@@ -370,6 +370,26 @@ answer it now.
     switching needs `--switch-to-hosted-api` and leaves that tracker behind:
     ask first. See
     [A hosted Subspace API](subspace-installer/README.md#a-hosted-subspace-api).
+17. **An existing initiative for the fleet's work?** (**no**: setup finds
+    or creates one named after the fleet.) If the tracker already holds the
+    fleet's projects under an initiative, ask for its UUID and pass
+    `--initiative UUID`: the fleet's officers may assign issues only in
+    their own fleet's projects. The dry run warns about each project of the
+    fleet's repositories that belongs to another fleet, and names the
+    initiative to adopt. With the API on the VM, setup checks that it
+    exists and assigns it to the fleet on that run, moving it from any
+    other; later runs never move it back. With a hosted API, setup prints
+    the request its administrator makes. See "Who owns the fleet's work" in
+    [Subspace API registration](subspace-installer/README.md#subspace-api-registration).
+18. **Do captains code themselves?** (**no**: `--captain-tools delegate`.)
+    By default a captain with crew plans, reviews and opens pull requests,
+    and its crew edit, test, commit and push: the captain has no edit tool,
+    and its shell runs any command but Git's writes and `sed -i` or
+    `perl -i`, a working agreement rather than a security boundary.
+    `--captain-tools standard` lets captains edit and commit as well. A fleet
+    installed before this choice existed keeps captains that code until you
+    pass `--captain-tools delegate`. See
+    [Instructions, permissions and toolchains](subspace-installer/README.md#instructions-permissions-and-toolchains).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.

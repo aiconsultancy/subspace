@@ -247,7 +247,7 @@ class Subspace:
                 self.initiatives[row["id"]] = row
                 return self.initiative(row)
             case "GET", ["initiatives", initiative]:
-                return dict(self.initiatives.get(initiative) or self.missing())
+                return self.initiative(self.initiatives.get(initiative) or self.missing())
             case "PUT", ["initiatives", initiative, "fleet"]:
                 row = self.initiatives.get(initiative) or self.missing()
                 assert body["fleetId"] is None or any(fleet["id"] == body["fleetId"] for fleet in self.fleets.values())
@@ -257,7 +257,7 @@ class Subspace:
 
     def initiative(self, row):
         fleet = next((fleet for fleet in self.fleets.values() if fleet["id"] == row["fleetId"]), None)
-        return {**row, "version": 1, "fleet": fleet and {"slug": fleet["slug"]}}
+        return {**row, "version": 1, "fleet": fleet and {key: fleet[key] for key in ("id", "slug", "name")}}
 
     def missing(self):
         raise Refusal(404, "Not found.")
@@ -599,7 +599,11 @@ def check_shape():
         assert engine["mcp"]["servers"]["subspace"]["url"] == "http://127.0.0.1:3001/mcp"
         assert {"action": "subspace_*", "resource": "*", "effect": "allow"} in permissions
         assert (opencode / "skills/subspace-tracker/SKILL.md").is_file()
-        assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role != "rear-admiral")
+        # The example's captains delegate: no edit tool, and an open shell that refuses Git's writes.
+        delegate = role == "captain" and json.loads((etc / "fleet.json").read_text()).get("captainTools") == "delegate"
+        assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role == "captain" and not delegate)
+        assert ({"action": "shell", "resource": "*", "effect": "allow"} in permissions) == delegate
+        assert ({"action": "shell", "resource": "*git push *", "effect": "deny"} in permissions) == delegate
     ref = Path("/var/lib/subspace-fleet/references/atlas/sample")
     assert subprocess.check_output(["runuser", "-u", "ss-atlas", "--", "git", "-C", ref, "show", "HEAD:README.md"], text=True).strip() == "sample"
     for user in ("ss-atlas", "ss-orion"):
@@ -798,6 +802,24 @@ def api():
     }, results
     print("API creation, update, idempotent registration of the fleet's channels, ship and officers, unassign "
           "and reassign passed.")
+
+
+def opencode_match(value, pattern):
+    """OpenCode 2.3.2's Wildcard.match on Linux (packages/core/src/util/wildcard.ts): `*` is any text, `?` one
+    character, and a trailing " *" also matches nothing."""
+    escaped = re.sub(r"[.+^${}()|\[\]\\]", lambda found: "\\" + found.group(0), pattern.replace("\\", "/"))
+    escaped = escaped.replace("*", ".*").replace("?", ".")
+    if escaped.endswith(" .*"):
+        escaped = escaped[:-3] + "( .*)?"
+    return re.fullmatch(escaped, value.replace("\\", "/"), re.S) is not None
+
+
+def opencode_decision(rules, action, resources):
+    """What OpenCode 2.3.2 decides for one tool call (packages/core/src/permission.ts, evaluateInput): each
+    resource takes its last matching rule, or ask; any deny refuses the call, else any ask asks."""
+    effects = [next((rule["effect"] for rule in reversed(rules) if opencode_match(action, rule["action"])
+                     and opencode_match(resource, rule["resource"])), "ask") for resource in resources]
+    return "deny" if "deny" in effects else "ask" if "ask" in effects else "allow"
 
 
 if __name__ == "__main__":

@@ -365,6 +365,41 @@ class FleetPolicyTests(unittest.TestCase):
                 granted = runtime.harness_permissions(cfg, operator)
                 self.assertEqual(granted, [*base, rule])
                 self.assertNotIn(runtime.SUBSPACE_MCP_GRANT, granted)
+        # The agent listener has no REST command of its own; a hosted API's is granted to every officer.
+        self.assertNotIn(runtime.SUBSPACE_REQUEST_GRANT, runtime.harness_permissions(cfg, person))
+
+    def test_a_hosted_api_gives_every_officer_its_rest_command_and_the_operator_the_last_word(self):
+        def hosted(harness=None):
+            config = example_config()
+            config["api"] = {"url": "https://subspace.example.com", "enrolment": True}
+            config["stargate"] = {"ref": runtime.SUBSPACE_AGENTS_COMMIT}
+            if harness:
+                config["harness"] = {**config["harness"], **harness}
+            cfg = validate(config, officer_secrets())
+            return [(person, runtime.harness_permissions(cfg, person)) for person in cfg["members"]]
+
+        def request(granted):
+            return fixture.opencode_decision(granted, "shell", ["subspace-request /api/v1/me"])
+
+        for person, granted in hosted():
+            self.assertEqual(granted, [*person["harness"]["permissions"], runtime.SUBSPACE_REQUEST_GRANT,
+                                       runtime.SUBSPACE_MCP_GRANT])
+            self.assertEqual(request(granted), "allow")
+        # After the starter policy and before the operator's own rules, which win under last-match-wins, a
+        # wildcard included: a role's deny of subspace-* or of every command holds.
+        for resource in ("subspace-*", "*"):
+            rule = {"action": "shell", "resource": resource, "effect": "deny"}
+            rear, captain = hosted({"captain": {"extraPermissions": [rule]}})
+            self.assertEqual(captain[1][-3:], [runtime.SUBSPACE_REQUEST_GRANT, rule, runtime.SUBSPACE_MCP_GRANT])
+            self.assertEqual((request(rear[1]), request(captain[1])), ("allow", "deny"))
+        # An explicit harness.permissions is the operator's too, so the grant comes first and the policy decides.
+        own = [{"action": "*", "resource": "*", "effect": "allow"}]
+        for _, granted in hosted({"permissions": own}):
+            self.assertEqual(granted, [runtime.SUBSPACE_REQUEST_GRANT, *own, runtime.SUBSPACE_MCP_GRANT])
+            self.assertEqual(request(granted), "allow")
+        closed = [{"action": "*", "resource": "*", "effect": "deny"}, {"action": "read", "resource": "*", "effect": "allow"}]
+        for _, granted in hosted({"permissions": closed}):
+            self.assertEqual(request(granted), "deny")
 
     def test_without_the_agent_listener_officers_get_no_api_server_or_skill(self):
         config = example_config()
@@ -572,6 +607,245 @@ def workspace_fleet(**api):
         config["api"] = api
         secrets = {**secrets, "apiToken": api_secrets()["apiToken"]}
     return validate(config, secrets)
+
+
+def captain_fleet(tools=None, **changes):
+    """The example fleet with a repository, a captain with crew (orion) and one without (vega)."""
+    config = example_config()
+    config.pop("captainTools", None)
+    if tools:
+        config["captainTools"] = tools
+    config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+    config["captains"].append({"id": "vega", "name": "Vega", "account": "example-vega",
+                               "crew": {"claude": {"count": 0}, "codex": {"count": 0}}})
+    config.update(changes)
+    return validate(config, officer_secrets("example-vega"))
+
+
+# Command lines and the resources OpenCode 2.3.2's shell scanner (packages/core/src/shell/scan.ts and parse.ts)
+# gives their commands, from reading its source: a command line splits at &&, ||, ;, | and newlines; a subshell's
+# or group's commands are listed; a command substitution's commands follow the command that holds them; `cd` to a
+# literal directory is no resource (only an external_directory check); and each resource is the command's text
+# from its first word, variable assignments included, to its last, quoted as typed.
+DELEGATE_ALLOWED = (
+    ("pwd", ["pwd"]),
+    ("head -n 40 README.md", ["head -n 40 README.md"]),
+    ("git fetch origin && git log --oneline origin/main..HEAD | head -20",
+     ["git fetch origin", "git log --oneline origin/main..HEAD", "head -20"]),
+    ("cd project && git diff origin/main...HEAD --stat", ["git diff origin/main...HEAD --stat"]),
+    ("git -C project status --short; git -C project branch --show-current",
+     ["git -C project status --short", "git -C project branch --show-current"]),
+    ("GIT_PAGER=cat git log -3 --format=%s", ["GIT_PAGER=cat git log -3 --format=%s"]),
+    ("git branch -a && git stash list && git worktree list && git tag --list",
+     ["git branch -a", "git stash list", "git worktree list", "git tag --list"]),
+    ("git config --get user.email && git remote -v", ["git config --get user.email", "git remote -v"]),
+    ("rg -n 'git push' scripts | wc -l", ["rg -n 'git push' scripts", "wc -l"]),
+    ("git -C project log --grep 'stash'", ["git -C project log --grep 'stash'"]),
+    ("make test", ["make test"]),
+    ("subspace-github gh pr create --title 'Fix the parser' --body-file /tmp/body.md",
+     ["subspace-github gh pr create --title 'Fix the parser' --body-file /tmp/body.md"]),
+    ("subspace-api /api/v1/me", ["subspace-api /api/v1/me"]),
+)
+DELEGATE_REFUSED = (
+    ("git commit -m 'Fix the parser'", ["git commit -m 'Fix the parser'"]),
+    ("git add -A && git commit -m wip", ["git add -A", "git commit -m wip"]),
+    ("git status; git push origin HEAD", ["git status", "git push origin HEAD"]),
+    ("(cd project && git push)", ["git push"]),
+    ("echo $(git push)", ["echo $(git push)", "git push"]),
+    ("GIT_TERMINAL_PROMPT=0 git push origin crew/example", ["GIT_TERMINAL_PROMPT=0 git push origin crew/example"]),
+    ("env git push", ["env git push"]),
+    ("git -C project push", ["git -C project push"]),
+    ("git -c user.name=Orion commit --amend --no-edit", ["git -c user.name=Orion commit --amend --no-edit"]),
+    ("git ls-files -z | xargs -0 git rm", ["git ls-files -z", "xargs -0 git rm"]),
+    ("git stash", ["git stash"]),
+    ("git stash pop", ["git stash pop"]),
+    ("git branch -D crew/example", ["git branch -D crew/example"]),
+    ("git checkout -b fix", ["git checkout -b fix"]),
+    ("git switch main", ["git switch main"]),
+    ("git reset --hard origin/main", ["git reset --hard origin/main"]),
+    ("git merge --ff-only origin/main", ["git merge --ff-only origin/main"]),
+    ("git config user.email orion@example.com", ["git config user.email orion@example.com"]),
+    # A read form in a write's arguments allows nothing: Git's writes are refused after the read forms.
+    ("git -C project commit -m 'stash list'", ["git -C project commit -m 'stash list'"]),
+    ("sed -i 's/a/b/' src/main.ts", ["sed -i 's/a/b/' src/main.ts"]),
+    ("find . -name '*.ts' | xargs sed -i 's/a/b/'", ["find . -name '*.ts'", "xargs sed -i 's/a/b/'"]),
+    ("perl -pi -e 's/a/b/' src/main.ts", ["perl -pi -e 's/a/b/' src/main.ts"]),
+    ("/usr/bin/git push", ["/usr/bin/git push"]),
+    ("git  push origin HEAD", ["git  push origin HEAD"]),
+    ("git   commit -m wip", ["git   commit -m wip"]),
+    # The README's known false refusal: a bare Git write word after a global option.
+    ("git -C project log --grep stash", ["git -C project log --grep stash"]),
+)
+# The listing forms of Git's mixed subcommands, and their writes, each checked as typed, after a global option and
+# after an assignment (DELEGATE_PREFIXES).
+DELEGATE_GIT_LISTINGS = (
+    "config --get user.email", "config --get-all remote.origin.fetch", "config --get-regexp '^remote\\.'",
+    "config --list", "config -l", "config --list --show-origin", "config get user.email", "config list",
+    "config get --local user.email", "config --show-origin --list", "config --name-only --list",
+    *(f"config --{scope} {read}" for scope in ("local", "global", "system", "worktree")
+      for read in ("--list", "-l", "--get user.email", "--get-regexp alias", "--list --show-origin")),
+    "config -f .gitmodules --get-regexp path", "config --file .gitmodules --list",
+    "branch", "branch -a", "branch -r", "branch -v", "branch -vv", "branch --verbose", "branch --all",
+    "branch --remotes", "branch -av", "branch -avv", "branch -rv", "branch -rvv", "branch -a -vv", "branch -vv -a",
+    "branch -r --sort=-committerdate", "branch -a --format='%(refname:short) %(committerdate)'",
+    "branch -a --color=always", "branch --list", "branch --list 'crew/*'", "branch -l", "branch -a --list 'crew/*'",
+    "branch -vv --list", "branch --sort=-committerdate --list", "branch --show-current", "branch --contains HEAD",
+    "branch -r --contains HEAD", "branch --merged origin/main", "branch --no-merged origin/main",
+    "branch -a --merged", "branch --points-at HEAD",
+    "tag", "tag -l", "tag -ln", "tag --list", "tag -l 'v*'", "tag --list --sort=-v:refname",
+    "tag --sort=-v:refname --list", "tag --contains HEAD", "tag --points-at HEAD",
+    "remote", "remote -v", "remote --verbose", "remote show origin", "remote get-url origin",
+    "stash list", "stash show", "stash show -p 'stash@{0}'", "worktree list", "worktree list --porcelain",
+    "notes list", "notes show HEAD", "submodule", "submodule status", "submodule status --recursive",
+    "sparse-checkout list",
+)
+DELEGATE_GIT_LISTING_WRITES = (
+    # Deleting, renaming or copying through a listing option, alone or bundled, and a name after -v.
+    "branch -r -d origin/stale", "branch -rd origin/stale", "branch -dr origin/stale", "branch -r -D origin/stale",
+    "branch -r --delete origin/stale", "branch -r -vd origin/stale", "branch -a -d crew/example",
+    "branch -ad crew/example", "branch -a -D crew/example", "branch -a -m old new", "branch -a -M old new",
+    "branch -a -c old new", "branch --all --move old new", "branch -r -u origin/main",
+    "branch -a --set-upstream-to=origin/main", "branch -r --unset-upstream", "branch -a --edit-description",
+    "branch -m old -a", "branch -v crew/example", "branch -vv crew/example", "branch --verbose crew/example",
+    "branch crew/example", "branch -f crew/example origin/main", "branch -d crew/example", "branch -D crew/example",
+    "tag v1.0", "tag -a v1.0 -m release", "tag -d v1.0", "tag -f v1.0",
+    "remote -v add upstream https://example.com/x.git", "remote add upstream https://example.com/x.git",
+    "remote set-url origin https://example.com/x.git", "remote remove upstream",
+    "config user.email orion@example.com", "config --local user.email orion@example.com",
+    "config --global --unset user.name", "config --unset user.email", "config --local --add a.b c",
+    "stash", "stash push -m wip", "stash pop", "stash drop", "worktree add ../x", "worktree remove ../x",
+    "notes add -m x", "submodule update --init", "sparse-checkout set src",
+)
+DELEGATE_PREFIXES = ("git", "git -C project", "GIT_OPTIONAL_LOCKS=0 git")
+# What the rules cannot see, as the README says: they match command text, so these still run.
+DELEGATE_NOT_REFUSED = (
+    ("bash -c 'git push'", ["bash -c 'git push'"]),
+    ("echo fix > src/main.ts", ["echo fix > src/main.ts"]),
+    ("cp /tmp/main.ts src/main.ts", ["cp /tmp/main.ts src/main.ts"]),
+    ("python3 -c 'import pathlib; pathlib.Path(\"x\").write_text(\"y\")'",
+     ["python3 -c 'import pathlib; pathlib.Path(\"x\").write_text(\"y\")'"]),
+)
+
+
+class CaptainPolicyTests(unittest.TestCase):
+    """captainTools: standard captains code; delegate captains have an open shell with writes refused."""
+
+    worktrees = "/var/lib/subspace-fleet/agents/orion/worktrees"
+
+    def test_a_delegate_captain_runs_any_command_but_writes(self):
+        cfg = captain_fleet("delegate")
+        rules = cfg["members"][1]["harness"]["permissions"]
+        for line, resources in DELEGATE_ALLOWED + DELEGATE_NOT_REFUSED:
+            with self.subTest(line):
+                self.assertEqual(fixture.opencode_decision(rules, "shell", resources), "allow")
+        for line, resources in DELEGATE_REFUSED:
+            with self.subTest(line):
+                self.assertEqual(fixture.opencode_decision(rules, "shell", resources), "deny")
+        for prefix in DELEGATE_PREFIXES:
+            for command, effect in ([(listing, "allow") for listing in DELEGATE_GIT_LISTINGS]
+                                    + [(write, "deny") for write in DELEGATE_GIT_LISTING_WRITES]):
+                with self.subTest(f"{prefix} {command}"):
+                    self.assertEqual(fixture.opencode_decision(rules, "shell", [f"{prefix} {command}"]), effect)
+        # No edit, write or patch tool (OpenCode's edit action); reads, but not of secrets, in any directory.
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "read", ["src/main.ts", "/tmp/notes.md"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "read", ["deploy/.env"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "external_directory", ["/tmp/*"]), "allow")
+
+    def test_a_standard_captain_keeps_its_policy_and_reads_its_crews_worktrees(self):
+        cfg = captain_fleet()
+        self.assertEqual(cfg["captainTools"], "standard")
+        rear, orion, vega = cfg["members"]
+        rules = orion["harness"]["permissions"]
+        self.assertFalse(orion.get("delegatesCoding"))
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["git add -A", "git commit -m wip"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["git push origin HEAD"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["git status", "head -20"]), "deny")
+        # Its crew's worktrees, and nothing else outside its workspace (the read tool and a shell's directory).
+        for directory in (f"{self.worktrees}/claude-1/project/*", f"{self.worktrees}/codex-2/project/src/*"):
+            self.assertEqual(fixture.opencode_decision(rules, "external_directory", [directory]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "external_directory", ["/tmp/*"]), "deny")
+        self.assertIn({"action": "external_directory", "resource": f"{self.worktrees}/*", "effect": "allow"}, rules)
+        # It reads them, but its edit, write and patch tools, which name an outside file by its absolute path,
+        # are refused there; its own checkout's files, named relative to its directory, it edits as before.
+        crew_file = f"{self.worktrees}/claude-1/project/src/main.ts"
+        self.assertEqual(fixture.opencode_decision(rules, "read", [crew_file]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "edit", [crew_file]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["project/src/main.ts"]), "allow")
+        # A captain without crew has no worktrees; the rear admiral has its reference checkouts only.
+        self.assertFalse(any(rule["action"] == "external_directory" for rule in vega["harness"]["permissions"]))
+        self.assertEqual([rule["resource"] for rule in rear["harness"]["permissions"]
+                          if rule["action"] == "external_directory"], ["/var/lib/subspace-fleet/references/atlas/*"])
+        # The starter policy is otherwise what it was.
+        self.assertEqual([rule for rule in rules if rule["action"] != "external_directory" and
+                          rule["resource"] != f"{self.worktrees}/*"], default_permissions("captain", None))
+
+    def test_a_captain_without_crew_keeps_the_standard_policy_in_a_delegate_fleet(self):
+        cfg = captain_fleet("delegate")
+        _, orion, vega = cfg["members"]
+        self.assertTrue(orion["delegatesCoding"])
+        self.assertFalse(vega.get("delegatesCoding"))
+        self.assertEqual(vega["harness"]["permissions"], default_permissions("captain", None))
+        self.assertIn("orion leave edits, commits and pushes to their crew", runtime.captain_tools_line(cfg))
+        self.assertIn("vega has no crew, so keeps the standard policy", runtime.captain_tools_line(cfg))
+        self.assertIn("Captain tools: standard", runtime.captain_tools_line(captain_fleet()))
+
+    def test_the_delegate_guidance_follows_captain_tools_not_the_permissions(self):
+        own = [{"action": "*", "resource": "*", "effect": "allow"}]
+        for harness in ({}, {"permissions": own}):
+            with self.subTest(harness=harness):
+                cfg = captain_fleet("delegate", harness={**harness, "type": "opencode"})
+                orion = cfg["members"][1]
+                self.assertTrue(orion["delegatesCoding"])
+                documents = roles.role_documents(cfg, orion, None, Path("/var/lib/subspace-fleet/agents/orion"))
+                self.assertIn("## Your tools", documents["instructions"])
+                self.assertIn("open the pull request with `subspace-github gh pr create`",
+                              documents["skills"]["fleet-captain"])
+                if harness:
+                    self.assertEqual(orion["harness"]["permissions"], own)
+        standard = roles.role_documents(captain_fleet(), captain_fleet()["members"][1], None, Path("/h"))
+        self.assertNotIn("## Your tools", standard["instructions"])
+        self.assertIn("Crew commit as you, so check", standard["skills"]["fleet-captain"])
+
+    def test_extra_permissions_extend_the_starter_policy_and_an_explicit_policy_still_replaces_it(self):
+        def rule(resource, effect="allow"):
+            return {"action": "shell", "resource": resource, "effect": effect}
+
+        harness = {"type": "opencode", "extraPermissions": [rule("kubectl get *")],
+                   "captain": {"extraPermissions": [rule("git stash *")]},
+                   "rearAdmiral": {"extraPermissions": [rule("make docs *")]}}
+        cfg = captain_fleet("delegate", harness=harness)
+        rear, orion, vega = cfg["members"]
+        # Appended in order, fleet, role, officer, after the starter policy, so they win.
+        self.assertEqual(orion["harness"]["permissions"],
+                         [*default_permissions("captain", None, delegate=True), rule("kubectl get *"), rule("git stash *")])
+        self.assertEqual(rear["harness"]["permissions"][-2:], [rule("kubectl get *"), rule("make docs *")])
+        self.assertEqual(rear["harness"]["permissions"][:-2],
+                         default_permissions("rear_admiral", Path("/var/lib/subspace-fleet/references/atlas")))
+        self.assertEqual(fixture.opencode_decision(orion["harness"]["permissions"], "shell", ["git stash pop"]), "allow")
+        self.assertTrue(orion["delegatesCoding"])
+        # An officer's own rules come last; an explicit harness.permissions replaces the starter policy and is
+        # extended the same way.
+        own = [{"action": "*", "resource": "*", "effect": "allow"}]
+        config = example_config()
+        config["captains"][0]["harness"] = {"permissions": own, "extraPermissions": [rule("git push *", "deny")]}
+        captain = validate(config, officer_secrets())["members"][1]
+        self.assertEqual(captain["harness"]["permissions"], [*own, rule("git push *", "deny")])
+        # Validated like harness.permissions, at every level, and refused for a Claude Agent SDK officer's own.
+        for change in ({"harness": {"extraPermissions": {"action": "shell"}}},
+                       {"harness": {"captain": {"extraPermissions": [{"action": "shell", "resource": "*"}]}}},
+                       {"harness": {"extraPermissions": [{**rule("*"), "effect": "maybe"}]}}):
+            with self.subTest(change), self.assertRaises(Invalid):
+                validate({**example_config(), **change}, officer_secrets())
+        config = example_config()
+        config["captains"][0]["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        config["captains"][0]["harness"] = {"type": "claude-sdk", "family": "claude", "extraPermissions": [rule("*")]}
+        with self.assertRaisesRegex(Invalid, "uses allowedTools"):
+            validate(config, officer_secrets())
+        config["captains"][0]["harness"].pop("extraPermissions")
+        config["harness"] = {**config["harness"], "extraPermissions": [rule("*")]}
+        self.assertEqual(validate(config, officer_secrets())["members"][1]["harness"]["type"], "claude-sdk")
 
 
 class WorkspaceRootTests(unittest.TestCase):
@@ -976,6 +1250,16 @@ class AgentDispatchTests(unittest.TestCase):
             self.assertNotIn("plugins", saved["opencode-atlas"])
         runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
 
+    def test_the_delegate_policy_and_extra_permissions_meet_stargates_fleet_tool_check(self):
+        self.enable()
+        self.config["captainTools"] = "delegate"
+        cfg = validate(self.config, self.secrets)
+        runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, cfg["members"][1]), "fixture")
+        self.config["harness"] = {**self.config["harness"],
+                                  "extraPermissions": [{"action": "fleet_*", "resource": "*", "effect": "ask"}]}
+        with self.assertRaisesRegex(Invalid, "fleet tools"):
+            validate(self.config, self.secrets)
+
     def test_role_guidance_follows_the_dispatch_switch(self):
         home = Path("/var/lib/subspace-fleet/agents/orion")
         references = Path("/references/atlas")
@@ -1314,6 +1598,31 @@ class FleetRecordsTests(unittest.TestCase):
         self.assertEqual((agents["Atlas"]["defaultModel"], agents["example-lyra"]["defaultModel"]),
                          ("claude-fable-5-2", runtime.FAMILIES["codex"]))
         self.assertEqual(self.register(), [], "a re-run changes nothing")
+
+    def test_registration_assigns_an_initiative_of_no_fleet_and_never_moves_another_fleets(self):
+        import fleetctl
+        self.api.call("POST", "/fleets", {"slug": "other", "name": "Other"})
+        other, theirs = self.api.fleet_by("other")["id"], "00000000-0000-4000-8000-0000000000a1"
+        self.api.initiatives[theirs] = {"id": theirs, "name": "Their work", "fleetId": other, "channels": ""}
+        self.config["api"]["initiatives"] = [fixture.INITIATIVE, theirs]
+        api = self.api
+
+        class Api(fleetctl.Api):
+            def __init__(self, _cfg):
+                pass
+
+            def request(self, method, path, body=None):
+                return api.call(method, path, body)
+
+        out = io.StringIO()
+        with patch.object(fleetctl, "Api", Api), contextlib.redirect_stdout(out):
+            fleetctl.register(validate(self.config, self.secrets))
+        ours = self.api.fleet_by("example-fleet")["id"]
+        self.assertEqual((self.api.initiatives[fixture.INITIATIVE]["fleetId"], self.api.initiatives[theirs]["fleetId"]),
+                         (ours, other))
+        self.assertIn(f"Assigned initiative {fixture.INITIATIVE}.", out.getvalue())
+        self.assertIn(f"Initiative {theirs} belongs to another fleet ({other}), so it was left there. To move it to "
+                      f"example-fleet, run 'subspace-fleetctl assign {theirs} example-fleet'.", out.getvalue())
 
     def test_a_changed_roster_is_reconciled(self):
         self.register()

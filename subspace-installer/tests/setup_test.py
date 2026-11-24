@@ -23,6 +23,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
@@ -40,6 +41,9 @@ from standard_channels import COMMAND_SUFFIX  # noqa: E402
 # Tests never reach the network: setup's outbound check is replaced here, and OutboundTests checks the real one.
 check_outbound = fleet_setup.check_outbound
 fleet_setup.check_outbound = lambda answers: None
+# Nor do they read a fleet's tracker as its rear admiral: TrackerOwnershipTests checks the real reader.
+agent_reader = fleet_setup.agent_reader
+fleet_setup.agent_reader = lambda answers, members: (None, "the tests reach no Subspace API")
 
 
 def fake_api(api):
@@ -215,15 +219,64 @@ class SetupInputsTests(unittest.TestCase):
         rear, captain = cfg["members"]
         self.assertFalse(rear.get("delegatesCoding"))
         self.assertTrue(captain["delegatesCoding"])
-        grants = {(rule["action"], rule["resource"]) for rule in captain["harness"]["permissions"]
-                  if rule["effect"] == "allow"}
-        self.assertIn(("shell", "subspace-github gh pr create *"), grants)
-        self.assertIn(("shell", "git diff *"), grants)
-        self.assertNotIn(("edit", "*"), grants)
-        self.assertNotIn(("shell", "git commit *"), grants)
-        self.assertNotIn(("shell", "make *"), grants)
+        rules = captain["harness"]["permissions"]
+        for command in ("subspace-github gh pr create --fill", "git diff main", "git fetch origin", "make test", "pwd"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow", command)
+        for command in ("git commit -m wip", "git push origin HEAD"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "deny", command)
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "deny")
         again = self.rerun(answers, config)
         self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "delegate")
+
+    def test_a_new_fleet_delegates_and_an_existing_one_keeps_its_captain_tools(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        repositories = ["--repositories", "https://github.com/example/project.git", *CREW]
+        answers, members, config, secrets, _ = self.generate([*base, *repositories])
+        self.assertEqual((answers["captainTools"], config["captainTools"]), ("delegate", "delegate"))
+        self.assertTrue(validate(config, secrets, check_files=False)["members"][1]["delegatesCoding"])
+        # Without repositories the captains have no crew, so they keep the standard policy until crew come.
+        _, _, bare, bare_secrets, _ = self.generate(base)
+        self.assertEqual(bare["captainTools"], "delegate")
+        captain = validate(bare, bare_secrets, check_files=False)["members"][1]
+        self.assertFalse(captain.get("delegatesCoding"))
+        self.assertEqual(captain["harness"]["permissions"], roles.default_permissions("captain", None))
+        # A rerun keeps the answer, and --captain-tools changes it.
+        self.assertEqual(fleet_setup.fleet_config(self.rerun(answers, config), members, "a" * 40)["captainTools"],
+                         "delegate")
+        again = self.rerun(answers, config, "--captain-tools", "standard")
+        self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "standard")
+        # A fleet set up before captainTools existed has neither the answer nor the key, and gets neither: a
+        # fleet.json without captainTools means standard, as its captains were installed to code.
+        legacy = {key: value for key, value in answers.items() if key != "captainTools"}
+        config.pop("captainTools")
+        again = self.rerun(legacy, config)
+        self.assertNotIn("captainTools", again)
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertNotIn("captainTools", rebuilt)
+        self.assertEqual(validate(rebuilt, secrets, check_files=False)["captainTools"], "standard")
+        # So does a fleet the fleet installer set up alone, which setup has no answers or inputs for.
+        (fleet_setup.INPUTS / "answers.json").unlink()
+        (fleet_setup.INPUTS / "fleet.json").unlink()
+        etc = Path(self.directory.name) / "etc"
+        etc.mkdir()
+        (etc / "fleet.json").write_text("{}")
+        with patch.object(fleet_setup, "FLEET_ETC", etc):
+            self.assertNotIn("captainTools", answers_for([*base, *repositories])[0])
+
+    def test_extra_permissions_written_by_hand_are_kept_on_a_rerun(self):
+        args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--repositories", "https://github.com/example/project.git", *CREW]
+        answers, members, config, _, _ = self.generate(args)
+        rule = {"action": "shell", "resource": "kubectl get *", "effect": "allow"}
+        config["harness"] = {"extraPermissions": [rule], "captain": {"extraPermissions": [rule]}}
+        config["captains"][0]["harness"] = {"extraPermissions": [rule]}
+        # A rerun that also changes the captains' model keeps every level's rules.
+        again = self.rerun(answers, config, "--captain-model", "gpt-6.2-sol")
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"]["extraPermissions"], [rule])
+        self.assertEqual(rebuilt["harness"]["captain"], {"extraPermissions": [rule], "model": "gpt-6.2-sol",
+                                                         "family": "codex"})
+        self.assertEqual(rebuilt["captains"][0]["harness"], {"extraPermissions": [rule]})
 
     def test_officer_models_are_set_by_option_and_kept_on_a_rerun(self):
         base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
@@ -562,6 +615,61 @@ class SetupInputsTests(unittest.TestCase):
         self.assertNotIn("AGENT_ORGANISATION", env())
         self.assertFalse(published())
 
+    def test_the_dry_run_previews_the_api_settings_the_real_run_uses(self):
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40, "--no-demo"]
+        payload = Path(self.directory.name) / "payload"
+        (payload / "subspace-api").mkdir(parents=True)
+        (payload / "subspace-api" / "compose.yaml").write_text("services: {}\n")
+        api_env = fleet_setup.INPUTS / "api.env"
+
+        def dry_run():
+            seen = []
+
+            def installer(config_path, dry_run=False, secrets_dir=None):
+                self.assertTrue(dry_run)
+                folder = Path(config_path).parent
+                seen.append((json.loads(Path(config_path).read_text()),
+                             json.loads((folder / "fleet.secrets.json").read_text())))
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "say"), \
+                    patch.object(fleet_setup, "installer", side_effect=installer):
+                fleet_setup.setup(fleet_setup.parse_args([*argv, "--dry-run"]))
+            config, secrets = seen[-1]
+            return config, validate(config, secrets, check_files=False)
+
+        def mcp(cfg):
+            return [runtime.SUBSPACE_MCP_GRANT in runtime.harness_permissions(cfg, person) for person in cfg["members"]]
+
+        # A new fleet: the real run starts the API with development sign-in and the agent listener.
+        config, cfg = dry_run()
+        self.assertEqual(config["api"], {"url": "http://127.0.0.1:3000", "initiatives": [],
+                                         "agentUrl": "http://127.0.0.1:3001"})
+        self.assertEqual(mcp(cfg), [True, True])
+        # An installed fleet, unchanged: its saved initiative and the api.env the real run keeps.
+        answers, _, _ = answers_for(argv[3:])
+        answers["initiativeId"] = "00000000-0000-4000-8000-000000000001"
+        fleet_setup.save_answers(answers)
+        with patch.object(fleet_setup, "PAYLOAD", payload), \
+                patch.object(fleet_setup, "API_DIR", Path(self.directory.name) / "api"), \
+                patch.object(fleet_setup, "compose"):
+            fleet_setup.api_up(answers, fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None))
+        config, cfg = dry_run()
+        self.assertEqual(config["api"]["initiatives"], [answers["initiativeId"]])
+        real = runtime.validate(*self.generate(argv[3:], fleet_setup.local_api_block(
+            answers, [answers["initiativeId"]], fleet_setup.agent_listener_enabled()))[2:4], check_files=False)
+        for planned, person in zip(cfg["members"], real["members"]):
+            self.assertEqual(runtime.harness_permissions(cfg, planned), runtime.harness_permissions(real, person))
+        self.assertEqual(mcp(cfg), [True, True])
+        # The operator turned the listener off: the officers lose the API's tools in both runs.
+        api_env.write_text(api_env.read_text().replace("AGENT_PORT=3001\n", "AGENT_PORT=\n"))
+        config, cfg = dry_run()
+        self.assertNotIn("agentUrl", config["api"])
+        self.assertEqual(mcp(cfg), [False, False])
+        # Without development sign-in the real run writes no API settings, nor does the dry run.
+        api_env.write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\n")
+        config, cfg = dry_run()
+        self.assertNotIn("api", config)
+
     def test_further_fleet_registration_carries_its_records_and_is_checked(self):
         argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra, Vega",
                 "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"]
@@ -715,6 +823,125 @@ class SetupInputsTests(unittest.TestCase):
             self.assertNotEqual(fleet_setup.fleet_initiative("t", "Fleet", "f"), created)
         self.assertNotIn("PATCH", api.counts)
 
+    def test_an_adopted_initiative_is_kept_as_the_fleets_by_its_id(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        adopted = "0000000A-0000-4000-8000-00000000000B"
+        answers, _, _ = answers_for([*base, "--initiative", adopted])
+        self.assertEqual(answers["initiativeId"], adopted.lower())
+        with self.assertRaisesRegex(fleet_setup.SetupError, "must be an initiative's UUID"):
+            answers_for([*base, "--initiative", "Local workspace"])
+        # Kept on later runs, and '' goes back to finding one by the fleet's name.
+        fleet_setup.save_answers(answers)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+            self.assertEqual(fleet_setup.gather(args, saved)["initiativeId"], adopted.lower())
+            args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--initiative", ""])
+            self.assertNotIn("initiativeId", fleet_setup.gather(args, saved))
+        # Only --initiative on the run adopts: setup takes the initiative it names though the admin is not a member
+        # and another fleet has it, and moves it once the fleet is registered. A recorded one that another fleet
+        # has since taken stays there, with a warning; one that is gone is replaced by the name search.
+        api = fixture.Subspace()
+        api.call("POST", "/fleets", {"slug": "local", "name": "Local fleet"})
+        api.call("POST", "/fleets", {"slug": "example-fleet", "name": "Example Fleet"})
+        adopted, local = adopted.lower(), api.fleet_by("local")["id"]
+        api.initiatives[adopted] = {"id": adopted, "name": "Local workspace", "fleetId": local, "channels": ""}
+
+        def call(_token, method, path, body=None):
+            if path == "/me/initiatives":
+                return {"items": []}
+            try:
+                return api.call(method, path, body)
+            except fixture.Refusal as refusal:
+                raise fleet_setup.ApiError("refused", refusal.status) from None
+
+        said = []
+        with patch.object(fleet_setup, "api_call", side_effect=call), \
+                patch.object(fleet_setup, "say", side_effect=said.append):
+            self.assertEqual(fleet_setup.fleet_initiative("t", "Example Fleet", "example-fleet", adopted, adopt=True),
+                             adopted)
+            self.assertIsNone(fleet_setup.fleet_initiative("t", "Example Fleet", "example-fleet", adopted,
+                                                           hint="; or not"))
+            self.assertEqual(said[-1], f"WARNING: initiative Local workspace ({adopted}), recorded as fleet "
+                             "example-fleet's, now belongs to fleet Local fleet (local). Setup leaves it there and "
+                             "registers no initiative for example-fleet on this run: only an explicit adoption moves "
+                             f"one. To move it back, run 'sudo subspace-fleetctl assign {adopted} example-fleet'; or "
+                             "not.")
+            self.assertEqual((api.initiatives[adopted]["fleetId"], api.counts["PUT"]), (local, 0))
+            fleet_setup.adopt_initiative("t", "example-fleet", adopted)
+            self.assertEqual(api.initiatives[adopted]["fleetId"], ours := api.fleet_by("example-fleet")["id"])
+            self.assertEqual(said[-1], f"assigned initiative Local workspace ({adopted}) to this fleet, moving it "
+                             "from fleet Local fleet (local)")
+            fleet_setup.adopt_initiative("t", "example-fleet", adopted)
+            self.assertEqual(api.counts["PUT"], 1)
+            # Now the fleet's own, the recorded ID stands, with no move.
+            self.assertEqual(fleet_setup.fleet_initiative("t", "Example Fleet", "example-fleet", adopted), adopted)
+            self.assertEqual(api.initiatives[adopted]["fleetId"], ours)
+            gone = "00000000-0000-4000-8000-00000000dead"
+            self.assertNotIn(fleet_setup.fleet_initiative("t", "Example Fleet", "example-fleet", gone),
+                             (gone, adopted))
+
+    def test_only_initiative_on_the_run_adopts_and_only_one_that_exists(self):
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40]
+        api = fixture.Subspace()
+        api.call("POST", "/fleets", {"slug": "local", "name": "Local fleet"})
+        local, workspace = api.fleet_by("local")["id"], "00000000-0000-4000-8000-0000000000a1"
+        missing = "00000000-0000-4000-8000-00000000dead"
+        api.initiatives[workspace] = {"id": workspace, "name": "Local workspace", "fleetId": local, "channels": ""}
+
+        def call(_token, method, path, body=None):
+            try:
+                return api.call(method, path, body)
+            except fixture.Refusal as refusal:
+                raise fleet_setup.ApiError("refused", refusal.status) from None
+
+        def setup(*extra):
+            """A real run, with the API, the installer and the VM's commands stubbed, up to its summary."""
+            said = []
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "installer"), patch.object(fleet_setup, "run"), \
+                    patch.object(fleet_setup, "api_up", return_value=True), \
+                    patch.object(fleet_setup, "history_database", return_value=None), \
+                    patch.object(fleet_setup, "agent_listener_enabled", return_value=False), \
+                    patch.object(fleet_setup, "api_token", return_value="header.payload.signature"), \
+                    patch.object(fleet_setup, "api_call", side_effect=call), \
+                    patch.object(fleet_setup, "seed_demo") as seed, \
+                    patch.object(fleet_setup, "irc_source", return_value="a" * 40), \
+                    patch.object(fleet_setup, "say", side_effect=said.append), \
+                    patch.object(fleet_setup, "summary", side_effect=fleet_setup.SetupError("stop here")), \
+                    self.assertRaises(fleet_setup.SetupError) as stopped:
+                fleet_setup.setup(fleet_setup.parse_args([*argv, *extra]))
+            answers = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+            return str(stopped.exception), answers.get("initiativeId"), said, seed.called
+
+        # An --initiative that does not exist stops the run before any tracker record changes, and is not recorded.
+        writes = list(api.writes)
+        error, recorded, _, seeded = setup("--initiative", missing)
+        self.assertIn(f"There is no initiative {missing} in the development organisation", error)
+        self.assertEqual((recorded, seeded, api.writes), (None, False, writes))
+        # One that exists is adopted, moved from the fleet that had it once this fleet is registered.
+        error, recorded, said, _ = setup("--initiative", workspace)
+        ours = api.fleet_by("example-fleet")["id"]
+        self.assertEqual((error, recorded, api.initiatives[workspace]["fleetId"]), ("stop here", workspace, ours))
+        self.assertIn(f"assigned initiative Local workspace ({workspace}) to this fleet, moving it from fleet Local "
+                      "fleet (local)", said)
+        self.assertEqual(fleet_setup.read_json(fleet_setup.INPUTS / "fleet.json")["api"]["initiatives"], [workspace])
+        # Taken back by the other fleet, a routine rerun leaves it there, registers none and keeps the answer.
+        api.initiatives[workspace]["fleetId"] = local
+        puts = api.counts["PUT"]
+        error, recorded, said, _ = setup()
+        self.assertEqual((error, recorded, api.initiatives[workspace]["fleetId"], api.counts["PUT"]),
+                         ("stop here", workspace, local, puts))
+        self.assertEqual(fleet_setup.read_json(fleet_setup.INPUTS / "fleet.json")["api"]["initiatives"], [])
+        self.assertTrue(any(line.startswith(f"WARNING: initiative Local workspace ({workspace}), recorded as fleet "
+                                            "example-fleet's, now belongs to fleet Local fleet (local).")
+                            and f"or setup with --initiative {workspace}; to have setup find or create one by the "
+                            "fleet's name instead, pass --initiative ''." in line for line in said))
+        # A mistyped --initiative on a fleet with one keeps the recorded one.
+        error, recorded, _, _ = setup("--initiative", missing)
+        self.assertEqual((error.startswith(f"There is no initiative {missing}"), recorded), (True, workspace))
+
     def test_teams_with_key_vault_needs_a_separate_gateway_user(self):
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"stakeholders": {"teams": {"botClientId": "x"}}})
         etc = Path(self.directory.name) / "etc"
@@ -727,6 +954,211 @@ class SetupInputsTests(unittest.TestCase):
             fleet_setup.write_json(etc / "gateway-checks.json", [["ss-fleet-gateway", "/var/lib/x/gateway.json"]])
             self.assertEqual(fleet_setup.metadata_users(answers), ["ss-fleet-gateway"])
             self.assertEqual(fleet_setup.metadata_users({"metadataUsers": []}), ["ss-fleet-gateway"])
+
+
+class TrackerOwnershipTests(unittest.TestCase):
+    """The warning when a fleet's tracker projects belong to another fleet, whose officers alone may assign them."""
+
+    FLEET, LOCAL = "00000000-0000-4000-8000-0000000000f1", "00000000-0000-4000-8000-0000000000f2"
+    WORKSPACE, CHILD, OWN = ("00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2",
+                             "00000000-0000-4000-8000-0000000000a3")
+
+    def api(self, projects, kind="agent"):
+        """GETs as the API answers them to the fleet's rear admiral (subspace-api src/api.ts, src/github.ts)."""
+        fleets = {self.FLEET: {"slug": "example-fleet", "name": "Example Fleet"},
+                  self.LOCAL: {"slug": "local", "name": "Local fleet"}}
+        initiatives = {
+            self.WORKSPACE: {"name": "Local workspace", "fleetId": self.LOCAL, "parentId": None},
+            self.CHILD: {"name": "Gateway work", "fleetId": None, "parentId": self.WORKSPACE},
+            self.OWN: {"name": "Example Fleet", "fleetId": self.FLEET, "parentId": None},
+        }
+        calls = []
+
+        def get(path):
+            calls.append(path)
+            route, _, query = path.partition("?")
+            if route == "/me":
+                return {"kind": kind, "fleetId": self.FLEET if kind == "agent" else None}
+            if route == "/repositories/projects":
+                repository = parse_qs(query)["repository"][0]
+                return {"items": [row for row in projects if row["repository"] == repository], "nextCursor": None}
+            initiative = route.removeprefix("/initiatives/")
+            row = initiatives[initiative]
+            return {"id": initiative, **row, "fleet": fleets.get(row["fleetId"])}
+        return get, calls
+
+    def project(self, key, repository, initiative):
+        return {"id": f"project-{key}", "key": key, "repository": repository, "initiativeId": initiative}
+
+    def test_another_fleets_projects_are_named_with_the_initiative_to_adopt(self):
+        projects = [self.project("WEB", "example/project", self.WORKSPACE),
+                    self.project("GATE", "example/gateway", self.CHILD),
+                    self.project("WEB", "example/library", self.WORKSPACE),
+                    self.project("DOC", "example/library", None),
+                    self.project("OWN", "example/library", self.OWN)]
+        get, calls = self.api(projects)
+        repositories = ["example/project", "example/gateway", "example/library"]
+        lines = fleet_setup.ownership_lines(get, repositories, assigns=True)
+        warning = ("WARNING: tracker project {} ({}) belongs to fleet Local fleet (local) through initiative Local "
+                   "workspace ({}), so this fleet's officers are refused when they assign its issues or mark them "
+                   "Ready for agents. To make it this fleet's, run setup again with --initiative {}, which assigns "
+                   "it, and all below it, to this fleet.")
+        # GATE's own initiative has no fleet, so its nearest ancestor with one decides; WEB is named once.
+        self.assertEqual(lines, [
+            warning.format("WEB", "example/project", self.WORKSPACE, self.WORKSPACE),
+            warning.format("GATE", "example/gateway", self.WORKSPACE, self.WORKSPACE),
+            "tracker projects DOC, OWN belong to this fleet or to none, so its officers may assign their issues",
+        ])
+        self.assertTrue(all(path.startswith(("/me", "/repositories/projects?repository=example%2F", "/initiatives/"))
+                            for path in calls))
+        # Adopted with --initiative on this run, setup assigns it; the parent's adoption also covers the child's
+        # project.
+        lines = fleet_setup.ownership_lines(get, repositories, self.WORKSPACE, assigns=True, adopt=True)
+        self.assertIn(f"tracker project GATE (example/gateway) belongs to fleet Local fleet (local) through initiative "
+                      f"Local workspace ({self.WORKSPACE}); setup assigns the fleet's initiative {self.WORKSPACE}, on "
+                      "that path, to this fleet, which makes it this fleet's.", lines)
+        self.assertIn(f"setup assigns the fleet's initiative Local workspace ({self.WORKSPACE}) to this fleet, moving "
+                      "it from fleet Local fleet (local).", lines)
+        self.assertFalse(any(line.startswith("WARNING") for line in lines))
+        # Recorded on an earlier run, it stays with the fleet that has it now: only --initiative moves it.
+        lines = fleet_setup.ownership_lines(get, repositories, self.WORKSPACE, assigns=True)
+        self.assertEqual(lines[:2], [warning.format("WEB", "example/project", self.WORKSPACE, self.WORKSPACE),
+                                     warning.format("GATE", "example/gateway", self.WORKSPACE, self.WORKSPACE)])
+        self.assertEqual(lines[2], f"WARNING: the fleet's initiative Local workspace ({self.WORKSPACE}) belongs to "
+                         "fleet Local fleet (local), and setup leaves it there. To make it this fleet's, run setup "
+                         f"again with --initiative {self.WORKSPACE}, which assigns it, and all below it, to this fleet.")
+        # One of no fleet the installer assigns, which makes the child's project this fleet's.
+        lines = fleet_setup.ownership_lines(get, ["example/gateway"], self.CHILD, assigns=True)
+        self.assertEqual(lines, [
+            f"tracker project GATE (example/gateway) belongs to fleet Local fleet (local) through initiative Local "
+            f"workspace ({self.WORKSPACE}); setup assigns the fleet's initiative {self.CHILD}, on that path, to this "
+            "fleet, which makes it this fleet's.",
+            f"setup assigns the fleet's initiative Gateway work ({self.CHILD}) to this fleet."])
+        # A hosted API, or one without development sign-in: only its administrator can assign the initiative.
+        lines = fleet_setup.ownership_lines(get, repositories, self.WORKSPACE, assigns=False)
+        put = f'PUT /api/v1/initiatives/{self.WORKSPACE}/fleet with {{"fleetId": "{self.FLEET}"}}'
+        self.assertIn(f"ask an administrator of the Subspace API to assign it to this fleet ({put}), and pass "
+                      f"--initiative {self.WORKSPACE} to record it as the fleet's.", lines[0])
+        self.assertEqual(lines[-2], f"WARNING: the fleet's initiative Local workspace ({self.WORKSPACE}) is not "
+                         f"assigned to it but to fleet Local fleet (local): ask an administrator of the Subspace API "
+                         f"to assign it to this fleet ({put}).")
+
+    def test_an_initiative_that_does_not_exist_is_named(self):
+        get, _ = self.api([self.project("OWN", "example/project", self.OWN)])
+
+        def missing(path):
+            if path.startswith("/initiatives/00000000-0000-4000-8000-00000000dead"):
+                raise fleet_setup.ApiError("The Subspace API returned HTTP 404.", 404)
+            return get(path)
+        gone = "00000000-0000-4000-8000-00000000dead"
+        self.assertEqual(fleet_setup.ownership_lines(missing, ["example/project"], gone, assigns=True, adopt=True), [
+            f"WARNING: the tracker has no initiative {gone}: check the ID given with --initiative; a real run stops "
+            "before changing any tracker record."])
+        self.assertEqual(fleet_setup.ownership_lines(missing, ["example/project"], gone, assigns=True), [
+            f"WARNING: the tracker has no initiative {gone}, which setup recorded as the fleet's; a real run finds or "
+            "creates one by the fleet's name."])
+
+    def test_an_adoption_setup_cannot_make_prints_the_administrators_request(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        inputs = Path(directory.name)
+        members = [{"id": "atlas", "name": "Atlas", "account": "example-fleet-atlas"}]
+        initiative = self.WORKSPACE
+        said = []
+        request = (f"PUT /api/v1/initiatives/{initiative}/fleet with {{\"fleetId\": \"<the fleet's ID>\"}}, where "
+                   "the fleet's ID is the \"id\" that GET /api/v1/fleets/example-fleet returns.")
+
+        def check(answers, adopt=True):
+            said.clear()
+            fleet_setup.ownership_check({"slug": "example-fleet", "initiativeId": initiative, **answers}, members, {},
+                                        adopt=adopt)
+            return said
+
+        with patch.object(fleet_setup, "INPUTS", inputs), patch.object(fleet_setup, "say", side_effect=said.append), \
+                patch.object(fleet_setup, "agent_reader", agent_reader):
+            # Development sign-in off turns the agent listener off too, so no check runs: the request still follows.
+            (inputs / "api.env").write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\nAGENT_PORT=\n")
+            self.assertEqual(check({"api": True}), [
+                "not checking which fleet owns this fleet's tracker projects: this VM's API has no agent listener",
+                f"WARNING: setup cannot assign the initiative given with --initiative ({initiative}) to this fleet, as "
+                "this VM's API no longer offers development sign-in, through which setup acts as its administrator. "
+                f"Ask an administrator of the Subspace API to assign it: {request}"])
+            # A hosted API's officers that have not enrolled yet.
+            with patch.object(runtime, "AGENT_SOCKETS", inputs / "agents"), \
+                    patch.object(fleet_setup, "installed_stargate_source", return_value=inputs / "stargate"):
+                self.assertIn("as a hosted API's administrators keep its records. Ask an administrator of the "
+                              f"Subspace API to assign it: {request}",
+                              check({"api": False, "apiUrl": "https://subspace.example.com"})[-1])
+            # Without --initiative on this run, or with development sign-in, which setup assigns through, none.
+            self.assertEqual(len(check({"api": True}, adopt=False)), 1)
+            (inputs / "api.env").write_text("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\nAGENT_PORT=\n")
+            self.assertEqual(len(check({"api": True})), 1)
+
+    def test_nothing_to_warn_about_or_nothing_to_check(self):
+        get, _ = self.api([self.project("OWN", "example/project", self.OWN)])
+        self.assertEqual(fleet_setup.ownership_lines(get, ["example/project"], self.OWN, assigns=False),
+                         ["tracker projects OWN belong to this fleet or to none, so its officers may assign their issues"])
+        get, _ = self.api([])
+        self.assertEqual(fleet_setup.ownership_lines(get, ["example/project"]), [
+            "no tracker project lists this fleet's GitHub repositories, so setup cannot tell which fleet owns its work"])
+        get, calls = self.api([], kind="human")
+        self.assertIn("is not yet a registered agent", fleet_setup.ownership_lines(get, ["example/project"])[0])
+        self.assertEqual(calls, ["/me"])
+
+    def test_the_check_reads_as_the_rear_admiral_and_never_stops_setup(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        inputs = Path(directory.name)
+        members = [{"id": "atlas", "name": "Atlas", "account": "example-fleet-atlas"}]
+        config = {"repositories": [{"id": "project", "url": "https://github.com/example/project.git"},
+                                   {"id": "tool", "url": "https://git.example.com/team/tool.git"}]}
+        said = []
+        with patch.object(fleet_setup, "INPUTS", inputs), patch.object(fleet_setup, "say", side_effect=said.append), \
+                patch.object(fleet_setup, "agent_reader", agent_reader):
+            # An API on this VM is read through its agent listener, naming the rear admiral in its header.
+            (inputs / "api.env").write_text("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\nAGENT_PORT=3001\n")
+            seen = []
+
+            def urlopen(request, timeout):
+                seen.append((request.full_url, request.get_header("X-subspace-agent")))
+                raise URLError("refused")
+            with patch.object(fleet_setup, "urlopen", side_effect=urlopen):
+                fleet_setup.ownership_check({"api": True}, members, config)
+            self.assertEqual(seen, [("http://127.0.0.1:3001/api/v1/me", "example-fleet-atlas")])
+            self.assertEqual(said, ["could not check which fleet owns this fleet's tracker projects: Could not reach "
+                                    "the Subspace API's agent listener for GET /me."])
+            (inputs / "api.env").write_text("AGENT_PORT=\n")
+            said.clear()
+            fleet_setup.ownership_check({"api": True}, members, config)
+            self.assertEqual(said, ["not checking which fleet owns this fleet's tracker projects: this VM's API has no "
+                                    "agent listener"])
+            # A hosted API is read through the rear admiral's signing-proxy socket, once it has enrolled.
+            hosted = {"apiUrl": "https://subspace.example.com", "api": False}
+            sockets, source = inputs / "agents", inputs / "stargate"
+            said.clear()
+            with patch.object(runtime, "AGENT_SOCKETS", sockets), \
+                    patch.object(fleet_setup, "installed_stargate_source", return_value=source):
+                fleet_setup.ownership_check(hosted, members, config)
+                self.assertEqual(said, ["not checking which fleet owns this fleet's tracker projects: the officers "
+                                        "have not enrolled with the hosted API yet"])
+                (sockets / "atlas").mkdir(parents=True)
+                listener = socket.socket(socket.AF_UNIX)
+                self.addCleanup(listener.close)
+                listener.bind(str(sockets / "atlas/api.sock"))
+                answers = {"/api/v1/me": {"kind": "agent", "fleetId": self.FLEET},
+                           "/api/v1/repositories/projects?repository=example%2Fproject&limit=100": {"items": []}}
+                commands = []
+
+                def run(command, **_options):
+                    commands.append(command)
+                    return subprocess.CompletedProcess(command, 0, json.dumps(answers[command[-1]]), "")
+                said.clear()
+                with patch.object(fleet_setup.subprocess, "run", side_effect=run):
+                    fleet_setup.ownership_check(hosted, members, config)
+            self.assertEqual(commands[0], [fleet_setup.FLEET_APP / "bin/bun", source / "src/main.ts", "subspace",
+                                           "request", "--socket", sockets / "atlas/api.sock", "/api/v1/me"])
+            self.assertEqual(said, ["no tracker project lists this fleet's GitHub repositories, so setup cannot tell "
+                                    "which fleet owns its work"])
 
 
 class AgentDispatchSetupTests(unittest.TestCase):

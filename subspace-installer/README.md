@@ -497,27 +497,127 @@ report to their captain, never in a ship channel. Edit the templates in
 receive the same role guidance and skill procedure in their system prompt.
 
 The default OpenCode policy grants read, glob, grep, skills and Git inspection.
-Captains can edit their checkout, stage and commit locally, and run common
-build and test commands. For a captain without crew, external paths,
-publication and other shell commands require an explicit grant. A captain
-with crew can reach them through its crew (see below). Build and test
-commands can execute code from the project, so use trusted repositories.
+A captain with crew can also read its crew's worktrees,
+`/var/lib/subspace-fleet/agents/<captain-id>/worktrees/`, with OpenCode's
+read tools and as its shell's working directory. What else a captain may do
+depends on `captainTools`.
 
-Interactive setup asks whether captains should use the standard policy or
-delegate coding to crew. Set `--captain-tools standard` or
-`--captain-tools delegate` on the host installer or `subspace-setup`. The
-default is `standard`, and reruns retain the choice. In `delegate` mode,
-each captain needs crew and a repository. Captains inspect changes, delegate
-edits, tests and branch pushes, and use `subspace-github gh pr create` with
-their GitHub App to open pull requests. Configured Subspace tracker tools
-remain available. In a hand-written fleet file, use `captainTools`.
+**Standard captains** (`captainTools: "standard"`) can edit their checkouts,
+stage and commit locally, and run common build and test commands. For a
+captain without crew, external paths, publication and other shell commands
+require an explicit grant. A captain with crew can reach them through its
+crew (see below). Build and test commands can execute code from the project,
+so use trusted repositories.
 
-Supply an ordered `harness.permissions` array to replace the starter policy across the fleet
-or for the rear admiral or a single captain. Rules use `action`, `resource`
-and `effect`. Put narrower rules after broader ones. See
-[OpenCode permissions](https://opencode.ai/docs/permissions/). A captain with
-crew also gets `stargate_crew`, `stargate_mail` and `stargate_history`, and
-`stargate_model` for `get`, on its pinned session.
+A standard captain's edit, write and patch tools are refused in its crew's
+worktrees, which it only reads. Its shell is not: OpenCode 2.3.2 checks a
+shell command's working directory, and a `cd` in it, against the same
+`external_directory` rule as the read tools, and its shell rules match the
+command's text, which names no directory. So the policy cannot let the
+captain read a crew worktree without also letting its allowed commands,
+`git add` and `git commit` among them, run there when it works in one. The
+crew who work in those worktrees share its Linux user anyway (see below).
+
+**Delegate captains** (`captainTools: "delegate"`) plan, review and open pull
+requests with `subspace-github gh pr create` and their GitHub App; their crew
+edit, test, commit and push. A delegate captain has no edit, write or patch
+tool, may work in any directory, and has an open shell with writes refused:
+any command runs, chained, piped or in a subshell, except
+
+- the Git commands that change a checkout or publish it: `push`, `commit`,
+  `merge`, `merge-file`, `mergetool`, `rebase`, `cherry-pick`, `revert`,
+  `am`, `pull`, `reset`, `add`, `stage`, `rm`, `mv`, `restore`, `checkout`,
+  `switch`, `clean`, `apply`, `bisect`, `init`, `update-ref`,
+  `update-index`, `read-tree`, `checkout-index`, `replace`,
+  `filter-branch`, `filter-repo` and `fast-import`;
+- `branch`, `tag`, `stash`, `notes`, `worktree`, `submodule`,
+  `sparse-checkout`, `config` and `remote`, but for their listing forms
+  (`DELEGATE_GIT_READS` and `DELEGATE_GIT_LIST_MODES` in
+  [`lib/roles.py`](lib/roles.py)): `git branch` alone or with `-v`, `-vv`,
+  `-a` or `-r` (the last two with formatting options such as `--sort`), and
+  any branch or tag listing with `--list`, `-l`, `--contains`, `--merged`,
+  `--no-merged`, `--points-at` or `--show-current`; `git config` with
+  `--get`, `--get-all`, `--get-regexp`, `--list` or `-l` after options such
+  as `--local`, `--global` or `--file F`, and `git config get` or `list`;
+  `git remote`, `git remote -v`, `git remote show` and `get-url`;
+  `git stash list` and `show`, `git worktree list`, `git notes list` and
+  `show`, `git submodule` and `status`, and `git sparse-checkout list`. A
+  listing option that deletes, renames, copies or sets an upstream
+  (`git branch -r -d`, `-rd`, `-a -m`, `-u`) is refused again, and so is a
+  name after `git branch -v`, which creates that branch;
+- the in-place editors `sed -i` and `perl -i`.
+
+Each Git rule covers `git` itself, Git's global options before the
+subcommand (`git -C project push`) and anything before `git`
+(`GIT_TERMINAL_PROMPT=0 git push`, `env git push`, `xargs git rm`,
+`/usr/bin/git push`), and any Git command with more than one space after
+`git` is refused. `git fetch`, `git log`, `git diff`, builds, tests and
+everything else run.
+
+**This is a working agreement, not a security boundary.** OpenCode 2.3.2
+checks each command of a command line separately, by the command's text, and
+the last matching rule decides. Text cannot tell every write from a read:
+
+- Still allowed: a redirect (`echo … > file`), `tee`, `cp`, `mv`, `rm`, a
+  script or build that writes, an interpreter (`python3 -c …`,
+  `bash -c 'git push'`) and a Git alias.
+- Refused although it only reads: a command in which one of those Git words
+  follows `git` and its options as a bare word, such as
+  `git -C project log --grep stash` (quote the word, or set the shell's
+  working directory instead of using `-C`), an argument, such as a pull
+  request title or a search pattern, that contains `git push` or the like
+  (quoted, or as the end of a longer word), and a branch listing
+  with other options but none of the listing ones above, such as
+  `git branch --sort=-committerdate` (add `--list`).
+
+The captain's instructions state the agreement, and its crew can do all of
+it anyway (see below), so protect the branches that matter on the server. A
+captain without crew has no one to delegate to, so in a delegate fleet it
+keeps the standard policy, and the dry run names it. The `fleet-captain`
+skill and a delegate captain's instructions follow `captainTools`, whatever
+`harness.permissions` says.
+
+**New fleets delegate.** `subspace-setup` gives a new fleet `delegate`, the
+default of its question and of an unattended run, and writes it to
+`fleet.json`; [`fleet.example.json`](fleet.example.json) has it too. Choose
+with `--captain-tools standard` or `--captain-tools delegate` on the host
+installer or `subspace-setup`; reruns keep the choice. In a hand-written
+fleet file, use `captainTools`.
+
+**Existing fleets keep theirs.** A fleet file without `captainTools` means
+`standard`. That is how a fleet installed before `captainTools` existed is
+read, so an upgrade leaves its captains coding as they were installed to,
+perhaps part-way through work, rather than taking their edits and commits
+away unannounced; `--captain-tools delegate` moves it. Setup sets no default
+on a VM it already has answers or inputs for, or whose fleet the fleet
+installer set up alone.
+
+`--dry-run` says which captains delegate, and compares each OpenCode
+officer's tool policy with the one installed in its engine configuration
+(`/etc/subspace-fleet/opencode-<id>.json`): it lists the rules the run adds
+(`+`) and removes (`-`) in policy order, since the last matching rule wins,
+or says the policy is unchanged or new. Run it as root to read the installed
+policies. `subspace-setup --dry-run` gives the installer the API settings a
+real run will write, from `api.env` as the run will leave it (development
+sign-in and the agent listener), the saved initiative and stand-ins for the
+tokens, so the comparison includes the API's tools. The installer applies a changed policy to a pinned root session too
+([Captain sessions](#captain-sessions)).
+
+To extend the starter policy, list rules in `harness.extraPermissions`: for
+the whole fleet, in `harness.captain` or `harness.rearAdmiral` for one role,
+or in an officer's own `harness`. The installer appends them in that order
+after the policy, so they win; for example
+`{"action": "shell", "resource": "kubectl get *", "effect": "allow"}` lets
+standard captains and the rear admiral run read-only `kubectl get`, and a
+`deny` takes a starter rule away. To replace the starter policy instead,
+supply an ordered `harness.permissions` array across the fleet or for the
+rear admiral or a single captain; `extraPermissions` still extends it. Rules
+use `action`, `resource` and `effect` (`allow`, `deny` or `ask`), the last
+matching rule wins, so put narrower rules after broader ones. See
+[OpenCode permissions](https://opencode.ai/docs/permissions/). Neither key
+applies to a Claude Agent SDK officer, which uses `allowedTools`. A captain
+with crew also gets `stargate_crew`, `stargate_mail` and `stargate_history`,
+and `stargate_model` for `get`, on its pinned session.
 
 Crew take no `permissions`. Stargate creates each crew session with its
 crew `coding` profile and curated tool access: reading, searching, skills,
@@ -968,6 +1068,18 @@ writes nothing. Registration never sends the Fleet API's token to the
 Subspace API or prints it: the desktop app asks for the fleet's token once and
 keeps it on the user's own machine.
 
+**Pull requests in the Fleet API.** With `stargate.api` on, the installer
+lists each crew worktree of a GitHub repository, by its path, with that
+repository's `owner/repository` in Stargate's `api.pullRequestRepositories`,
+so the Fleet API can show the pull request of a crew member's branch. It
+writes the key only when the installed Stargate's Fleet API configuration
+has it (from v0.42.0): v0.40 and v0.41 refuse it.
+Stargate reads the branch with Git and looks the pull request up with `gh`,
+both as the gateway's Linux user. Until that user can read the captains'
+worktrees, which lie in their mode `0700` homes (STAR-4), and has `gh`
+installed and signed in to GitHub, which the installer does not do, a
+crew context's `pullRequest` stays `null`.
+
 `subspace-setup` registers the same records with the API on its VM before it
 runs the installer, so [agent dispatch](#agent-dispatch) can sign the rear
 admiral in, and `subspace-setup register-fleet` registers a further fleet's
@@ -980,6 +1092,32 @@ first fleet, and `register-fleet` refuses a loopback address for a further
 fleet. Without one, the API keeps the address it has. Setup gives the fleet's
 initiative no channels of its own: the standard channels belong to the fleet
 and its ships.
+
+**Who owns the fleet's work.** A tracker project belongs to its initiative's
+fleet, or to the fleet of that initiative's nearest ancestor with one, and the
+API refuses a fleet agent's assignment, or *Ready for agents* flag, in another
+fleet's project. So `subspace-setup`, in its dry run and at the end of a real
+run, reads the tracker as the rear admiral (through the agent listener, or a
+hosted API's signing-proxy socket once the officers have enrolled; read-only)
+and names, with a `WARNING`, each tracker project linked to one of the fleet's
+GitHub repositories that belongs to another fleet, with the initiative that
+makes it so, for example one the API's development sign-in created for its
+default `local` fleet. To make that initiative the fleet's own, pass
+`--initiative <its UUID>` (kept on later runs; `--initiative ''` goes back to
+finding one by the fleet's name). With an API on this VM that still offers
+development sign-in, setup checks that it exists, and stops before changing
+any tracker record, recording nothing, if it does not; otherwise it uses it
+as the fleet's initiative and assigns it, and everything below it, to this
+fleet, moving it from the other fleet; the dry run says so first. Only a run
+with `--initiative` moves an initiative: if another fleet takes the fleet's
+recorded initiative later, a run without it leaves the initiative there,
+says so and registers none for this fleet, and `subspace-fleetctl register`
+likewise assigns only an initiative of no fleet. A hosted API's
+administrators keep its records, as do those of an API without development
+sign-in, so setup prints the request for one of them to make instead
+(`PUT /api/v1/initiatives/<id>/fleet` with the fleet's UUID, the `id` that
+`GET /api/v1/fleets/<slug>` returns), whether or not it can read the tracker.
+A project that lists none of the fleet's repositories is not checked.
 
 ## The API's agent listener
 
@@ -1196,13 +1334,17 @@ As that administrator, setup then creates or updates, as
   deactivated. The rear admiral's name and every IRC nick must be unused in
   the organisation; registration stops otherwise, possibly after creating
   the fleet's record, and a run with a new name completes it;
-- **the fleet's initiative**, found by the ID setup saved or by the fleet's
-  name among initiatives that belong to no fleet or to this one, else created
-  with the admin as owner and member, and assigned to the fleet.
+- **the fleet's initiative**, the one `--initiative` names, else found by the
+  ID setup saved, while it belongs to no fleet or to this one, or by the
+  fleet's name among initiatives that belong to no fleet or to this one, else
+  created with the admin as owner and member, and assigned to the fleet (see
+  "Who owns the fleet's work" under
+  [Subspace API registration](#subspace-api-registration)).
 
 It leaves everything else alone: it creates no organisation or person and
 changes no one's role, and it does not touch other fleets, ships, agents,
-initiatives, issues or any other record. With agent dispatch on, the rear
+initiatives, issues or any other record, but for an initiative `--initiative`
+adopts from another fleet. With agent dispatch on, the rear
 admiral's token is minted for its existing agent record. Only a `--migrate`
 run changes more: the schema, and the usernames of people who had none.
 
@@ -1330,8 +1472,19 @@ What the fleet installer renders, with `api.enrolment` set:
   gateway process, gets the same command as a stdio server. Neither holds a
   credential or names itself with a header.
 - The `subspace_*` tool grant, the API skill, and a section in each officer's
-  instructions on making REST calls with `stargate subspace request --socket
-  <socket> /api/v1/...`.
+  instructions on making REST calls with `subspace-request /api/v1/...`
+  (`--method` and `--input FILE` for a body). That command,
+  `/opt/subspace-fleet/bin/subspace-request`, runs Stargate's
+  `subspace request` on the socket of the officer whose Linux user runs it,
+  so its name stays the same when Stargate's checkout changes, and crew act
+  as their captain, as through its MCP server. Every OpenCode officer's
+  policy allows it (`{"action": "shell", "resource": "subspace-request *",
+  "effect": "allow"}`), the rear admiral's included. The installer puts that
+  rule after the starter policy and before the operator's own rules, an
+  explicit `harness.permissions` or `harness.extraPermissions`, so any of
+  them that matches the command decides, a deny of `subspace-*` or `*`
+  included. A hand-written `harness.permissions` that denies by default
+  therefore has to allow `subspace-request *` itself.
 - Nothing of the agent listener: no `X-Subspace-Agent` header, no
   `agent-header` helper and no `AGENT_PORT`. `subspace-fleetctl register`
   registers nothing, since the API's administrators keep the fleet's records.
@@ -1785,7 +1938,8 @@ their crew's assignments through `stargate_crew`.
 | `rearAdmiral`, `captains[]` | Each has `id`, `name`, an `account` (with `officerNames` plain it may be left out, and is the `id` if given) and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` (each crew slot's [name](#crew-names)), `crewIds` (an installed crew member's ID kept under a new name; needs a Stargate that allows it) and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
-| `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model` and `effort`, apply to one. Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
+| `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model`, `effort` and `extraPermissions`, apply to one. Explicit OpenCode V2 rules in `permissions` replace the starter policy; rules in `extraPermissions` (fleet, role and officer, appended in that order) extend whichever applies. Each rule has `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
+| `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`, as for a fleet installed before the setting; `subspace-setup` and `fleet.example.json` give a new fleet `delegate`. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
@@ -1920,9 +2074,10 @@ listener policy separately, including Docker-published ports.
 
 The API integration looks up the fleet by slug and creates or patches its
 registration, with its ships and officers (see
-[Subspace API registration](#subspace-api-registration)). It applies the
-listed initiative assignments after startup. An API failure leaves the fleet
-running and can be retried independently.
+[Subspace API registration](#subspace-api-registration)). After startup it
+assigns each listed initiative that belongs to no fleet, and leaves one that
+another fleet has where it is, saying so: `assign` moves it. An API failure
+leaves the fleet running and can be retried independently.
 
 ```sh
 sudo subspace-fleetctl register
@@ -1991,6 +2146,13 @@ setting together before it changes the fleet, in the dry run and the real
 run alike, so when an upgrade introduces several new settings at once and
 one is refused, none of them is applied.
 
+- **Officers call the tracker's REST route as `subspace-request`.** On a
+  fleet with a hosted API, officers' instructions now name
+  `subspace-request` instead of the long Stargate command. The starter
+  policy allows it. A fleet whose `harness.permissions` is written by hand
+  and denies by default must add
+  `{"action": "shell", "resource": "subspace-request *", "effect": "allow"}`,
+  or its officers lose that route (the `subspace_*` tools are unaffected).
 - **IRC certificates are the default for a remote server (breaking).** A
   remote fleet whose secrets file has IRC passwords for its rear admiral or
   captains, and whose `fleet.json` does not set `irc.auth`, is refused until
@@ -2018,6 +2180,28 @@ one is refused, none of them is applied.
 - **An existing PostgreSQL** is a `subspace-setup` setting, kept in its
   answers; it changes nothing in the fleet installer's inputs and combines
   with any of the above.
+- **Captain policies.** A fleet without `captainTools` keeps the standard
+  policy. Captains with crew may now read their crew's worktrees, and with a
+  hosted API every officer may run `subspace-request`. A delegate fleet's
+  captains trade their allowlist for the open shell with writes refused
+  ([Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)).
+  An officer with a hand-written `harness.permissions` keeps it. To move
+  captains from one to the starter policy, remove it, keep any rule you
+  still need in `harness.extraPermissions`, and check the dry run's policy
+  changes, as root:
+
+  ```sh
+  sudo cp -p /root/fleet/fleet.json /root/fleet/fleet.json.before-starter-policy
+  sudo sh -c 'jq "del(.harness.permissions, .captains[].harness.permissions)" \
+    /root/fleet/fleet.json.before-starter-policy > /root/fleet/fleet.json'
+  sudo subspace-setup --dry-run
+  sudo subspace-setup
+  ```
+
+  A fleet-wide `harness.permissions` applies to the rear admiral too, so
+  removing it returns the rear admiral to its starter policy as well. With
+  the fleet installer alone, edit your `fleet.json` the same way and run
+  `sudo ./install.sh upgrade --config ~/fleet.json --dry-run`.
 
 ## Stargate pin
 
