@@ -1,0 +1,21 @@
+# Never commit a secret. Keep them in your cloud's secret store or a password
+# manager, and on the fleet VM, which generates its own.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.token
+*.password
+*.secrets/
+fleet.secrets/
+secrets.json
+secrets.*.json
+*.tfstate*
+*.tfvars
+!*.example.tfvars
+.terraform/
+# Fetched upstream checkouts and caches.
+/.cache/
+.DS_Store

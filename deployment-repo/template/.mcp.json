@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "subspace": {
+      "type": "http",
+      "url": "@@API_URL@@/mcp",
+      "headersHelper": "python3 agent-kit/bin/subspace_token.py --header --mcp-endpoint @@API_URL@@/mcp"
+    }
+  }
+}
