@@ -211,8 +211,9 @@ the tracker when the choice applies to the whole work stream.
   work issue, its tracker and the project with a short `q` phrase. Filters
   combine. Use `subspace_get_decision` to verify the closest records and
   `subspace_count_decisions` to count filtered results. If one already covers
-  the choice, cite its actual ID on the issue. You can add the issue to a
-  proposed decision's existing `issueIds`.
+  the choice, cite its actual ID on the issue. If you can edit the proposal,
+  you can also add the issue to its existing `issueIds`. Registered agents
+  can change only decisions they recorded.
 - **Log** with `subspace_log_decision` using `project`, `title`, `decidedOn`
   (YYYY-MM-DD) and `decision`. Add `context`, `why`, `implications`,
   `alternatives`, `tags` and linked issue UUIDs in `issueIds` as applicable.
