@@ -309,6 +309,22 @@ answer it now.
     to renew it, or see
     [Agent dispatch](subspace-installer/README.md#agent-dispatch) for a
     long-lived token. An unattended run leaves it off.
+15. **An existing PostgreSQL for the tracker?** (**no**: the API keeps its
+    own PostgreSQL on the fleet VM.) If they already run one, for example a
+    managed server, the fleet's API can use it instead, with no database on
+    the VM. Ask for a file on this computer holding its
+    `postgresql://USER:PASSWORD@HOST:5432/DATABASE?sslmode=verify-full` URL
+    (`chmod 600`; never paste the URL into the chat), its CA certificate when
+    the VM does not trust it, whether its migrations may be applied (back it
+    up first), and the `--organisation` and `--admin-email` of someone who is
+    already an administrator there, unless the database is empty. Pass
+    `--database-url-file FILE`, `--database-ca-file FILE` and, to migrate it,
+    `--migrate`. The VM must reach the server, so its firewall must allow the
+    VM. Do a `--dry-run` first: it connects read-only and says whether
+    migrations are missing and whether that person is an administrator. There
+    is no demo data in a database the installer did not create, and no way
+    back to a database on the VM. See
+    [An existing PostgreSQL](subspace-installer/README.md#an-existing-postgresql).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -439,6 +455,12 @@ whichever ports sshd listens on), and
 `--access cloudflare` with the `--ssh-proxy` from
 [Private access](docs/private-access.md#cloudflare-zero-trust) instead. Leave
 `--access` out only for an existing VM you reach another private way.
+
+For an existing PostgreSQL (question 15), add `--database-url-file FILE`
+(`--database-ca-file FILE` for a private CA, `--migrate` to apply missing
+migrations), and the `--organisation` and `--admin-email` of an
+administrator already in that database. Run it with `--dry-run` first: the
+dry run checks the database read-only and changes nothing on the VM.
 
 To keep the generated secrets in Azure Key Vault, give the VM a managed
 identity that can read and write the vault's secrets (for example the Key
@@ -1102,6 +1124,9 @@ permissions, Slack and Teams.
 | --- | --- |
 | IRC passwords, model proxy key, PostgreSQL password | Generated on the VM in `/root/fleet/` (root-only), optionally also in Key Vault |
 | Installed copies the services read | `/etc/subspace-fleet/` (root-only), and each agent's files in its own home with mode 0600 |
+| An existing PostgreSQL's URL and CA | `/root/fleet/database-url` and `database-ca.pem` (root-only), copied from your files on each run that passes them |
+| Officers' IRC certificates (remote IRC) | `/root/fleet/fleet.secrets/<officer-id>/irc-client.pem` (root-only), generated on the VM; only fingerprints are printed |
+| An IRC operator's password | Your file only: copied to the VM for the run that passes it, then removed; never printed or saved |
 | Model provider logins | `/var/lib/subspace-fleet/proxy/auth` on the VM, owned by the proxy user |
 | Your IRC password and Stargate API token | `~/.subspace/targets/<target>/` on your computer, owner-only |
 | A shared IRC server's secrets, in a container | Owner-only files on your computer and the platform's secret store ([Run the shared IRC server in a container](#run-the-shared-irc-server-in-a-container)) |
