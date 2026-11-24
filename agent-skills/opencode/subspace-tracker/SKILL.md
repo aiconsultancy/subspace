@@ -92,9 +92,15 @@ rules in brief.
   filing a duplicate. Without a `stateType` filter the search covers every
   state, open and closed, and `includeArchived` adds archived issues; filters
   combine, so use `stateType` only to narrow a search on purpose.
-- **Size an issue to one working session.** Do not file one issue per small
-  finding, review note or follow-up. Add it as a comment or a to-do on the
-  issue it belongs to, or batch small related items into one issue per area.
+- **Size an issue to one working session.** Give it a clear outcome and
+  group the related findings, review notes and follow-ups that can be finished
+  together. Add small items to the open issue that owns the work as comments
+  or to-dos. If that issue is already complete and the work still matters,
+  use an existing open issue for the area or file one grouped follow-up.
+- **Let an issue span PRs when review or merge order calls for it.** Use
+  `Refs NAV-12` in intermediate PR descriptions. Use `Closes NAV-12` only in
+  the PR that completes the issue, once the prerequisite PRs have merged.
+  Read the issue and its tracker after the final merge to verify completion.
 - **Give every issue and tracker a one-line summary** that says in plain
   words what it is for, so a list of issues can be read without opening
   them; a tracker's summary says what it groups. `summary` is required on
@@ -115,8 +121,10 @@ for agents.
 1. **Look for an existing tracker first**, open, closed and archived:
    `subspace_list_issues` with
    `filters: {"type": "tracker", "q": "<words>", "includeArchived": true}`
-   and no `stateType`, following `nextCursor` while there are more. Reopen or
-   extend one that fits rather than starting a duplicate.
+   and no `stateType`, following `nextCursor` while there are more. Read its
+   scope and children. Extend a suitable open tracker or reuse a completed
+   one, which reopens when it gains an open child. If it is archived, get
+   authorisation to unarchive it before adding children.
 2. Only when none fits, create one with `subspace_create_issue` and
    `"type": "tracker"`. Required: `project` (key or UUID), `title`, `summary`.
 3. Add children with `parentId` set to the parent's key (`NAV-12`) or UUID, on
@@ -127,6 +135,10 @@ for agents.
    no depth limit, but it refuses an archived parent and any link that would
    make a cycle (409). Keep trees shallow, usually one tracker over its
    issues. A tracker's state follows only its direct children.
+5. Read the parent after adding an open child and after completing the last
+   open child, including when a PR closes it. Check the derived state
+   against the children's actual states. Report any mismatch on the
+   tracker with the affected keys and states.
 
 **Relations** give order and context. On create, pass
 `relations: {"blocks": [...], "blockedBy": [...], "relatedTo": [...],
@@ -198,28 +210,48 @@ token), `subspace_archive_issue`, `subspace_unarchive_issue`,
 
 ## Decisions
 
-- **Search** with `subspace_list_decisions` (`q`, `status`, `tag`, `issue`,
-  `project`, `madeByType`) and `subspace_count_decisions`; read one with
-  `subspace_get_decision`. Search before logging, so you do not duplicate one.
-- **Log** with `subspace_log_decision`: `project`, `title`, `decidedOn`
-  (YYYY-MM-DD), `decision`, and optionally `context`, `why`, `implications`,
-  `alternatives`, `tags`, `issueIds` and `status` (`proposed`, the default,
-  `accepted` or `rejected`).
-- **Who is recorded.** The recorder is always the caller. A fleet agent is
-  also the maker: send `madeByType: "agent"` with its own registered name,
-  rank and model, or leave the maker fields out. A captain or rear admiral
-  records a crew member's decision with `madeByType: "agent"`,
-  `madeByAgentRank: "crew"`, and the crew member's `madeByAgentName` and
-  `madeByAgentModel`. To record a decision a person made, send
-  `madeByType: "human"`, their `madeByUserId`, and an `evidenceKind` and
-  `evidenceReference` showing where they made it. A person's login cannot
-  record an agent's decision, so a local agent never sets agent maker fields.
-- **Update** a proposed decision with `subspace_update_decision` (`decisionId`
-  and `changes`); an agent can change only decisions it recorded.
-- **Accept or reject** a proposed one with `subspace_set_decision_status`.
-- **Supersede** an accepted decision by logging a new one with `supersedesId`
-  set to it; when the new one is accepted, the old one becomes `superseded`.
-- `subspace_list_decision_revisions` shows its saved revisions.
+Record material choices when made, such as changes to scope, architecture,
+compatibility or delivery order. Capture the choice, the reasons it was
+made, significant alternatives and consequences. Link the work issue or
+the tracker when the choice applies to the whole work stream.
+
+- **Search first.** Call `subspace_list_decisions` separately with `issue`
+  set to the work issue and to its tracker, without a phrase filter. Also
+  search with `project` and a short `q` phrase. Filters combine and also
+  support `status`, `tag` and `madeByType`. Use `subspace_get_decision` to
+  verify the closest records and `subspace_count_decisions` to count filtered
+  results. If one covers the choice, cite its actual ID on the issue. To
+  link an issue to an editable proposal, send the complete updated
+  `issueIds` list. Registered agents can change only decisions they recorded.
+- **Log** with `subspace_log_decision` using `project`, `title`, `decidedOn`
+  (YYYY-MM-DD) and `decision`. Add `context`, `why`, `implications`,
+  `alternatives`, `tags` and linked issue UUIDs in `issueIds` as applicable.
+  The default `status` is `proposed`. Use it while a choice needs approval,
+  and use `accepted` when the authorised maker has decided. Record a
+  rejection only when it was decided.
+- **Record the actual maker.** The caller is the recorder. For a registered
+  agent's own choice, omit the maker fields to use its registered identity,
+  or set `madeByType: "agent"`, `madeByAgentName`, `madeByAgentRank` and
+  `madeByAgentModel`. Captains and rear admirals can relay crew choices with
+  those fields, using rank `crew` and the crew member's name and model.
+  A local agent signed in as a person uses human provenance.
+- **Use the person's evidence for human decisions.** Send
+  `madeByType: "human"`, their `madeByUserId`, `evidenceKind` and
+  `evidenceReference`. For `subspaceComment`, use the ID of the person's own
+  comment. For approval in the current session, use `other` with a session
+  and date reference and a short `evidenceExcerpt`. A local agent marks
+  the decision text as on behalf of the person. If a local agent came up
+  with the choice, leave a marked proposal on the issue and ask the person
+  to confirm before recording it as theirs. Use the person's confirmation
+  as evidence.
+- **Edit or replace.** Use `subspace_update_decision` for a proposed
+  decision with its current version in `changes`. Use
+  `subspace_set_decision_status` with its current version and the maker's
+  authorisation to accept or reject it. To replace an accepted decision,
+  log a proposed decision in the same project with `supersedesId` set to the
+  predecessor's UUID. After authorised acceptance, read both records and
+  verify the predecessor is superseded. Read the immutable history with
+  `subspace_list_decision_revisions`.
 
 ## Documents, reviews and media
 
