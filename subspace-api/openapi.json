@@ -34171,12 +34171,129 @@
             }
           }
         },
-        "description": "A fleet's gateway registers a rear admiral or captain of the enrolment token's fleet with a certificate, or adds the certificate to the active agent of that name and rank in that fleet (201). The same certificate with the same scopes again answers 200 with the same IDs. 401 for a missing, unknown, expired, revoked or used-up token; 409 for a name held in another fleet, by a deactivated agent or with another rank, or a certificate registered elsewhere or revoked.",
+        "description": "A fleet's gateway registers a rear admiral or captain of the enrolment token's fleet with a certificate, or adds the certificate to the active agent of that name and rank in that fleet (201). The same certificate with the same scopes again answers 200 with the same IDs. 401 for a missing, unknown, expired, revoked or used-up token; 409 for a name held in another fleet, by a deactivated agent or with another rank, a new agent's name or IRC nick that another agent or person holds (the detail names the agent and its fleet), or a certificate registered elsewhere or revoked.",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AgentEnrolment"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/v1/agents/enrol/check": {
+      "post": {
+        "tags": [
+          "enrolment"
+        ],
+        "operationId": "enrolment.checkEnrolment",
+        "parameters": [],
+        "security": [
+          {
+            "enrolmentToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "AgentEnrolmentCheckResult",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEnrolmentCheckResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "A fleet's installer asks, with the fleet's enrolment token, what enrolling each of up to 50 agents would do, by the same rules as enrolment: existing (a key is added to the active agent of that name and rank in the token's fleet), new (the name and IRC nick are free) or refused, with the reason, which names the agent and fleet that hold a name. It takes no key, changes nothing and uses none of the token's uses. 401 for a missing, unknown, expired or revoked token.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentEnrolmentCheck"
               }
             }
           },
@@ -36535,6 +36652,117 @@
           "isFormerMember",
           "kind",
           "agent"
+        ],
+        "additionalProperties": false
+      },
+      "AgentEnrolmentCheckResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "new",
+                    "existing",
+                    "refused"
+                  ]
+                },
+                "detail": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "outcome",
+                "detail"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "AgentEnrolmentCheck": {
+        "type": "object",
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9-]+$"
+                },
+                "rank": {
+                  "type": "string",
+                  "enum": [
+                    "rearAdmiral",
+                    "captain"
+                  ]
+                },
+                "ship": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 64,
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ircNick": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 32,
+                      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "rank"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "agents"
         ],
         "additionalProperties": false
       },

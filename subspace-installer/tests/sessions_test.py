@@ -18,6 +18,8 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture  # noqa: E402
 import runtime  # noqa: E402
 import sessions  # noqa: E402
 
@@ -347,7 +349,7 @@ def secrets_for(*accounts):
 
 
 def crew_fleet(*captains):
-    config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+    config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
     config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
     config["irc"]["auth"] = "password"
     config["captains"] = [{"id": name, "name": name.title(), "account": f"example-{name}"} for name in captains]
@@ -842,8 +844,15 @@ class InstalledFleet(unittest.TestCase):
                                      crew={"claude": {"count": 0}, "codex": {"count": 0}})
         api = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"],
                "agentUrl": "http://127.0.0.1:3001"}
+        # The same fleet as a new one is set up now: plain officer names and named crew.
+        plain = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        plain.update(repositories=config["repositories"], irc={**plain["irc"], "auth": "password"},
+                     captains=[plain["captains"][0], {"id": "vega", "name": "Vega", **{
+                         key: config["captains"][1][key] for key in ("harness", "crew")}}])
         return {"local-api": ({**config, "api": api}, {**secrets, "apiToken": "aaa.bbb.admin"}),
-                "no-api": (config, secrets)}
+                "no-api": (config, secrets),
+                "plain-names": ({**plain, "api": api},
+                                {**secrets_for("atlas", "orion", "vega"), "apiToken": "aaa.bbb.admin"})}
 
     def render_mode(self, config, secrets):
         servers = {4096 + index: FakeOpenCode() for index in range(3)}
@@ -975,9 +984,11 @@ class InstalledFleet(unittest.TestCase):
         self.assertFalse((self.etc / "stargate.json").exists())
 
     def test_the_default_modes_render_byte_for_byte_as_before(self):
-        """The modes that existed before the hosted API render exactly what they rendered then.
+        """The modes that existed before the hosted API render exactly what they rendered then, and a fleet with
+        plain officer names and named crew renders as recorded.
 
-        tests/golden/default-render.json holds those files as main rendered them before the hosted-API mode.
+        tests/golden/default-render.json holds those files as main rendered them before the hosted-API mode, with
+        each crew member's model family and slot beside its name, and the plain-names fleet as first recorded.
         Write it again only for an intended change to these modes:
         SUBSPACE_UPDATE_GOLDEN=1 python3 -B subspace-installer/tests/sessions_test.py
         """

@@ -38,7 +38,9 @@ runtime.readable_without_credentials = lambda url: True
 
 
 def example_config():
-    config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+    # Most of these tests name the officers' accounts as a fleet installed before plain names did; PlainNamesTests
+    # covers plain names, the example's own.
+    config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
     # These tests sign officers in with passwords; IrcCertificateTests covers the default, certificates.
     config["irc"]["auth"] = "password"
     return config
@@ -501,7 +503,7 @@ class FleetPolicyTests(unittest.TestCase):
 
     def test_stargate_fleet_api_is_an_operator_listener(self):
         example = Path(__file__).resolve().parents[1] / "fleet.example.json"
-        config = json.loads(example.read_text())
+        config = fixture.legacy_names(json.loads(example.read_text()))
         config["irc"]["auth"] = "password"
         config["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
         secrets = {"proxyKey": "fixture-model-proxy-key", "ircPasswords": {
@@ -1350,7 +1352,7 @@ class FleetRecordsTests(unittest.TestCase):
     def test_records_that_belong_to_someone_else_are_refused(self):
         self.register()
         cases = {
-            "already named Atlas": lambda api: api.agents.update(x={
+            "The name Atlas is taken in the Subspace API: agent atlas": lambda api: api.agents.update(x={
                 "userId": "x", "name": "atlas", "rank": "crew", "fleetId": None, "shipId": None, "ircNick": None,
                 "serviceTokenClientId": "someone@example.com", "defaultModel": "m", "isActive": True, "version": 1}),
             "under another account subject": lambda api: next(
@@ -1453,6 +1455,164 @@ class FleetRecordsTests(unittest.TestCase):
             config.pop("api")
             secrets.pop("apiToken")
             validate(config, secrets)
+
+
+class PlainNamesTests(unittest.TestCase):
+    """An officer has one name, its ID: IRC account and nick, API agent name and Stargate ID; ship channels are
+    #<captain-id>. A fleet installed with fleet-prefixed names keeps them until it is renamed."""
+
+    def setUp(self):
+        self.config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        self.config["irc"]["auth"] = "password"
+        self.config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        self.config["captains"].append({"id": "vega", "name": "Vega", "crewNames": {
+            "claude-1": "Altair", "claude-2": "Castor", "codex-1": "Pollux", "codex-2": "Spica"}})
+        self.secrets = {"proxyKey": "fixture-model-proxy-key",
+                        "ircPasswords": {name: "fixture-password" for name in ("atlas", "orion", "vega")}}
+
+    def test_each_officer_has_one_name_everywhere(self):
+        cfg = validate(self.config, self.secrets)
+        self.assertEqual([(person["id"], person["account"], person["channel"]) for person in cfg["members"]],
+                         [("atlas", "atlas", "#example-fleet-starbase"), ("orion", "orion", "#orion"),
+                          ("vega", "vega", "#vega")])
+        self.assertEqual(cfg["irc"]["channels"], ["#example-fleet-starbase", "#example-fleet-command", "#orion", "#vega"])
+        records = fleet_records.check(cfg["slug"], fleet_records.roster(cfg))
+        self.assertEqual((records["rearAdmiral"]["name"], records["rearAdmiral"]["ircNick"]), ("atlas", "atlas"))
+        self.assertEqual([(row["name"], row["ircNick"], row["ship"], row["channel"]) for row in records["captains"]],
+                         [("orion", "orion", "Orion", "#orion"), ("vega", "vega", "Vega", "#vega")])
+        cfg["api"] = {"origin": "https://subspace.example.com"}
+        agents = runtime.subspace_agents_settings(cfg, Path("/var/lib/subspace-fleet/gateway"))["officers"]
+        self.assertEqual([(row["name"], row["ircNick"]) for row in agents],
+                         [("atlas", "atlas"), ("orion", "orion"), ("vega", "vega")])
+        registration, _ = runtime.irc_agent(cfg, cfg["members"][1], {})
+        self.assertEqual((registration["id"], registration["account"], registration["displayName"]),
+                         ("orion", "orion", "Orion"))
+
+    def test_an_account_other_than_the_id_is_refused_with_plain_names(self):
+        self.config["captains"][0]["account"] = "example-orion"
+        with self.assertRaisesRegex(Invalid, "an officer's IRC account is its ID"):
+            validate(self.config, self.secrets)
+        self.config["captains"][0]["channel"] = "#example-fleet-orion"
+        self.config["captains"][0]["account"] = "orion"
+        with self.assertRaisesRegex(Invalid, "must be #orion"):
+            validate(self.config, self.secrets)
+        # A ship channel may not be a standard fleet channel.
+        self.config["captains"][0].pop("channel")
+        self.config["slug"] = "ex"
+        self.config["captains"][1] = {"id": "ex-command", "name": "Command"}
+        with self.assertRaisesRegex(Invalid, "named like a standard fleet channel"):
+            validate(self.config, {**self.secrets, "ircPasswords": {"atlas": "x" * 20, "orion": "x" * 20,
+                                                                     "ex-command": "x" * 20}})
+
+    def test_a_fleet_without_officer_names_keeps_its_prefixed_names(self):
+        cfg = validate(*fixture_legacy())
+        self.assertEqual(cfg["officerNames"], "prefixed")
+        self.assertEqual([(person["account"], person["channel"]) for person in cfg["members"]],
+                         [("example-atlas", "#example-fleet-starbase"), ("example-orion", "#example-fleet-orion")])
+        records = fleet_records.roster(cfg)
+        self.assertEqual((records["rearAdmiral"]["name"], records["captains"][0]["name"]), ("Atlas", "example-orion"))
+        with self.assertRaisesRegex(Invalid, "officerNames"):
+            validate({**fixture_legacy()[0], "officerNames": "fleet"}, fixture_legacy()[1])
+
+    def test_crew_names_are_unique_in_the_fleet_and_never_an_officers(self):
+        cfg = validate(self.config, self.secrets)
+        crew = [(worker["id"], worker["name"], worker["slot"], worker["named"]) for worker in cfg["members"][1]["crew"]]
+        self.assertEqual(crew, [("rigel", "Rigel", "claude-1", True), ("deneb", "Deneb", "claude-2", True),
+                                ("mira", "Mira", "codex-1", True), ("sirius", "Sirius", "codex-2", True)])
+        plan = "\n".join(runtime.names_plan(cfg))
+        self.assertIn("Captain Orion: orion, channel #orion", plan)
+        self.assertIn("crew: Rigel (Claude 1, claude-sonnet-5-5); Deneb (Claude 2, claude-sonnet-5-5)", plan)
+        for names, message in (({"claude-1": "rigel"}, "same name as captain orion's Rigel"),
+                               ({"claude-1": "Orion"}, "has an officer's name"),
+                               ({"claude-1": "ATLAS"}, "has an officer's name")):
+            config = json.loads(json.dumps(self.config))
+            config["captains"][1]["crewNames"].update(names)
+            with self.subTest(names), self.assertRaisesRegex(Invalid, message):
+                validate(config, self.secrets)
+        # Slots without names of their own keep their slot names on every ship, as installed fleets do.
+        for captain in self.config["captains"]:
+            captain.pop("crewNames")
+        cfg = validate(self.config, self.secrets)
+        self.assertEqual([worker["name"] for worker in cfg["members"][2]["crew"]],
+                         ["Claude 1", "Claude 2", "Codex 1", "Codex 2"])
+        self.assertIn("Claude 1 (Claude 1, claude-sonnet-5-5) [slot name]", "\n".join(runtime.names_plan(cfg)))
+
+    def test_a_new_captains_crew_are_named_in_a_plain_fleet(self):
+        self.config["captains"][1].pop("crewNames")
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            paths = [work / "fleet.json", work / "fleet.secrets.json"]
+            for path, value in zip(paths, (self.config, self.secrets), strict=True):
+                path.write_text(json.dumps(value))
+                path.chmod(0o600)
+            # On a new VM the installer stops before anything else, dry run or not.
+            for verb, tail in (("plan", []), ("prepare", [str(work / "stage")])):
+                with self.subTest(verb), patch.object(runtime, "ETC", work / "etc"), \
+                        patch.object(runtime, "STATE", work / "state"), patch.object(runtime, "SESSIONS", work / "none"), \
+                        self.assertRaisesRegex(Invalid, "Crew vega claude-1, vega claude-2, vega codex-1, vega codex-2 "
+                                               "have no name"):
+                    runtime.main([verb, *map(str, paths), *tail, "", "false"])
+        cfg = validate(self.config, self.secrets)
+        # A captain installed with repositories keeps its crew as they are; a fleet installed with fleet-prefixed
+        # names keeps its slot names.
+        runtime.check_new_crew_named(cfg, {"captains": [{"id": "orion"}, {"id": "vega"}],
+                                           "repositories": [{"id": "project"}]})
+        with self.assertRaisesRegex(Invalid, "vega claude-1"):
+            runtime.check_new_crew_named(cfg, {"captains": [{"id": "orion"}, {"id": "vega"}]})
+        runtime.check_new_crew_named(validate(*fixture_legacy()), {})
+
+    def test_an_installed_crew_member_keeps_its_id_under_a_new_name_only_where_stargate_allows(self):
+        self.config["captains"][0]["crewNames"] = {"claude-1": "Rigel"}
+        self.config["captains"][0]["crewIds"] = {"claude-1": "claude-1"}
+        cfg = validate(self.config, self.secrets)
+        worker = cfg["members"][1]["crew"][0]
+        self.assertEqual((worker["id"], worker["name"], worker["agent"]), ("claude-1", "Rigel", "orion-crew-claude-1"))
+        cfg["stargate"]["ref"] = "c" * 40
+        with self.assertRaisesRegex(Invalid, "requires a crew member's name to match its ID"):
+            runtime.check_crew_ids(cfg)
+        with patch.object(runtime, "stargate_crew_names_free", return_value=True):
+            runtime.check_crew_ids(cfg)
+        self.config["captains"][0]["crewIds"] = {"claude-9": "x"}
+        with self.assertRaisesRegex(Invalid, "crewIds may give only enabled crew slots"):
+            validate(self.config, self.secrets)
+
+    def test_records_accept_either_standard_ship_channel(self):
+        cfg = validate(self.config, self.secrets)
+        records = fleet_records.roster(cfg)
+        records["captains"][0]["channel"] = "#vega"
+        with self.assertRaisesRegex(fleet_records.Refused, "standard ship channel: #orion"):
+            fleet_records.check(cfg["slug"], records)
+
+    def test_a_prefixed_fleet_is_renamed_in_place_in_the_api(self):
+        legacy, secrets = fixture_legacy()
+        legacy["api"] = {"url": "http://127.0.0.1:3000"}
+        api = fixture.Subspace()
+        cfg = validate(legacy, {**secrets, "apiToken": "header.payload.admin"})
+        fleet_records.register(api.call, fleet_records.fleet_fields(cfg), fleet_records.roster(cfg), lambda _: None)
+        ids = sorted(row["userId"] for row in api.agents.values())
+        renames = [{"old": "example-atlas", "name": "atlas", "nick": "atlas", "channel": None},
+                   {"old": "example-orion", "name": "orion", "nick": "orion",
+                    "channel": ("#example-fleet-orion", "#orion")}]
+        said = []
+        self.assertEqual(fleet_records.rename(api.call, "example-fleet", renames, said.append), 3)
+        self.assertEqual(api.summary()["agents"], [("atlas", "rearAdmiral", "atlas", None, True),
+                                                   ("orion", "captain", "orion", "Orion", True)])
+        self.assertEqual(api.summary()["ships"], [("Orion", "#orion")])
+        self.assertEqual(sorted(row["userId"] for row in api.agents.values()), ids)
+        # A re-run after a partial failure finds the renamed records and writes nothing.
+        self.assertEqual(fleet_records.rename(api.call, "example-fleet", renames, said.append), 0)
+        # A name another fleet's agent holds is refused, naming it.
+        other = fleet_records.taken_names(
+            [{"name": "vega", "ircNick": "vega", "fleet": "other-fleet", "isActive": True}], "example-fleet",
+            [("vega", "vega", {"vega"}), ("orion", "orion", {"orion"})])
+        self.assertEqual(other, ["vega is taken in the Subspace API: agent vega of fleet other-fleet has it"])
+
+
+def fixture_legacy():
+    """The example as subspace-setup installed it before plain names, with its officers' passwords."""
+    config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
+    config["irc"]["auth"] = "password"
+    return config, officer_secrets()
 
 
 class RepositoryAccessTests(unittest.TestCase):
@@ -1663,7 +1823,7 @@ class IrcCertificateTests(unittest.TestCase):
     SECRETS = {"proxyKey": "fixture-model-proxy-key"}
 
     def setUp(self):
-        self.config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        self.config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
         # The example names the default explicitly; these tests check the default itself.
         del self.config["irc"]["auth"]
         temporary = tempfile.TemporaryDirectory()

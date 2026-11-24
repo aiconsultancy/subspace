@@ -203,12 +203,34 @@ answer it now.
    extra cloud resources and costs nothing more. Tell them that moving to a
    shared server later keeps the fleet but not its IRC history.
 3. **Names.** A name for the fleet (for example "Example Fleet"), a name for
-   the rear admiral (for example "Atlas") and one or more captain or ship
-   names (for example "Orion, Vega"). Names become IRC channels, IRC accounts
-   and Linux users, so keep them short: the fleet ID (the fleet name in lower
-   case, or `--slug`) plus a hyphen and an agent's name must fit 32
-   characters, as in `example-fleet-orion`. A captain cannot be called
-   Starbase or Command, the names of two of the fleet's standard channels.
+   the rear admiral (for example "Atlas"), one or more captain or ship names
+   (for example "Orion, Vega") and a name for every crew member on every
+   ship (question 5 sets how many). Suggest names, with a theme for the
+   fleet or for each ship (stars, birds, rivers), and let the user accept or
+   change each one.
+   - **An officer's name is its one name everywhere.** In lower case it is
+     the rear admiral's or captain's IRC account and nick, its agent name in
+     the Subspace API, its Stargate ID and Linux user (`ss-orion`), and a
+     captain's ship channel (`#orion`). Keep it short: at most 16 letters,
+     digits or hyphens.
+   - **Officers' names must be unique on the IRC server and in the API's
+     organisation**, compared without case, because other fleets and people
+     share both: if the user runs other fleets on the same IRC server or
+     API, ask which names those use and suggest others. Two officers whose
+     names differ only by case are refused. The dry run checks each name on
+     the IRC server and in the API and stops at a taken one, naming who has
+     it; suggest another name then.
+   - **Crew names** go in `--crew-names`, each captain's crew in slot order,
+     Claude-family first, then Codex-family, for example
+     `--crew-names 'Orion=Rigel,Deneb,Mira,Sirius;Vega=Altair,Castor,Pollux,Spica'`.
+     Each is unique in the fleet, ignoring case, and none is an officer's
+     name. Setup refuses a new captain with crew without them. Each crew
+     member's model family and slot is shown beside its name, so the name
+     need not say which model it runs.
+   - The fleet's name (in lower case, or `--slug`) names its Starbase and
+     fleet command channels, `#example-fleet-starbase` and
+     `#example-fleet-command`; a captain whose name would give one of those
+     is refused.
 4. **Which GitHub repositories should the captains have checked out?** List
    them in order, as HTTPS URLs; the first is where each captain starts. Every
    captain gets every repository in the list (`--repositories`, at most
@@ -535,8 +557,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-d
 ```
 
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
-optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`
-the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`, and
+optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`,
+the crew's names as `--crew-names 'Orion=Rigel,Deneb,Mira,Sirius;Vega=...'`
+(question 3; needed once captains have repositories, and so crew; later runs keep them, and an installed crew member's name cannot change this way), the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`, and
 the officers' as `--captain-model MODEL --rear-admiral-model MODEL` (with
 `--captain-effort` and `--rear-admiral-effort`), on this command and on the cloud VM one above. Leave out `--install-deps`
 to stop and ask instead of installing Lima, QEMU or Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first
@@ -1205,6 +1228,7 @@ fleet's agents then have no way into the API yet.
 | Connect the rear admiral to Slack or Teams | [Slack](docs/slack.md), [Teams](docs/teams.md) |
 | Change the repositories | Run the install command again with `--repositories`; it replaces the list. Once a captain's session is pinned, the installer refuses an empty list or a different first repository, whether reordered or replaced |
 | Add private repositories or GitHub Apps | Edit `/root/fleet/fleet.json` on the VM, put credential files under `/root/fleet/fleet.secrets/`, then `sudo subspace-setup` |
+| Give a fleet installed with fleet-prefixed names (`example-fleet-orion`) plain ones | `sudo subspace-setup rename-officers --dry-run`, then without `--dry-run`, on the VM ([Officer names](subspace-installer/README.md#rename-an-installed-fleet)); not for a fleet installed with `--api-target` |
 | Print your IRC password | `sudo subspace-setup secret irc-admin` on the VM |
 | Seed the demo data again | `sudo subspace-setup demo` on the VM |
 | Stop or start a local VM | `./install.sh stop`, `./install.sh start` |
