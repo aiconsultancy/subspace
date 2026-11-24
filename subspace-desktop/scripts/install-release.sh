@@ -8,6 +8,8 @@
 #
 # The script picks the newest release, or --version, downloads the archive for
 # this machine and its .sha256 file, verifies the checksum, and installs.
+# --no-api installs the build with no API backend, which each release also
+# carries, instead of the standard one.
 
 set -eu
 
@@ -16,10 +18,11 @@ version="${SUBSPACE_VERSION:-latest}"
 bin_dir="${SUBSPACE_BIN_DIR:-}"
 channel=stable
 link=false
+no_api="${SUBSPACE_NO_API:-}"
 
 usage() {
 	cat <<'USAGE'
-Usage: install-release.sh [--channel CHANNEL] [--link] [--repository OWNER/REPO] [--version VERSION] [--bin-dir PATH]
+Usage: install-release.sh [--channel CHANNEL] [--no-api] [--link] [--repository OWNER/REPO] [--version VERSION] [--bin-dir PATH]
 
 Download a Subspace release. On macOS, install the signed app into
 ~/Applications and link its executable into a per-user bin directory. On Linux
@@ -27,6 +30,8 @@ and Windows, install the executable.
 
 Options:
   --channel CHANNEL        stable (default), nightly, alpha or beta.
+  --no-api                 Install the build with no API backend: Channels, the
+                           GitHub Spaces and web Spaces with nothing to sign in to.
   --link                   Make a pre-release the PATH CLI. Otherwise print its full path.
   --repository OWNER/REPO  Override aiconsultancy/subspace.
   --version VERSION        Release to install, such as 0.1.0. The default is the newest.
@@ -37,6 +42,7 @@ Environment:
   SUBSPACE_RELEASE_REPO     Same as --repository. Only subspace-desktop-v tags are used.
   SUBSPACE_VERSION          Same as --version.
   SUBSPACE_BIN_DIR          Same as --bin-dir.
+  SUBSPACE_NO_API           1 is the same as --no-api.
 USAGE
 }
 
@@ -48,6 +54,10 @@ while [ $# -gt 0 ]; do
 		;;
 	--link)
 		link=true
+		shift
+		;;
+	--no-api)
+		no_api=1
 		shift
 		;;
 	--repository)
@@ -90,6 +100,13 @@ nightly | alpha | beta)
 	windows_install_directory="$windows_install_directory-$channel"
 	;;
 *) echo "unsupported channel: $channel" >&2; exit 2 ;;
+esac
+# The build with no API backend names its archives apart, as the release
+# scripts publish them, so it updates only from its own.
+case "$no_api" in
+1) asset_stem="$asset_stem-NoAPI"; asset_prefix="$asset_prefix-no-api" ;;
+'' | 0) ;;
+*) echo "SUBSPACE_NO_API must be 1 or empty" >&2; exit 2 ;;
 esac
 
 validate_version() {

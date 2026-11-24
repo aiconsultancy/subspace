@@ -10,6 +10,8 @@ or $env:SUBSPACE_RELEASE_REPO.
 
 The script picks the newest release, or -Version, downloads the archive for
 this machine and its .sha256 file, verifies the checksum, and installs.
+-NoApi installs the build with no API backend, which each release also
+carries, instead of the standard one.
 
 On macOS the signed app goes to ~/Applications and its executable is linked
 into -BinDir or ~/.local/bin. On Windows the executable goes to a
@@ -22,6 +24,9 @@ executable goes to -BinDir or ~/.local/bin.
 
 .EXAMPLE
 ./install-release.ps1 -Version 0.1.0 -BinDir C:\tools\bin -NoPath
+
+.EXAMPLE
+./install-release.ps1 -NoApi
 #>
 [CmdletBinding()]
 param(
@@ -31,7 +36,8 @@ param(
     [ValidateSet('stable', 'nightly', 'alpha', 'beta')]
     [string]$Channel = 'stable',
     [switch]$Link,
-    [switch]$NoPath
+    [switch]$NoPath,
+    [switch]$NoApi = $($env:SUBSPACE_NO_API -eq '1')
 )
 
 Set-StrictMode -Version Latest
@@ -53,6 +59,12 @@ if ($Channel -ne 'stable') {
     $productSettings.AppName += " ($title)"
     $assetStem += "-$title"
     $productSettings.WindowsDirectory += "-$Channel"
+}
+# The build with no API backend names its archives apart, as the release
+# scripts publish them, so it updates only from its own.
+if ($NoApi) {
+    $assetStem += '-NoAPI'
+    $productSettings.AssetPrefix += '-no-api'
 }
 $versionPattern = '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
 if ($Channel -ne 'stable') { $versionPattern += "-$Channel\.[1-9][0-9]{11}\.g[0-9a-f]{7}" }
