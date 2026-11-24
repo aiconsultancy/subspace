@@ -833,6 +833,121 @@ class InstalledFleet(unittest.TestCase):
         calls = [[call.args[0], call.kwargs.get("input")] for call in runtime.subprocess.run.call_args_list]
         return {**self.snapshot(), "subprocess calls": json.dumps(calls, indent=1).replace(self.root.name, "<root>")}
 
+    def hosted(self):
+        """A fleet on a hosted API (api.enrolment) with an OpenCode captain with crew and a Claude Agent SDK captain,
+        on a Stargate that has subspaceAgents."""
+        config, secrets = crew_fleet("orion", "vega")
+        config["captains"][1].update(harness={"type": "claude-sdk", "family": "claude"},
+                                     crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        config["api"] = {"url": "https://subspace.example.com", "enrolment": True}
+        config["stargate"] = {"ref": runtime.SUBSPACE_AGENTS_COMMIT}
+        token = "senr1." + "A" * 64
+        extra = {"tokens": {runtime.ENROLMENT_TOKEN: token}, "cloud": {}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        sockets, tmpfiles = Path(self.root.name) / "run/agents", self.etc / "tmpfiles.conf"
+        for name, value in (("AGENT_SOCKETS", sockets), ("AGENT_TMPFILES", tmpfiles)):
+            self.start(patch.object(runtime, name, value))
+        self.start(patch.object(runtime, "stargate_has_subspace_agents", return_value=True))
+        (self.state / "gateway").mkdir()  # account() makes it on a VM
+        self.start(patch.object(runtime.pwd, "getpwnam", return_value=runtime.pwd.getpwuid(os.getuid())))
+        servers = {4096 + index: FakeOpenCode() for index in range(3)}
+        self.start(patch.object(runtime.sessions, "OpenCode",
+                                side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
+        return config, secrets, extra, token, sockets, tmpfiles
+
+    def test_a_hosted_api_gives_every_officer_stargates_bridge_and_no_agent_header(self):
+        config, secrets, extra, token, sockets, tmpfiles = self.hosted()
+        cfg = runtime.validate(config, secrets)
+        runtime.render(cfg, extra)
+        runtime.commission(False)
+        gateway_home = self.state / "gateway"
+        stargate = json.loads((self.etc / "stargate.json").read_text())
+        bridge = ["/opt/subspace-fleet/bin/bun",
+                  f"/opt/subspace-fleet/src/stargate-{runtime.SUBSPACE_AGENTS_COMMIT}/src/main.ts", "subspace", "mcp"]
+        self.assertEqual(stargate["subspaceAgents"], {
+            "enabled": True, "api": {"baseUrl": "https://subspace.example.com"},
+            "enrolment": {"tokenFile": str(gateway_home / runtime.ENROLMENT_TOKEN)},
+            "officers": [
+                {"name": "Atlas", "rank": "rearAdmiral", "model": "gpt-5.4", "ircNick": "example-atlas",
+                 "socketPath": str(sockets / "atlas/api.sock")},
+                {"name": "example-orion", "rank": "captain", "ship": "Orion", "model": "gpt-5.4",
+                 "ircNick": "example-orion", "socketPath": str(sockets / "orion/api.sock")},
+                {"name": "example-vega", "rank": "captain", "ship": "Vega", "model": "claude-sonnet-5-5",
+                 "ircNick": "example-vega", "socketPath": str(sockets / "vega/api.sock")},
+            ]})
+        # The token is the gateway user's alone; the sockets' directories admit each officer's engine group.
+        self.assertEqual((gateway_home / runtime.ENROLMENT_TOKEN).read_text(), token + "\n")
+        self.assertEqual(stat.S_IMODE((gateway_home / runtime.ENROLMENT_TOKEN).stat().st_mode), 0o600)
+        self.assertIn(f"d {sockets / 'orion'} 2750 {runtime.GATEWAY} ss-orion -", tmpfiles.read_text().splitlines())
+        self.assertIn(f"d {sockets} 0711 root root -", tmpfiles.read_text().splitlines())
+        runtime.directory.assert_any_call(sockets / "vega", 0o2750, runtime.GATEWAY, "ss-vega")
+        unit = (self.systemd / "subspace-fleet-gateway.service").read_text().splitlines()
+        self.assertIn(f"ReadWritePaths={sockets / 'orion'}", unit)
+        # OpenCode engines and the Claude officer's own gateway run Stargate's bridge to their own socket.
+        engine = json.loads((self.etc / "opencode-orion.json").read_text())
+        self.assertEqual(engine["mcp"], {"servers": {"subspace": {
+            "type": "local", "command": [*bridge, "--socket", str(sockets / "orion/api.sock")]}}})
+        self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
+        vega = json.loads((self.etc / "stargate-gateway-agent-vega.json").read_text())["irc"][0]["backend"]
+        self.assertEqual(vega["mcpServers"], {"subspace": {
+            "type": "stdio", "command": bridge[0], "args": [*bridge[1:], "--socket", str(sockets / "vega/api.sock")]}})
+        self.assertNotIn("subspaceAgents", json.loads((self.etc / "stargate-gateway-agent-vega.json").read_text()))
+        # No configuration names an agent by a header or reaches an agent listener, and only the gateway's file
+        # holds the token. (The skill's text still describes the listener; the instructions say it is replaced.)
+        def walk(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    yield key
+                    yield from walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from walk(item)
+            elif isinstance(value, str) and value.startswith(("http://", "https://")):
+                yield value
+        for path in self.etc.rglob("*.json"):
+            if path.name not in ("extra-secrets.json", "fleet.json"):
+                found = set(walk(json.loads(path.read_text())))
+                self.assertFalse({runtime.AGENT_HEADER, "headersHelper", "http://127.0.0.1:3001/mcp"} & found, path)
+                self.assertNotIn(token, path.read_text())
+        self.assertFalse(any("agent-header" in path.read_text() for path in self.systemd.iterdir()))
+        # The officers' instructions say how REST calls reach the API.
+        roles_input = [json.loads(call.kwargs["input"]) for call in runtime.subprocess.run.call_args_list
+                       if call.args[0][-1] == "role"]
+        self.assertTrue(all("subspace request --socket" in document["instructions"] for document in roles_input))
+        self.assertIn(f"subspace request --socket {sockets / 'orion/api.sock'} /api/v1/me",
+                      json.dumps(roles_input))
+        # Registration is left to the hosted API's administrators: no request, no token.
+        import fleetctl
+        with patch.object(fleetctl, "Api") as api:
+            fleetctl.register(cfg)
+        api.assert_not_called()
+        # Back to an API on this VM, the tmpfiles entry goes.
+        runtime.render(runtime.validate(*self.fleets()["local-api"]), {"tokens": {}, "cloud": {}})
+        self.assertFalse(tmpfiles.exists())
+
+    def test_a_hosted_api_refuses_what_it_cannot_serve(self):
+        config, secrets, extra, token, _, _ = self.hosted()
+        claude_only = {"rearAdmiral": {**config["rearAdmiral"], "harness": {"type": "claude-sdk", "family": "claude"}},
+                       "captains": [config["captains"][1]]}
+        for change, private, message in (
+                ({"api": {"url": "https://subspace.example.com", "enrolment": True,
+                          "agentUrl": "http://127.0.0.1:3001"}}, secrets, "exclude each other"),
+                ({}, {**secrets, "apiToken": "aaa.bbb.admin"}, "keeps no administrator token"),
+                ({"stargate": {}}, secrets, "pinned release, v0.43.0, has not got it"),
+                (claude_only, secrets_for("example-atlas", "example-vega"), "needs an OpenCode officer")):
+            with self.subTest(message), self.assertRaisesRegex(runtime.Invalid, message):
+                runtime.validate({**config, **change}, private)
+        cfg = runtime.validate(config, secrets)
+        with self.assertRaisesRegex(runtime.Invalid, "needs the fleet's enrolment token"):
+            runtime.extra_snapshot(cfg, None, {}, False)
+        self.assertEqual(runtime.extra_snapshot(cfg, None, extra, False)["tokens"], extra["tokens"])
+        with patch.object(runtime, "stargate_has_subspace_agents", return_value=False), \
+                self.assertRaisesRegex(runtime.Invalid, "has not got it"):
+            runtime.render(cfg, extra)
+        self.assertFalse((self.etc / "stargate.json").exists())
+
     def test_the_default_modes_render_byte_for_byte_as_before(self):
         """The modes that existed before the hosted API render exactly what they rendered then.
 

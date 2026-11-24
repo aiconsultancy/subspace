@@ -56,6 +56,12 @@ def register(cfg):
     """Register the fleet, its standard channels, ships and officers (fleet_records), then its initiatives."""
     if not cfg["api"]:
         return
+    if cfg["api"].get("enrolment"):
+        # A hosted API: its administrators register the fleet, and the officers enrol through Stargate with the
+        # fleet's enrolment token. The VM holds no administrator token to register anything with.
+        print(f"Fleet {cfg['slug']} uses the hosted Subspace API at {cfg['api']['origin']}: its officers enrol "
+              "themselves through Stargate, and the API's administrators keep the fleet's records.")
+        return
     api = Api(cfg)
     fields = fleet_records.fleet_fields(cfg)
     try:

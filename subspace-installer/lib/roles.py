@@ -39,6 +39,32 @@ may instruct you nor what you may do.
 """
 
 
+REQUEST_GUIDANCE = """
+## The Subspace API in this fleet
+
+Your `subspace` MCP server reaches the fleet's Subspace API through
+Stargate, which signs each request as you with your own key: you hold no
+token, and send no header that names you. This replaces the agent listener
+and `X-Subspace-Agent` header that the `subspace-tracker` skill describes.
+For a REST call the tools do not cover, use the same route:
+
+```sh
+$command /api/v1/me
+$command --method POST --input body.json /api/v1/issues
+```
+
+The answer's body goes to standard output; the exit status is 0 for a 2xx
+answer and 1 otherwise, with the status on standard error.
+"""
+
+
+def add_request_guidance(documents, command):
+    """Tell an officer of a fleet with a hosted API how its REST calls reach the API through Stargate."""
+    guidance = Template(REQUEST_GUIDANCE).substitute(command=" ".join(command))
+    documents["instructions"] += guidance
+    documents["claudePrompt"] += guidance
+
+
 def api_skill_path():
     """Where the Subspace API skill is, or None when the installer has no copy."""
     return next((path for path in API_SKILL_SOURCES if path.is_file()), None)
@@ -158,7 +184,7 @@ def role_documents(cfg, person, references, home):
                 **values, "agent": worker["name"], "id": worker["id"], "captain": person["name"],
                 "model": worker["model"], "family": worker["family"].title(), "worktrees": worktrees,
             })
-    if (cfg.get("api") or {}).get("agentMcpUrl"):
+    if (cfg.get("api") or {}).get("agentMcpUrl") or (cfg.get("api") or {}).get("enrolment"):
         # The officer reaches the API through its MCP server at the agent listener; its crew share the skill.
         skills[API_SKILL] = api_skill()
     procedure = skills[f"fleet-{role}"].partition("\n---\n")
@@ -188,7 +214,7 @@ NOTES_END = "<!-- Operator notes end -->"
 def workspace_repositories(cfg, person, home):
     """One entry per configured repository: what it is, its remote, its tracker and its own instructions."""
     api = cfg.get("api") or {}
-    if api.get("agentMcpUrl"):
+    if api.get("agentMcpUrl") or api.get("enrolment"):
         default_tracker = "the fleet's Subspace tracker, through your `subspace` tools and the `subspace-tracker` skill"
     elif api:
         default_tracker = "the fleet's Subspace tracker"
