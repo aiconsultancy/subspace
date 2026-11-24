@@ -39,6 +39,26 @@ may instruct you nor what you may do.
 """
 
 
+DELEGATE_GUIDANCE = """
+## Your tools
+
+You plan, review and publish; your crew write the code. You do not edit
+files, and your shell refuses the commands that change a checkout or publish
+it: `git commit`, `git push` and the other Git commands that change files,
+the index, branches, tags, the stash or Git's configuration (such as add,
+checkout, merge, rebase, reset, restore and switch), and `sed -i` and
+`perl -i`. Everything else runs, chained or piped: reading and searching,
+`git fetch`, `git log`, `git diff`, `git branch -a`, builds and tests, and
+`subspace-github gh pr create`. The refusals match command text, so they are
+a working agreement, not a lock: never get round them with an interpreter, a
+script, a redirect or another spelling. Assign the change to a crew member
+instead. A read that names one of those Git words after a global option, such
+as `git -C project log --grep stash`, is refused too: quote the word or set
+the shell's working directory instead of `-C`. To list branches or tags with
+options of your own, such as `--sort`, add `--list`.
+"""
+
+
 REQUEST_GUIDANCE = """
 ## The Subspace API in this fleet
 
@@ -46,7 +66,8 @@ Your `subspace` MCP server reaches the fleet's Subspace API through
 Stargate, which signs each request as you with your own key: you hold no
 token, and send no header that names you. This replaces the agent listener
 and `X-Subspace-Agent` header that the `subspace-tracker` skill describes.
-For a REST call the tools do not cover, use the same route:
+For a REST call the tools do not cover, use the same route with the
+`$command` command, which your policy allows:
 
 ```sh
 $command /api/v1/me
@@ -78,19 +99,111 @@ def api_skill():
     return path.read_text()
 
 
-def default_permissions(role, references, *, delegate=False):
+# A delegate captain's shell (captainTools "delegate") runs any command but those that change a checkout or publish
+# it, which its crew do. OpenCode 2.3.2 checks each command of a chained, piped or substituted command line on its
+# own, by the command's text from its first word (assignments included), and the last matching rule wins;
+# `*` matches any text and a trailing " *" also matches nothing (core/src/permission.ts, util/wildcard.ts,
+# shell/scan.ts). So each Git rule is written for `git` with anything before it (`VAR=1 git`, `env git`,
+# `xargs git`, `/usr/bin/git`), with and without Git's global options before the subcommand (`git -C dir`).
+def git_forms(text):
+    return (f"*git {text}", f"*git -* {text}")
+
+
+def options(subcommand, *tokens):
+    """Each token as a Git subcommand's first option and as a later one."""
+    return tuple(form for token in tokens for form in (f"{subcommand} {token}", f"{subcommand} * {token}"))
+
+
+# Git subcommands with read-only forms, refused but for those forms (DELEGATE_GIT_READS).
+DELEGATE_GIT_MIXED = ("branch", "tag", "stash", "notes", "worktree", "submodule", "sparse-checkout", "config", "remote")
+# Their listing forms. `branch -v` and the like with a name create that branch, so they are allowed only alone;
+# with -a or -r Git refuses a name, but they still delete, rename or copy, which DELEGATE_GIT_REREFUSED takes back.
+# A config read's options come before its key, as Git reads none after it.
+DELEGATE_GIT_READS = (
+    "branch", "branch -v", "branch -vv", "branch --verbose",
+    *options("branch", *(f"{flag} *" for flag in ("-a", "-r", "--all", "--remotes", "-av", "-avv", "-va", "-vva",
+                                                  "-rv", "-rvv", "-vr", "-vvr"))),
+    "tag", "stash list*", "stash show*", "notes list*", "notes show*", "worktree list*", "submodule",
+    "submodule status*", "sparse-checkout list*",
+    "config --get*", "config -* --get*", "config --list*", "config -* --list*", "config -l *", "config -* -l *",
+    "config get *", "config list*",
+    "remote", "remote -v", "remote --verbose", "remote show *", "remote get-url *",
+)
+# A branch listing's options that delete, rename, copy or set an upstream, alone or in a bundle (`-rd`): refused
+# again after the listing forms.
+DELEGATE_GIT_REREFUSED = options(
+    "branch", "-d*", "-?d*", "-??d *", "-D*", "-?D*", "-??D *", "-m*", "-?m *", "-M*", "-?M *", "-c*", "-?c *",
+    "-C*", "-?C *", "--move*", "--copy*", "-u*", "--set-upstream*", "--unset-upstream*", "--edit-description*",
+)
+# List modes, which Git refuses with any other mode, so a command that has one is read-only whatever else it says:
+# allowed again last.
+DELEGATE_GIT_LIST_MODES = (
+    *options("branch", "--list *", "-l *", "--show-current *", "--contains*", "--no-contains*", "--merged*",
+             "--no-merged*", "--points-at*"),
+    "tag -l*", *options("tag", "-l *", "--list *", "--contains*", "--no-contains*", "--points-at*", "--merged*",
+                        "--no-merged*"),
+)
+# Git subcommands that change files, the index, refs or history, or publish: refused in every form, after the
+# read-only forms above, so that no read form allows them again.
+DELEGATE_GIT_WRITES = (
+    "push", "commit", "merge", "merge-file", "mergetool", "rebase", "cherry-pick", "revert", "am", "pull", "reset",
+    "add", "stage", "rm", "mv", "restore", "checkout", "switch", "clean", "apply", "bisect", "init", "update-ref",
+    "update-index", "read-tree", "checkout-index", "replace", "filter-branch", "filter-repo", "fast-import",
+)
+# The in-place editors, refused as typed and after anything before them (`xargs sed -i`).
+DELEGATE_IN_PLACE = ("sed -i*", "sed * -i*", "sed --in-place*", "sed * --in-place*",
+                     "perl -i*", "perl -pi*", "perl * -i*", "perl * -pi*")
+
+
+def delegate_shell():
+    """A delegate captain's shell rules: everything, then the Git and in-place edits its crew make instead."""
+
+    def rules(effect, texts):
+        return [{"action": "shell", "resource": form, "effect": effect} for text in texts for form in git_forms(text)]
+
+    return [
+        {"action": "shell", "resource": "*", "effect": "allow"},
+        *rules("deny", (f"{subcommand} *" for subcommand in DELEGATE_GIT_MIXED)),
+        *rules("allow", DELEGATE_GIT_READS),
+        *rules("deny", DELEGATE_GIT_REREFUSED),
+        *rules("allow", DELEGATE_GIT_LIST_MODES),
+        *rules("deny", (f"{subcommand} *" for subcommand in DELEGATE_GIT_WRITES)),
+        # OpenCode keeps a command's spacing, which the rules above spell with one space after `git`.
+        {"action": "shell", "resource": "*git  *", "effect": "deny"},
+        *({"action": "shell", "resource": form, "effect": "deny"}
+          for editor in DELEGATE_IN_PLACE for form in (editor, f"* {editor}")),
+    ]
+
+
+def default_permissions(role, references, *, delegate=False, worktrees=None):
+    """An officer's starter OpenCode policy.
+
+    references is the rear admiral's reference checkouts; worktrees is a captain's crew's worktrees, which it
+    reads; delegate gives a captain the delegate policy: no edits, and an open shell but for writes.
+    """
     rules = [{"action": "*", "resource": "*", "effect": "deny"}]
     rules.extend({"action": action, "resource": "*", "effect": "allow"} for action in ("read", "glob", "grep", "question", "skill"))
     if references and role == "rear_admiral":
         rules.append({"action": "external_directory", "resource": f"{references}/*", "effect": "allow"})
+    if delegate:
+        # Its open shell reads whatever its Linux user can, so its tools may work in any directory.
+        rules.append({"action": "external_directory", "resource": "*", "effect": "allow"})
+    elif worktrees:
+        # OpenCode checks the read, glob and grep tools, the edit tools and a shell's working directory all against
+        # this rule, so it also lets the shell work there; the edit tools are refused there below.
+        rules.append({"action": "external_directory", "resource": f"{worktrees}/*", "effect": "allow"})
     for resource in ("*.env", "*.env.*", "*.pem", "*.key"):
         rules.append({"action": "read", "resource": resource, "effect": "deny"})
     rules.append({"action": "read", "resource": "*.env.example", "effect": "allow"})
-    commands = ["git status", "git diff", "git log", "git show"]
     if delegate:
-        commands += ["subspace-github gh pr view", "subspace-github gh pr diff", "subspace-github gh pr create"]
-    elif role != "rear_admiral":
+        return [*rules, *delegate_shell()]
+    commands = ["git status", "git diff", "git log", "git show"]
+    if role != "rear_admiral":
         rules.append({"action": "edit", "resource": "*", "effect": "allow"})
+        if worktrees:
+            # Its crew's worktrees are theirs to change: an edit outside the captain's directory names the file's
+            # absolute path (OpenCode's file-access.ts).
+            rules.append({"action": "edit", "resource": f"{worktrees}/*", "effect": "deny"})
         commands += ["git add", "git commit", "git fetch", "make", "npm test", "npm run", "bun test", "bun run",
                      "cargo check", "cargo test", "cargo build", "go test", "python3 -m unittest", "pytest"]
     rules.extend({"action": "shell", "resource": f"{command} *", "effect": "allow"} for command in commands)
@@ -183,6 +296,8 @@ def role_documents(cfg, person, references, home):
     else:
         values["crew"] = "You have no crew in this fleet. Do the work yourself in your checkout."
     instructions = render(role, "AGENTS.md", values)
+    if person.get("delegatesCoding"):
+        instructions += DELEGATE_GUIDANCE
     if person.get("slack"):
         # Stargate's pinned Slack turns carry a source line that the officer's definition explains once.
         instructions += SLACK_GUIDANCE

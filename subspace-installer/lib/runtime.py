@@ -2,6 +2,7 @@
 """Validate fleet inputs and converge the system configuration."""
 
 import base64
+import difflib
 import fcntl
 import grp
 import hashlib
@@ -648,8 +649,19 @@ def claude_efforts(model):
     return EFFORTS["opencode", "claude"]
 
 
+def permission_rules(rules, label):
+    """An ordered list of OpenCode permission rules, each with action, resource and effect."""
+    require(isinstance(rules, list), f"{label} must be an array of OpenCode permission rules.")
+    for rule in rules:
+        fields(rule, "permission", "action resource effect", ["action", "resource", "effect"])
+        pattern(rule["effect"], r"allow|deny|ask", "permission effect")
+        string(rule["action"], "permission action")
+        string(rule["resource"], "permission resource", 1024)
+    return rules
+
+
 def harness_config(value, inherited):
-    value = fields(value, "harness", "type model family effort permissions allowedTools")
+    value = fields(value, "harness", "type model family effort permissions extraPermissions allowedTools")
     backend = pattern(value.get("type", inherited["type"]), r"opencode|claude-sdk", "harness type (opencode or claude-sdk)")
     if "model" in value and "family" not in value and isinstance(value["model"], str):
         # A model named without its family goes where its ID says, as subspace-setup writes it: claude-* through
@@ -680,18 +692,18 @@ def harness_config(value, inherited):
         pattern(tool, r"Agent|Bash|Edit|Glob|Grep|LSP|NotebookEdit|Read|TodoWrite|WebFetch|WebSearch|Write", "Claude built-in tool")
     require(len(set(tools)) == len(tools), "Claude tools must be unique.")
     if backend == "claude-sdk":
-        require(family == "claude" and "permissions" not in value, "Claude Agent SDK requires the Claude family and uses allowedTools.")
+        require(family == "claude" and not {"permissions", "extraPermissions"} & value.keys(),
+                "Claude Agent SDK requires the Claude family and uses allowedTools.")
     else:
         require("allowedTools" not in value, "OpenCode uses permissions.")
     permissions = value.get("permissions", inherited["permissions"])
     require("permissions" not in value or isinstance(permissions, list) and permissions, "Specify a non-empty list of OpenCode permissions.")
-    for permission in permissions or ():
-        fields(permission, "permission", "action resource effect", ["action", "resource", "effect"])
-        pattern(permission["effect"], r"allow|deny|ask", "permission effect")
-        string(permission["action"], "permission action")
-        string(permission["resource"], "permission resource", 1024)
+    permission_rules(permissions or [], "harness.permissions")
+    # Rules that extend the policy rather than replace it: the fleet's, then the role's, then the officer's own.
+    extra = [*inherited.get("extraPermissions", []),
+             *permission_rules(value.get("extraPermissions", []), "harness.extraPermissions")]
     return {"type": backend, "family": family, "model": model, "effort": effort, "permissions": permissions,
-            "allowedTools": tools}
+            "extraPermissions": extra, "allowedTools": tools}
 
 
 def crew_config(value, inherited):
@@ -847,6 +859,26 @@ def repository_config(value):
             pattern(address, r"https://github\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+", "private GitHub repository HTTPS URL")
         repos[name] = {"url": address, "private": private}
     return repos
+
+
+def github_repository(address):
+    """A GitHub HTTPS repository URL's owner/repository, as Stargate reads a remote
+    (src/api/v1/github-repository.ts), or None for any other URL."""
+    parts = urlsplit(address)
+    if parts.scheme != "https" or (parts.hostname or "").lower() != "github.com" or parts.query or parts.fragment:
+        return None
+    name = parts.path[1:].removesuffix("/").removesuffix(".git")
+    valid = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", name) and not re.search(r"/\.{1,2}$", name)
+    return name if valid else None
+
+
+def pull_request_repositories(cfg, homes):
+    """Stargate's api.pullRequestRepositories: each crew worktree of a GitHub repository, keyed by its path as the
+    crew plugin names it, and that repository's owner/repository, so the Fleet API can look up the pull request
+    of the worktree's branch."""
+    return {str(crew_worktree(homes[person["id"]], worker, repo_id)): name
+            for person in cfg["members"][1:] for worker in person["crew"]
+            for repo_id, repo in cfg["repositories"].items() if (name := github_repository(repo["url"]))}
 
 
 def repository_notes(value):
@@ -1018,7 +1050,7 @@ def validate(config, credentials, check_files=True):
     # Each role's default model, then the fleet's harness, then its captain or rearAdmiral block, then the officer's.
     fleet_harness = cfg.get("harness", {})
     require(isinstance(fleet_harness, dict), "harness must be an object.")
-    roles = {key: fields(fleet_harness.get(key, {}), f"harness.{key}", "family model effort")
+    roles = {key: fields(fleet_harness.get(key, {}), f"harness.{key}", "family model effort extraPermissions")
              for key in ROLE_HARNESS.values()}
     shared = {key: val for key, val in fleet_harness.items() if key not in roles}
     hulls = {role: harness_config(roles[key], harness_config(shared, {"type": "opencode", **OFFICER_DEFAULTS[role],
@@ -1170,14 +1202,23 @@ def validate(config, credentials, check_files=True):
     require(not any(repo["private"] for repo in repositories.values()) or len(applications) == len(agents),
             "Private repositories require a distinct GitHub App for the rear admiral and every captain.")
     for person in agents:
-        delegate = person["role"] == "captain" and captain_tools == "delegate"
-        require(not delegate or person["crew"],
-                f"Captain {person['id']} needs crew and at least one repository for captainTools delegate.")
-        if person["harness"]["permissions"] is None:
+        # With captainTools delegate, a captain with crew leaves coding to them, whatever its harness.permissions;
+        # a captain without crew has no one to delegate to, so it keeps the standard policy.
+        delegate = person["role"] == "captain" and captain_tools == "delegate" and bool(person["crew"])
+        if delegate:
+            person["delegatesCoding"] = True
+        starter = person["harness"]["permissions"] is None
+        if starter:
             references = STATE / "references" / person["id"] if cfg.get("repositories") else None
-            person["harness"]["permissions"] = default_permissions(person["role"], references, delegate=delegate)
-            if delegate:
-                person["delegatesCoding"] = True
+            worktrees = STATE / "agents" / person["id"] / "worktrees" if person["crew"] else None
+            person["harness"]["permissions"] = default_permissions(person["role"], references, delegate=delegate,
+                                                                   worktrees=worktrees)
+        # Where the operator's own rules begin, an explicit harness.permissions or else extraPermissions: a grant
+        # the installer adds goes before them (harness_permissions), so they have the last word.
+        person["harness"]["operatorRulesFrom"] = len(person["harness"]["permissions"]) if starter else 0
+        if extra := person["harness"]["extraPermissions"]:
+            # After the starter policy or an explicit harness.permissions, so the operator's rules win.
+            person["harness"]["permissions"] = [*person["harness"]["permissions"], *extra]
         if dispatch and person["crew"]:
             fleet_ipc_policy(person["harness"]["permissions"], f"Captain {person['id']}'s harness.permissions")
     if api:
@@ -1203,6 +1244,7 @@ def validate(config, credentials, check_files=True):
         "proxy": {"port": proxy_port, "requestRetries": retries, "key": proxy_key},
         "passwords": passwords, "operatorPassword": operator_password, "token": token, "listeners": listeners,
         "historyPassword": history_password(irc, private),
+        "captainTools": captain_tools,
     }
 
 
@@ -1545,14 +1587,55 @@ def subspace_bridge(cfg, agent_id):
 
 
 def subspace_request(cfg, agent_id):
-    """The command an officer's REST calls to the hosted API go through, before the path."""
+    """Stargate's command for a REST call to the hosted API on an officer's socket, before the path."""
     return [str(APP / "bin/bun"), str(stargate_entry(cfg)), "subspace", "request", "--socket",
             str(agent_socket(agent_id))]
+
+
+# Every officer's stable command for REST calls to a hosted API, whatever Stargate's checkout is called, and its
+# grant: Stargate's request command on the socket of the officer that runs it.
+SUBSPACE_REQUEST = APP / "bin/subspace-request"
+SUBSPACE_REQUEST_GRANT = {"action": "shell", "resource": "subspace-request *", "effect": "allow"}
+
+
+def subspace_request_script(cfg):
+    """SUBSPACE_REQUEST: the officer is the Linux user that runs it (ss-<id>), so crew, who run as their captain,
+    act as the captain, as through its MCP server."""
+    request = subspace_request(cfg, "$officer")
+    return "\n".join([
+        "#!/bin/sh",
+        "# Generated by the Subspace fleet installer. A REST call to the fleet's hosted Subspace API, signed as the",
+        "# officer that runs it by Stargate's signing proxy:",
+        "#   subspace-request [--method METHOD] [--input FILE] /api/v1/PATH",
+        "set -eu",
+        "user=$(id -un)",
+        "officer=${user#ss-}",
+        f'socket="{request[-1]}"',
+        'if [ "$officer" = "$user" ] || [ ! -S "$socket" ]; then',
+        '    echo "subspace-request: run it as a fleet officer; there is no signing-proxy socket at $socket." >&2',
+        "    exit 2",
+        "fi",
+        f'exec {" ".join(request[:-1])} "$socket" "$@"',
+        "",
+    ])
 
 
 def stargate_has_subspace_agents(cfg):
     """Whether the installed Stargate checkout has the subspaceAgents section (SUBSPACE_AGENTS_FILE)."""
     return (APP / "src" / f"stargate-{cfg['stargate']['ref']}" / SUBSPACE_AGENTS_FILE).is_file()
+
+
+def stargate_has_pull_request_repositories(cfg):
+    """Whether the installed Stargate checkout's Fleet API takes api.pullRequestRepositories. Releases from v0.42.0
+    do; v0.40 and v0.41 refuse the key in their config check, so their gateway would not start. The Fleet API's
+    configuration sits beside its server, which moved between releases (FLEET_API_SERVERS in subspace-setup)."""
+    for schema in (APP / "src" / f"stargate-{cfg['stargate']['ref']}").glob("src/**/api/v1/config.ts"):
+        try:
+            if "pullRequestRepositories" in schema.read_text():
+                return True
+        except (OSError, UnicodeDecodeError):
+            continue
+    return False
 
 
 def require_subspace_agents(cfg):
@@ -1596,16 +1679,23 @@ def agent_socket_directories(cfg):
 
 
 def harness_permissions(cfg, person):
-    """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener is configured.
+    """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener or a hosted API is
+    configured, and with a hosted API the officer's REST command (SUBSPACE_REQUEST).
 
     An operator rule that already names a subspace_ action (an allow, ask or deny) stands alone: the installer
-    adds its grant only when the policy says nothing about these tools.
+    adds the MCP tools' grant only when the policy says nothing about them. The REST command's grant goes after
+    the starter policy and before the operator's own rules (operatorRulesFrom): the last matching rule wins, so
+    any operator rule that matches the command, such as a deny of `subspace-*`, decides.
     """
     permissions = person["harness"]["permissions"]
+    granted = permissions
+    if enrolled(cfg):
+        own = person["harness"].get("operatorRulesFrom", 0)
+        granted = [*permissions[:own], SUBSPACE_REQUEST_GRANT, *permissions[own:]]
     if (subspace_mcp_url(cfg) or enrolled(cfg)) and not any(
             str(rule.get("action", "")).startswith(f"{SUBSPACE_MCP}_") for rule in permissions):
-        return [*permissions, SUBSPACE_MCP_GRANT]
-    return permissions
+        granted = [*granted, SUBSPACE_MCP_GRANT]
+    return granted
 
 
 def captain_permissions(cfg, person):
@@ -2388,6 +2478,76 @@ def officer_models_line(cfg):
     return f"Officer models: {'; '.join(parts)}.{need}"
 
 
+def captain_tools_line(cfg):
+    """--dry-run: which captains code and which delegate coding to their crew (captainTools)."""
+    captains = cfg["members"][1:]
+    if not captains:
+        return None
+    if cfg["captainTools"] == "standard":
+        return "Captain tools: standard. Captains edit, commit and run builds and tests themselves."
+    delegates = [person["id"] for person in captains if person.get("delegatesCoding")]
+    solo = [person["id"] for person in captains if not person.get("delegatesCoding")]
+    line = "Captain tools: delegate."
+    if delegates:
+        line += (f" {', '.join(delegates)} leave edits, commits and pushes to their crew: no edit tool, and a shell "
+                 "that runs anything but the Git commands that change a checkout or publish it, and sed -i and perl -i.")
+    if solo:
+        line += (f" {', '.join(solo)} {'has no crew, so keeps' if len(solo) == 1 else 'have no crew, so keep'} "
+                 "the standard policy.")
+    return line
+
+
+def policy_lines(cfg):
+    """--dry-run: each OpenCode officer's tool policy against the one installed in its engine configuration: the
+    rules this run adds (+) and removes (-), in policy order, since the last matching rule wins. Officers with
+    the same changes share one entry."""
+
+    def text(rule):
+        return f"{rule['action']} {json.dumps(rule['resource'])} {rule['effect']}"
+
+    changed, unchanged, new, unreadable = {}, [], [], []
+    for person in cfg["members"]:
+        if person["harness"]["type"] != "opencode":
+            continue
+        path = ETC / f"opencode-{person['id']}.json"
+        policy = [text(rule) for rule in harness_permissions(cfg, person)]
+        if not path.exists():
+            new.append(f"{person['id']} ({len(policy)} rules)")
+            continue
+        if not os.access(path, os.R_OK):
+            unreadable.append(person["id"])
+            continue
+        try:
+            installed = [text(rule) for rule in read_json(path).get("permissions", [])]
+        except (Invalid, AttributeError, KeyError, TypeError):
+            unreadable.append(person["id"])
+            continue
+        lines = []
+        for tag, old_start, old_end, new_start, new_end in difflib.SequenceMatcher(
+                None, installed, policy, autojunk=False).get_opcodes():
+            if tag != "equal":
+                lines += [f"  - {rule}" for rule in installed[old_start:old_end]]
+                lines += [f"  + {rule}" for rule in policy[new_start:new_end]]
+        if lines:
+            changed.setdefault(tuple(lines), []).append(person["id"])
+        else:
+            unchanged.append(person["id"])
+    output = []
+    for lines, ids in changed.items():
+        added = sum(line.startswith("  +") for line in lines)
+        output.append(f"Tool policy of {', '.join(ids)} changes: {added} rules added and {len(lines) - added} removed "
+                      "(OpenCode permissions; the last matching rule wins):")
+        output.extend(lines)
+    if unchanged:
+        output.append(f"Tool policy unchanged: {', '.join(unchanged)}.")
+    if new:
+        output.append(f"Tool policy of officers with none installed yet: {', '.join(new)}.")
+    if unreadable:
+        output.append(f"Run the dry run as root to compare the tool policy of {', '.join(unreadable)} with the "
+                      "installed one.")
+    return output
+
+
 def unserved_message(unserved, accounts):
     models = ", ".join(sorted({f"{model} ({kind} account)" for _, model, kind in unserved}))
     officers = ", ".join(officer for officer, _, _ in unserved)
@@ -2660,8 +2820,11 @@ def render(cfg, extra, prune=False):
         require_subspace_agents(cfg)
         own_file(gateway_home / ENROLMENT_TOKEN, extra["tokens"][ENROLMENT_TOKEN] + "\n", GATEWAY)
         sockets = agent_socket_directories(cfg)
+        write(SUBSPACE_REQUEST, subspace_request_script(cfg), 0o755)
     elif AGENT_TMPFILES.exists():
         AGENT_TMPFILES.unlink()
+    if not enrolled(cfg):
+        SUBSPACE_REQUEST.unlink(missing_ok=True)
     if "caFile" in cfg["irc"]:
         write(ETC / "irc-ca.pem", Path(cfg["irc"]["caFile"]).read_text(), 0o644)
     homes = {}
@@ -2675,7 +2838,7 @@ def render(cfg, extra, prune=False):
         references = STATE / "references" / agent_id if cfg["repositories"] else None
         documents[agent_id] = role_documents(cfg, person, references, home)
         if enrolled(cfg):
-            add_request_guidance(documents[agent_id], subspace_request(cfg, agent_id))
+            add_request_guidance(documents[agent_id], [SUBSPACE_REQUEST.name])
         subprocess.run(
             ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "role"],
             input=json_text(documents[agent_id]), text=True, check=True,
@@ -2795,6 +2958,9 @@ def render(cfg, extra, prune=False):
                     "allowedNetworks": ["127.0.0.0/8", "::1/128"], "fleetName": cfg["name"],
                     "corsOrigins": cfg["stargate"]["api"]["corsOrigins"],
                 }
+                if stargate_has_pull_request_repositories(cfg) and (
+                        repositories := pull_request_repositories(cfg, homes)):
+                    settings["api"]["pullRequestRepositories"] = repositories
         if options.get("bots"):
             # Officers' own Slack bots, before the rear admiral's stakeholder bot when it has one.
             settings["bots"] = [*options["bots"], *settings.get("bots", [])]
@@ -3087,6 +3253,10 @@ def main(args):
             for line in session_root_lines(cfg):
                 print(line)
             for line in slack_plan(cfg):
+                print(line)
+            if line := captain_tools_line(cfg):
+                print(line)
+            for line in policy_lines(cfg):
                 print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":

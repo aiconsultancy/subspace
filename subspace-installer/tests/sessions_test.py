@@ -9,7 +9,9 @@ import io
 import json
 import os
 from pathlib import Path
+import pwd
 import stat
+import subprocess
 import sys
 import tempfile
 from threading import Thread
@@ -352,6 +354,8 @@ def crew_fleet(*captains):
     config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
     config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
     config["irc"]["auth"] = "password"
+    # Without captainTools, as a fleet installed before it existed: captains keep the standard policy.
+    config.pop("captainTools")
     config["captains"] = [{"id": name, "name": name.title(), "account": f"example-{name}"} for name in captains]
     secrets = secrets_for("example-atlas", *(f"example-{name}" for name in captains))
     return config, secrets
@@ -463,6 +467,89 @@ class InstalledFleet(unittest.TestCase):
         self.render(config, secrets)
         self.assertEqual(self.events, [])
         self.assertEqual(marker.read_text(), f"{session_id}\n")
+
+    def test_the_dry_run_prints_each_officers_policy_changes_against_the_installed_one(self):
+        config, secrets = crew_fleet("orion")
+        self.render(config, secrets)
+        self.assertEqual(runtime.policy_lines(runtime.validate(config, secrets)),
+                         ["Tool policy unchanged: atlas, orion."])
+        # Delegate captains, a new captain and an extra rule for every officer.
+        config["captainTools"] = "delegate"
+        config["harness"] = {**config["harness"],
+                             "extraPermissions": [{"action": "shell", "resource": "kubectl get *", "effect": "allow"}]}
+        config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra"})
+        cfg = runtime.validate(config, {**secrets, "ircPasswords": {**secrets["ircPasswords"],
+                                                                    "example-lyra": "fixture-password"}})
+        lines = runtime.policy_lines(cfg)
+        orion = lines.index(next(line for line in lines if line.startswith("Tool policy of orion changes:")))
+        changes = lines[orion + 1:lines.index(next(line for line in lines[orion + 1:] if not line.startswith("  ")))]
+        self.assertIn('  - edit "*" allow', changes)
+        self.assertIn('  - shell "git commit *" allow', changes)
+        self.assertIn('  + external_directory "*" allow', changes)
+        self.assertIn('  + shell "*" allow', changes)
+        self.assertIn('  + shell "*git push *" deny', changes)
+        self.assertEqual(changes[-1], '  + shell "kubectl get *" allow')
+        added = sum(line.startswith("  +") for line in changes)
+        self.assertEqual(lines[orion], f"Tool policy of orion changes: {added} rules added and {len(changes) - added} "
+                         "removed (OpenCode permissions; the last matching rule wins):")
+        self.assertIn("Tool policy of atlas changes: 1 rules added and 0 removed (OpenCode permissions; the last "
+                      "matching rule wins):", lines)
+        self.assertIn('  + shell "kubectl get *" allow', lines[lines.index(next(
+            line for line in lines if line.startswith("Tool policy of atlas"))) + 1])
+        lyra = len(runtime.harness_permissions(cfg, cfg["members"][2]))
+        self.assertEqual(lines[-1], f"Tool policy of officers with none installed yet: lyra ({lyra} rules).")
+        # One whose installed policy this user cannot read is named.
+        with patch.object(runtime.os, "access", side_effect=lambda path, mode: not str(path).endswith("orion.json")):
+            lines = runtime.policy_lines(cfg)
+        self.assertEqual(lines[-1], "Run the dry run as root to compare the tool policy of orion with the installed one.")
+
+    def test_the_fleet_api_looks_up_pull_requests_for_each_crew_worktree_of_a_github_repository(self):
+        config, secrets = crew_fleet("orion", "vega")
+        config["captains"][1]["crew"] = {"claude": {"count": 1}, "codex": {"count": 0}}
+        config["repositories"] += [{"id": "tool", "url": "https://git.example.com/team/tool.git"},
+                                   {"id": "library", "url": "https://github.com/example/library"}]
+        config["stargate"] = {"api": {"port": 8484}}
+        # Only a Stargate whose Fleet API takes the key gets it: v0.40 and v0.41 refuse it in their config check.
+        app = Path(self.root.name) / "app"
+        self.start(patch.object(runtime, "APP", app))
+        checkout = app / "src" / f"stargate-{runtime.STARGATE_REF}"
+        schema = checkout / "src/api/v1/config.ts"
+        schema.parent.mkdir(parents=True)
+        schema.write_text("const ApiConfig = Schema.Struct({ listen: Schema.String })\n")
+        self.render(config, secrets)
+        self.assertNotIn("pullRequestRepositories", json.loads((self.etc / "stargate.json").read_text())["api"])
+        # v0.42 and v0.43 keep it in src/api/v1, v0.44 on in src/observability/dashboard/api/v1.
+        schema.write_text("  pullRequestRepositories: Schema.optional(pullRequestRepositories),\n")
+        cfg = runtime.validate(config, secrets)
+        self.assertTrue(runtime.stargate_has_pull_request_repositories(cfg))
+        schema.unlink()
+        self.assertFalse(runtime.stargate_has_pull_request_repositories(cfg))
+        schema = checkout / "src/observability/dashboard/api/v1/config.ts"
+        schema.parent.mkdir(parents=True)
+        schema.write_text("  pullRequestRepositories: Schema.optional(pullRequestRepositories),\n")
+        self.assertTrue(runtime.stargate_has_pull_request_repositories(cfg))
+        self.render(config, secrets)
+        api = json.loads((self.etc / "stargate.json").read_text())["api"]
+        worktrees = {captain: self.state / "agents" / captain / "worktrees" for captain in ("orion", "vega")}
+        self.assertEqual(api["pullRequestRepositories"], {
+            **{str(worktrees["orion"] / crew / "project"): "example/project" for crew in fixture.CREW},
+            **{str(worktrees["orion"] / crew / "library"): "example/library" for crew in fixture.CREW},
+            str(worktrees["vega"] / "claude-1/project"): "example/project",
+            str(worktrees["vega"] / "claude-1/library"): "example/library",
+        })
+        # Keyed by the worktree paths the crew plugin is given.
+        cfg = runtime.validate(config, secrets)
+        options = runtime.crew_options(cfg, cfg["members"][1], self.state / "agents/orion", 4097, "ses_fixture")
+        self.assertEqual(options["projects"]["library"]["worktrees"]["claude-1"],
+                         str(worktrees["orion"] / "claude-1/library"))
+        self.assertEqual([runtime.github_repository(url) for url in (
+            "https://github.com/example/project.git", "https://GitHub.com/example/project/", "http://github.com/a/b",
+            "https://github.com/example", "https://github.com/example/..", "https://gitlab.com/example/project")],
+            ["example/project", "example/project", None, None, None, None])
+        # Without the Fleet API there is nothing to configure.
+        config.pop("stargate")
+        self.render(config, secrets)
+        self.assertNotIn("api", json.loads((self.etc / "stargate.json").read_text()))
 
     def test_a_marker_without_a_confirmed_record_is_withdrawn_before_anything_is_written(self):
         config, secrets = crew_fleet("orion")
@@ -882,7 +969,8 @@ class InstalledFleet(unittest.TestCase):
             (self.etc / name).write_text(json.dumps(value))
             (self.etc / name).chmod(0o600)
         sockets, tmpfiles = Path(self.root.name) / "run/agents", self.etc / "tmpfiles.conf"
-        for name, value in (("AGENT_SOCKETS", sockets), ("AGENT_TMPFILES", tmpfiles)):
+        self.request = Path(self.root.name) / "bin/subspace-request"
+        for name, value in (("AGENT_SOCKETS", sockets), ("AGENT_TMPFILES", tmpfiles), ("SUBSPACE_REQUEST", self.request)):
             self.start(patch.object(runtime, name, value))
         self.start(patch.object(runtime, "stargate_has_subspace_agents", return_value=True))
         (self.state / "gateway").mkdir()  # account() makes it on a VM
@@ -947,20 +1035,37 @@ class InstalledFleet(unittest.TestCase):
                 self.assertFalse({runtime.AGENT_HEADER, "headersHelper", "http://127.0.0.1:3001/mcp"} & found, path)
                 self.assertNotIn(token, path.read_text())
         self.assertFalse(any("agent-header" in path.read_text() for path in self.systemd.iterdir()))
-        # The officers' instructions say how REST calls reach the API.
+        # The officers' instructions name one stable REST command, which every OpenCode officer's policy allows,
+        # the rear admiral's included, and which runs Stargate's request command on the caller's own socket.
         roles_input = [json.loads(call.kwargs["input"]) for call in runtime.subprocess.run.call_args_list
                        if call.args[0][-1] == "role"]
-        self.assertTrue(all("subspace request --socket" in document["instructions"] for document in roles_input))
-        self.assertIn(f"subspace request --socket {sockets / 'orion/api.sock'} /api/v1/me",
-                      json.dumps(roles_input))
+        self.assertEqual({document["role"] for document in roles_input}, {"rear-admiral", "captain"})
+        for document in roles_input:
+            self.assertIn("subspace-request /api/v1/me\nsubspace-request --method POST", document["instructions"])
+            self.assertNotIn("--socket", document["instructions"])
+        for officer in ("atlas", "orion"):
+            rules = json.loads((self.etc / f"opencode-{officer}.json").read_text())["permissions"]
+            self.assertEqual(rules[-2:], [runtime.SUBSPACE_REQUEST_GRANT, runtime.SUBSPACE_MCP_GRANT])
+            self.assertEqual(fixture.opencode_decision(rules, "shell", ["subspace-request /api/v1/me"]), "allow")
+        script = self.request.read_text()
+        self.assertEqual(script.splitlines()[-1], f'exec {bridge[0]} {bridge[1]} subspace request --socket "$socket" "$@"')
+        self.assertIn(f'socket="{sockets}/$officer/api.sock"', script)
+        # Run by a user that is not an officer's (subprocess.run is this suite's mock), it refuses.
+        self.assertFalse(pwd.getpwuid(os.getuid()).pw_name.startswith("ss-"))
+        shell = subprocess.Popen(["sh", str(self.request), "/api/v1/me"], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        _, error = shell.communicate(timeout=30)
+        self.assertEqual(shell.returncode, 2, error)
+        self.assertIn("run it as a fleet officer", error)
         # Registration is left to the hosted API's administrators: no request, no token.
         import fleetctl
         with patch.object(fleetctl, "Api") as api:
             fleetctl.register(cfg)
         api.assert_not_called()
-        # Back to an API on this VM, the tmpfiles entry goes.
+        # Back to an API on this VM, the tmpfiles entry and the REST command go.
         runtime.render(runtime.validate(*self.fleets()["local-api"]), {"tokens": {}, "cloud": {}})
         self.assertFalse(tmpfiles.exists())
+        self.assertFalse(self.request.exists())
 
     def test_a_hosted_api_refuses_what_it_cannot_serve(self):
         config, secrets, extra, token, _, _ = self.hosted()
