@@ -115,6 +115,15 @@ starts, which is handy against a local stack.
   port). Register a public client on the Mobile and desktop platform, with
   no secret, and grant it the API scope.
 
+With `workos` or `entra` the app cannot be used without the account: while
+there is no session, at start-up and when a session ends for good, a
+sign-in dialog covers the main window, naming the organisation from the
+build's branding, with the provider's sign-in and Quit. It closes once you
+are signed in, and Channels then connects to your account's networks. A saved
+session the app cannot renew because the network or the API is out of reach
+still opens the app, which shows that it is retrying. `dev` signs in by
+itself and never shows the dialog, nor does a build with no API backend.
+
 Example build config for a hosted API with WorkOS:
 
 ```json
@@ -176,9 +185,10 @@ with nothing to sign in to:
 
 The build has no API origin and no account. It leaves out what needs the
 API: **Settings > Account** and any sign-in, the Issues and Decisions Spaces,
-**Settings > Fleets**, and, in Channels, the initiative picker, fleet
-context, captain notices (and their switch in **Settings > Channels**), chat
-uploads and the tracker commands, so `/assign` is ordinary IRC input.
+**Settings > Fleets**, and, in Channels, the account networks, the
+initiative picker, fleet context, captain notices (and their switch in
+**Settings > Channels**), chat uploads and the tracker commands, so
+`/assign` is ordinary IRC input.
 Channels connects to the networks you add in **Settings > Channels**. Fleet
 Console shows the fleets you give it: the Stargate API address and token in
 **Settings > Spaces > Fleet Console** (which the installer can fill in), and

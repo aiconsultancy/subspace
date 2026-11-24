@@ -75,21 +75,31 @@ pub(crate) fn registration() -> Option<AccountRegistration> {
 
 /// The account `launch` offers: none without a provider, as in every build
 /// with no API backend, so the shell shows no Account page and no sign-in.
+/// With one, the app needs it: the shell asks for sign-in over the window
+/// while there is no session, unless the provider signs in by itself, as
+/// `dev` does.
 fn registration_for(launch: &Launch) -> Option<AccountRegistration> {
     if launch.provider.is_empty() {
         return None;
     }
     Some(if launch.backend == ApiBackend::Nett {
-        AccountRegistration {
-            provider: nett_provider,
-            configure: Some(configure_nett_api),
-        }
+        required_account(nett_provider, configure_nett_api)
     } else {
-        AccountRegistration {
-            provider,
-            configure: Some(configure_subspace_api),
-        }
+        required_account(provider, configure_subspace_api)
     })
+}
+
+/// An account the app cannot be used without, from `provider`, whose tokens
+/// `configure` hands to the API client.
+fn required_account(
+    provider: fn(&str) -> Option<Arc<dyn Provider>>,
+    configure: fn(AccountTokenSource),
+) -> AccountRegistration {
+    AccountRegistration {
+        provider,
+        configure: Some(configure),
+        required: true,
+    }
 }
 
 /// WorkOS device authorisation with the environment's one accepted client.
@@ -314,7 +324,20 @@ mod tests {
             api_url: "http://127.0.0.1:3000",
             ..Stamped::default()
         };
-        assert!(registration_for(&resolve(&dev, Vec::new()).unwrap()).is_some());
+        let account = registration_for(&resolve(&dev, Vec::new()).unwrap());
+        assert!(
+            account.is_some_and(|account| account.required),
+            "an API-backed build cannot be used without its account"
+        );
+        let nett = Stamped {
+            backend: "nett",
+            provider: "workos",
+            nett_api_url: "https://api.nett.example",
+            workos_client_id: "client_00000000000000000000000000",
+            ..Stamped::default()
+        };
+        let account = registration_for(&resolve(&nett, Vec::new()).unwrap());
+        assert!(account.is_some_and(|account| account.required));
         let off = vec![("SUBSPACE_IDENTITY_PROVIDER".to_owned(), String::new())];
         assert!(registration_for(&resolve(&dev, off).unwrap()).is_none());
     }
