@@ -449,6 +449,16 @@ build and test commands. For a captain without crew, external paths,
 publication and other shell commands require an explicit grant. A captain
 with crew can reach them through its crew (see below). Build and test
 commands can execute code from the project, so use trusted repositories.
+
+Interactive setup asks whether captains should use the standard policy or
+delegate coding to crew. Set `--captain-tools standard` or
+`--captain-tools delegate` on the host installer or `subspace-setup`. The
+default is `standard`, and reruns retain the choice. In `delegate` mode,
+each captain needs crew and a repository. Captains inspect changes, delegate
+edits, tests and branch pushes, and use `subspace-github gh pr create` with
+their GitHub App to open pull requests. Configured Subspace tracker tools
+remain available. In a hand-written fleet file, use `captainTools`.
+
 Supply an ordered `harness.permissions` array to replace the starter policy across the fleet
 or for the rear admiral or a single captain. Rules use `action`, `resource`
 and `effect`. Put narrower rules after broader ones. See

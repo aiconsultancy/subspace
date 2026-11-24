@@ -876,7 +876,7 @@ def history_password(irc, private):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name rearAdmiral captains harness crew repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     require(isinstance(cfg["captains"], list), "Captains must be an array.")
     officers = [member(person) for person in [cfg["rearAdmiral"], *cfg["captains"]]]
@@ -910,6 +910,7 @@ def validate(config, credentials, check_files=True):
                                                                          "permissions": None}))
              for role, key in ROLE_HARNESS.items()}
     crew = crew_config(cfg.get("crew", {}), {family: {"count": 2, "model": model} for family, model in FAMILIES.items()})
+    captain_tools = pattern(cfg.get("captainTools", "standard"), r"standard|delegate", "captain tool policy")
     repositories = repository_config(cfg.get("repositories", []))
     agents = []
     for index, (person, room) in enumerate(zip(officers, officer_rooms, strict=True)):
@@ -1047,9 +1048,14 @@ def validate(config, credentials, check_files=True):
     require(not any(repo["private"] for repo in repositories.values()) or len(applications) == len(agents),
             "Private repositories require a distinct GitHub App for the rear admiral and every captain.")
     for person in agents:
+        delegate = person["role"] == "captain" and captain_tools == "delegate"
+        require(not delegate or person["crew"],
+                f"Captain {person['id']} needs crew and at least one repository for captainTools delegate.")
         if person["harness"]["permissions"] is None:
             references = STATE / "references" / person["id"] if cfg.get("repositories") else None
-            person["harness"]["permissions"] = default_permissions(person["role"], references)
+            person["harness"]["permissions"] = default_permissions(person["role"], references, delegate=delegate)
+            if delegate:
+                person["delegatesCoding"] = True
         if dispatch and person["crew"]:
             fleet_ipc_policy(person["harness"]["permissions"], f"Captain {person['id']}'s harness.permissions")
     if api:
@@ -2119,7 +2125,7 @@ def render_firewall(cfg):
     if cfg["stargate"]["api"]:
         ports["stargate-api"] = cfg["stargate"]["api"]["port"]
     config = ETC / "firewall.nft"
-    write(config, rules(ports, admins, clients), 0o600)
+    write(config, rules(ports, admins, clients, pwd.getpwnam(VIEW).pw_uid), 0o600)
     write(SYSTEMD / FIREWALL, "\n".join([
         "[Unit]", "Description=Subspace fleet local service firewall",
         "After=nftables.service",

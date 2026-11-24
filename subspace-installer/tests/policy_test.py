@@ -58,10 +58,10 @@ def officer_secrets(*extra):
 
 class FleetPolicyTests(unittest.TestCase):
     def test_firewall_scopes_operator_ports_and_proxy(self):
-        result = rules({"dashboard": 8070, "agentsview": 8080, "proxy": 8317}, [1700], [701, 702])
+        result = rules({"dashboard": 8070, "agentsview": 8080, "proxy": 8317}, [1700], [701, 702], 703)
         self.assertEqual(result.splitlines()[:2], ["add table inet subspace_fleet", "delete table inet subspace_fleet"])
         self.assertIn('oifname "lo" tcp dport 8070 meta skuid != { 0, 1700 } reject', result)
-        self.assertIn('oifname "lo" tcp dport 8080 meta skuid != { 0, 1700 } reject', result)
+        self.assertIn('oifname "lo" tcp dport 8080 meta skuid != { 0, 703, 1700 } reject', result)
         self.assertIn('oifname "lo" tcp dport 8317 meta skuid != { 0, 701, 702, 1700 } reject', result)
         self.assertIn('iifname != "lo" tcp dport { 8070, 8080, 8317 } reject', result)
 
@@ -525,7 +525,7 @@ class FleetPolicyTests(unittest.TestCase):
         config["stargate"] = {"api": {"port": 8484, "listen": "0.0.0.0:8484"}}
         with self.assertRaises(Invalid):
             validate(config, secrets)
-        result = rules({"dashboard": 8070, "agentsview": 8080, "proxy": 8317, "stargate-api": 8484}, [1700], [701])
+        result = rules({"dashboard": 8070, "agentsview": 8080, "proxy": 8317, "stargate-api": 8484}, [1700], [701], 703)
         self.assertIn('oifname "lo" tcp dport 8484 meta skuid != { 0, 1700 } reject', result)
 
     def test_stargate_is_pinned_to_a_release_with_agent_dispatch(self):

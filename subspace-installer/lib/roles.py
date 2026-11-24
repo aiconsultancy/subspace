@@ -78,7 +78,7 @@ def api_skill():
     return path.read_text()
 
 
-def default_permissions(role, references):
+def default_permissions(role, references, *, delegate=False):
     rules = [{"action": "*", "resource": "*", "effect": "deny"}]
     rules.extend({"action": action, "resource": "*", "effect": "allow"} for action in ("read", "glob", "grep", "question", "skill"))
     if references and role == "rear_admiral":
@@ -87,7 +87,9 @@ def default_permissions(role, references):
         rules.append({"action": "read", "resource": resource, "effect": "deny"})
     rules.append({"action": "read", "resource": "*.env.example", "effect": "allow"})
     commands = ["git status", "git diff", "git log", "git show"]
-    if role != "rear_admiral":
+    if delegate:
+        commands += ["subspace-github gh pr view", "subspace-github gh pr diff", "subspace-github gh pr create"]
+    elif role != "rear_admiral":
         rules.append({"action": "edit", "resource": "*", "effect": "allow"})
         commands += ["git add", "git commit", "git fetch", "make", "npm test", "npm run", "bun test", "bun run",
                      "cargo check", "cargo test", "cargo build", "go test", "python3 -m unittest", "pytest"]
@@ -164,6 +166,16 @@ def role_documents(cfg, person, references, home):
         "worktrees": f"{home}/worktrees",
     }
     values["dispatch"] = dispatch_guidance(cfg, person)
+    values["completion"] = (
+        "4. Have crew resolve overlaps, run the checks and push the reviewed branch.\n"
+        "   Inspect their work and open the pull request with `subspace-github gh pr create`.\n"
+        "5. Report the result, the pull request and any remaining risk in " + values["channel"] + "."
+        if person.get("delegatesCoding") else
+        "4. Resolve overlaps and review the combined diff. Crew commit as you, so check\n"
+        "   every commit and branch before you push or open a pull request.\n"
+        "5. Run the checks and report the result, the pull request and any remaining\n"
+        f"   risk in {values['channel']}."
+    )
     if person.get("crew"):
         roster = "\n".join(f"- {worker['name']} (`{worker['id']}`, {worker['family'].title()} family, "
                            f"model `{worker['model']}`)" for worker in person["crew"])

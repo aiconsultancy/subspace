@@ -142,8 +142,9 @@ function tool<S extends Schema.Decoder<unknown>, A, E>(
   readOnly: boolean,
   schema: S,
   run: (member: Member, args: S["Type"]) => Effect.Effect<A, E, Database | GithubIntegration>,
+  advertisedSchema: Schema.Decoder<unknown> = schema,
 ) {
-  const document = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" });
+  const document = Schema.toJsonSchemaDocument(advertisedSchema, { onExcessProperty: "error" });
   return {
     description,
     inputSchema: { ...document.schema, type: "object", $defs: document.definitions },
@@ -460,7 +461,7 @@ export const mcpTools = {
     (member, { issue, ...query }) => listReviews(member, issue, query),
   ),
   subspace_get_review_status: tool(
-    "Check required reviews against a document or external revision.",
+    "Check required reviews. Supply either document (with optional documentRevision), or issue with kind, subject and revision.",
     true,
     Schema.Union([
       Schema.Struct({ ...issue, ...IssueReviewStatus.fields }),
@@ -470,6 +471,15 @@ export const mcpTools = {
       "document" in input
         ? documentReviewStatus(member, input.document, input.documentRevision)
         : issueReviewStatus(member, input.issue, input),
+    // Claude requires a plain object at the root of a tool schema. Keep the union for decoding calls.
+    Schema.Struct({
+      document: Schema.optional(Ref),
+      documentRevision: Schema.optional(Version),
+      issue: Schema.optional(Ref),
+      kind: Schema.optional(IssueReviewStatus.fields.kind),
+      subject: Schema.optional(IssueReviewStatus.fields.subject),
+      revision: Schema.optional(IssueReviewStatus.fields.revision),
+    }),
   ),
   subspace_list_fleets: tool("List fleets.", true, Pagination, listFleets),
   subspace_get_fleet: tool(
