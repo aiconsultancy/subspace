@@ -77,9 +77,11 @@ pub(crate) fn registration() -> Option<AccountRegistration> {
 /// with no API backend, so the shell shows no Account page and no sign-in.
 /// With one, the app needs it: the shell asks for sign-in over the window
 /// while there is no session, unless the provider signs in by itself, as
-/// `dev` does.
+/// `dev` does. A launch that cannot sign in at all, such as development
+/// sign-in with an API on another computer, offers none either: no Account
+/// page, no sign-in cover, and the Spaces say why.
 fn registration_for(launch: &Launch) -> Option<AccountRegistration> {
-    if launch.provider.is_empty() {
+    if launch.provider.is_empty() || sign_in::unavailable(launch).is_some() {
         return None;
     }
     Some(if launch.backend == ApiBackend::Nett {
@@ -325,6 +327,14 @@ mod tests {
         assert!(account.is_some_and(|account| account.required));
         let off = vec![("SUBSPACE_IDENTITY_PROVIDER".to_owned(), String::new())];
         assert!(registration_for(&resolve(&dev, off).unwrap()).is_none());
+        let hosted = vec![(
+            "SUBSPACE_API_URL".to_owned(),
+            "https://api.example.com".to_owned(),
+        )];
+        assert!(
+            registration_for(&resolve(&dev, hosted).unwrap()).is_none(),
+            "development sign-in on a hosted API offers no account that cannot sign in"
+        );
     }
 
     /// Set for the child process that installs the stamped launch.

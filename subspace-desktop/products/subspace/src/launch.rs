@@ -714,7 +714,13 @@ mod tests {
             ]),
         )
         .unwrap_err();
-        assert!(matches!(failure, Failure::Environment(_)), "{failure:?}");
+        match failure {
+            Failure::Environment(message) => {
+                assert!(message.contains("SUBSPACE_API_URL"), "{message}");
+                assert!(!message.contains("client"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
         // A variable completes the file, and the file's own value is wrong.
         let failure = resolve_with(
             &SUBSPACE,

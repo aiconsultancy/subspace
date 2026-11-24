@@ -16,6 +16,12 @@ pub(crate) const API_RESOURCE: &str = "subspace-api";
 /// built here as sign-in builds it, so a value sign-in would refuse stops
 /// the launch, named by its setting, rather than silently turning sign-in
 /// off.
+//
+// The configuration is built here and dropped, and built again from the
+// same launch by the same builders when the shell asks for the provider, so
+// the two cannot disagree. Keeping the built one instead would make the
+// launch hold provider types rather than plain, comparable settings, and
+// the provider needs the shell's keychain namespace, known only later.
 pub(crate) fn check(launch: &Launch) -> Result<(), String> {
     match launch.provider.as_str() {
         "" | "dev" => Ok(()),
