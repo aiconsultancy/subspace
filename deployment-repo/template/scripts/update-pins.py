@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Move the pins in pins.json: the Subspace and Stargate releases this deployment runs.
 
-  scripts/update-pins.py                     each project to its latest release
-  scripts/update-pins.py --subspace REF      a release tag, or a full commit SHA on main
-  scripts/update-pins.py --stargate REF
+  scripts/update-pins.py                     both projects to their latest releases
+  scripts/update-pins.py --subspace REF      Subspace only: a release tag, or a full commit SHA on main
+  scripts/update-pins.py --stargate REF      Stargate only (pass both flags to move both)
   scripts/update-pins.py --dry-run           print the moves, change nothing
 
 A pin records the release tag and the commit it resolves to, so a moved tag
@@ -76,7 +76,10 @@ def main():
     args = parser.parse_args()
     pins = json.loads(PINS.read_text())
     moved = False
-    for name in ("subspace", "stargate"):
+    # A flag names the projects to move; the others stay where they are pinned.
+    named = [name for name in ("subspace", "stargate") if getattr(args, name) is not None] \
+        or ["subspace", "stargate"]
+    for name in named:
         project = pins[name]
         target = resolve(project, getattr(args, name))
         old = project["commit"]

@@ -31,8 +31,11 @@ Read `README.md` first.
   create; one issue per working session. If the server is missing or answers
   401, the person runs the set-up in the README; never ask for a password or
   a code.
-- Talk to the fleet with the `subspace-irc` skill. You speak with the
-  person's account, which the fleet's agents obey: post only what they asked
-  for or approved, with the `--as` marker, and never a secret.
+- Talk to the fleet with the `subspace-irc` skill, running this
+  repository's own helper with its settings, from the repository's root:
+  `python3 agent-kit/bin/subspace_irc.py --config agent-kit/agent.json …`.
+  You speak with the person's account, which the fleet's agents obey: post
+  only what they asked for or approved, with the `--as` marker, and never a
+  secret.
 - Record decisions in the tracker with `subspace_log_decision`, with the
   actual maker and their evidence, and link the issue they belong to.

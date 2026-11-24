@@ -5,6 +5,9 @@ Claude Code and Codex started in a clone of this repository get the Subspace
 skills (.claude/skills, .agents/skills) and the `subspace` MCP server (.mcp.json,
 .codex/config.toml, opencode.json). The skills and helpers are copies of
 upstream files at the Subspace commit this repository pins, never edited here.
+The MCP registration and the IRC skill run this repository's own helpers with
+its own settings (agent-kit/agent.json, through --config), so agents here act
+on this deployment whatever else this computer is set up for.
 
   scripts/agent-kit.py sync [--source CHECKOUT]   copy the pinned upstream files into place
   scripts/agent-kit.py check [--source CHECKOUT]  fail if a copy differs from the pinned upstream (CI)
@@ -13,10 +16,13 @@ upstream files at the Subspace commit this repository pins, never edited here.
 
 sync and check read the pin's commit from a clone (CHECKOUT, or a cached
 fetch of the pinned repository under .cache/). setup changes only
-~/.subspace (or SUBSPACE_HOME).
+~/.subspace (or SUBSPACE_HOME); it keeps an agent.json or a helper there that
+differs from this repository's unless you pass --force, and says how they
+differ.
 """
 
 import argparse
+import difflib
 import filecmp
 import json
 import os
@@ -132,6 +138,17 @@ def read_env(path):
     return values
 
 
+def differences(installed, pinned):
+    """How an installed helper differs from this repository's copy, in a line."""
+    added = removed = 0
+    for line in difflib.unified_diff(installed.read_text(errors="replace").splitlines(),
+                                     pinned.read_text(errors="replace").splitlines(), lineterm="", n=0):
+        if not line.startswith(("+++", "---")):
+            added += line.startswith("+")
+            removed += line.startswith("-")
+    return f"differs from this repository's copy by +{added} -{removed} lines; see: diff -u {installed} {pinned}"
+
+
 def setup(name, dry_run, force):
     """Install the helpers the skills name (~/.subspace/bin) and this deployment's sign-in settings."""
     home = Path(os.environ.get("SUBSPACE_HOME") or Path.home() / ".subspace")
@@ -142,7 +159,7 @@ def setup(name, dry_run, force):
     name = (name or agents.get("SUBSPACE_HUMAN_NAME") or "").strip()
     if not name or len(name) > 60 or "\n" in name:
         die("pass --name with the name your agents act for, as people know you (at most 60 characters).")
-    steps, settings_file = [], home / "agent.json"
+    steps, kept, settings_file = [], [], home / "agent.json"
     try:
         current = json.loads(settings_file.read_text()) if settings_file.is_file() else None
     except ValueError:
@@ -150,30 +167,45 @@ def setup(name, dry_run, force):
     if settings and current is None:
         steps.append(("write", settings_file, f"sign-in settings for {settings['api_url']}"))
     elif settings and {key: current.get(key) for key in settings} != settings:
-        if not force:
-            die(f"{settings_file} is set up for another API or sign-in ({current.get('api_url')}). "
-                "Pass --force to replace it; the old file is kept beside it.")
-        steps.append(("replace", settings_file, f"sign-in settings for {settings['api_url']} (keeping a copy)"))
+        changes = ", ".join(f"{key} {current.get(key)!r} there, {value!r} here"
+                            for key, value in settings.items() if current.get(key) != value)
+        if force:
+            steps.append(("replace", settings_file, f"keeping a copy; {changes}"))
+        else:
+            kept.append((settings_file, f"is set up for another API or sign-in: {changes}"))
     for helper in HELPERS:
-        target = home / "bin" / helper
-        if not target.is_file() or not filecmp.cmp(ROOT / "agent-kit" / "bin" / helper, target, shallow=False):
+        pinned, target = ROOT / "agent-kit" / "bin" / helper, home / "bin" / helper
+        if not target.is_file():
             steps.append(("helper", target, "the pinned helper the skills run"))
+        elif not filecmp.cmp(pinned, target, shallow=False):
+            # It may be newer, from another deployment or a Subspace checkout: replace it only when asked.
+            if force:
+                steps.append(("replace helper", target, f"keeping a copy; it {differences(target, pinned)}"))
+            else:
+                kept.append((target, differences(target, pinned)))
     if agents.get("SUBSPACE_HUMAN_NAME") != name:
         steps.append(("name", home / "agents.env", f"your agents mark their messages 'on behalf of {name} (<model>)'"))
     for kind, path, about in steps:
         print(f"{'would ' if dry_run else ''}{kind}: {path} ({about})")
-    if not steps:
+    for path, about in kept:
+        print(f"{'would keep' if dry_run else 'kept'}: {path}, which {about}")
+    if kept:
+        print("Agents in this repository use its own helpers and settings (agent-kit/) either way. --force replaces "
+              "the files kept above too, keeping a copy of each, so that agents elsewhere on this computer act on "
+              "this deployment as well.")
+    if not steps and not kept:
         print(f"{home} is already set up for this repository.")
     if dry_run:
         return
+    stamp = time.strftime("%Y%m%d%H%M%S")
     for kind, path, _ in steps:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if kind == "replace":
-            shutil.copy2(path, path.with_name(f"agent.json.bak-{time.strftime('%Y%m%d%H%M%S')}"))
+        if kind.startswith("replace"):
+            shutil.copy2(path, path.with_name(f"{path.name}.bak-{stamp}"))
         if kind in ("write", "replace"):
             path.write_text(json.dumps(settings, indent=2) + "\n")
             path.chmod(0o600)
-        elif kind == "helper":
+        elif kind in ("helper", "replace helper"):
             shutil.copyfile(ROOT / "agent-kit" / "bin" / path.name, path)
             path.chmod(0o755)
         elif kind == "name":
@@ -184,10 +216,11 @@ def setup(name, dry_run, force):
         print("\nThis deployment has no hosted API: keep the fleet's tunnel running, and register the MCP server "
               "with ./install.sh skills from a Subspace checkout.")
         return
+    token = "python3 agent-kit/bin/subspace_token.py --config agent-kit/agent.json"
     print(f"""
-Next:
-  1. Sign in once in your browser:  python3 {home / 'bin' / 'subspace_token.py'} --login
-     Check it:                      python3 {home / 'bin' / 'subspace_token.py'} --me
+Next, from this repository's root:
+  1. Sign in once in your browser:  {token} --login
+     Check it:                      {token} --me
   2. Start Claude Code in this repository and allow the `subspace` server from .mcp.json when asked.
      For Codex, trust this repository when asked: project MCP servers load only in trusted projects.
   3. Agent sessions already running see the skills and the server only after they restart.""")
@@ -201,7 +234,8 @@ def main():
     person = sub.add_parser("setup")
     person.add_argument("--name")
     person.add_argument("--dry-run", action="store_true")
-    person.add_argument("--force", action="store_true", help="replace agent.json set up for another API")
+    person.add_argument("--force", action="store_true",
+                        help="replace an agent.json or helpers in ~/.subspace that differ from this repository's")
     args = parser.parse_args()
     if args.command == "sync":
         sync(args.source)

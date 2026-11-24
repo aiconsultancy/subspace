@@ -3,7 +3,7 @@
   "mcp": {
     "subspace": {
       "type": "local",
-      "command": ["sh", "-c", "exec python3 \"$(git rev-parse --show-toplevel)/agent-kit/bin/subspace_token.py\" --mcp-stdio --mcp-endpoint @@API_URL@@/mcp"],
+      "command": ["sh", "-c", "top=$(git rev-parse --show-toplevel) && exec python3 \"$top/agent-kit/bin/subspace_token.py\" --config \"$top/agent-kit/agent.json\" --mcp-stdio --mcp-endpoint @@API_URL@@/mcp"],
       "enabled": true
     }
   }

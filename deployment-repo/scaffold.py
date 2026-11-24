@@ -12,16 +12,21 @@ keeps secrets out, the agent kit and its CI check), copies the agent skills
 and helpers at the Subspace pin, and runs git init. With a hosted API
 (--api-url and --workos-client-id) it also registers the API's MCP server for
 Claude Code, Codex and OpenCode. It never commits, pushes or creates a remote
-repository. See docs/deployment-repository.md.
+repository. It builds the repository beside --dir and moves it into place only
+once it is complete, so a failure leaves nothing behind. See
+docs/deployment-repository.md.
 """
 
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = Path(__file__).resolve().parent
 TEMPLATE = HERE / "template"
@@ -45,7 +50,8 @@ def hosted_gaps(commit):
     """What a hosted API's agent kit needs that the pinned Subspace commit lacks, when this checkout has it."""
     gaps = []
     for path, marker, what in (("agent-skills/bin/subspace_token.py", "workos", "WorkOS sign-in for local agents"),
-                               ("agent-skills/bin/subspace_irc.py", "irc-credential", "IRC sign-in through the API")):
+                               ("agent-skills/bin/subspace_irc.py", "irc-credential", "IRC sign-in through the API"),
+                               ("agent-skills/bin/subspace_token.py", "--config", "settings bound to the repository")):
         shown = subprocess.run(["git", "show", f"{commit}:{path}"], cwd=UPSTREAM, capture_output=True, text=True)
         if shown.returncode == 0 and marker not in shown.stdout:
             gaps.append(what)
@@ -57,6 +63,24 @@ def template_files(hosted):
         relative = path.relative_to(TEMPLATE).as_posix()
         if path.is_file() and "__pycache__" not in relative and (hosted or relative not in HOSTED_ONLY):
             yield relative, path
+
+
+def build(stage, rendered, commit, no_git):
+    """Write the whole repository into stage; on a failure, say so and leave the target untouched."""
+    for relative, (text, executable) in rendered.items():
+        path = stage / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        if executable:
+            path.chmod(0o755)
+    have = subprocess.run(["git", "cat-file", "-e", commit + "^{commit}"], cwd=UPSTREAM,
+                          capture_output=True).returncode == 0
+    sync = [sys.executable, "-B", str(stage / "scripts" / "agent-kit.py"), "sync", *(["--source", str(UPSTREAM)] if have else [])]
+    if subprocess.run(sync, cwd=stage).returncode:
+        die("copying the agent kit from the Subspace pin failed, so nothing was created. Fix what the message above "
+            "says, such as the network or the pin, and run the scaffold again.")
+    if not no_git and subprocess.run(["git", "init", "-q", "-b", "main"], cwd=stage).returncode:
+        die("git init failed, so nothing was created. Run the scaffold again, or with --no-git.")
 
 
 def main():
@@ -118,19 +142,19 @@ def main():
         print("would run git init" if not args.no_git else "would not run git init")
         return
 
-    for relative, (text, executable) in rendered.items():
-        path = target / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-        if executable:
-            path.chmod(0o755)
-    have = subprocess.run(["git", "cat-file", "-e", values["SUBSPACE_COMMIT"] + "^{commit}"], cwd=UPSTREAM,
-                          capture_output=True).returncode == 0
-    sync = [sys.executable, "-B", str(target / "scripts" / "agent-kit.py"), "sync", *(["--source", str(UPSTREAM)] if have else [])]
-    if subprocess.run(sync, cwd=target).returncode:
-        die(f"created {target}, but copying the agent kit failed; run python3 scripts/agent-kit.py sync there.")
-    if not args.no_git:
-        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=target, check=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=f".{target.name}.scaffold-", dir=target.parent))
+    try:
+        umask = os.umask(0o022)
+        os.umask(umask)
+        stage.chmod(0o777 & ~umask)  # as a folder made with mkdir would be, not mkdtemp's owner-only mode
+        build(stage, rendered, values["SUBSPACE_COMMIT"], args.no_git)
+        if target.exists():
+            target.rmdir()  # empty, as checked above
+        os.replace(stage, target)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
     print(f"""
 Created {target}. Nothing is committed or pushed. Next:
   1. Review it, add your fleet's definition (fleet/), hosting code and runbooks, without secrets.

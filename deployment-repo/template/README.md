@@ -35,13 +35,19 @@ private network that reaches the API and IRC):
 ```sh
 python3 scripts/agent-kit.py setup --name "Your Name" --dry-run
 python3 scripts/agent-kit.py setup --name "Your Name"
-python3 ~/.subspace/bin/subspace_token.py --login     # once, in your browser
-python3 ~/.subspace/bin/subspace_token.py --me        # check who you are
+python3 agent-kit/bin/subspace_token.py --config agent-kit/agent.json --login   # once, in your browser
+python3 agent-kit/bin/subspace_token.py --config agent-kit/agent.json --me      # check who you are
 ```
 
 Then start Claude Code here and allow the `subspace` server from `.mcp.json`
 when it asks; in Codex, trust this repository when it asks. Sessions that
 were already running see the skills and the server after they restart.
+
+Agents here use this repository's own helpers and settings (`agent-kit/`,
+through `--config`), so they act on this deployment even when your computer
+is also set up for another one. `setup` keeps a `~/.subspace/agent.json` or
+a helper in `~/.subspace/bin/` that differs from this repository's, and says
+how it differs; `--force` replaces them, keeping a copy of each.
 
 ## Updating
 
@@ -49,7 +55,7 @@ Bump the pins, sync, review, deploy:
 
 ```sh
 python3 scripts/update-pins.py --dry-run     # what the latest releases are
-python3 scripts/update-pins.py               # move both pins (or --subspace TAG|SHA, --stargate TAG|SHA)
+python3 scripts/update-pins.py               # move both pins, or only the one named: --subspace TAG|SHA, --stargate TAG|SHA
 python3 scripts/agent-kit.py sync            # copy the skills and helpers at the new Subspace pin
 ```
 

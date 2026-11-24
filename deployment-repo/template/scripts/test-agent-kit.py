@@ -104,14 +104,37 @@ class AgentKitTest(unittest.TestCase):
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE((self.home / "agent.json").stat().st_mode), 0o600)
             self.assertEqual(stat.S_IMODE((self.home / "bin/subspace_irc.py").stat().st_mode), 0o755)
-        self.assertIn("already set up", self.run_kit("setup")[1])
-        (self.home / "agent.json").write_text(json.dumps({**SETTINGS, "api_url": "https://other.example.com"}))
-        self.assertIn("set up for another API", str(self.run_kit("setup")[0]))
-        self.assertEqual(self.run_kit("setup", "--force")[0], 0)
-        self.assertEqual(json.loads((self.home / "agent.json").read_text()), SETTINGS)
-        self.assertEqual(len(list(self.home.glob("agent.json.bak-*"))), 1)
+        code, output, _ = self.run_kit("setup")
+        self.assertIn("already set up", output)
+        self.assertIn("--config agent-kit/agent.json --login", output)
         self.assertIn("pass --name", str(self.run_kit("setup", "--name", " ")[0]))
 
+    def test_setup_keeps_another_apis_settings_and_differing_helpers_unless_forced(self):
+        self.run_kit("sync", "--source", str(self.upstream))
+        self.run_kit("setup", "--name", "George")
+        other = {**SETTINGS, "api_url": "https://other.example.com"}
+        (self.home / "agent.json").write_text(json.dumps(other))
+        newer = self.home / "bin/subspace_irc.py"
+        newer.write_text("a newer helper\nfrom another deployment\n")
+        code, output, _ = self.run_kit("setup", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn(f"would keep: {self.home / 'agent.json'}, which is set up for another API or sign-in: "
+                      "api_url 'https://other.example.com' there, 'https://api.example.com' here", output)
+        self.assertIn(f"would keep: {newer}, which differs from this repository's copy by +1 -2 lines; see: diff -u",
+                      output)
+        code, output, _ = self.run_kit("setup")
+        self.assertEqual(code, 0)
+        self.assertIn(f"kept: {newer}", output)
+        self.assertIn("Agents in this repository use its own helpers and settings", output)
+        self.assertEqual(json.loads((self.home / "agent.json").read_text()), other)
+        self.assertEqual(newer.read_text(), "a newer helper\nfrom another deployment\n")
+        self.assertIn("would replace helper", self.run_kit("setup", "--force", "--dry-run")[1])
+        self.assertEqual(self.run_kit("setup", "--force")[0], 0)
+        self.assertEqual(json.loads((self.home / "agent.json").read_text()), SETTINGS)
+        self.assertEqual(newer.read_text(), "upstream agent-skills/bin/subspace_irc.py\n")
+        self.assertEqual(len(list(self.home.glob("agent.json.bak-*"))), 1)
+        self.assertEqual([path.read_text() for path in (self.home / "bin").glob("subspace_irc.py.bak-*")],
+                         ["a newer helper\nfrom another deployment\n"])
 
 if __name__ == "__main__":
     unittest.main()
