@@ -2766,7 +2766,11 @@ def main(args):
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
             print(f"Standard IRC channels: {' '.join(cfg['irc']['channels'])} (Starbase, fleet command, then one "
                   "ship channel per captain)." + ("" if cfg["irc"]["mode"] == "local" else
-                                                   " Register them on the IRC server before installing."))
+                                                   " On a remote server the officers create them by joining, so they "
+                                                   "need no registration; registering them with ChanServ is optional "
+                                                   "and keeps their topic and modes when they empty. Only a server "
+                                                   "that lets operators alone create channels needs them created "
+                                                   "first."))
             if dispatch := cfg["agentDispatch"]:
                 print(f"Agent dispatch is on: the rear admiral checks {cfg['api']['url']} every "
                       f"{dispatch['pollIntervalSeconds']} seconds as its own API agent and offers issues in "

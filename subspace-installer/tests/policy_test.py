@@ -1487,6 +1487,9 @@ class RepositoryAccessTests(unittest.TestCase):
         self.assertFalse((self.work / "stage/fleet.json").exists())
         text, _ = self.main("plan", lambda url: True)
         self.assertNotIn("WARNING", text)
+        # On a remote IRC server the officers create the standard channels by joining: nothing to register first.
+        self.assertIn("the officers create them by joining, so they need no registration", text)
+        self.assertNotIn("Register them on the IRC server", text)
         # subspace-setup's check before it changes the API refuses as the real run would.
         with patch.dict("os.environ", {"SUBSPACE_FLEET_CHECK": "strict"}), \
                 self.assertRaisesRegex(Invalid, "Git cannot read library"):

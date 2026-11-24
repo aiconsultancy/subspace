@@ -61,9 +61,12 @@ captain, such as `example-atlas` and `example-orion`. They sign in with a
 certificate each, whose fingerprints the installer prints for you to bind to
 the accounts ([IRC sign-in](#irc-sign-in)); with `"auth": "password"` under
 `irc`, supply their passwords in `ircPasswords` instead. Crew have no IRC accounts. Add trusted human
-SASL accounts to `irc.allowedAccounts`. Ask the IRC operator to register the
-fleet's [standard channels](#channels) (`--dry-run` lists them) and any
-initiative channels, and grant access to the appropriate accounts. For local IRC,
+SASL accounts to `irc.allowedAccounts`. The officers create the fleet's
+[standard channels](#channels) (`--dry-run` lists them) by joining them, so
+they need no registration; registering them with ChanServ is optional, keeps
+their topic and modes when they empty, and lets the IRC operator grant access
+to the appropriate accounts. Only a server that lets operators alone create
+channels needs them created first. For local IRC,
 [pin a revision that contains the Compose project](#local-irc-and-tls).
 
 The installer validates JSON, installs base tooling and verified release
@@ -418,8 +421,8 @@ desktop recognises them by name:
 
 The installer always creates them: it seeds them on local Ergo, puts them in
 the bundle for a [shared server](../INSTALL.md#one-fleet-or-several-shared-irc),
-and prints them in `--dry-run` so an operator can register them on a server
-it does not manage. Their names are fixed. `irc.starbaseChannel`,
+and prints them in `--dry-run`. On a server it does not manage, the officers
+create them by joining; registering them there is optional. Their names are fixed. `irc.starbaseChannel`,
 `irc.commandChannel` and a member's `channel` may be left out or set to the
 standard name; any other value is refused, as is a slug or captain ID that
 makes a name longer than 50 bytes (IRC and Stargate's limit) or a captain ID
