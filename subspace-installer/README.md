@@ -993,11 +993,23 @@ the run ends.
   and looking for `src/subspace/bridge.ts`; the fleet installer refuses its
   pinned release and stops before rendering unless the checked-out Stargate
   has that file.
-- **Checks.** Every run, the dry run included, checks that the API answers
-  `GET /api/v1/health`, and checks the token by posting an empty enrolment:
-  the API refuses that for its body (400) only once the token is valid, which
-  means the token's fleet exists, and it uses none of the token's uses. An
-  expired, revoked or unknown token is reported with the API's reason.
+- **Checks.** Before setup saves anything, every run, the dry run included,
+  checks that the API answers `GET /health` and, when the run is given a
+  token, checks it by posting an empty enrolment: the API refuses that for
+  its body (400) only once the token is valid, which means the token's fleet
+  exists, and it uses none of the token's uses. An expired, revoked or
+  unknown token is reported with the API's reason. Neither request follows a
+  redirect: the token goes only to the origin given. A refused run, a refused
+  `--switch-to-hosted-api` included, leaves the fleet's answers and secrets
+  as they were.
+- **Later runs.** A run without `--api-enrolment-token-file` checks no
+  token: tokens last an hour by default and a week at most, and officers
+  already enrolled need none. Stargate reads the stored token only to enrol
+  an officer with no enrolment yet, in the background, so an expired one
+  only logs that officer's failure and never stops the gateway. The stored
+  token stays (root-only, and the gateway user's copy mode `0600`) until a
+  new one replaces it. To add an officer or replace a key, ask for a fresh
+  token and pass it.
 - **Names.** Officers enrol under the names [registration](#subspace-api-registration)
   uses: the rear admiral by its name, a captain by its IRC account with its
   name as its ship, and each with its model and IRC nick. An agent of the

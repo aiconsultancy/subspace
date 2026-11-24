@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 import fleet_setup  # noqa: E402
 import irc_accounts  # noqa: E402
+import roles  # noqa: E402
 import runtime  # noqa: E402
 from runtime import irc_officer, validate  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
@@ -1434,12 +1435,24 @@ class HostedApi(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    redirect = None  # A Location to answer every request with, as a misconfigured proxy might.
+
     def do_GET(self):
-        self.reply(200, {"status": "ok"}) if self.path == "/api/v1/health" else self.reply(404, {})
+        if self.redirect:
+            return self.moved()
+        self.reply(200, {"status": "ok"}) if self.path == "/health" else self.reply(404, {})
+
+    def moved(self):
+        self.send_response(302)
+        self.send_header("Location", self.redirect)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", 0)))
         self.server.enrolments += 1
+        if self.redirect:
+            return self.moved()
         if self.headers.get("Authorization") != f"Bearer {self.token}":
             self.reply(401, {"detail": "A valid enrolment token is required."})
         else:
@@ -1513,10 +1526,13 @@ class HostedApiSetupTests(unittest.TestCase):
                                "--api-enrolment-token-file", str(self.token_file))
         self.assertEqual(fleet_setup.enrolment_token(args), HostedApi.token)
         stored = fleet_setup.INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN
+        self.assertFalse(stored.exists(), "nothing is kept before the run's checks pass")
+        fleet_setup.store_enrolment_token(HostedApi.token)
         self.assertEqual((stored.read_text(), stored.stat().st_mode & 0o777), (HostedApi.token + "\n", 0o600))
-        # A later run without the option keeps it; a first run without any token stops.
+        # A later run without the option checks no token: the stored one may have expired, and enrolled officers
+        # need none. A first run without any token stops.
         _, later = self.answers("--api-url", "https://subspace.example.com")
-        self.assertEqual(fleet_setup.enrolment_token(later), HostedApi.token)
+        self.assertIsNone(fleet_setup.enrolment_token(later))
         stored.unlink()
         with self.assertRaisesRegex(fleet_setup.SetupError, "needs the fleet's enrolment token"):
             fleet_setup.enrolment_token(later)
@@ -1542,8 +1558,35 @@ class HostedApiSetupTests(unittest.TestCase):
             fleet_setup.hosted_checks(answers, "senr1." + "C" * 64)
         self.assertNotIn("senr1.", str(refused.exception))
         self.assertEqual(server.enrolments, 2)
-        with self.assertRaisesRegex(fleet_setup.SetupError, "does not answer GET /api/v1/health"):
+        # Without a token given on this run (a rerun, its stored token maybe expired) only health is checked.
+        output.clear()
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            fleet_setup.hosted_checks(answers, None)
+        self.assertEqual(server.enrolments, 2)
+        self.assertIn("Officers already enrolled keep working without one; a new officer", "\n".join(output))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "does not answer GET /health"):
             fleet_setup.hosted_checks({"apiUrl": "http://127.0.0.1:9"}, HostedApi.token)
+        # A redirect is never followed with the token, and the message names where it pointed.
+        HostedApi.redirect = "https://elsewhere.example.net/api/v1/agents/enrol"
+        self.addCleanup(setattr, HostedApi, "redirect", None)
+        for token in (None, HostedApi.token):
+            with self.subTest(token=bool(token)), \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "redirect \\(302\\) to elsewhere.example.net"):
+                fleet_setup.hosted_checks(answers, token)
+
+    def test_the_hosted_paths_are_the_apis_own(self):
+        # The health check, the enrolment check and the REST examples in the officers' instructions name paths
+        # the API serves, as its OpenAPI document lists them.
+        document = json.loads((Path(fleet_setup.HERE).parents[1] / "subspace-api/openapi.json").read_text())
+        for path, method in (("/health", "get"), ("/api/v1/agents/enrol", "post"), ("/api/v1/me", "get"),
+                             ("/api/v1/issues", "post"), ("/api/v1/fleets/{reference}/enrolment-tokens", "post")):
+            self.assertIn(method, document["paths"].get(path, {}), path)
+        source = Path(fleet_setup.__file__).read_text()
+        self.assertIn('f"{origin}/health"', source)
+        self.assertIn('f"{origin}/api/v1/agents/enrol"', source)
+        guidance = roles.REQUEST_GUIDANCE
+        self.assertIn("/api/v1/me", guidance)
+        self.assertIn("/api/v1/issues", guidance)
 
     def test_stargate_is_checked_for_subspace_agents_at_the_chosen_commit(self):
         source = self.root / "stargate"

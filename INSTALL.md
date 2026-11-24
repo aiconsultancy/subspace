@@ -478,7 +478,8 @@ whichever ports sshd listens on), and
 For a hosted API (question 16), add `--api-url URL --api-enrolment-token-file
 FILE --stargate-ref SHA` instead; the dry run checks that the API answers,
 that the token is valid (without using it) and that the Stargate commit has
-`subspaceAgents`.
+`subspaceAgents`. Later runs need no token unless an officer is added or a key
+replaced; then ask the API's administrator for a fresh one.
 
 For an existing PostgreSQL (question 15), add `--database-url-file FILE`
 (`--database-ca-file FILE` for a private CA, `--migrate` to apply missing

@@ -45,7 +45,7 @@ import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
-from urllib.request import ProxyHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
 
 HERE = Path(__file__).resolve().parent
 PAYLOAD = HERE.parents[1]
@@ -952,43 +952,64 @@ def hosted_api(args, answers, saved):
 
 
 def enrolment_token(args):
-    """Put the fleet's enrolment token, read from a root-only file, in the fleet's secrets directory, where the
-    fleet installer takes it from. Required until the fleet has one. Never printed."""
+    """The enrolment token given on this run, read from a root-only file and checked for its form, or None.
+    Nothing is written here: store_enrolment_token keeps it once the run's checks have passed. Never printed."""
+    stored = INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN
+    if not args.api_enrolment_token_file:
+        require(stored.is_file() or (FLEET_ETC / "extra-secrets.json").is_file(),
+                "The first run with --api-url needs the fleet's enrolment token: pass --api-enrolment-token-file "
+                "FILE (an administrator of the hosted API issues it for this fleet).")
+        return None
+    token = password_file(args.api_enrolment_token_file, "--api-enrolment-token-file", "enrolment token")
+    require(re.fullmatch(runtime.ENROLMENT_TOKEN_TEXT, token),
+            f"The enrolment token file {args.api_enrolment_token_file} must hold the fleet's enrolment token "
+            "(senr1.…) that the hosted API's administrator issued.")
+    return token
+
+
+def store_enrolment_token(token):
+    """Keep a token given on this run in the fleet's secrets directory, where the fleet installer takes it from.
+    An earlier token stays until a new one replaces it: Stargate reads it only to enrol an officer that has no
+    enrolment yet, so an expired one never troubles officers already enrolled."""
     destination = INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN
-    if args.api_enrolment_token_file:
-        token = password_file(args.api_enrolment_token_file, "--api-enrolment-token-file", "enrolment token")
-        require(re.fullmatch(runtime.ENROLMENT_TOKEN_TEXT, token),
-                f"The enrolment token file {args.api_enrolment_token_file} must hold the fleet's enrolment token "
-                "(senr1.…) that the hosted API's administrator issued.")
-        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(destination.parent, 0o700)
-        write_private(destination, token + "\n")
-    require(destination.is_file() or (FLEET_ETC / "extra-secrets.json").is_file(),
-            "The first run with --api-url needs the fleet's enrolment token: pass --api-enrolment-token-file FILE "
-            "(an administrator of the hosted API issues it for this fleet).")
-    return destination.read_text().strip() if destination.is_file() else None
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(destination.parent, 0o700)
+    write_private(destination, token + "\n")
+
+
+class NoRedirect(HTTPRedirectHandler):
+    """Refuse a redirect rather than follow it: urllib would send the enrolment token on to the new host."""
+
+    def redirect_request(self, request, _fp, code, _message, headers, _new_url):
+        target = urlsplit(headers.get("Location", "")).hostname or "an unnamed host"
+        raise SetupError(f"The hosted Subspace API at {urlsplit(request.full_url).scheme}://"
+                         f"{urlsplit(request.full_url).netloc} answered with a redirect ({code}) to {target}. Setup "
+                         "does not follow it with the enrolment token: pass the API's own origin with --api-url.")
 
 
 def hosted_checks(answers, token):
-    """The dry run's checks of a hosted API: that it answers, and that the enrolment token is valid, which means
-    its fleet exists. An enrolment request with an empty body is refused for its body (400) only once the token is
-    accepted, and uses nothing."""
+    """Checks of a hosted API on every run: that it answers (GET /health), and that a token given on this run is
+    valid, which means its fleet exists. An enrolment request with an empty body is refused for its body (400)
+    only once the token is accepted, and uses nothing. No redirect is followed."""
     origin = answers["apiUrl"]
+    opener = build_opener(NoRedirect)
     try:
-        with urlopen(Request(f"{origin}/api/v1/health", headers={"Accept": "application/json"}), timeout=15) as reply:
+        with opener.open(Request(f"{origin}/health", headers={"Accept": "application/json"}), timeout=15) as reply:
             healthy = json.load(reply).get("status") == "ok"
     except (HTTPError, URLError, OSError, ValueError):
         healthy = False
-    require(healthy, f"The hosted Subspace API at {origin} does not answer GET /api/v1/health. Check the URL and "
-            "that this VM reaches it (outbound HTTPS, and any private network or access proxy).")
+    require(healthy, f"The hosted Subspace API at {origin} does not answer GET /health. Check the URL and that this "
+            "VM reaches it (outbound HTTPS, and any private network or access proxy).")
     say(f"hosted API: {origin} answers")
     if not token:
-        say("hosted API: no enrolment token here; the installed one is kept")
+        say("hosted API: no enrolment token given on this run, so none is checked. Officers already enrolled keep "
+            "working without one; a new officer, or one whose key is replaced, needs a fresh token "
+            "(--api-enrolment-token-file).")
         return
     request = Request(f"{origin}/api/v1/agents/enrol", data=b"{}", method="POST", headers={
         "Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"})
     try:
-        with urlopen(request, timeout=15) as reply:
+        with opener.open(request, timeout=15) as reply:
             status, detail = reply.status, ""
     except HTTPError as error:
         status = error.code
@@ -1786,14 +1807,6 @@ def configure(args):
             "This VM's API already keeps its tracker in its own PostgreSQL, which setup does not move. To use an "
             "existing PostgreSQL, restore a dump of that database there and set up a fresh VM with "
             "--database-url-file (installer README, 'An existing PostgreSQL').")
-    save_answers(answers)
-    # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
-    secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
-    members = roster(answers, rear, captains)
-    local_irc = answers["irc"] == "local"
-    config_path = INPUTS / "fleet.json"
-    secrets_path = INPUTS / "fleet.secrets.json"
-
     if answers.get("stargateRef"):
         stargate_tag, stargate_ref = "pinned", answers["stargateRef"]
     else:
@@ -1801,6 +1814,8 @@ def configure(args):
     say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
     enrolment = None
     if answers.get("apiUrl"):
+        # Every check of the hosted API comes before setup saves anything, so a refused run, a switch from an
+        # API on this VM included, leaves the fleet's answers and secrets exactly as they were.
         require(stargate_agents(stargate_ref),
                 f"A hosted API (--api-url) needs a Stargate with its subspaceAgents section, from commit "
                 f"{runtime.SUBSPACE_AGENTS_COMMIT[:12]} on, and Stargate {stargate_tag} ({stargate_ref[:12]}) has not "
@@ -1808,6 +1823,15 @@ def configure(args):
         say(f"Stargate {stargate_ref[:12]} has subspaceAgents ({runtime.SUBSPACE_AGENTS_FILE})")
         enrolment = enrolment_token(args)
         hosted_checks(answers, enrolment)
+    save_answers(answers)
+    if enrolment:
+        store_enrolment_token(enrolment)
+    # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
+    secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
+    members = roster(answers, rear, captains)
+    local_irc = answers["irc"] == "local"
+    config_path = INPUTS / "fleet.json"
+    secrets_path = INPUTS / "fleet.secrets.json"
 
     dispatch_token = ""
 
