@@ -21,7 +21,9 @@ const WIDTH: f32 = 560.;
 const HEIGHT: f32 = 260.;
 
 /// Writes `title` and `detail` to standard error and shows them in a window
-/// titled `app_name` until the person quits. Returns the failure exit code.
+/// titled `app_name` until the person quits or closes it. Returns the
+/// failure exit code where the event loop returns (Linux and Windows); on
+/// macOS quitting ends the process from inside the loop, with exit code 0.
 // qual:api - a product calls it when its own start-up checks fail.
 pub fn report_startup_failure(app_name: &str, title: &str, detail: &str) -> ExitCode {
     eprintln!("{title}\n{detail}");
@@ -46,6 +48,9 @@ pub fn report_startup_failure(app_name: &str, title: &str, detail: &str) -> Exit
         if opened.is_err() {
             cx.quit();
         }
+        // Closing the only window quits too, rather than leaving a process
+        // with no window in the Dock.
+        cx.on_window_closed(|cx, _| cx.quit()).detach();
         cx.activate(true);
     });
     ExitCode::FAILURE

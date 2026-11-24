@@ -16,7 +16,11 @@ the Dock or the Start menu: the app simply does not open.
   (`host/app/src/startup_failure.rs`) prints the title and detail to
   standard error, then opens one centred window titled `app_name` with the
   title, the detail and **Quit**, built from the shared dialog footer and
-  button. Quitting returns the failure exit code.
+  button. **Quit** or closing the window ends the app. On Linux and Windows
+  the event loop then returns and the function returns the failure exit
+  code; on macOS quitting ends the process from inside the loop with exit
+  code 0, so a script cannot rely on the exit code there and should read
+  standard error.
 - It is additive: no existing type or function changes. The Framework names
   no setting; the app writes the words.
 
@@ -24,7 +28,9 @@ the Dock or the Start menu: the app simply does not open.
 
 - Test: `startup_failure::tests` renders the window and finds its Quit
   button.
-- Not verified: the window on Windows and Linux.
+- Not verified: the window on Windows and Linux, and closing it from the
+  title bar on any system (the close hook is not reachable from the
+  headless test).
 
 ## Tasks
 
