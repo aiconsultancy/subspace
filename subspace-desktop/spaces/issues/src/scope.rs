@@ -1,6 +1,10 @@
 //! Pure presentation of connection, loading and failed-read states.
 use crate::listing::{Failure, Listing, Status, updated};
-pub(crate) const SIGN_IN_MESSAGE: &str = "Sign in under Settings › Account, then try again.";
+/// What to do about a sign-in the API asked for: sign in under Settings ›
+/// Account, or, when this run cannot sign in, why.
+pub(crate) fn sign_in_message() -> &'static str {
+    subspace_api_client::sign_in_state().1
+}
 /// The words for a list that couldn't be reached, naming the service.
 pub(crate) fn network_message() -> String {
     subspace_api_client::unreachable_message()
@@ -123,7 +127,10 @@ pub(crate) fn screen_text(screen: &Screen, _profile: &str) -> ScreenText {
     let Screen::Failed(failure) = screen;
     let service = subspace_api_client::service_name();
     let (title, message) = match failure {
-        Failure::Edge => ("Sign-in required", SIGN_IN_MESSAGE.to_owned()),
+        Failure::Edge => {
+            let (title, message) = subspace_api_client::sign_in_state();
+            (title, message.to_owned())
+        }
         Failure::Forbidden => (
             "Access denied",
             format!("{service} refused access. Try again after access is restored."),
@@ -164,7 +171,9 @@ pub(crate) fn offline_text(read_at: Instant, now: Instant) -> (String, String) {
 pub(crate) fn scope_line(profile: &str, access: &Access) -> String {
     match access {
         Access::Ready { display_name } => format!("{profile} · Signed in as {display_name}"),
-        Access::Failed(Failure::Edge) => format!("{profile} · Sign-in required"),
+        Access::Failed(Failure::Edge) => {
+            format!("{profile} · {}", subspace_api_client::sign_in_state().0)
+        }
         Access::Failed(Failure::Organisation) => {
             format!("{profile} · {}", NoOrganisation::current().title())
         }

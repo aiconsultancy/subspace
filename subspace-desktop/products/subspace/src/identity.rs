@@ -9,14 +9,13 @@
 
 use crate::launch::{self, Launch, Stamped};
 use crate::settings::ApiBackend;
+use crate::sign_in::{self, API_RESOURCE};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use subspace_framework::account::{Error, Provider};
 use subspace_framework::shell::{AccountRegistration, AccountTokenSource, account_session};
 
 const MINIMUM_API_TOKEN_VALIDITY: Duration = Duration::from_secs(120);
-/// The resource name the app registers for Subspace API tokens.
-const API_RESOURCE: &str = "subspace-api";
 /// The resource name a NETT build registers for NETT API tokens.
 const NETT_RESOURCE: &str = "nett-api";
 const ORGANIZATION_NAME: &str = env!("SUBSPACE_BUILD_ORGANIZATION_NAME");
@@ -78,9 +77,11 @@ pub(crate) fn registration() -> Option<AccountRegistration> {
 /// with no API backend, so the shell shows no Account page and no sign-in.
 /// With one, the app needs it: the shell asks for sign-in over the window
 /// while there is no session, unless the provider signs in by itself, as
-/// `dev` does.
+/// `dev` does. A launch that cannot sign in at all, such as development
+/// sign-in with an API on another computer, offers none either: no Account
+/// page, no sign-in cover, and the Spaces say why.
 fn registration_for(launch: &Launch) -> Option<AccountRegistration> {
-    if launch.provider.is_empty() {
+    if launch.provider.is_empty() || sign_in::unavailable(launch).is_some() {
         return None;
     }
     Some(if launch.backend == ApiBackend::Nett {
@@ -105,16 +106,14 @@ fn required_account(
 
 /// WorkOS device authorisation with the environment's one accepted client.
 fn nett_provider(namespace: &str) -> Option<Arc<dyn Provider>> {
-    use subspace_framework::workos_auth::{Config, SessionManager};
+    use subspace_framework::workos_auth::SessionManager;
     let built = (|| -> Result<Arc<dyn Provider>, Error> {
         let launch = LAUNCH.get().ok_or(Error::Unconfigured)?;
-        let mut config = Config::new(&launch.workos_client_id)?
+        let config = sign_in::workos_config(launch)
+            .map_err(|_| Error::Unconfigured)?
             .with_organization(ORGANIZATION_NAME)
             .with_resource(NETT_RESOURCE)?
             .with_device_authorization();
-        if !launch.workos_api_url.is_empty() {
-            config = config.with_api_url(&launch.workos_api_url)?;
-        }
         let credentials = nett_credentials(namespace, &launch.nett_api_url);
         Ok(Arc::new(SessionManager::system(config, &credentials)))
     })();
@@ -169,35 +168,22 @@ fn dev(launch: &Launch) -> Result<Arc<dyn Provider>, Error> {
 }
 
 fn workos(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> {
-    use subspace_framework::workos_auth::{Config, SessionManager};
-    let mut config = Config::new(&launch.workos_client_id)?
+    let config = sign_in::workos_config(launch)
+        .map_err(|_| Error::Unconfigured)?
         .with_organization(ORGANIZATION_NAME)
         .with_resource(API_RESOURCE)?;
-    if !launch.workos_api_url.is_empty() {
-        config = config.with_api_url(&launch.workos_api_url)?;
-    }
-    if !launch.workos_redirect_port.is_empty() {
-        config = config.with_redirect_port(
-            launch
-                .workos_redirect_port
-                .parse()
-                .map_err(|_| Error::Unconfigured)?,
-        );
-    }
-    Ok(Arc::new(SessionManager::system(config, namespace)))
+    Ok(Arc::new(
+        subspace_framework::workos_auth::SessionManager::system(config, namespace),
+    ))
 }
 
 fn entra(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> {
-    use subspace_framework::entra_auth::{Config, SessionManager};
-    let mut config = Config::new(&launch.entra_tenant_id, &launch.entra_client_id)?
+    let config = sign_in::entra_config(launch)
+        .map_err(|_| Error::Unconfigured)?
         .with_organization(ORGANIZATION_NAME);
-    if !launch.entra_authority.is_empty() {
-        config = config.with_authority(&launch.entra_authority)?;
-    }
-    if !launch.entra_api_scope.is_empty() {
-        config = config.with_scope(API_RESOURCE, &launch.entra_api_scope)?;
-    }
-    Ok(Arc::new(SessionManager::system(config, namespace)))
+    Ok(Arc::new(
+        subspace_framework::entra_auth::SessionManager::system(config, namespace),
+    ))
 }
 
 fn configure_subspace_api(source: AccountTokenSource) {
@@ -341,6 +327,14 @@ mod tests {
         assert!(account.is_some_and(|account| account.required));
         let off = vec![("SUBSPACE_IDENTITY_PROVIDER".to_owned(), String::new())];
         assert!(registration_for(&resolve(&dev, off).unwrap()).is_none());
+        let hosted = vec![(
+            "SUBSPACE_API_URL".to_owned(),
+            "https://api.example.com".to_owned(),
+        )];
+        assert!(
+            registration_for(&resolve(&dev, hosted).unwrap()).is_none(),
+            "development sign-in on a hosted API offers no account that cannot sign in"
+        );
     }
 
     /// Set for the child process that installs the stamped launch.

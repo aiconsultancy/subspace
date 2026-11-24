@@ -28,7 +28,8 @@ mod writing;
 pub use activity::ActivityQuery;
 pub use backend::{
     Backend, Capabilities, backend, capabilities, configure_no_backend, has_backend,
-    may_serve_initiative_channels, service_name, unreachable_message,
+    may_serve_initiative_channels, service_name, set_sign_in_unavailable, sign_in_state,
+    sign_in_unavailable, unreachable_message,
 };
 pub use dev_sign_in::{DevSignIn, DevUser};
 pub use fixture::fixture_from_env;

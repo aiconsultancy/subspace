@@ -77,7 +77,7 @@ fn empty(issue: &IssueSnapshot, tokens: &Tokens, cx: &mut Context<Issues>) -> Di
                 "issue-decisions-error-hint",
                 match error {
                     ReadError::Network => "Check your connection and retry.".to_owned(),
-                    ReadError::SignInNeeded => crate::scope::SIGN_IN_MESSAGE.to_owned(),
+                    ReadError::SignInNeeded => crate::scope::sign_in_message().to_owned(),
                     _ => crate::scope::read_error_message(),
                 },
             ))

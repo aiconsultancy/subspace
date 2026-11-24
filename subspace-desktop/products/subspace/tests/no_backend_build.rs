@@ -17,6 +17,10 @@ mod launch;
 #[path = "../src/connection.rs"]
 mod connection;
 
+#[allow(dead_code)]
+#[path = "../src/sign_in.rs"]
+mod sign_in;
+
 use gpui_kit::TestAppContext;
 use subspace_api_client::initiatives::Catalog;
 use subspace_api_client::{Capabilities, Client};

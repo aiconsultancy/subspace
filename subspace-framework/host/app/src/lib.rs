@@ -48,7 +48,7 @@ pub use registry::reload_configured_boards;
 pub use registry::{BoardRegistration, ConfiguredBoards};
 pub use search_runtime::RerankerFactory;
 pub use settings::extensions::SettingsExtension;
-pub use startup::{ProductBuild, launch};
+pub use startup::{ProductBuild, launch, reads_configuration};
 pub use startup_failure::report_startup_failure;
 pub use theme::record_new_install_theme;
 

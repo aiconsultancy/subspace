@@ -106,7 +106,7 @@ esac
 case "$no_api" in
 1) asset_stem="$asset_stem-NoAPI"; asset_prefix="$asset_prefix-no-api" ;;
 '' | 0) ;;
-*) echo "SUBSPACE_NO_API must be 1 or empty" >&2; exit 2 ;;
+*) echo "SUBSPACE_NO_API must be 1, 0 or empty" >&2; exit 2 ;;
 esac
 
 validate_version() {

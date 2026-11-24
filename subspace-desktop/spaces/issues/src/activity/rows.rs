@@ -151,9 +151,10 @@ fn section_notice(
         Some(list) if list.error() == Some(&ReadError::Network) => {
             (network.as_str(), Intent::Page(section, false))
         }
-        Some(list) if list.error() == Some(&ReadError::SignInNeeded) => {
-            (crate::scope::SIGN_IN_MESSAGE, Intent::Page(section, false))
-        }
+        Some(list) if list.error() == Some(&ReadError::SignInNeeded) => (
+            crate::scope::sign_in_message(),
+            Intent::Page(section, false),
+        ),
         Some(list) if list.error().is_some() => (
             "Couldn't load this section. Retry",
             Intent::Page(section, false),

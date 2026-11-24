@@ -1,4 +1,4 @@
-use super::{CONNECTION_NOTE, IssuesSettings};
+use super::{IssuesSettings, connection_note};
 use gpui_kit::component::v_flex;
 use gpui_kit::{
     Context, InteractiveElement as _, IntoElement, ParentElement as _, Render,
@@ -19,7 +19,7 @@ impl Render for IssuesSettings {
                 self.address.clone(),
                 MenuChat::Off,
             ))
-            .child(fields::note_with(&tokens, CONNECTION_NOTE, MenuChat::Off))
+            .child(fields::note_with(&tokens, connection_note(), MenuChat::Off))
             .child(
                 div()
                     .id("issues-connection-state")

@@ -16,16 +16,30 @@ the Dock or the Start menu: the app simply does not open.
   (`host/app/src/startup_failure.rs`) prints the title and detail to
   standard error, then opens one centred window titled `app_name` with the
   title, the detail and **Quit**, built from the shared dialog footer and
-  button. Quitting returns the failure exit code.
+  button. **Quit** or closing the window ends the app. On Linux and Windows
+  the event loop then returns and the function returns the failure exit
+  code; on macOS quitting ends the process from inside the loop with exit
+  code 0, so a script cannot rely on the exit code there and should read
+  standard error.
+- `shell::reads_configuration(descriptor, args) -> bool`
+  (`host/app/src/startup.rs`) says whether the arguments start a route that
+  reads the app's configuration. The product metadata, About, `--version`
+  and `upgrade` read none, so an app runs its own start-up checks only when
+  it is true, and a broken setting never blocks an upgrade.
 - It is additive: no existing type or function changes. The Framework names
   no setting; the app writes the words.
+- Released: `report_startup_failure` in 0.4.0. Quitting when the window
+  closes and `reads_configuration` come in the release after it.
 
 ## Delivery
 
-- Test: `startup_failure::tests` renders the window and finds its Quit
-  button.
-- Not verified: the window on Windows and Linux.
+- Tests: `startup_failure::tests` renders the window and finds its Quit
+  button; `startup::tests` lists the routes that read the configuration.
+- Not verified: the window on Windows and Linux, and closing it from the
+  title bar on any system (the close hook is not reachable from the
+  headless test).
 
 ## Tasks
 
 - [x] The function, its view and test, and the README note.
+- [x] Quit when the window closes; `reads_configuration` and its test.

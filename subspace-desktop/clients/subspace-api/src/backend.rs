@@ -88,6 +88,36 @@ fn unreachable_at(origin: Option<&url::Url>, service: &str) -> String {
     }
 }
 
+static SIGN_IN_UNAVAILABLE: OnceLock<String> = OnceLock::new();
+
+/// Records, once and before any Space starts, why this run cannot sign in
+/// at all, such as development sign-in set to an API on another computer.
+// qual:api — the product calls it at startup, from a launch module its tests also compile.
+pub fn set_sign_in_unavailable(reason: String) {
+    let _ = SIGN_IN_UNAVAILABLE.set(reason);
+}
+
+/// What a Space says when the API wants a sign-in: the title and what to do.
+pub fn sign_in_state() -> (&'static str, &'static str) {
+    sign_in_state_for(sign_in_unavailable())
+}
+
+/// Why this run cannot sign in, when the product recorded a reason.
+pub fn sign_in_unavailable() -> Option<&'static str> {
+    SIGN_IN_UNAVAILABLE.get().map(String::as_str)
+}
+
+/// [`sign_in_state`] when sign-in is unavailable for `reason`.
+fn sign_in_state_for(reason: Option<&'static str>) -> (&'static str, &'static str) {
+    match reason {
+        Some(reason) => ("Sign-in unavailable", reason),
+        None => (
+            "Sign-in required",
+            "Sign in under Settings › Account, then try again.",
+        ),
+    }
+}
+
 /// The service's name in messages and the Issues header.
 pub fn service_name() -> &'static str {
     match backend() {
@@ -411,6 +441,18 @@ mod tests {
         assert_eq!(
             super::unreachable_at(Some(&local), "Subspace API"),
             "No API reachable at http://127.0.0.1:3000. Start it, or set the app's API address in connection.json, then try again."
+        );
+        assert_eq!(
+            super::sign_in_state_for(None).0,
+            "Sign-in required",
+            "without a reason the Account page is the way in"
+        );
+        assert_eq!(
+            super::sign_in_state_for(Some("Development sign-in reaches only this computer.")),
+            (
+                "Sign-in unavailable",
+                "Development sign-in reaches only this computer."
+            )
         );
         assert_eq!(
             super::unreachable_at(None, "Subspace API"),

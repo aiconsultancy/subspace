@@ -244,7 +244,10 @@ gpui-pre-platform = { opt-level = 3 }
   `shell::report_startup_failure(app_name, title, detail)`: it prints the
   problem and shows one small window with it and **Quit**, so someone who
   opened the app from the Finder, the Dock or the Start menu sees why it did
-  not start.
+  not start. Closing the window quits too.
+  `shell::reads_configuration(descriptor, args)` is false for About,
+  `--version` and `upgrade`, which read no settings, so the app can skip
+  its checks for them.
 
 ## Accounts
 

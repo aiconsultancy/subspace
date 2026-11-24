@@ -43,6 +43,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $Channel = $Channel.ToLowerInvariant()
+if ($env:SUBSPACE_NO_API -notin @($null, '', '0', '1')) {
+    throw 'SUBSPACE_NO_API must be 1, 0 or empty'
+}
 $productSettings = @{
     TagPrefix = 'subspace-desktop-v'
     AssetPrefix = 'subspace'

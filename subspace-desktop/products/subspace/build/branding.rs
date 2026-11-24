@@ -199,6 +199,14 @@ fn validate_provider(values: &[(&str, String)], provider: &str) -> Result<(), &'
         {
             Err("The entra provider requires non-nil tenant and public client UUIDs")
         }
+        "entra"
+            if !value(values, "API_URL").is_empty()
+                && value(values, "ENTRA_API_SCOPE").is_empty() =>
+        {
+            Err(
+                "The entra provider with an api_url requires entra_api_scope, such as api://<application id>/API.Access",
+            )
+        }
         "workos" if !valid_workos_client_id(value(values, "WORKOS_CLIENT_ID")) => {
             Err("The workos provider requires workos_client_id, such as client_01ABC")
         }
@@ -257,6 +265,16 @@ mod tests {
             r#"{{"identity_provider":"entra","entra_tenant_id":"{ID}","entra_client_id":"{ID}"}}"#
         );
         assert!(branding(&entra).is_ok());
+        // With an API, Entra needs the API's delegated scope.
+        let hosted = format!(
+            r#"{{"identity_provider":"entra","entra_tenant_id":"{ID}","entra_client_id":"{ID}","api_url":"https://api.example.com"}}"#
+        );
+        assert!(branding(&hosted).is_err());
+        let scoped = hosted.replace(
+            r#""api_url""#,
+            r#""entra_api_scope":"api://00000000-0000-0000-0000-000000000003/API.Access","api_url""#,
+        );
+        assert!(branding(&scoped).is_ok());
         assert!(branding(r#"{"identity_provider":"okta"}"#).is_err());
         assert!(branding(r#"{"title_prefix":"Line\nbreak"}"#).is_err());
     }

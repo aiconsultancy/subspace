@@ -56,6 +56,25 @@ pub struct ProductBuild {
     pub report_issue_repository: Option<&'static str>,
 }
 
+/// Whether `args` start a route that reads the app's configuration. The
+/// product metadata, About, `--version` and `upgrade` read none, so an app
+/// that checks its own settings before [`launch`] skips those checks for
+/// them, and a broken setting never blocks an upgrade.
+// qual:api - a product calls it before its own start-up checks.
+pub fn reads_configuration(descriptor: &ProductDescriptor, args: &[String]) -> bool {
+    reads_configuration_for(args, descriptor.update.is_some())
+}
+
+fn reads_configuration_for(args: &[String], updates: bool) -> bool {
+    !matches!(
+        route(args, updates),
+        StartupRoute::Metadata
+            | StartupRoute::About
+            | StartupRoute::Version
+            | StartupRoute::Upgrade
+    )
+}
+
 /// `updates` is whether this app has an update source. Without one,
 /// `upgrade` is not a Framework command and falls through to the normal
 /// command path, which reports it as unknown.
@@ -359,6 +378,23 @@ mod tests {
             route(&["github".into(), "upgrade".into()], true),
             StartupRoute::Command
         );
+    }
+
+    #[test]
+    fn only_desktop_mcp_and_commands_read_the_configuration() {
+        let updating = |args: &[&str]| super::reads_configuration_for(&words(args), true);
+        for args in [
+            &["upgrade"][..],
+            &["--version"],
+            &["about"],
+            &["__product_metadata"],
+        ] {
+            assert!(!updating(args), "{args:?}");
+        }
+        for args in [&[][..], &["mcp"], &["issues", "list"]] {
+            assert!(updating(args), "{args:?}");
+        }
+        assert!(super::reads_configuration_for(&words(&["upgrade"]), false));
     }
 
     #[test]
