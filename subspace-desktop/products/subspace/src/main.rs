@@ -46,9 +46,11 @@ fn main() -> ExitCode {
     let mut descriptor = subspace_descriptor::subspace_descriptor();
     identity::adjust_descriptor(&mut descriptor);
     let desktop = std::env::args_os().len() == 1;
-    let connection = connection::locate(&descriptor, env!("CARGO_PKG_VERSION"));
-    let configured = connection::read(&connection)
-        .map_err(|message| launch::Failure::File(connection.clone(), message))
+    let located = connection::locate(&descriptor, env!("CARGO_PKG_VERSION"));
+    let configured = located
+        .map_or(Ok(None), |path| {
+            connection::read(&path).map_err(|message| launch::Failure::File(path, message))
+        })
         .and_then(|file| identity::configure_backend(file.as_ref(), identity::variables()));
     if let Err(failure) = configured {
         return connection::report(&descriptor.display_name, &failure, desktop);

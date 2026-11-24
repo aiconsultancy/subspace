@@ -82,8 +82,9 @@ pub(crate) enum Failure {
 
 /// Resolves the launch from the stamped settings, the connection file, when
 /// there is one, and the run's variables: a variable wins over the file, and
-/// the file over the stamped value. The file is checked on its own first,
-/// so a problem in it is reported as the file's, in its own words.
+/// the file over the stamped value, so a variable can complete or correct
+/// the file. Only when the merged settings fail is the file checked on its
+/// own, to report a problem in it as the file's, in its own words.
 pub(crate) fn resolve_with(
     stamped: &Stamped,
     connection: Option<&Connection>,
@@ -92,13 +93,22 @@ pub(crate) fn resolve_with(
     let file: Vec<(String, String)> = connection
         .map(|c| c.variables().collect())
         .unwrap_or_default();
-    if let Some(connection) = connection {
-        resolve(stamped, file.clone())
-            .map_err(|message| Failure::File(connection.path.clone(), in_file_terms(&message)))?;
-    }
-    let mut merged: BTreeMap<String, String> = file.into_iter().collect();
+    let mut merged: BTreeMap<String, String> = file.iter().cloned().collect();
     merged.extend(variables);
-    resolve(stamped, merged).map_err(Failure::Environment)
+    resolve(stamped, merged).map_err(|message| {
+        let in_file = connection.and_then(|c| resolve(stamped, file).err().map(|m| (c, m)));
+        blame(in_file, message)
+    })
+}
+
+/// The file's own problem when it has one, else the run's.
+fn blame(in_file: Option<(&Connection, String)>, message: String) -> Failure {
+    match in_file {
+        Some((connection, problem)) => {
+            Failure::File(connection.path.clone(), in_file_terms(&problem))
+        }
+        None => Failure::Environment(message),
+    }
 }
 
 /// Resolves the launch from the stamped settings and the run's variables,
@@ -605,6 +615,29 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(failure, Failure::Environment(_)), "{failure:?}");
+    }
+
+    #[test]
+    fn a_variable_can_complete_or_correct_the_file() {
+        // The file alone would leave development sign-in on a hosted API.
+        let launch = resolve_with(
+            &SUBSPACE,
+            Some(&file(r#"{"api_url": "https://api.example.com"}"#)),
+            vars(&[
+                ("SUBSPACE_IDENTITY_PROVIDER", "workos"),
+                ("SUBSPACE_WORKOS_CLIENT_ID", "client_01ABC"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(launch.api_url, "https://api.example.com");
+        assert_eq!(launch.provider, "workos");
+        let launch = resolve_with(
+            &SUBSPACE,
+            Some(&file(r#"{"api_url": "http://api.example.com"}"#)),
+            vars(&[("SUBSPACE_API_URL", "http://127.0.0.1:3000")]),
+        )
+        .unwrap();
+        assert_eq!(launch.api_url, "http://127.0.0.1:3000");
     }
 
     #[test]

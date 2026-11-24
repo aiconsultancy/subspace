@@ -123,11 +123,12 @@ fn unknown(key: &str) -> String {
 }
 
 /// Where this app keeps its connection file: beside its `config.json`.
-pub(crate) fn locate(descriptor: &ProductDescriptor, version: &str) -> PathBuf {
-    let config = subspace_framework::shell::prepare_context(descriptor.clone(), version)
-        .map(|context| subspace_framework::shell::config_file(&context))
-        .unwrap_or_default();
-    config.with_file_name(FILE_NAME)
+/// None when the config folder cannot be found, so the app never reads a
+/// file from wherever it was started.
+pub(crate) fn locate(descriptor: &ProductDescriptor, version: &str) -> Option<PathBuf> {
+    subspace_framework::shell::prepare_context(descriptor.clone(), version)
+        .ok()
+        .map(|context| subspace_framework::shell::config_file(&context).with_file_name(FILE_NAME))
 }
 
 /// Says why the app cannot start: in a window the desktop app shows until
