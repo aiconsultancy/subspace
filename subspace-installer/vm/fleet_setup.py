@@ -45,7 +45,7 @@ import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 HERE = Path(__file__).resolve().parent
 PAYLOAD = HERE.parents[1]
@@ -620,7 +620,7 @@ def demo_channels():
 
 
 def apt_mirrors(sources=Path("/etc/apt")):
-    """The package mirrors this VM's apt sources name (one-line and deb822 formats), as base URLs."""
+    """The package mirrors this VM's enabled apt sources name (one-line and deb822 formats), as base URLs."""
     found = []
     files = [sources / "sources.list", *sorted((sources / "sources.list.d").glob("*.list")),
              *sorted((sources / "sources.list.d").glob("*.sources"))]
@@ -629,28 +629,67 @@ def apt_mirrors(sources=Path("/etc/apt")):
             text = path.read_text()
         except OSError:
             continue
+        if path.suffix == ".sources":
+            # deb822: one stanza per paragraph; "Enabled: no" switches a stanza off.
+            for stanza in re.split(r"\n\s*\n", text):
+                fields = {}
+                for line in stanza.splitlines():
+                    key, _, value = line.split("#", 1)[0].partition(":")
+                    if value:
+                        fields[key.strip().lower()] = value.split()
+                if fields.get("enabled", ["yes"])[0].lower() != "no":
+                    found += fields.get("uris", [])
+            continue
         for line in text.splitlines():
             words = line.split("#", 1)[0].split()
-            if path.suffix == ".sources" and words[:1] == ["URIs:"]:
-                found += words[1:]
-            elif path.suffix == ".list" and words[:1] in (["deb"], ["deb-src"]):
+            if words[:1] in (["deb"], ["deb-src"]):
                 found += [word for word in words[1:] if not word.startswith("[")][:1]
     return list(dict.fromkeys(url for url in found if url.startswith(("http://", "https://"))))
 
 
+def apt_proxies():
+    """apt's own proxies by scheme (Acquire::http::Proxy, Acquire::https::Proxy), which its downloads use."""
+    try:
+        dump = subprocess.run(["apt-config", "dump"], capture_output=True, text=True, timeout=10, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    proxies = {}
+    for line in (dump or "").splitlines():
+        match = re.fullmatch(r'Acquire::(https?)::Proxy "([^"]*)";', line.strip())
+        if match and match.group(2).lower() not in ("", "direct", "false"):
+            proxies[match.group(1)] = match.group(2)
+    return proxies
+
+
+def docker_ready():
+    """Whether Docker with its Compose plugin is already installed, so Docker's repository is not needed."""
+    if not shutil.which("docker"):
+        return False
+    try:
+        return subprocess.run(["docker", "compose", "version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=20, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def outbound_targets(answers):
-    """What the install downloads from: GitHub (Stargate and the pinned releases), Docker's repository when
-    the VM runs containers, and the package mirror."""
-    targets = [("GitHub", "https://github.com")]
-    if answers.get("api") or answers.get("irc") == "local":
-        targets.append(("Docker's package repository", "https://download.docker.com"))
-    targets += [("the package mirror", url) for url in apt_mirrors()]
+    """What the install downloads from, as (label, URL, proxy): GitHub (Stargate and the pinned releases),
+    Docker's repository when the VM runs containers and has no Docker yet, and the package mirrors, probed
+    through apt's own proxy as apt reaches them."""
+    targets = [("GitHub", "https://github.com", None)]
+    if (answers.get("api") or answers.get("irc") == "local") and not docker_ready():
+        targets.append(("Docker's package repository", "https://download.docker.com", None))
+    proxies = apt_proxies()
+    targets += [("the package mirror", url, proxies.get(urlsplit(url).scheme)) for url in apt_mirrors()]
     return targets
 
 
-def reachable(url):
+def reachable(url, proxy=None):
+    """Whether a URL answers at all. proxy: one to use instead of the environment's, such as apt's."""
+    opener = build_opener(ProxyHandler({"http": proxy, "https": proxy})) if proxy else None
+    request = Request(url, method="HEAD", headers={"User-Agent": "subspace-setup"})
     try:
-        with urlopen(Request(url, method="HEAD", headers={"User-Agent": "subspace-setup"}), timeout=OUTBOUND_TIMEOUT):
+        with (opener.open if opener else urlopen)(request, timeout=OUTBOUND_TIMEOUT):
             return True
     except HTTPError:
         return True  # It answered.
@@ -663,8 +702,9 @@ def check_outbound(answers):
     run with no outbound access waits minutes on its first download and fails without saying why."""
     targets = outbound_targets(answers)
     with ThreadPoolExecutor(max_workers=len(targets)) as pool:
-        results = list(pool.map(lambda target: reachable(target[1]), targets))
-    missing = [f"{label} ({urlsplit(url).hostname})" for (label, url), ok in zip(targets, results) if not ok]
+        results = list(pool.map(lambda target: reachable(target[1], target[2]), targets))
+    missing = [f"{label} ({urlsplit(url).hostname}{' through apt' + chr(39) + 's proxy' if proxy else ''})"
+               for (label, url, proxy), ok in zip(targets, results) if not ok]
     require(not missing, "This VM has no outbound access to " + ", ".join(missing) + ", which the install "
             "downloads from. " + OUTBOUND_HELP)
 

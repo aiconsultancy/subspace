@@ -1431,12 +1431,37 @@ class OutboundTests(unittest.TestCase):
                                               "deb cdrom:[Ubuntu]/ noble main\n")
             (apt / "sources.list.d/ubuntu.sources").write_text(
                 "Types: deb\nURIs: http://archive.example.org/ubuntu/ http://mirror.example.com/ubuntu\n"
-                "Suites: noble\n")
+                "Suites: noble\n\nTypes: deb\nURIs: http://disabled.example.net/ubuntu\nEnabled: no\n")
             self.assertEqual(fleet_setup.apt_mirrors(apt), ["http://mirror.example.com/ubuntu",
                                                             "http://archive.example.org/ubuntu/"])
 
+    def test_mirrors_are_probed_through_apts_own_proxy(self):
+        dump = ('Acquire "";\nAcquire::http::Proxy "http://proxy.example.com:3128/";\n'
+                'Acquire::https::Proxy "DIRECT";\n')
+        with patch.object(fleet_setup.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0, stdout=dump)):
+            self.assertEqual(fleet_setup.apt_proxies(), {"http": "http://proxy.example.com:3128/"})
+        opened = []
+
+        class Opener:
+            def open(self, request, timeout):
+                opened.append(request.full_url)
+                raise URLError("refused")
+        with patch.object(fleet_setup, "build_opener", return_value=Opener()) as build, \
+                patch.object(fleet_setup, "urlopen", side_effect=AssertionError("not through the environment")):
+            self.assertFalse(fleet_setup.reachable("http://archive.example.org/ubuntu/", "http://proxy.example.com:3128/"))
+        self.assertEqual(build.call_args.args[0].proxies, {"http": "http://proxy.example.com:3128/",
+                                                           "https": "http://proxy.example.com:3128/"})
+        with patch.object(fleet_setup, "apt_mirrors", return_value=["http://archive.example.org/ubuntu/"]), \
+                patch.object(fleet_setup, "apt_proxies", return_value={"http": "http://proxy.example.com:3128/"}), \
+                patch.object(fleet_setup, "docker_ready", return_value=True):
+            self.assertEqual(fleet_setup.outbound_targets({"api": True}), [
+                ("GitHub", "https://github.com", None),
+                ("the package mirror", "http://archive.example.org/ubuntu/", "http://proxy.example.com:3128/")])
+
     def test_no_outbound_access_stops_at_once_and_says_what_to_open(self):
-        targets = [("GitHub", "https://github.com"), ("the package mirror", "http://archive.example.org/ubuntu/")]
+        targets = [("GitHub", "https://github.com", None),
+                   ("the package mirror", "http://archive.example.org/ubuntu/", None)]
         with patch.object(fleet_setup, "outbound_targets", return_value=targets), \
                 patch.object(fleet_setup, "urlopen", side_effect=URLError("timed out")) as opened, \
                 self.assertRaisesRegex(fleet_setup.SetupError, r"no outbound access to GitHub \(github.com\), the "
@@ -1448,11 +1473,14 @@ class OutboundTests(unittest.TestCase):
         with patch.object(fleet_setup, "outbound_targets", return_value=targets), \
                 patch.object(fleet_setup, "urlopen", side_effect=refused):
             check_outbound({"api": True})
-        # Docker's repository only matters when the VM runs containers.
-        with patch.object(fleet_setup, "apt_mirrors", return_value=[]):
-            self.assertNotIn("Docker's package repository",
-                             dict(fleet_setup.outbound_targets({"api": False, "irc": "remote"})))
-            self.assertIn("Docker's package repository", dict(fleet_setup.outbound_targets({"api": True})))
+        # Docker's repository only matters when the VM runs containers and has no Docker Compose yet.
+        def labels(answers, ready=False):
+            with patch.object(fleet_setup, "apt_mirrors", return_value=[]), \
+                    patch.object(fleet_setup, "docker_ready", return_value=ready):
+                return [label for label, _, _ in fleet_setup.outbound_targets(answers)]
+        self.assertNotIn("Docker's package repository", labels({"api": False, "irc": "remote"}))
+        self.assertIn("Docker's package repository", labels({"api": True}))
+        self.assertNotIn("Docker's package repository", labels({"api": True}, ready=True))
 
     def test_the_release_lookup_says_why_it_failed(self):
         with patch.object(fleet_setup, "run", side_effect=fleet_setup.SetupError("git ls-remote did not finish")), \
