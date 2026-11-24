@@ -9876,6 +9876,7 @@ dependencies = [
  "serde",
  "serde_json",
  "similar 3.2.1",
+ "subspace-client-fleet",
  "subspace-framework",
  "tempfile",
  "tokio",

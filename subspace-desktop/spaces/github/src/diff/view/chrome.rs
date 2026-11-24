@@ -1,4 +1,4 @@
-//! The diff view's title bar and file tree.
+//! The diff view's file tree.
 
 use std::sync::Arc;
 
@@ -10,116 +10,17 @@ use gpui_kit::{
     OperatingSystem, ParentElement as _, Pixels, StatefulInteractiveElement as _, Styled as _,
     Window, div, px, uniform_list,
 };
-use subspace_framework::dashboard::action::{Intent, action_button};
-use subspace_framework::dashboard::panel::IconName;
-use subspace_framework::dashboard::segmented::{self, Segment};
+use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::truncated;
-use subspace_framework::dashboard::{Tokens, links};
 
-use super::super::model::{Layout, TreeRow, TreeStatus, tree_rows, tree_status};
+use super::super::model::{TreeRow, TreeStatus, tree_rows, tree_status};
 use super::{
-    BAR_PAD_PX, DiffEvent, DiffView, SEARCH_CONTEXT, SEARCH_PAD_X_PX, SEARCH_PAD_Y_PX,
-    TREE_HEADER_H_PX, TREE_INDENT_PX, TREE_LETTER_W_PX, TREE_MAX_SHARE, TREE_MIN_W_PX, TREE_PAD_PX,
-    TREE_ROW_H, VIEWED_OPACITY,
+    BAR_PAD_PX, DiffView, SEARCH_CONTEXT, SEARCH_PAD_X_PX, SEARCH_PAD_Y_PX, TREE_HEADER_H_PX,
+    TREE_INDENT_PX, TREE_LETTER_W_PX, TREE_MAX_SHARE, TREE_MIN_W_PX, TREE_PAD_PX, TREE_ROW_H,
+    VIEWED_OPACITY,
 };
-use crate::rows::state_glyph;
 
 impl DiffView {
-    // ---- Rendering ------------------------------------------------------------------
-
-    pub(super) fn title_bar(&self, tokens: &Tokens, cx: &mut Context<Self>) -> Div {
-        let icon = state_glyph(&self.item);
-        h_flex()
-            .flex_shrink_0()
-            .h(tokens.toolbar_height)
-            .gap_2()
-            .px(px(BAR_PAD_PX))
-            .border_b_1()
-            .border_color(tokens.line)
-            .text_size(tokens.row_font)
-            .whitespace_nowrap()
-            .child(
-                action_button(
-                    "diff-back",
-                    Intent::Quiet,
-                    Some(IconName::ChevronLeft),
-                    "Back",
-                )
-                .on_click(cx.listener(|_, _, _, cx| cx.emit(DiffEvent::Close))),
-            )
-            .child(div().text_color(tokens.glyph(&icon)).child(icon.text))
-            .child(
-                div()
-                    .text_color(tokens.muted)
-                    .child(format!("{}#{}", self.item.repo, self.item.number)),
-            )
-            .child(
-                truncated::text("diff-pr-title", self.item.title.clone())
-                    .flex_1()
-                    .text_color(tokens.fg_strong),
-            )
-            .child(div().text_color(tokens.muted).child(self.branch_text()))
-            .when_some(
-                self.item.additions.zip(self.item.deletions),
-                |bar, (additions, deletions)| {
-                    bar.child(
-                        div()
-                            .text_color(tokens.green)
-                            .child(format!("+{additions}")),
-                    )
-                    .child(div().text_color(tokens.red).child(format!("−{deletions}")))
-                },
-            )
-            .child(self.layout_toggles(tokens, cx))
-            .child(
-                action_button(
-                    "diff-github",
-                    Intent::Neutral,
-                    Some(IconName::ExternalLink),
-                    "GitHub",
-                )
-                .on_click(cx.listener(|view, _, _, cx| {
-                    links::open(&view.files_url(), cx);
-                })),
-            )
-    }
-
-    /// "head → base", or nothing when the item carries no branch.
-    fn branch_text(&self) -> String {
-        match (&self.item.head_ref, &self.item.base_ref) {
-            (Some(head), Some(base)) => format!("{head} → {base}"),
-            _ => String::new(),
-        }
-    }
-
-    /// The unified and split choices of the title bar.
-    fn layout_toggles(&self, tokens: &Tokens, cx: &mut Context<Self>) -> Div {
-        let entity = cx.entity().downgrade();
-        segmented::control(
-            "diff-layout",
-            [Segment::new("Unified"), Segment::new("Split")],
-            Some(self.layout_index()),
-            tokens,
-            move |index, _, _, cx| {
-                _ = entity.update(cx, |view, cx| {
-                    view.set_layout(
-                        if index == 0 {
-                            Layout::Unified
-                        } else {
-                            Layout::Split
-                        },
-                        cx,
-                    )
-                });
-            },
-        )
-    }
-
-    /// The chosen layout's place among the toggles: unified first, then split.
-    fn layout_index(&self) -> usize {
-        usize::from(self.layout == Layout::Split)
-    }
-
     pub(super) fn tree(&self, tokens: &Tokens, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let query = self.search.read(cx).value().to_string();
         v_flex()
@@ -164,15 +65,17 @@ impl DiffView {
                     .child(self.files.len().to_string()),
             )
             .child(div().flex_1())
-            .child(
-                div()
-                    .text_color(if all_viewed {
-                        tokens.green
-                    } else {
-                        tokens.muted
-                    })
-                    .child(format!("{viewed_count} / {} viewed", self.files.len())),
-            )
+            .when(self.item().is_some(), |header| {
+                header.child(
+                    div()
+                        .text_color(if all_viewed {
+                            tokens.green
+                        } else {
+                            tokens.muted
+                        })
+                        .child(format!("{viewed_count} / {} viewed", self.files.len())),
+                )
+            })
     }
 
     /// GitHub lists at most 300 files; say so when it cut the list.
@@ -274,20 +177,22 @@ impl DiffView {
                     .flex_1()
                     .text_color(tokens.fg),
             )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .text_xs()
-                    .text_color(tokens.green)
-                    .child(format!("+{}", view.file.additions)),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .text_xs()
-                    .text_color(tokens.red)
-                    .child(format!("−{}", view.file.deletions)),
-            )
+            .when(!view.binary, |row| {
+                row.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(tokens.green)
+                        .child(format!("+{}", view.file.additions)),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(tokens.red)
+                        .child(format!("−{}", view.file.deletions)),
+                )
+            })
             .on_click(cx.listener(move |view, _, _, cx| view.go_to(file, cx)))
             .into_any_element()
     }

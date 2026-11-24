@@ -45,6 +45,9 @@ pub struct FileView {
     pub file: GhDiffFile,
     pub patch: Patch,
     pub reason: Option<&'static str>,
+    pub next_page: Option<String>,
+    pub binary: bool,
+    pub binary_size: Option<u64>,
 }
 
 impl FileView {
@@ -55,6 +58,9 @@ impl FileView {
             file,
             patch,
             reason,
+            next_page: None,
+            binary: false,
+            binary_size: None,
         }
     }
 
@@ -73,6 +79,7 @@ pub enum Layout {
 pub enum DiffRow {
     File(usize),
     Note(usize),
+    More(usize),
     Gap {
         file: usize,
         gap: usize,
@@ -111,9 +118,12 @@ pub fn build_rows(files: &[FileView], options: &RowOptions<'_>) -> (Vec<DiffRow>
         }
         if view.reason.is_some() {
             rows.push(DiffRow::Note(index));
-            continue;
+        } else {
+            project_file(&mut rows, index, view, options);
         }
-        project_file(&mut rows, index, view, options);
+        if view.next_page.is_some() {
+            rows.push(DiffRow::More(index));
+        }
     }
     (rows, starts)
 }

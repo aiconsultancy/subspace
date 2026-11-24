@@ -26,7 +26,7 @@ impl DiffView {
         }
         self.tree_scroll
             .scroll_to_item(self.tree_index(file), ScrollStrategy::Nearest);
-        if self.files[file].image_only() {
+        if self.item().is_some() && self.files[file].image_only() {
             self.open_image(file, cx);
         } else {
             self.image = None;
@@ -105,7 +105,10 @@ impl DiffView {
         advance: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = self.files.get(file).map(|f| f.file.path.clone()) else {
+        let (Some(id), Some(path)) = (
+            self.viewed_id(),
+            self.files.get(file).map(|f| f.file.path.clone()),
+        ) else {
             return;
         };
         let marking = !self.viewed.contains(&path);
@@ -118,8 +121,7 @@ impl DiffView {
         }
         let mut paths: Vec<String> = self.viewed.iter().cloned().collect();
         paths.sort();
-        let store = ViewedStore::parse(prefs::get(cx, VIEWED_KEY).as_deref())
-            .with(&self.viewed_id(), paths);
+        let store = ViewedStore::parse(prefs::get(cx, VIEWED_KEY).as_deref()).with(&id, paths);
         prefs::set(cx, VIEWED_KEY, store.to_json());
         self.rebuild();
         if marking && advance {
@@ -191,11 +193,15 @@ impl DiffView {
     }
 
     pub(super) fn open_files(&mut self, _: &OpenFiles, _: &mut Window, cx: &mut Context<Self>) {
-        links::open(&self.files_url(), cx);
+        if let Some(url) = self.files_url() {
+            links::open(&url, cx);
+        }
     }
 
     pub(super) fn copy_url(&mut self, _: &CopyUrl, _: &mut Window, cx: &mut Context<Self>) {
-        let url = self.files_url();
+        let Some(url) = self.files_url() else {
+            return;
+        };
         links::copy(url.clone(), cx);
         cx.emit(DiffEvent::Toast(Toast::info(format!("Copied {url}"))));
     }

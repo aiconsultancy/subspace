@@ -138,6 +138,28 @@ mod tests {
     use super::{FleetEvent, Frames, FramingError, MAX_FRAME_BYTES};
 
     #[test]
+    fn ship_events_carry_only_the_matching_checkout_fingerprint() {
+        let mut frames = Frames::default();
+        let data = r#"{"id":"example-ship","crewMembers":[{"id":"example-crew","contexts":[{"project":null,"git":{"fingerprint":"default"}},{"project":"example","git":{"fingerprint":"named"}},{"project":"old-gateway","git":{"head":"abcd"}}]}]}"#;
+        frames
+            .push(format!("event: ship\ndata: {data}\n\n").as_bytes())
+            .unwrap();
+        let Some(FleetEvent::Ship(ship)) = frames.ready.pop_front() else {
+            panic!("expected ship event");
+        };
+        assert_eq!(ship.crew_fingerprint("example-crew", None), Some("default"));
+        assert_eq!(
+            ship.crew_fingerprint("example-crew", Some("example")),
+            Some("named")
+        );
+        assert_eq!(
+            ship.crew_fingerprint("example-crew", Some("old-gateway")),
+            None
+        );
+        assert_eq!(ship.crew_fingerprint("other", Some("example")), None);
+    }
+
+    #[test]
     fn frames_split_across_chunks_and_line_endings_become_events() {
         let mut frames = Frames::default();
         let text = "\u{feff}event: heartbeat\r\ndata: {\"at\":7}\r\n\r\n: comment\n\

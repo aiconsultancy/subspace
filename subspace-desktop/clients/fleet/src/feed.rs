@@ -81,6 +81,20 @@ impl Feed {
         lock(&self.0.state).clone()
     }
 
+    pub(crate) fn crew_fingerprint(
+        &self,
+        ship: &str,
+        member: &str,
+        project: Option<&str>,
+    ) -> Option<String> {
+        let snapshot = lock(&self.0.state);
+        let detail = snapshot.ships.get(ship)?;
+        if detail.detail_stale {
+            return None;
+        }
+        detail.crew_fingerprint(member, project).map(str::to_owned)
+    }
+
     /// Changes with every update, so a caller can tell when to read again.
     pub fn revision(&self) -> u64 {
         self.0.revision.load(Ordering::Acquire)

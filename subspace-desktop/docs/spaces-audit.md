@@ -204,6 +204,7 @@ the registrations differ.
 | `issues` | requests | `github@1/open-pull-request` |
 | `decisions` | requests | `issues@1/current-scope` |
 | `github` | responds | `github@1/open-pull-request` |
+| `github` | responds | `crew-diff@1/open-crew-diff` |
 | `github` | responds | `github@1/resolve-pull-requests` |
 | `github` | publishes | `github@1/changed` |
 

@@ -34,6 +34,7 @@ use gpui_kit::{
     Pixels, Render, SharedString, Stateful, Styled as _, Subscription, Task, TestSupportExt as _,
     WeakEntity, Window, actions, div,
 };
+use subspace_client_fleet::{FleetApi, navigation::OpenCrewDiff};
 use subspace_framework::client_github::model::{
     GhItem, GhItemDetail, GhUser, ItemKind, ReviewEvent, SECTIONS, SectionDef, short_login,
 };
@@ -50,10 +51,12 @@ use subspace_framework::dashboard::row_menu::{MenuCommand, MenuGroup, RowMenu};
 use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{
     DASHBOARD_CONTEXT, Dashboard, DashboardEvent, ItemSearch, KeyHelp, Modal, PaletteCommand,
-    PaletteOption, Search, SubList, Toast, Tokens, links, panel, prefs, services, view_keys,
+    PaletteOption, ReturnPoint, Search, SubList, Toast, Tokens, links, panel, prefs, services,
+    view_keys,
 };
 
 use crate::detail::{Mode, OnAction, PanelAction, PanelInput};
+use crate::diff::view::{DiffSource, FleetSource, GitHubSource};
 use crate::diff::{DiffEvent, DiffView, OpenDiff};
 use crate::model::{
     SectionData, assignee_logins, can_comment, can_review, default_section, is_pr_section,
@@ -166,6 +169,14 @@ const DIFF_KEYS: &[KeyHelp] = &[
         "Esc",
         "Close the composer or the image, then back to the list",
     ),
+];
+
+const CREW_DIFF_KEYS: &[KeyHelp] = &[
+    KeyHelp::new("n / p", "Next / previous file"),
+    KeyHelp::new("j / k", "Scroll down / up"),
+    KeyHelp::new("Home / End", "First / last file"),
+    KeyHelp::new("s", "Split or unified layout"),
+    KeyHelp::new("Esc", "Back"),
 ];
 
 const SECTION_KEY: &str = "github.section";
@@ -289,6 +300,12 @@ enum MenuTarget {
     View,
 }
 
+struct CrewDiff {
+    // `open_link` has no Window; the next render creates the view.
+    pending: Option<OpenCrewDiff>,
+    origin: Option<ReturnPoint>,
+}
+
 // qual:allow(srp, god_struct) reason: "This retained board owns account selection and its rows and details; all measured methods form one cluster."
 pub struct Github {
     focus: FocusHandle,
@@ -321,6 +338,8 @@ pub struct Github {
     assignee_anchor: Entity<Anchor>,
     assignee_bottom_anchor: Entity<Anchor>,
     diff: Option<(Entity<DiffView>, Subscription)>,
+    crew_diff: Option<CrewDiff>,
+    arrival: Option<ReturnPoint>,
     now: i64,
     _detail_task: Option<Task<()>>,
     _search_selection: Option<Task<()>>,
@@ -350,6 +369,13 @@ pub struct Github {
 
 fn error_text(error: &Error) -> String {
     error.to_string()
+}
+
+fn github_client(cx: &App) -> Option<Arc<Client>> {
+    let credentials = services(cx)?.credentials.clone();
+    Some(Arc::new(
+        Client::new(credentials).with_work_account(prefs::get(cx, ACCOUNT_KEY)),
+    ))
 }
 
 impl Github {
@@ -414,7 +440,7 @@ impl Github {
     /// The item actions work on: the diff's pull request, else the selection.
     fn subject_item(&self, cx: &App) -> Option<GhItem> {
         match &self.diff {
-            Some((diff, _)) => Some(diff.read(cx).item.clone()),
+            Some((diff, _)) => diff.read(cx).item().cloned(),
             None => self.selected_item(),
         }
     }
@@ -712,7 +738,8 @@ impl Github {
             Some((diff, _)) => self
                 .composer
                 .as_ref()
-                .map(|_| diff.read(cx).item.key.clone()),
+                .and_then(|_| diff.read(cx).item())
+                .map(|item| item.key.clone()),
             // The page, else the inspector's selection while it shows.
             None => self
                 .list
@@ -1288,13 +1315,24 @@ impl Github {
         let Some(login) = self.account.clone() else {
             return;
         };
-        let focus = self.focus.clone();
-        let client = self.client.clone();
-        let open = OpenDiff {
-            item,
+        self.crew_diff = None;
+        let source = DiffSource::GitHub(GitHubSource {
+            item: Box::new(item),
             login,
-            client,
-            focus,
+            client: self.client.clone(),
+        });
+        self.open_diff_source(source, window, cx);
+    }
+
+    fn open_diff_source(
+        &mut self,
+        source: DiffSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open = OpenDiff {
+            source,
+            focus: self.focus.clone(),
         };
         let view = cx.new(|cx| DiffView::new(open, window, cx));
         let subscription =
@@ -1314,6 +1352,9 @@ impl Github {
             return;
         }
         self.diff = None;
+        if let Some(origin) = self.crew_diff.take().and_then(|diff| diff.origin) {
+            cx.emit(DashboardEvent::Return(origin));
+        }
         self.focus.focus(window, cx);
         cx.notify();
     }
@@ -1442,6 +1483,7 @@ impl Dashboard for Github {
         use subspace_framework::dashboard::contracts::{BoardContracts, Declaration};
         const CONTRACTS: BoardContracts = BoardContracts::new(&[
             Declaration::responds::<OpenPullRequest>(),
+            Declaration::responds::<OpenCrewDiff>(),
             Declaration::responds::<ResolvePullRequests>(),
             Declaration::publishes::<Changed>(),
         ]);
@@ -1449,7 +1491,28 @@ impl Dashboard for Github {
     }
 
     fn open_link(&mut self, url: &str, cx: &mut Context<Self>) -> bool {
-        navigation::open(self, url, cx)
+        if let Some(target) = OpenCrewDiff::parse(url) {
+            let known = FleetApi::current(cx)
+                .is_some_and(|api| api.read(cx).fleet(&target.fleet).is_some());
+            if known {
+                self.crew_diff = Some(CrewDiff {
+                    pending: Some(target),
+                    origin: self.arrival.take(),
+                });
+                self.close_confirmation = None;
+                cx.notify();
+            }
+            return known;
+        }
+        if navigation::open(self, url, cx) {
+            self.crew_diff = None;
+            return true;
+        }
+        false
+    }
+
+    fn arrived_from(&mut self, from: Option<ReturnPoint>, _: &mut Context<Self>) {
+        self.arrival = from;
     }
 
     fn agent_tools(
@@ -1459,12 +1522,7 @@ impl Dashboard for Github {
     }
 
     fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let client = services(cx).map(|services| {
-            Arc::new(
-                Client::new(services.credentials.clone())
-                    .with_work_account(prefs::get(cx, ACCOUNT_KEY)),
-            )
-        });
+        let client = github_client(cx);
         let section = prefs::get(cx, SECTION_KEY)
             .filter(|id| is_pr_section(id))
             .and_then(|id| section_by_id(&id))
@@ -1500,6 +1558,8 @@ impl Dashboard for Github {
             assignee_anchor,
             assignee_bottom_anchor,
             diff: None,
+            crew_diff: None,
+            arrival: None,
             now: model::now_seconds(),
             _detail_task: None,
             _search_selection: None,
@@ -1547,6 +1607,10 @@ impl Dashboard for Github {
     }
 
     fn activate(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.arrival = None;
+        if let Some((diff, _)) = &self.diff {
+            diff.update(cx, DiffView::follow_crew);
+        }
         if !self.started {
             self.start(cx);
             return;
@@ -1582,6 +1646,9 @@ impl Dashboard for Github {
     }
 
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((diff, _)) = &self.diff {
+            diff.update(cx, |diff, _| diff.unfollow_crew());
+        }
         self.menu_anchors.dismiss(window, cx);
         self.menu = None;
         self.favourites.close();
@@ -1598,7 +1665,7 @@ impl Dashboard for Github {
 
     fn status(&self, cx: &App) -> Option<SharedString> {
         if let Some((diff, _)) = &self.diff {
-            return Some(format!("{} · files", diff.read(cx).key()).into());
+            return Some(diff.read(cx).status().into());
         }
         let counts = self.view_counts();
         let line = layout::status_line(&self.scope_line(), counts.as_deref());
@@ -1616,9 +1683,9 @@ impl Dashboard for Github {
 
     fn subject(&self, cx: &App) -> Option<Row> {
         if let Some((diff, _)) = &self.diff {
-            let item = diff.read(cx).item.clone();
+            let item = diff.read(cx).item()?;
             return Some(rows::row(
-                &item,
+                item,
                 self.account_login().unwrap_or_default(),
                 self.now,
             ));
@@ -1695,7 +1762,11 @@ impl Dashboard for Github {
     }
 
     fn keys(&self) -> &'static [KeyHelp] {
-        key_help(self.diff.is_some())
+        if self.crew_diff.is_some() {
+            CREW_DIFF_KEYS
+        } else {
+            key_help(self.diff.is_some())
+        }
     }
 
     fn help_foot(&self) -> Option<SharedString> {
@@ -1707,6 +1778,12 @@ impl Dashboard for Github {
     }
 
     fn reload(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((diff, _)) = &self.diff
+            && diff.read(cx).item().is_none()
+        {
+            diff.update(cx, |diff, cx| diff.load(cx));
+            return;
+        }
         if !self.started {
             self.start(cx);
             return;
@@ -1953,7 +2030,7 @@ impl Github {
     /// The item of the diff view, when the composer is open on it.
     fn composed_diff_item(&self, cx: &App) -> Option<GhItem> {
         let (diff, _) = self.diff.as_ref()?;
-        let item = diff.read(cx).item.clone();
+        let item = diff.read(cx).item()?.clone();
         match self.composer.as_ref()?.key == item.key {
             true => Some(item),
             false => None,
@@ -1993,6 +2070,9 @@ fn configure(composer: &mut Composer, mode: Mode, window: &mut Window, cx: &mut 
 
 impl Render for Github {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(target) = self.crew_diff.as_mut().and_then(|diff| diff.pending.take()) {
+            self.open_diff_source(DiffSource::Fleet(FleetSource { target }), window, cx);
+        }
         search_index::purge(self, cx);
         self.sync_collapsed(cx);
         self.ensure_detail(cx);
@@ -2098,20 +2178,32 @@ impl Github {
 
     fn diff_commands(&self, cx: &Context<Self>) -> Vec<PaletteCommand> {
         use diff::view as dv;
-        vec![
+        let back = if self.crew_diff.is_some() {
+            "Back"
+        } else {
+            "Back to the list"
+        };
+        let mut commands = vec![
             PaletteCommand::new("Next file", dv::NextFile).shortcut("n"),
             PaletteCommand::new("Previous file", dv::PreviousFile).shortcut("p"),
-            PaletteCommand::new("Toggle viewed on the current file", dv::ToggleViewed)
-                .keywords("mark seen")
-                .shortcut("v"),
             PaletteCommand::new(self.layout_command_label(cx), dv::ToggleLayout)
                 .keywords("layout side by side")
                 .shortcut("s"),
             PaletteCommand::new("Search files", dv::SearchFiles)
                 .keywords("tree filter find")
                 .shortcut("/"),
-            PaletteCommand::new("Back to the list", dv::DiffEscape).shortcut("Esc"),
-        ]
+            PaletteCommand::new(back, dv::DiffEscape).shortcut("Esc"),
+        ];
+        if self.subject_item(cx).is_some() {
+            commands.push(
+                PaletteCommand::new("Toggle viewed on the current file", dv::ToggleViewed)
+                    .keywords("mark seen")
+                    .shortcut("v"),
+            );
+        } else if let Some((diff, _)) = &self.diff {
+            commands.extend(DiffView::crew_commands(diff));
+        }
+        commands
     }
 
     /// The layout command names the layout it switches to.

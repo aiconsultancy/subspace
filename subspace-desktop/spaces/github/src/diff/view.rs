@@ -122,11 +122,17 @@ fn code_row_height(tokens: &Tokens) -> f32 {
 
 mod chrome;
 mod code;
+mod crew_chrome;
+mod crew_watch;
 mod image;
 mod load;
 mod nav;
+mod source;
+mod toolbar;
 
 use image::ImageView;
+use source::FleetState;
+pub(crate) use source::{DiffSource, FleetSource, GitHubSource};
 
 /// The loaded text of a file, for expanding hunk gaps.
 enum Text {
@@ -164,10 +170,8 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 /// What a diff view opens on.
-pub struct OpenDiff {
-    pub item: GhItem,
-    pub login: String,
-    pub client: Option<Arc<Client>>,
+pub(crate) struct OpenDiff {
+    pub source: DiffSource,
     pub focus: FocusHandle,
 }
 
@@ -180,9 +184,8 @@ pub enum DiffEvent {
 
 pub struct DiffView {
     focus: FocusHandle,
-    client: Option<Arc<Client>>,
-    login: String,
-    pub item: GhItem,
+    source: DiffSource,
+    fleet: FleetState,
     base_sha: String,
     head_sha: String,
     total: u32,
@@ -218,13 +221,8 @@ pub struct DiffView {
 impl EventEmitter<DiffEvent> for DiffView {}
 
 impl DiffView {
-    pub fn new(open: OpenDiff, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let OpenDiff {
-            item,
-            login,
-            client,
-            focus,
-        } = open;
+    pub(crate) fn new(open: OpenDiff, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let OpenDiff { source, focus } = open;
         let layout = match prefs::get(cx, STYLE_KEY).as_deref() {
             Some("split") => Layout::Split,
             _ => Layout::Unified,
@@ -237,9 +235,8 @@ impl DiffView {
         });
         let mut view = Self {
             focus,
-            client,
-            login,
-            item,
+            source,
+            fleet: FleetState::default(),
             base_sha: String::new(),
             head_sha: String::new(),
             total: 0,
@@ -267,16 +264,42 @@ impl DiffView {
             _search_subscription: subscription,
             _load: None,
         };
+        view.follow_crew(cx);
         view.load(cx);
         view
     }
 
-    pub fn key(&self) -> &str {
-        &self.item.key
+    pub fn item(&self) -> Option<&GhItem> {
+        self.source.github().map(|source| source.item.as_ref())
     }
 
-    pub fn files_url(&self) -> String {
-        format!("{}/files", self.item.url)
+    pub(crate) fn update_item(&mut self, item: &GhItem, cx: &mut Context<Self>) {
+        if let DiffSource::GitHub(source) = &mut self.source
+            && source.item.key == item.key
+        {
+            source.item.as_mut().clone_from(item);
+            cx.notify();
+        }
+    }
+
+    pub fn status(&self) -> String {
+        match &self.source {
+            DiffSource::GitHub(source) => format!("{} · files", source.item.key),
+            DiffSource::Fleet(source) => format!("{} · {} files", source.target.member, self.total),
+        }
+    }
+
+    pub fn files_url(&self) -> Option<String> {
+        self.item().map(|item| format!("{}/files", item.url))
+    }
+
+    fn github_connection(&self) -> Option<(Arc<Client>, String, String)> {
+        let source = self.source.github()?;
+        Some((
+            source.client.clone()?,
+            source.login.clone(),
+            source.item.repo.clone(),
+        ))
     }
 
     /// The file tree, once the diff has files to show.
@@ -289,16 +312,17 @@ impl DiffView {
         (self.loaded && !self.files.is_empty()).then(|| self.tree(tokens, window, cx))
     }
 
-    fn blob_url(&self, file: &GhDiffFile) -> String {
+    fn blob_url(&self, file: &GhDiffFile) -> Option<String> {
         let sha = if file.status == GhFileStatus::Removed {
             &self.base_sha
         } else {
             &self.head_sha
         };
-        format!(
+        Some(format!(
             "https://github.com/{}/blob/{sha}/{}",
-            self.item.repo, file.path
-        )
+            self.item()?.repo,
+            file.path
+        ))
     }
 }
 

@@ -61,10 +61,10 @@ impl DiffView {
 
     /// Fetch one side's blob and put it in its slot when it arrives.
     fn load_side(&self, file: usize, right: bool, source: SideSource, cx: &mut Context<Self>) {
-        let (Some((sha, path)), Some(client)) = (source, self.client.clone()) else {
+        let (Some((sha, path)), Some((client, login, repo))) = (source, self.github_connection())
+        else {
             return;
         };
-        let (login, repo) = (self.login.clone(), self.item.repo.clone());
         cx.spawn(async move |view, cx| {
             let result = cx
                 .background_spawn(async move { client.image(&login, &repo, &sha, &path) })

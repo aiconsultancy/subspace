@@ -4,4 +4,4 @@ pub mod highlight;
 pub mod model;
 pub mod view;
 
-pub use view::{DiffEvent, DiffView, OpenDiff};
+pub(crate) use view::{DiffEvent, DiffView, OpenDiff};

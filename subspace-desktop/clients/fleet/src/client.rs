@@ -55,13 +55,25 @@ impl FleetClient {
 
     fn get<T: DeserializeOwned>(&self, segments: &[&str]) -> Result<T, Error> {
         let url = self.address.url(segments)?;
-        let response = agent()
-            .get(url.as_str())
-            .header("Accept", "application/json")
-            .header("Authorization", format!("Bearer {}", self.token.expose()))
-            .call()
-            .map_err(|_| Error::Unreachable)?;
-        read_json(check_status(response)?)
+        self.get_json(&url, MAX_JSON_BYTES)
+    }
+
+    pub(crate) fn get_json<T: DeserializeOwned>(
+        &self,
+        url: &url::Url,
+        max_bytes: u64,
+    ) -> Result<T, Error> {
+        let mut response = check_status(
+            agent()
+                .get(url.as_str())
+                .header("Accept", "application/json")
+                .header("Cache-Control", "no-store")
+                .header("Authorization", format!("Bearer {}", self.token.expose()))
+                .call()
+                .map_err(|_| Error::Unreachable)?,
+        )?;
+        let reader = response.body_mut().with_config().limit(max_bytes).reader();
+        serde_json::from_reader(std::io::BufReader::new(reader)).map_err(|_| Error::InvalidResponse)
     }
 }
 
@@ -117,16 +129,6 @@ fn check_status(response: Response<Body>) -> Result<Response<Body>, Error> {
         None => Err(Error::UnexpectedStatus(response.status().as_u16())),
         Some(error) => Err(error),
     }
-}
-
-fn read_json<T: DeserializeOwned>(mut response: Response<Body>) -> Result<T, Error> {
-    let text = response
-        .body_mut()
-        .with_config()
-        .limit(MAX_JSON_BYTES)
-        .read_to_string()
-        .map_err(|_| Error::InvalidResponse)?;
-    serde_json::from_str(&text).map_err(|_| Error::InvalidResponse)
 }
 
 #[cfg(test)]

@@ -57,12 +57,7 @@ fn apply_closed(board: &mut Github, fresh: Option<GhItemDetail>, cx: &mut Contex
         }
     }
     if let Some((diff, _)) = &board.diff {
-        diff.update(cx, |diff, cx| {
-            if diff.item.key == item.key {
-                diff.item = item.clone();
-                cx.notify();
-            }
-        });
+        diff.update(cx, |diff, cx| diff.update_item(&item, cx));
     }
     emit_toast(Toast::info(format!("Closed #{}", item.number)), cx);
     board.save_cache(cx);

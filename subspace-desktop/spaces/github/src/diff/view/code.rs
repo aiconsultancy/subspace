@@ -80,6 +80,7 @@ impl DiffView {
         match row {
             DiffRow::File(file) => self.file_header(file, ("diff-file", index), tokens, cx),
             DiffRow::Note(file) => self.note_row(file, index, tokens, cx),
+            DiffRow::More(file) => self.more_row(file, tokens, cx),
             DiffRow::Gap { file, gap } => self.gap_row(file, gap, index, tokens, cx),
             DiffRow::Line { file, line } => {
                 let runs = self.patch_runs(file, line);
@@ -151,15 +152,30 @@ impl DiffView {
         }
         match (self.loaded, self.files.is_empty()) {
             (false, _) => self.code_placeholder(tokens, cx),
-            (true, true) => feedback::empty(
-                tokens,
+            (true, true) => self.empty_diff(tokens),
+            (true, false) => self.code_list(tokens, cx),
+        }
+    }
+
+    fn empty_diff(&self, tokens: &Tokens) -> AnyElement {
+        let (id, title, text) = match self.item() {
+            None if self.fleet.unavailable => (
+                "crew-diff-unavailable",
+                "Diff not available",
+                "The checkout may not exist yet, or this fleet may not support crew diffs.",
+            ),
+            None => (
+                "crew-diff-empty",
+                "No changed files",
+                "There are no changes in this mode.",
+            ),
+            Some(_) => (
                 "github-diff-empty",
                 "No changed files",
                 "This pull request changes no files.",
-            )
-            .into_any_element(),
-            (true, false) => self.code_list(tokens, cx),
-        }
+            ),
+        };
+        feedback::empty(tokens, id, title, text).into_any_element()
     }
 
     /// The skeleton while the diff loads, or the error that stopped it.

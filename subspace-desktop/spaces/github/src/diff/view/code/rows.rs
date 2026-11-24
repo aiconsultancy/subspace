@@ -30,7 +30,10 @@ impl DiffView {
         let viewed = self.viewed.contains(&view.file.path);
         let collapsed = self.collapsed.contains(&file);
         let name = header_name(view.file.previous_path.as_deref(), &view.file.path);
-        let svg = view.file.patch.is_some() && image_type(&view.file.path) == Some("image/svg+xml");
+        let github = self.item().is_some();
+        let svg = github
+            && view.file.patch.is_some()
+            && image_type(&view.file.path) == Some("image/svg+xml");
         h_flex()
             .id(id)
             .h(px(code_row_height(tokens)))
@@ -57,31 +60,20 @@ impl DiffView {
                 )
                 .text_color(tokens.fg_strong),
             )
-            .child(
-                div()
-                    .text_color(tokens.green)
-                    .child(format!("+{}", view.file.additions)),
-            )
-            .child(
-                div()
-                    .text_color(tokens.red)
-                    .child(format!("−{}", view.file.deletions)),
-            )
-            .when(svg, |el| {
-                el.child(
-                    action_button(
-                        ("diff-view-image", file),
-                        Intent::Neutral,
-                        Some(IconName::Eye),
-                        "View image",
-                    )
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        cx.stop_propagation();
-                        view.open_image(file, cx);
-                    })),
+            .when(!view.binary, |row| {
+                row.child(
+                    div()
+                        .text_color(tokens.green)
+                        .child(format!("+{}", view.file.additions)),
+                )
+                .child(
+                    div()
+                        .text_color(tokens.red)
+                        .child(format!("−{}", view.file.deletions)),
                 )
             })
-            .child(viewed_mark(file, viewed, tokens, cx))
+            .when(svg, |el| el.child(view_image_button(file, cx)))
+            .when(github, |el| el.child(viewed_mark(file, viewed, tokens, cx)))
             .on_click(cx.listener(move |view, _, _, cx| view.toggle_collapsed(file, cx)))
             .into_any_element()
     }
@@ -103,7 +95,7 @@ impl DiffView {
             .gap_3()
             .text_size(tokens.row_font)
             .text_color(tokens.muted);
-        if view.image_only() {
+        if self.item().is_some() && view.image_only() {
             return base
                 .cursor_pointer()
                 .child("Image file")
@@ -115,20 +107,52 @@ impl DiffView {
                 .into_any_element();
         }
         let too_large = reason == "Diff too large to show here";
-        let url = self.blob_url(&view.file);
         base.child(reason)
-            .when(too_large, |el| {
-                el.child(
-                    div()
-                        .id(("diff-blob", index))
-                        .cursor_pointer()
-                        .text_color(tokens.accent)
-                        .child("View on GitHub ↗")
-                        .on_click(move |_, _, cx| {
-                            links::open(&url, cx);
-                        }),
-                )
+            .when_some(view.binary_size, |el, bytes| {
+                el.child(format!("{bytes} bytes"))
             })
+            .when_some(
+                self.blob_url(&view.file).filter(|_| too_large),
+                |el, url| {
+                    el.child(
+                        div()
+                            .id(("diff-blob", index))
+                            .cursor_pointer()
+                            .text_color(tokens.accent)
+                            .child("View on GitHub ↗")
+                            .on_click(move |_, _, cx| {
+                                links::open(&url, cx);
+                            }),
+                    )
+                },
+            )
+            .into_any_element()
+    }
+
+    pub(super) fn more_row(
+        &self,
+        file: usize,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let loading = self.fleet.loading.contains(&file);
+        let label = if loading {
+            "Loading…"
+        } else {
+            "Load next page"
+        };
+        h_flex()
+            .h(px(code_row_height(tokens)))
+            .px(px(BAR_PAD_PX))
+            .child(
+                action_button(
+                    ("crew-diff-more", file),
+                    Intent::Quiet,
+                    Some(IconName::ChevronDown),
+                    label,
+                )
+                .on_click(cx.listener(move |view, _, _, cx| view.load_more(file, cx))),
+            )
             .into_any_element()
     }
 
@@ -153,7 +177,8 @@ impl DiffView {
             .get(gap)
             .map(|hunk| hunk.header.clone())
             .unwrap_or_default();
-        let expandable = !self.expanded.contains(&(file, gap))
+        let expandable = self.item().is_some()
+            && !self.expanded.contains(&(file, gap))
             && hidden != Some(0)
             && !matches!(
                 view.file.status,
@@ -185,6 +210,19 @@ impl DiffView {
             .child(truncated::text(("diff-hunk-header", gap), header).min_w_0())
             .into_any_element()
     }
+}
+
+fn view_image_button(file: usize, cx: &Context<DiffView>) -> impl IntoElement {
+    action_button(
+        ("diff-view-image", file),
+        Intent::Neutral,
+        Some(IconName::Eye),
+        "View image",
+    )
+    .on_click(cx.listener(move |view, _, _, cx| {
+        cx.stop_propagation();
+        view.open_image(file, cx);
+    }))
 }
 
 /// The "☑ Viewed" box of a file header.

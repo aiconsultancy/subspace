@@ -20,6 +20,8 @@ pub enum Error {
         "No Fleet API at this address (404). Check the address and that Stargate's api block is enabled."
     )]
     NotFound,
+    #[error("The checkout changed while loading. Refresh to try again.")]
+    StaleDiff,
     /// 429 or 503, with the server's wait in whole seconds when it gave one.
     #[error("Stargate is busy. Subspace will try again.")]
     Busy(Option<u64>),

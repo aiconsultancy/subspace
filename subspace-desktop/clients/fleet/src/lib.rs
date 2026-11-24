@@ -12,11 +12,13 @@
 
 mod address;
 mod client;
+pub mod diff;
 mod directory;
 mod error;
 mod events;
 mod feed;
 pub mod model;
+pub mod navigation;
 mod service;
 pub mod settings;
 mod stream;

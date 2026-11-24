@@ -250,6 +250,20 @@ impl FleetApi {
             .map(|followed| followed.feed.snapshot())
     }
 
+    /// The matching checkout's fingerprint, if supplied by the followed fleet.
+    pub fn crew_fingerprint(
+        &self,
+        fleet: &str,
+        ship: &str,
+        member: &str,
+        project: Option<&str>,
+    ) -> Option<String> {
+        self.feeds
+            .get(fleet)?
+            .feed
+            .crew_fingerprint(ship, member, project)
+    }
+
     /// The fleets the built-in Fleet Console may use, each with its token
     /// only for the address it was saved for.
     pub fn shared_fleets(&self) -> Vec<SharedFleet> {

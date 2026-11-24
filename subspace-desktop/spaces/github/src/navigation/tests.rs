@@ -77,6 +77,42 @@ fn render(cx: &mut VisualTestContext) {
 }
 
 #[gpui_kit::test]
+fn crew_navigation_opens_a_diff_without_a_github_subject(cx: &mut TestAppContext) {
+    use subspace_client_fleet::{FleetApi, FleetRecord, TokenStore, navigation::OpenCrewDiff};
+
+    let (board, cx) = mount(cx, None);
+    let route = OpenCrewDiff {
+        fleet: "example-fleet".into(),
+        ship: "example-ship".into(),
+        member: "example-crew".into(),
+        project: Some("example".into()),
+    }
+    .navigation()
+    .url;
+    board.update(cx, |board, cx| assert!(!board.open_link(&route, cx)));
+    cx.update(|_, cx| {
+        FleetApi::install_new(
+            TokenStore::memory(),
+            vec![FleetRecord::new("example-fleet", "Example fleet", None)],
+            cx,
+        );
+    });
+    board.update(cx, |board, cx| {
+        board.account = None;
+        assert!(board.open_link(&route, cx));
+    });
+    render(cx);
+    board.read_with(cx, |board, cx| {
+        assert!(board.diff.is_some());
+        assert!(board.subject_item(cx).is_none());
+        assert!(board.agent_context(cx).is_none());
+        assert!(board.status(cx).unwrap().contains("example-crew"));
+    });
+    board.update_in(cx, |board, window, cx| board.close_diff(window, cx));
+    board.read_with(cx, |board, _| assert!(board.diff.is_none()));
+}
+
+#[gpui_kit::test]
 fn known_pr_opens_the_normal_panel_and_unfolds_its_repository(cx: &mut TestAppContext) {
     let (board, cx) = mount(cx, None);
     board.update(cx, seed);

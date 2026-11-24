@@ -144,6 +144,19 @@ pub struct ShipDetail {
     pub detail_stale: bool,
 }
 
+impl ShipDetail {
+    pub(crate) fn crew_fingerprint(&self, member: &str, project: Option<&str>) -> Option<&str> {
+        let context = self
+            .crew_members
+            .iter()
+            .find(|crew| crew.id == member)?
+            .contexts
+            .iter()
+            .find(|context| context.project.as_deref() == project)?;
+        context.git.as_ref()?.fingerprint.as_deref()
+    }
+}
+
 /// One crew member and its work in each project.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
@@ -235,6 +248,8 @@ pub enum TaskStatus {
 pub struct Git {
     pub branch: Option<String>,
     pub head: Option<String>,
+    /// The worktree snapshot shared by all diff modes.
+    pub fingerprint: Option<String>,
     pub base: Option<String>,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,

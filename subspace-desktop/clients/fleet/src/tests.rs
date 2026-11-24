@@ -118,6 +118,146 @@ fn answer_once(reply: &'static str) -> (FleetAddress, std::thread::JoinHandle<St
     (address, server)
 }
 
+mod diff {
+    use super::answer_once;
+    use crate::diff::{DiffFilePage, DiffMode, DiffStatus, DiffTarget};
+    use crate::{Error, FleetClient};
+    use subspace_framework::core::Secret;
+
+    const TARGET: DiffTarget<'static> = DiffTarget {
+        ship: "example-ship",
+        member: "example-crew",
+        project: Some("example"),
+        mode: DiffMode::Working,
+    };
+    const OK: &str = concat!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+        r#"{"ship":"example-ship","member":"example-crew","project":"example","mode":"working","branch":"example","base":{"ref":"origin/main","commit":"parent"},"head":"head","fingerprint":"snapshot","computedAt":123,"total":2,"additions":1,"deletions":0,"files":[{"path":"notes & plans.txt","previousPath":"old.txt","status":"renamed","additions":1,"deletions":0,"patch":"@@ -0,0 +1,1 @@\n","patchNextPage":"file+1"}],"nextCursor":"list+2"}"#,
+    );
+    const OK_FILE: &str = concat!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+        r#"{"fingerprint":"snapshot","file":{"path":"notes & plans.txt","previousPath":"old.txt","status":"renamed","additions":1,"deletions":0,"patch":"+example.com\n"}}"#,
+    );
+
+    #[test]
+    fn file_list_reads_a_page_and_passes_the_opaque_cursor() {
+        let (address, server) = answer_once(OK);
+        let client = FleetClient::new(address, Secret::new("fixture-token"));
+        let page = client.diff(TARGET, Some("list+1")).unwrap().unwrap();
+        assert_eq!(page.next_cursor.as_deref(), Some("list+2"));
+        assert_eq!(page.files[0].status, DiffStatus::Renamed);
+        assert_eq!(page.files[0].patch_next_page.as_deref(), Some("file+1"));
+        assert_eq!(
+            server.join().unwrap().lines().next(),
+            Some(
+                "GET /stargate/api/v1/ships/example-ship/crew/example-crew/diff?mode=working&project=example&cursor=list%2B1 HTTP/1.1"
+            )
+        );
+    }
+
+    #[test]
+    fn file_read_encodes_paths_and_pins_the_page_to_its_snapshot() {
+        let (address, server) = answer_once(OK_FILE);
+        let client = FleetClient::new(address, Secret::new("fixture-token"));
+        let page = client
+            .diff_file(
+                TARGET,
+                DiffFilePage {
+                    path: "notes & plans.txt",
+                    page: Some("file+1"),
+                    at: "snapshot",
+                },
+            )
+            .unwrap();
+        assert_eq!(page.fingerprint, "snapshot");
+        assert_eq!(page.file.patch.as_deref(), Some("+example.com\n"));
+        assert!(page.file.patch_next_page.is_none());
+        assert_eq!(
+            server.join().unwrap().lines().next(),
+            Some(
+                "GET /stargate/api/v1/ships/example-ship/crew/example-crew/diff/file?mode=working&project=example&path=notes+%26+plans.txt&at=snapshot&page=file%2B1 HTTP/1.1"
+            )
+        );
+    }
+
+    #[test]
+    fn an_old_gateway_is_unavailable_but_a_missing_file_is_not() {
+        let not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let (address, server) = answer_once(not_found);
+        let client = FleetClient::new(address, Secret::new("fixture-token"));
+        assert!(client.diff(TARGET, None).unwrap().is_none());
+        server.join().unwrap();
+        let (address, server) = answer_once(not_found);
+        let client = FleetClient::new(address, Secret::new("fixture-token"));
+        assert_eq!(
+            client
+                .diff_file(
+                    TARGET,
+                    DiffFilePage {
+                        path: "gone.txt",
+                        page: None,
+                        at: "snapshot"
+                    }
+                )
+                .err(),
+            Some(Error::NotFound)
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn stale_file_pages_keep_their_conflict_status() {
+        let (address, server) =
+            answer_once("HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let client = FleetClient::new(address, Secret::new("fixture-token"));
+        assert_eq!(
+            client
+                .diff_file(
+                    TARGET,
+                    DiffFilePage {
+                        path: "notes.txt",
+                        page: Some("file+1"),
+                        at: "old"
+                    }
+                )
+                .err(),
+            Some(Error::StaleDiff)
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reads_binary_size_without_decoding_the_content_page() {
+        let (address, server) = answer_once(concat!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+            r#"{"fingerprint":"snapshot","file":{"path":"icon.png","status":"removed","binary":true,"size":2},"content":{"side":"old","encoding":"base64","offset":0,"size":2,"data":"AAA="}}"#,
+        ));
+        let client = FleetClient::new(address, Secret::new("fixture-token"));
+        let page = client
+            .diff_file(
+                TARGET,
+                DiffFilePage {
+                    path: "icon.png",
+                    at: "snapshot",
+                    page: None,
+                },
+            )
+            .unwrap();
+        assert!(page.file.binary);
+        assert_eq!(page.file.size, Some(2));
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn a_conflict_on_the_fleet_overview_is_an_unexpected_status() {
+    let (address, server) =
+        answer_once("HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let client = FleetClient::new(address, Secret::new("fixture-token"));
+    assert_eq!(client.fleet().err(), Some(Error::UnexpectedStatus(409)));
+    server.join().unwrap();
+}
+
 #[test]
 fn the_token_goes_only_in_the_authorization_header_and_redirects_are_not_followed() {
     let (address, server) = answer_once(
