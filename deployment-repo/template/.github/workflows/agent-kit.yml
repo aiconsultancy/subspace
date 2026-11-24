@@ -1,0 +1,25 @@
+# The agent kit's skills and helpers are copies of Subspace's agent-skills/ at
+# the commit pinned in pins.json. This fails when a copy differs from the pin.
+name: Agent kit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-kit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Kit script tests
+        run: python3 -B scripts/test-agent-kit.py
+      - name: The copies match the Subspace pin
+        run: python3 -B scripts/agent-kit.py check

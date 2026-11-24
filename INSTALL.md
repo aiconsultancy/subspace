@@ -46,8 +46,9 @@ your own computer is the quickest way, and it stays fully supported.
 >    install, so you cannot do it unattended: walk them through
 >    [bringing the agents online](#bring-the-agents-online) if they are there,
 >    or leave them the exact commands.
-> 7. If the plan included the [local agent skills](#use-your-local-agents-with-the-fleet),
->    install them last, for the agents and the name the user gave.
+> 7. If the plan included the [local agent skills](#use-your-local-agents-with-the-fleet)
+>    or a [deployment repository](#keep-your-deployment-in-a-repository-of-your-own),
+>    install or create them last, for the agents, names and folder the user gave.
 
 ## What you are installing
 
@@ -319,7 +320,8 @@ answer it now.
     use the tracker and talk to the fleet? Which agents, and what name should
     those agents use for them? You install them at the end. See
     [Use your local agents with the fleet](#use-your-local-agents-with-the-fleet).
-    **Default: no.**
+    A deployment repository (question 19) carries the skills for its own
+    folder; these are for working from any folder. **Default: no.**
 13. **Slack or Teams** (optional). Should stakeholders reach the rear admiral
     in Slack or Microsoft Teams? Slack works with a private VM as is
     ([Slack](docs/slack.md)). Teams needs an Azure VM and one public callback
@@ -390,6 +392,20 @@ answer it now.
     installed before this choice existed keeps captains that code until you
     pass `--captain-tools delegate`. See
     [Instructions, permissions and toolchains](subspace-installer/README.md#instructions-permissions-and-toolchains).
+19. **A deployment repository of their own?** When they deploy for
+    themselves or their organisation, rather than trying Subspace out,
+    recommend a new private repository that pins the Subspace and Stargate
+    releases they deploy (and moves the pins to the latest releases on
+    review), holds their own configuration and deployment material (the
+    fleet's definition without secrets, hosting and deployment code, desktop
+    build settings, runbooks), never holds a secret, and carries the agent
+    skills and the MCP registration so that people and their local agents
+    can work with the fleet from their own machines. Offer to create it with
+    the [scaffold](#keep-your-deployment-in-a-repository-of-your-own): ask
+    for its folder and name, and with a hosted API its address and WorkOS
+    client ID. Creating the private repository on GitHub and pushing to it
+    is outward-facing: ask for that separately. **Default: yes for a cloud
+    or hosted deployment, no for a trial on a local VM.**
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -1155,6 +1171,27 @@ their model and version, for example
 comment. The skills require this, and the IRC helper adds it to every line.
 The fleet's agents take orders from your account, so local agents send only
 what you asked for.
+
+## Keep your deployment in a repository of your own
+
+For anything beyond a trial, keep your configuration and deployment in a
+private repository of your own and take Subspace and Stargate as pinned
+releases: see [Your deployment repository](docs/deployment-repository.md).
+Create its skeleton from this checkout:
+
+```sh
+python3 deployment-repo/scaffold.py --dir ../example-deployment --name "Example Org" \
+  --api-url https://api.example.com --workos-client-id client_EXAMPLE --dry-run
+```
+
+Without `--dry-run` it writes the pins (the latest releases unless you pass
+`--subspace` or `--stargate`), the folders for the fleet's definition,
+hosting, desktop settings and runbooks, a `.gitignore` that keeps secrets
+out, the agent skills and helpers copied at the Subspace pin with the MCP
+registration for Claude Code, Codex and OpenCode, and a CI check of those
+copies; then it runs `git init`. It never commits or pushes. Then record the
+install command and the VM's `/root/fleet/fleet.json` (it holds no secrets)
+in `fleet/`. To update: bump the pins, sync, review, deploy.
 
 ## Check that the fleet is private
 

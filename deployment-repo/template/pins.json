@@ -1,0 +1,14 @@
+{
+  "subspace": {
+    "repository": "aiconsultancy/subspace",
+    "tag_pattern": "subspace-desktop-v*",
+    "release": "@@SUBSPACE_RELEASE@@",
+    "commit": "@@SUBSPACE_COMMIT@@"
+  },
+  "stargate": {
+    "repository": "aiconsultancy/stargate",
+    "tag_pattern": "v*",
+    "release": "@@STARGATE_RELEASE@@",
+    "commit": "@@STARGATE_COMMIT@@"
+  }
+}
