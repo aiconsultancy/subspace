@@ -333,6 +333,7 @@ mod tests {
             app_bundle: "X".into(),
             token_variable: "SUBSPACE_GITHUB_TOKEN".into(),
             channel: crate::Channel::Stable,
+            exclusive: false,
         }
     }
 

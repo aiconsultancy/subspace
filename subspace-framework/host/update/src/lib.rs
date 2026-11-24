@@ -165,13 +165,35 @@ impl Updater {
     pub fn check(&self) -> Result<CheckOutcome> {
         let newest = self.client()?.newest()?;
         Ok(match newest {
-            Some(release) if is_newer(self.source.channel, &release.version, &self.app.version) => {
+            Some(release)
+                if is_newer(self.source.channel, &release.version, &self.app.version)
+                    && self.offers(&release) =>
+            {
                 CheckOutcome::Newer(release)
             }
             Some(_) => CheckOutcome::UpToDate,
             None => CheckOutcome::NoRelease {
                 repository: self.source.repository.clone(),
             },
+        })
+    }
+
+    /// Whether `release` is one this build installs: any release, or for an
+    /// exclusive source only one that publishes this build's own archive and
+    /// its checksum, so a variant never offers, nor installs, another
+    /// build's archive.
+    fn offers(&self, release: &Release) -> bool {
+        !self.source.exclusive
+            || current_executable().is_ok_and(|executable| self.publishes_own(release, &executable))
+    }
+
+    /// Whether `release` publishes the archive, and its checksum, that this
+    /// build at `executable` installs.
+    fn publishes_own(&self, release: &Release, executable: &Path) -> bool {
+        wanted_asset(&self.source, &release.version, executable).is_ok_and(|wanted| {
+            let name = wanted.name();
+            release.assets.contains_key(name)
+                && release.assets.contains_key(&format!("{name}.sha256"))
         })
     }
 
@@ -388,6 +410,51 @@ mod tests {
             .join()
             .expect("the release crosses threads");
         assert_eq!(received, release);
+    }
+
+    /// A variant with its own asset names is offered only a release that
+    /// publishes its archive; the ordinary build is offered every newer
+    /// release, as before.
+    #[test]
+    fn an_exclusive_build_is_offered_only_releases_with_its_own_archive() {
+        let executable = std::path::Path::new("/opt/example/subspace");
+        let release = |names: &[String]| Release {
+            tag: "subspace-desktop-v9.0.0".into(),
+            version: "9.0.0".into(),
+            html_url: "https://example.test/release".into(),
+            assets: names
+                .iter()
+                .map(|name| (name.clone(), format!("https://api.example.test/{name}")))
+                .collect(),
+        };
+        let name = |updater: &Updater| {
+            super::wanted_asset(&updater.source, "9.0.0", executable)
+                .unwrap()
+                .name()
+                .to_owned()
+        };
+        let standard = Updater::for_product(&known_product(), "1.0.0").unwrap();
+        let mut variant = standard.clone();
+        variant.source.archive_prefix = "subspace-no-api".into();
+        variant.source.exclusive = true;
+        let (own, theirs) = (name(&variant), name(&standard));
+        assert!(own.starts_with("subspace-no-api-9.0.0-") && theirs.starts_with("subspace-9.0.0-"));
+        let only_standard = release(&[theirs.clone(), format!("{theirs}.sha256")]);
+        let both = release(&[
+            theirs.clone(),
+            format!("{theirs}.sha256"),
+            own.clone(),
+            format!("{own}.sha256"),
+        ]);
+        assert!(!variant.publishes_own(&only_standard, executable));
+        assert!(variant.publishes_own(&both, executable));
+        assert!(
+            !variant.publishes_own(&release(std::slice::from_ref(&own)), executable),
+            "no checksum"
+        );
+        // The ordinary build is offered a newer release whatever it holds.
+        assert!(standard.offers(&release(&[])));
+        assert!(standard.offers(&only_standard));
     }
 
     #[test]
