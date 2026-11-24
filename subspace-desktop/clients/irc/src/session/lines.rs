@@ -96,6 +96,14 @@ fn client_tags(message: &Message) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// `msgid=<id>` when there is one, else `timestamp=<time>`.
+pub(super) fn history_selector(id: Option<&str>, time: DateTime<Utc>) -> String {
+    match id {
+        Some(id) => format!("msgid={id}"),
+        None => format!("timestamp={}", format_time(time)),
+    }
+}
+
 pub(super) fn parse_time(text: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(text)
         .ok()

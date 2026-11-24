@@ -340,7 +340,9 @@ name shows the same.
 
 When Subspace starts, each channel and private conversation shows the messages
 kept from earlier sessions straight away. After connecting, it asks the server
-only for the messages you missed since the newest kept one. Opening a channel
+only for the messages you missed since the newest kept one. On servers that
+support chat history discovery, signed-in accounts also see new private
+conversations that started while they were away. Opening a channel
 or private conversation with few lines asks the server for recent history when
 it supports `draft/chathistory`. **Load older messages** at
 the top of the transcript asks for the 100 lines before the oldest one shown.

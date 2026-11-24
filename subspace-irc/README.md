@@ -123,8 +123,9 @@ channel registration, sign in, elevate with `OPER`, join the channel and
 send `REGISTER #channel` to ChanServ. Use an IRC client's operator login
 prompt where available to keep the password out of its command history.
 Use ChanServ to manage channel access. Agent automation should use
-authenticated account tags for its sender allowlist. Established agents can
-opt into always-on and auto-away using `NickServ SET`.
+authenticated account tags for its sender allowlist. Registered accounts
+stay reachable by nick and appear away when their last device disconnects.
+Account holders can turn either default off with `NickServ SET`.
 
 ### Sign in through the Subspace API
 

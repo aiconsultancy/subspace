@@ -10,17 +10,24 @@ use crate::model::{Anchor, BufferKey, Event, Line, LineKind, Target};
 use crate::proto::Message;
 
 const CAP: &str = "draft/chathistory";
+pub(super) mod targets;
 /// Lines requested when a buffer opens with nothing held.
 pub const LATEST: u16 = 100;
 /// The most missed lines requested for an anchored buffer.
 pub const CATCH_UP: u16 = 500;
 
-/// One request waiting for its batch: its limit, and whether its lines merge
-/// among the held ones ([`Event::Backfill`]) or go before them.
+/// One request waiting for its batch and how its lines will be delivered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Pending {
     limit: u16,
-    merge: bool,
+    delivery: Delivery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    Older,
+    Backfill,
+    Discovered,
 }
 
 /// Requests per folded target, oldest first: servers answer in order.
@@ -31,7 +38,7 @@ struct Request {
     subcommand: &'static str,
     selector: String,
     limit: u16,
-    merge: bool,
+    delivery: Delivery,
 }
 
 /// `CHATHISTORY LATEST <target> * <limit>`, when the server supports it.
@@ -46,9 +53,9 @@ pub(super) fn resume(session: &mut Session, target: &str) -> Option<Message> {
         Some(anchor) => {
             let request = Request {
                 subcommand: "LATEST",
-                selector: selector(anchor.id.as_deref(), anchor.time),
+                selector: lines::history_selector(anchor.id.as_deref(), anchor.time),
                 limit: CATCH_UP,
-                merge: true,
+                delivery: Delivery::Backfill,
             };
             send(session, target, request)
         }
@@ -65,14 +72,14 @@ pub(super) fn request(
     limit: u16,
 ) -> Option<Message> {
     let (subcommand, selector) = match before {
-        Some(time) => ("BEFORE", selector(None, time)),
+        Some(time) => ("BEFORE", lines::history_selector(None, time)),
         None => ("LATEST", "*".to_string()),
     };
     let request = Request {
         subcommand,
         selector,
         limit,
-        merge: false,
+        delivery: Delivery::Older,
     };
     send(session, target, request)
 }
@@ -86,19 +93,11 @@ pub(super) fn around(
 ) -> Option<Message> {
     let request = Request {
         subcommand: "AROUND",
-        selector: selector(point.0, point.1),
+        selector: lines::history_selector(point.0, point.1),
         limit,
-        merge: true,
+        delivery: Delivery::Backfill,
     };
     send(session, target, request)
-}
-
-/// `msgid=<id>` when there is one, else `timestamp=<time>`.
-fn selector(id: Option<&str>, time: DateTime<Utc>) -> String {
-    match id {
-        Some(id) => format!("msgid={id}"),
-        None => format!("timestamp={}", lines::format_time(time)),
-    }
 }
 
 fn send(session: &mut Session, target: &str, request: Request) -> Option<Message> {
@@ -110,7 +109,7 @@ fn send(session: &mut Session, target: &str, request: Request) -> Option<Message
         key,
         Pending {
             limit: request.limit,
-            merge: request.merge,
+            delivery: request.delivery,
         },
     )?;
     Some(Message::new(
@@ -186,20 +185,32 @@ pub(super) fn deliver(
     let reacted = reactions::history(session, messages, &buffer_target);
     let buffer = session.buffer(buffer_target);
     out.updates.now.extend(reacted);
-    out.event(match requested {
-        Some(Pending { merge: true, .. }) => Event::Backfill { buffer, lines },
-        _ => Event::History {
+    match requested.map(|request| request.delivery) {
+        Some(Delivery::Discovered) if lines.is_empty() => {}
+        Some(Delivery::Discovered) if session.queries.insert(key) => {
+            // New conversations use the same unread handling as bouncer replay.
+            out.events.extend(lines.into_iter().map(Event::Replayed));
+        }
+        Some(Delivery::Backfill | Delivery::Discovered) => {
+            out.event(Event::Backfill { buffer, lines });
+        }
+        _ => out.event(Event::History {
             buffer,
             complete: closed && complete(messages.len(), requested),
             lines,
-        },
-    });
+        }),
+    }
 }
 
 /// `FAIL CHATHISTORY <code> [context…] :<description>` ends the pending
 /// requests its context names. Servers differ in where the target appears,
 /// and some name none, so without a match every pending request ends.
 pub(super) fn failed(session: &mut Session, message: &Message, out: &mut Output) {
+    if targets::is_failure(session, message) {
+        session.discovering_queries = None;
+        return;
+    }
+
     let context = message
         .params
         .get(2..message.params.len().saturating_sub(1))
@@ -233,18 +244,19 @@ pub(super) fn abandon(session: &mut Session) -> Vec<Event> {
 fn ended(session: &Session, target: &str, requests: &[Pending]) -> Vec<Event> {
     requests
         .iter()
-        .map(|request| {
+        .filter_map(|request| {
             let buffer = session.buffer(buffer_target(session, target));
-            match request.merge {
-                true => Event::Backfill {
+            match request.delivery {
+                Delivery::Discovered => None,
+                Delivery::Backfill => Some(Event::Backfill {
                     buffer,
                     lines: Vec::new(),
-                },
-                false => Event::History {
+                }),
+                Delivery::Older => Some(Event::History {
                     buffer,
                     lines: Vec::new(),
                     complete: false,
-                },
+                }),
             }
         })
         .collect()

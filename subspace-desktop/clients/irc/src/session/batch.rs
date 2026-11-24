@@ -64,7 +64,11 @@ pub(super) fn batch(session: &mut Session, message: &Message, out: &mut Output) 
     }
     let buffer = if matches!(
         message.param(1),
-        "chathistory" | "draft/chathistory" | "draft/multiline" | "znc.in/playback"
+        "chathistory"
+            | "draft/chathistory"
+            | history::targets::BATCH
+            | "draft/multiline"
+            | "znc.in/playback"
     ) || buffered_parent(session, message).is_some()
     {
         Buffer::Collecting {
@@ -137,6 +141,10 @@ fn finish(session: &mut Session, batch: Batch, closed: bool, out: &mut Output) {
             complete,
             out,
         );
+    }
+    if kind == history::targets::BATCH {
+        history::targets::deliver(session, &opening, &messages, complete, out);
+        return;
     }
     if matches!(kind, "chathistory" | "draft/chathistory") {
         history::deliver(session, opening.param(2), &messages, complete, out);
