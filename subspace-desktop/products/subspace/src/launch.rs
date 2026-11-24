@@ -14,7 +14,7 @@
 //! Development sign-in with an API on another computer is not refused: the
 //! app opens and says sign-in is unavailable.
 
-use crate::connection::{Connection, in_file_terms};
+use crate::connection::{Connection, blames_file, in_file_terms};
 use crate::settings::{
     ApiBackend, refused_in_nett, refused_without_backend, valid_api_url, valid_workos_client_id,
 };
@@ -86,32 +86,27 @@ pub(crate) enum Failure {
 /// Resolves the launch from the stamped settings, the connection file, when
 /// there is one, and the run's variables: a variable wins over the file, and
 /// the file over the stamped value, so a variable can complete or correct
-/// the file. Only when the merged settings fail is the file checked on its
-/// own, to report a problem in it as the file's, in its own words.
+/// the file. A failure is the file's when the setting it names took its
+/// value from the file (`connection::blames_file`), and then in the file's
+/// own words; otherwise it is the run's.
 pub(crate) fn resolve_with(
     stamped: &Stamped,
     connection: Option<&Connection>,
     variables: impl IntoIterator<Item = (String, String)>,
 ) -> Result<Launch, Failure> {
-    let file: Vec<(String, String)> = connection
+    let variables: BTreeMap<String, String> = variables.into_iter().collect();
+    let file: BTreeMap<String, String> = connection
         .map(|c| c.variables().collect())
         .unwrap_or_default();
-    let mut merged: BTreeMap<String, String> = file.iter().cloned().collect();
-    merged.extend(variables);
+    let mut merged = file.clone();
+    merged.extend(variables.clone());
     resolve(stamped, merged).map_err(|message| {
-        let in_file = connection.and_then(|c| resolve(stamped, file).err().map(|m| (c, m)));
-        blame(in_file, message)
-    })
-}
-
-/// The file's own problem when it has one, else the run's.
-fn blame(in_file: Option<(&Connection, String)>, message: String) -> Failure {
-    match in_file {
-        Some((connection, problem)) => {
-            Failure::File(connection.path.clone(), in_file_terms(&problem))
+        let file_alone_fails = || resolve(stamped, file.clone()).is_err();
+        match connection.filter(|_| blames_file(&message, &file, &variables, file_alone_fails)) {
+            Some(connection) => Failure::File(connection.path.clone(), in_file_terms(&message)),
+            None => Failure::Environment(message),
         }
-        None => Failure::Environment(message),
-    }
+    })
 }
 
 /// Resolves the launch from the stamped settings and the run's variables,
@@ -247,7 +242,9 @@ pub(crate) fn nett_url_error() -> String {
 }
 
 fn subspace_url_error() -> String {
-    "The Subspace API URL must be HTTPS (or HTTP on a loopback address), optionally ending in /api, without credentials, query or fragment.".into()
+    format!(
+        "The Subspace API URL (api_url or {API_URL}) must be HTTPS (or HTTP on a loopback address), optionally ending in /api, without credentials, query or fragment."
+    )
 }
 
 /// Installs the launch's one backend before any Space starts. A NETT launch
@@ -694,6 +691,92 @@ mod tests {
                 other => panic!("{name}: {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn a_failure_is_blamed_on_where_its_setting_came_from() {
+        let workos = file(r#"{"identity_provider": "workos"}"#);
+        // The file leaves the client to a variable, and the variable is wrong.
+        let failure = resolve_with(
+            &SUBSPACE,
+            Some(&workos),
+            vars(&[("SUBSPACE_WORKOS_CLIENT_ID", "wrong")]),
+        )
+        .unwrap_err();
+        assert!(matches!(failure, Failure::Environment(_)), "{failure:?}");
+        // A variable completes the file, and a variable elsewhere is wrong.
+        let failure = resolve_with(
+            &SUBSPACE,
+            Some(&workos),
+            vars(&[
+                ("SUBSPACE_WORKOS_CLIENT_ID", "client_01ABC"),
+                ("SUBSPACE_API_URL", "http://api.example.com"),
+            ]),
+        )
+        .unwrap_err();
+        assert!(matches!(failure, Failure::Environment(_)), "{failure:?}");
+        // A variable completes the file, and the file's own value is wrong.
+        let failure = resolve_with(
+            &SUBSPACE,
+            Some(&file(
+                r#"{"identity_provider": "workos", "workos_api_url": "not a url"}"#,
+            )),
+            vars(&[("SUBSPACE_WORKOS_CLIENT_ID", "client_01ABC")]),
+        )
+        .unwrap_err();
+        match failure {
+            Failure::File(_, message) => assert!(message.contains("(workos_api_url)"), "{message}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_variable_corrects_a_mistyped_value_in_the_file() {
+        let mistyped = file(
+            r#"{"identity_provider": "workos", "workos_client_id": "client_01ABC",
+                "workos_redirect_port": "eight"}"#,
+        );
+        match resolve_with(&SUBSPACE, Some(&mistyped), Vec::new()) {
+            Err(Failure::File(_, message)) => {
+                assert!(message.contains("(workos_redirect_port)"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let launch = resolve_with(
+            &SUBSPACE,
+            Some(&mistyped),
+            vars(&[("SUBSPACE_WORKOS_REDIRECT_PORT", "8400")]),
+        )
+        .unwrap();
+        assert_eq!(launch.workos_redirect_port, "8400");
+    }
+
+    #[test]
+    fn entra_with_an_api_needs_its_scope() {
+        let entra = r#"{"identity_provider": "entra",
+            "entra_tenant_id": "00000000-0000-0000-0000-000000000001",
+            "entra_client_id": "00000000-0000-0000-0000-000000000002"}"#;
+        match resolve_with(&SUBSPACE, Some(&file(entra)), Vec::new()) {
+            Err(Failure::File(_, message)) => {
+                assert!(message.contains("(entra_api_scope)"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let scope = (
+            "SUBSPACE_ENTRA_API_SCOPE",
+            "api://00000000-0000-0000-0000-000000000003/API.Access",
+        );
+        assert!(resolve_with(&SUBSPACE, Some(&file(entra)), vars(&[scope])).is_ok());
+        let cleared = resolve_with(
+            &SUBSPACE,
+            Some(&file(&entra.replace(
+                "\"entra_client_id\"",
+                "\"entra_api_scope\": \"api://00000000-0000-0000-0000-000000000003/API.Access\", \"entra_client_id\"",
+            ))),
+            vars(&[("SUBSPACE_ENTRA_API_SCOPE", "")]),
+        )
+        .unwrap_err();
+        assert!(matches!(cleared, Failure::Environment(_)), "{cleared:?}");
     }
 
     #[test]

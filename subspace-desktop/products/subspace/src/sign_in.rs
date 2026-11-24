@@ -20,7 +20,7 @@ pub(crate) fn check(launch: &Launch) -> Result<(), String> {
     match launch.provider.as_str() {
         "" | "dev" => Ok(()),
         "workos" => workos_config(launch).map(drop),
-        "entra" => entra_config(launch).map(drop),
+        "entra" => entra_config(launch).and_then(|_| entra_scope(launch)),
         other => Err(format!(
             "The identity provider (identity_provider or {PROVIDER}) must be dev, workos, entra or empty, not \"{other}\"."
         )),
@@ -49,7 +49,8 @@ pub(crate) fn workos_config(launch: &Launch) -> Result<workos_auth::Config, Stri
         })?;
     }
     if !launch.workos_redirect_port.is_empty() {
-        let port = launch.workos_redirect_port.parse().map_err(|_| {
+        let port = launch.workos_redirect_port.parse::<u16>();
+        let port = port.ok().filter(|port| *port != 0).ok_or_else(|| {
             unusable(
                 "WorkOS redirect port",
                 "workos_redirect_port",
@@ -100,6 +101,17 @@ pub(crate) fn entra_config(launch: &Launch) -> Result<entra_auth::Config, String
     Ok(config)
 }
 
+/// Entra signs in for an API only with the API's delegated scope: without
+/// one, browser sign-in succeeds and every API token request fails.
+fn entra_scope(launch: &Launch) -> Result<(), String> {
+    if launch.api_url.is_empty() || !launch.entra_api_scope.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Entra sign-in for an API needs the API's delegated scope (entra_api_scope or {ENTRA_API_SCOPE}), such as api://00000000-0000-0000-0000-000000000003/API.Access."
+    ))
+}
+
 /// A setting sign-in cannot use, by its build config and variable names.
 fn unusable(what: &str, key: &str, variable: &str, example: &str) -> String {
     format!("The {what} ({key} or {variable}) is not one sign-in can use; set it like {example}.")
@@ -112,7 +124,7 @@ pub(crate) fn unavailable(launch: &Launch) -> Option<String> {
     let hosted = !launch.api_url.is_empty() && !loopback_url(&launch.api_url);
     (launch.provider == "dev" && hosted).then(|| {
         format!(
-            "Development sign-in reaches only an API on this computer, and this app is set to {}. Set identity_provider to workos or entra, or api_url to this computer, in connection.json, then open the app again.",
+            "Development sign-in reaches only an API on this computer, and this app is set to {}. Set identity_provider to workos or entra, or the API address to this computer, in connection.json or the SUBSPACE_ variables, then open the app again.",
             launch.api_url
         )
     })

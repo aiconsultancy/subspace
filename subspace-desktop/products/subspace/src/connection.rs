@@ -80,7 +80,7 @@ pub(crate) fn read(path: &Path) -> Result<Option<Connection>, String> {
 }
 
 /// The settings in `text`: a JSON object of strings, the redirect port also
-/// as a number.
+/// as a number. Their values are checked after the run's variables apply.
 pub(crate) fn parse(text: &str) -> Result<BTreeMap<&'static str, String>, String> {
     let value: Value = serde_json::from_str(text)
         .map_err(|error| format!("The file is not valid JSON: {error}."))?;
@@ -98,19 +98,13 @@ fn setting(key: &str, value: &Value) -> Result<(&'static str, String), String> {
     let Some((_, variable)) = SETTINGS.iter().find(|(name, _)| *name == key) else {
         return Err(unknown(key));
     };
+    // Only the shape is checked here: values are checked once the run's
+    // variables are applied, so a variable can correct one.
     let text = match value {
         Value::String(text) => text.clone(),
         Value::Number(number) if key == "workos_redirect_port" => number.to_string(),
         _ => return Err(format!("The setting {key} must be text.")),
     };
-    if key == "workos_redirect_port"
-        && !text.trim().is_empty()
-        && text.trim().parse::<u16>().is_err()
-    {
-        return Err(format!(
-            "The setting {key} must be a port number from 1 to 65535."
-        ));
-    }
     Ok((variable, text))
 }
 
@@ -120,6 +114,29 @@ fn unknown(key: &str) -> String {
     } else {
         format!("{key} is not a setting this file holds.")
     }
+}
+
+/// Whether a failed launch's `message` is the file's: it names a setting
+/// whose value came from the file, or names none a variable set while the
+/// file alone fails too.
+pub(crate) fn blames_file(
+    message: &str,
+    file: &BTreeMap<String, String>,
+    variables: &BTreeMap<String, String>,
+    file_alone_fails: impl FnOnce() -> bool,
+) -> bool {
+    let from_file = file
+        .keys()
+        .any(|name| !variables.contains_key(name) && names(message, name));
+    let from_variable = variables.keys().any(|name| names(message, name));
+    from_file || (!from_variable && file_alone_fails())
+}
+
+/// Whether `message` names the variable `name` itself, not a longer one.
+fn names(message: &str, name: &str) -> bool {
+    message.match_indices(name).any(|(at, _)| {
+        !message[at + name.len()..].starts_with(|c: char| c == '_' || c.is_ascii_alphanumeric())
+    })
 }
 
 /// Where this app keeps its connection file: beside its `config.json`.
@@ -206,8 +223,7 @@ mod tests {
                 "apiUrl is not a setting",
             ),
             (r#"{"api_url": 3}"#, "api_url must be text"),
-            (r#"{"workos_redirect_port": "port"}"#, "port number"),
-            (r#"{"workos_redirect_port": 70000}"#, "port number"),
+            (r#"{"workos_redirect_port": true}"#, "must be text"),
         ] {
             let error = parse(text).unwrap_err();
             assert!(error.contains(says), "{text}: {error}");
