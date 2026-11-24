@@ -24,8 +24,15 @@ serves both: it tells an agent signed in as itself to write as itself, and an
 agent using a person's login to mark its text. The commands below are for
 your own computer only.
 
+The API's MCP server also states the essential rules for filing work in its
+server instructions and in the issue tools' descriptions, so an agent that has
+not loaded the skill still sees them: search first, one working session per
+issue, a one-line summary on every issue, related issues grouped under a
+tracker, and the on-behalf marker.
+
 The API's own tests check that every tool these skills name is in the MCP
-tool catalogue and that the three tracker skills share the same rules
+tool catalogue, that the three tracker skills share the same rules, and that
+the server's instructions agree with them
 (`subspace-api/tests/agent-skills.test.ts`).
 
 ## Your login, always marked

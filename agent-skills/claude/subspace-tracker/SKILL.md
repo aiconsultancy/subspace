@@ -72,6 +72,27 @@ receives 400. For a crew member's decision, see Decisions below.
 - Ask a person before archiving or deleting anything, changing a decision's
   status, or rewriting someone else's text. Never write secrets.
 
+## Filing work
+
+The MCP server's instructions and the issue tools' descriptions repeat these
+rules in brief.
+
+- **Search before you create.** Look for an issue or tracker that already
+  covers the work, closed and archived ones included (see the first step
+  below), and extend it rather than filing a duplicate.
+- **Size an issue to one working session.** Do not file one issue per small
+  finding, review note or follow-up. Add it as a comment or a to-do on the
+  issue it belongs to, or batch small related items into one issue per area.
+- **Give every issue and tracker a one-line summary** that says in plain
+  words what it is for, so a list of issues can be read without opening
+  them; a tracker's summary says what it groups. `summary` is required on
+  create, one line of at most 300 characters. Keep it current with
+  `subspace_update_issue` when the scope changes, especially after folding or
+  regrouping issues.
+- **Group related issues under a tracker.** Reuse a tracker that fits before
+  creating one, keep trees shallow, and do not park unrelated issues under a
+  tracker: its state follows its direct children.
+
 ## Issues, trackers and sub-issues
 
 An issue has a `type`: `issue` or `tracker`. A tracker groups work: its

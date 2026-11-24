@@ -18,7 +18,7 @@ import { GithubIntegration } from "../src/github";
 import { GithubPollState, githubPollState } from "../src/github-poll";
 import { type Member } from "../src/identity";
 import { fleetAgentOf } from "../src/initiatives";
-import { mcpTools } from "../src/mcp-tools";
+import { mcpInstructions, mcpTools } from "../src/mcp-tools";
 import { Storage } from "../src/storage";
 import { UpdateHub } from "../src/updates";
 
@@ -429,6 +429,16 @@ describe("requests on the agent listener", () => {
       ((await whoami.json()) as { result: { structuredContent: unknown } }).result
         .structuredContent,
     ).toMatchObject({ userId: captain.id, kind: "agent", agentRank: "captain", isAdmin: false });
+  });
+
+  test("gives the rules for filing work in the MCP server instructions", async () => {
+    const init = await rpc("Orion", "initialize", { protocolVersion: "2025-11-25" });
+    expect(init.status).toBe(200);
+    expect(
+      ((await init.json()) as { result: { protocolVersion: string; instructions: string } }).result,
+    ).toEqual(
+      expect.objectContaining({ protocolVersion: "2025-11-25", instructions: mcpInstructions }),
+    );
   });
 
   test("let a captain relay crew work and refuse it from any other rank", async () => {
