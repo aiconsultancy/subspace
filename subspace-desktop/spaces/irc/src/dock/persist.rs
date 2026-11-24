@@ -38,7 +38,7 @@ pub(super) fn docks_changed(board: &mut Irc, cx: &mut Context<Irc>) {
 fn save(board: &Irc, cx: &mut App) {
     let mut layout = current(board, cx);
     let previous = prefs::get(cx, KEY);
-    if keep_local_centre(board, cx) {
+    if keep_local_centre(board) {
         layout.center = layout::decode(previous.as_deref()).and_then(|stored| stored.center);
     }
     let text = layout::encode(&layout);
@@ -47,12 +47,12 @@ fn save(board: &Irc, cx: &mut App) {
     }
 }
 
-fn keep_local_centre(board: &Irc, cx: &App) -> bool {
+/// Whether the saved centre stays as it is: while a switch retires the
+/// previous initiative's conversations, which are not the person's doing.
+/// The selected initiative is remembered across restarts, so its
+/// conversations are saved like any others.
+fn keep_local_centre(board: &Irc) -> bool {
     board.dock.retiring
-        || board
-            .hub
-            .as_ref()
-            .is_some_and(|hub| hub.read(cx).initiatives.selected_for_runtime())
 }
 
 /// The centre the area shows, in buffer terms.

@@ -49,12 +49,41 @@ impl Render for Irc {
 }
 
 /// Whether there is a network to show: until then the pane says so, the
-/// navigator stays and there is no inspector.
+/// navigator stays and there is no inspector. Never while Channels is closed
+/// to someone who belongs to no initiative.
 fn configured(board: &Irc, cx: &App) -> bool {
+    board.hub.as_ref().is_some_and(|hub| {
+        let hub = hub.read(cx);
+        !hub.initiatives.closed()
+            && !hub.initiatives.awaiting_read()
+            && !hub.state.networks().is_empty()
+    })
+}
+
+/// Whether the networks wait for the first read of the memberships.
+fn awaiting_read(board: &Irc, cx: &App) -> bool {
     board
         .hub
         .as_ref()
-        .is_some_and(|hub| !hub.read(cx).state.networks().is_empty())
+        .is_some_and(|hub| hub.read(cx).initiatives.awaiting_read())
+}
+
+/// Whether the API that brings the person's networks cannot be reached,
+/// where initiatives carry channels.
+fn unreachable(board: &Irc, cx: &App) -> bool {
+    subspace_api_client::capabilities().initiative_channels
+        && board
+            .hub
+            .as_ref()
+            .is_some_and(|hub| hub.read(cx).api_unreachable(cx))
+}
+
+/// Whether Channels is closed until the person belongs to an initiative.
+pub(crate) fn closed(board: &Irc, cx: &App) -> bool {
+    board
+        .hub
+        .as_ref()
+        .is_some_and(|hub| hub.read(cx).initiatives.closed())
 }
 
 /// The docks the status bar's switches show: both, once there is a network
@@ -97,11 +126,16 @@ fn navigator(
 }
 
 /// The pane: the toolbar over the conversations, or what the Space says
-/// before it has a network to show.
+/// before it has a network to show or while it is closed.
 fn pane(board: &mut Irc, configured: bool, cx: &mut Context<Irc>) -> workspace::Pane {
     let pane = workspace::Pane::new("irc-pane");
     let area = match &board.hub {
         None => return pane.child(empty::stopped(cx)),
+        Some(_) if closed(board, cx) => return pane.child(empty::not_a_member(board, cx)),
+        Some(_) if awaiting_read(board, cx) => return pane.child(empty::checking(cx)),
+        Some(_) if !configured && unreachable(board, cx) => {
+            return pane.child(empty::unreachable(board, cx));
+        }
         Some(_) if !configured => return pane.child(empty::unconfigured(board, cx)),
         Some(_) => board.dock.area.clone(),
     };

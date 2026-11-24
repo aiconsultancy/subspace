@@ -95,17 +95,30 @@ impl ServerLogin {
     /// new one when the API may be asked. Blocking, without holding the
     /// lock while the API answers, so [`Self::forget`] never waits on it.
     pub(crate) fn login(&self, client: &Client) -> Result<Login, Unavailable> {
+        self.ask(client).0
+    }
+
+    /// [`Self::login`], with whether a request to the API reached it:
+    /// `None` when none was made, as when the kept login is offered.
+    pub(crate) fn ask(&self, client: &Client) -> (Result<Login, Unavailable>, Option<bool>) {
         let now = Instant::now();
         {
             let mut held = self.held();
             match held.step(now) {
-                Step::Keep => return held.login(now).ok_or(Unavailable::Waiting),
-                Step::Wait => return Err(Unavailable::Waiting),
+                Step::Keep => return (held.login(now).ok_or(Unavailable::Waiting), None),
+                Step::Wait => return (Err(Unavailable::Waiting), None),
                 Step::Ask => held.begin(now),
             }
         }
         let answer = client.irc_credential(&self.host, self.port);
-        self.held().take(answer, now, Instant::now())
+        let reached = !matches!(answer, Err(Error::Network));
+        (self.held().take(answer, now, Instant::now()), Some(reached))
+    }
+
+    /// Lets the next request go now, as Reload asks, rather than after the
+    /// wait a failure set. The shortest gap between requests still holds.
+    pub(crate) fn retry_now(&self) {
+        self.held().retry_at = None;
     }
 
     /// The server refused the kept login: drop it, so the next connect
@@ -285,5 +298,48 @@ mod tests {
         assert_eq!(expired.err(), Some(Unavailable::Expired));
         assert!(held.kept.is_none());
         assert_eq!(held.step(now), Step::Wait, "and backs off");
+    }
+
+    #[test]
+    fn only_a_request_made_says_whether_the_api_was_reached() {
+        use super::ServerLogin;
+        use crate::initiatives::Endpoint;
+        // Nothing listens on the discard port on loopback.
+        let client = subspace_api_client::Client::loopback("http://127.0.0.1:9/api", None).unwrap();
+        let login = ServerLogin::new(&Endpoint::parse("ircs://irc.example.test:6697").unwrap());
+        let (answer, reached) = login.ask(&client);
+        assert_eq!(answer.err(), Some(Unavailable::Api(Error::Network)));
+        assert_eq!(reached, Some(false), "asked, and the API was not reached");
+        let (answer, reached) = login.ask(&client);
+        assert_eq!(answer.err(), Some(Unavailable::Waiting));
+        assert_eq!(reached, None, "too soon: nothing was asked");
+        // A fresh kept login is offered without asking.
+        let now = Instant::now();
+        login
+            .held()
+            .take(credential(Duration::from_secs(600)), now, now)
+            .unwrap();
+        let (answer, reached) = login.ask(&client);
+        assert!(answer.is_ok());
+        assert_eq!(reached, None);
+    }
+
+    #[test]
+    fn reload_lets_the_next_request_go_without_the_failure_s_wait() {
+        let mut now = Instant::now();
+        let mut held = Held::default();
+        // Three failures in a row: the next request waits 20 seconds.
+        for _ in 0..3 {
+            asked(&mut held, now);
+            assert!(held.take(Err(Error::Network), now, now).is_err());
+            now += Duration::from_secs(30);
+        }
+        now -= Duration::from_secs(30);
+        let past_gap = now + Duration::from_secs(11);
+        assert_eq!(held.step(past_gap), Step::Wait, "still the failure's wait");
+        held.retry_at = None;
+        assert_eq!(held.step(past_gap), Step::Ask, "Reload asks now");
+        let soon = now + Duration::from_secs(2);
+        assert_eq!(held.step(soon), Step::Wait, "the shortest gap still holds");
     }
 }
