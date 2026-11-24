@@ -34,11 +34,16 @@ API backend never shows it.
   progress text from Settings › Account, and Quit, then the provider's
   sign-in, or while it runs, Cancel and Open browser again. Retry appears
   after a sign-in that could not reach the service. The backdrop occludes
-  the window and sets the modal key context, so the Space behind takes no
-  pointer or shortcut, and the board is told it is covered. Focus moves to
-  the sign-in button when the dialog appears. The dialog has the dialog
-  role and is labelled with its title. Nothing dismisses it; Quit, or
-  Cmd/Ctrl+Q, quits as the app always does.
+  the window, and the board is told it is covered. While it shows, the
+  shell attaches only Quit and Quit and Restart: every other shell,
+  Space-switch, terminal and chat action, from a key or the menu bar, finds
+  no handler, so Settings, the palette, the terminal and the Space switches
+  cannot open or change anything behind it. When it appears it closes the
+  palette, the shortcuts, Settings and any dialog, and focus moves to its
+  sign-in button and is brought back there if Tab would move it behind.
+  When it closes, focus returns to the Space on show. The dialog has the
+  dialog role and is labelled with its title. Nothing dismisses it; Quit,
+  or Cmd/Ctrl+Q, quits as the app always does.
 - **After.** Signing in closes it. Channels' account networks
   (`spaces/irc/src/managed`) follow the account as they already did, so
   they connect with no settings touched.
@@ -56,7 +61,10 @@ shows; after sign-in the app carries on and each part loads as before.
   is needed, and a required account with a browser sign-in asking again
   after sign-out), `app/shell/cover_tests.rs` (the dialog covers the window
   and takes focus only while a required account has no session, and not
-  when signed in or offline with a saved session), `app/sign_in_gate.rs`
+  when signed in or offline with a saved session; refuses Settings, the
+  palette, the terminal, chat and the Space switches while Quit still
+  acts; closes Settings when it appears; and gives focus back to the Space
+  after sign-in), `app/sign_in_gate.rs`
   (the organisation line) and `products/subspace/src/identity.rs` (both
   API backends require their account).
 - Screenshots, in Twilight Two at 1440 x 900, from the capture build with
