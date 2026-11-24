@@ -29,8 +29,11 @@ how.
   `install-release.sh --no-api` and `install-release.ps1 -NoApi` (or
   `SUBSPACE_NO_API=1`) install the build with no API backend.
 - **Channels, Issues and Decisions start on.** The descriptor no longer
-  gates their default on a debug build. A saved choice in `config.json` still
-  wins, so anyone who turned one off or on keeps it. With no API reachable,
+  gates their default on a debug build. A choice saved in `config.json`
+  still wins, but the app saved a choice only when it differed from the old
+  default (off in a release build): someone who turned Channels, Issues or
+  Decisions on and back off has nothing saved, so after upgrading it starts
+  on and they turn it off again in Settings. With no API reachable,
   Issues and Decisions say `No API reachable at <address>. Start it, or set
   the app's API address in connection.json, then try again.` instead of only
   `Couldn't reach Subspace API`.
@@ -39,8 +42,11 @@ how.
   and the example) holds the settings the `SUBSPACE_*` run-time variables
   override, under their build config names, with the same rules
   (`src/connection.rs`, `launch::resolve_with`). A variable wins over the
-  file, and the file over the built-in value; a setting the file leaves out
-  falls through; no file changes nothing. It cannot change the backend,
+  file, and the file over the built-in value, so a variable can complete or
+  correct the file; a setting the file leaves out falls through; no file
+  changes nothing. When the merged settings fail and the file alone fails
+  too, the problem is reported as the file's; otherwise as the variable's.
+  When the app's config folder cannot be found, no file is read. It cannot change the backend,
   branding or update source, and names those settings when it tries. A build
   with no API backend refuses a file that would switch an API or sign-in on,
   as it refuses the variables. Development sign-in accepts only an API on
@@ -48,7 +54,8 @@ how.
   unchanged: `workos` or `entra` asks, `dev` does not.
 - **A visible start-up failure.** A file or variable the app cannot use
   stops it before the shell, as before, but the desktop app now shows a
-  window naming the file, the setting and the problem, with **Quit**
+  window naming the file, the setting and the problem, with **Quit**; closing
+  the window quits too
   (`subspace_framework::shell::report_startup_failure`). Commands still
   print to standard error.
 - **Documentation fixes.** `docs/installation.md` describes the real release
@@ -65,8 +72,8 @@ how.
     bad file naming the setting, a missing file, and launch messages in the
     file's words.
   - `products/subspace/src/launch.rs`: precedence (variable, file, build),
-    no file changes nothing, the file held to the same rules and named when
-    it breaks one, and a build with no API backend refusing a file that
+    no file changes nothing, a variable completing or correcting the file,
+    the file held to the same rules and named when it breaks one, and a build with no API backend refusing a file that
     switches an API on.
   - `clients/subspace-api/src/backend.rs`: the unreachable message names the
     address.

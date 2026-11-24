@@ -269,6 +269,10 @@ for installer in shell powershell; do
 	grep -Eq -- '--pattern (Subspace-NoAPI_0\.1\.0_darwin_arm64\.zip|subspace-no-api-0\.1\.0-)' "$fixture/gh.log"
 	SUBSPACE_NO_API=1 "${command[@]}" >"$fixture/output" 2>&1
 	cmp "$fixture/source-$executable-no-api/$executable" "$installed"
+	if SUBSPACE_NO_API=yes "${command[@]}" >"$fixture/output" 2>&1; then
+		echo "$installer: SUBSPACE_NO_API=yes must be refused" >&2; exit 1
+	fi
+	grep -Fq 'SUBSPACE_NO_API must be 1, 0 or empty' "$fixture/output"
 	"${command[@]}" >"$fixture/output" 2>&1
 	cmp "$fixture/source-$executable/$executable" "$installed"
 

@@ -69,6 +69,11 @@ connection file that would switch an API or sign-in on, the same way it
 refuses the environment variables; a file with no such setting, or only
 empty ones, is fine.
 
+Both apps keep their settings in the same folder and read the same file, so
+before moving from the standard app to the `-NoAPI` one, rename or remove a
+connection file that sets an API or sign-in, and put it back when you move
+again.
+
 ## When something is wrong
 
 If the file cannot be read, is not JSON, names a setting it cannot hold or
