@@ -796,6 +796,14 @@ so, because it cannot run without them.
 - `--database-url-file` runs the API on this VM, so it cannot be combined with
   `--no-api` or, on the host, `--api-target`. On a fleet set up with
   `--no-api`, it turns the API back on.
+- **The dry run checks the database, read-only.** `--dry-run` connects with
+  the URL as the API will, TLS and `--database-ca-file` included, in a
+  read-only session, and prints what it finds: whether it connected and over
+  TLS, how many of this API's migrations the database lacks, and whether the
+  admin (`--admin-email` in the development `--organisation`) is already an
+  administrator there, or the database has no organisation yet. It stops
+  when the real run would: no connection, missing migrations without
+  `--migrate`, or an admin who is not there or not an administrator.
 
 ### Migrations
 

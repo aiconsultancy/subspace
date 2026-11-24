@@ -852,9 +852,11 @@ class ExternalDatabaseTests(unittest.TestCase):
                            if path.is_file() and path.name != "database-url")
         before = sorted(path.name for path in fleet_setup.INPUTS.iterdir())
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer", side_effect=dry_installer), \
+                patch.object(fleet_setup, "database_checks") as checks, \
                 patch.object(fleet_setup, "say", side_effect=output.append):
             fleet_setup.setup(fleet_setup.parse_args(argv))
         self.assertTrue(written)
+        checks.assert_called_once()
         self.assertTrue(any("this VM runs no PostgreSQL container" in line for line in output))
         self.assertNotIn(self.PASSWORD, "\n".join(output) + "".join(written))
         self.assertEqual(sorted(path.name for path in fleet_setup.INPUTS.iterdir()), before)
@@ -879,6 +881,7 @@ class ExternalDatabaseTests(unittest.TestCase):
                 "--stargate-ref", "c" * 40, "--database-url-file", other, "--dry-run"]
         output = []
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer"), \
+                patch.object(fleet_setup, "database_checks"), \
                 patch.object(fleet_setup, "say", side_effect=output.append):
             fleet_setup.setup(fleet_setup.parse_args(argv))
         self.assertTrue(any(other in line for line in output))
@@ -951,6 +954,70 @@ class ExternalDatabaseTests(unittest.TestCase):
                 self.assertRaisesRegex(fleet_setup.SetupError, "stop here"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
         self.assertEqual(order[:4], ["check", "lockdown.sh", "docker.sh", ("api", True)])
+
+    def test_the_dry_run_checks_the_database_read_only_and_says_what_it_found(self):
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        payload = self.root / "payload"
+        for name in ("20260101000000_first", "20260102000000_second"):
+            (payload / "subspace-api/drizzle" / name).mkdir(parents=True)
+            (payload / "subspace-api/drizzle" / name / "migration.sql").write_text("SELECT 1;\n")
+
+        class Fake:
+            def __init__(self, url, ca_file=None, applied=(), standing="admin"):
+                self.tls, self.closed, self.applied, self.standing = True, False, set(applied), standing
+
+            def close(self):
+                self.closed = True
+
+        def check(migrate=False, **fake):
+            output, made = [], []
+
+            def connect(url, ca_file=None):
+                made.append(Fake(url, ca_file, **fake))
+                return made[-1]
+            with patch.object(fleet_setup, "PAYLOAD", payload), \
+                    patch.object(fleet_setup.postgres_check, "Connection", side_effect=connect), \
+                    patch.object(fleet_setup.postgres_check, "applied_migrations", side_effect=lambda c: c.applied), \
+                    patch.object(fleet_setup.postgres_check, "administrator", side_effect=lambda c, o, e: c.standing), \
+                    patch.object(fleet_setup, "say", side_effect=output.append):
+                try:
+                    fleet_setup.database_checks(answers, migrate)
+                finally:
+                    self.assertTrue(made[0].closed)
+            return "\n".join(output)
+        both = ("20260101000000_first", "20260102000000_second")
+        text = check(applied=both)
+        self.assertIn("connected read-only to the existing PostgreSQL named in", text)
+        self.assertIn("over TLS", text)
+        self.assertIn("it has all 2 of this API's migrations", text)
+        self.assertIn("developer@example.com in the development organisation local is an administrator", text)
+        self.assertIn("lacks 1 of this API's 2 migrations, which the real run applies",
+                      check(migrate=True, applied=both[:1]))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "lacks 2 of this API's 2 migrations.*add --migrate"):
+            check(applied=())
+        self.assertIn("no organisation yet", check(migrate=True, applied=()))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "is not in the database"):
+            check(applied=both, standing="missing")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "is not an administrator"):
+            check(applied=both, standing="member")
+        with patch.object(fleet_setup.postgres_check, "Connection",
+                          side_effect=fleet_setup.postgres_check.DatabaseError("cannot reach the server (timeout)")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "could not check the existing PostgreSQL") as refused:
+            fleet_setup.database_checks(answers, False)
+        self.assertNotIn(self.PASSWORD, str(refused.exception))
+        self.assertNotIn("tracker-db.example.org", str(refused.exception))
+
+    def test_the_database_check_speaks_scram_as_rfc_7677_does(self):
+        final, server = fleet_setup.postgres_check.scram_proof(
+            "pencil", "rOprNGfwEbeRWgbNEkqO",
+            "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096",
+            "n=user,r=rOprNGfwEbeRWgbNEkqO")
+        self.assertEqual(final, "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,"
+                                "p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=")
+        self.assertEqual(server, "6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=")
+        self.assertEqual(fleet_setup.postgres_check.parameters(self.URL), {
+            "host": "tracker-db.example.org", "port": 5432, "database": "tracker", "user": "tracker",
+            "password": "s3cret$word#x", "sslmode": "verify-full"})
 
     def test_the_other_new_settings_survive_a_run_against_an_existing_postgresql(self):
         # Slack bots, a captain's sessionRoot and repository notes are added to fleet.json by hand; setup keeps them

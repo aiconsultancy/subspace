@@ -54,6 +54,7 @@ INSTALLER = PAYLOAD / "subspace-installer"
 sys.path.insert(0, str(HERE.parent / "lib"))
 import fleet_records  # noqa: E402
 import irc_accounts  # noqa: E402
+import postgres_check  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
 INPUTS = Path("/root/fleet")
@@ -916,6 +917,59 @@ def database_ca(path):
             f"The database CA file {path} must hold the server's CA certificate (PEM) and no private key.")
 
 
+def database_checks(answers, migrate):
+    """The dry run's read-only checks of an existing PostgreSQL: that the API's URL connects, which of this API's
+    migrations it lacks, and whether the admin setup acts as is already an administrator there. Stops, after
+    saying everything it found, when the real run would stop."""
+    path = answers["databaseUrlFile"]
+    url = database_url(path)
+    folder = PAYLOAD / "subspace-api" / "drizzle"
+    local = sorted(entry.name for entry in folder.iterdir() if (entry / "migration.sql").is_file()) \
+        if folder.is_dir() else []
+    lines, problems = [], []
+    try:
+        connection = postgres_check.Connection(url, answers.get("databaseCaFile"))
+        try:
+            lines.append(f"database check: connected read-only to the existing PostgreSQL named in {path}, "
+                         + ("over TLS" if connection.tls else "unencrypted"))
+            applied = postgres_check.applied_migrations(connection)
+            standing = postgres_check.administrator(connection, answers["organisation"], answers["adminEmail"]) \
+                if applied else "empty"
+        finally:
+            connection.close()
+    except postgres_check.DatabaseError as error:
+        raise SetupError(f"The dry run could not check the existing PostgreSQL named in {path}: {error}. The real run "
+                         "would stop there too: check the URL, the server's firewall and the role's privileges.") \
+            from None
+    pending = [name for name in local if name not in applied]
+    unknown = applied - set(local)
+    if not pending:
+        lines.append(f"database check: it has all {len(local)} of this API's migrations")
+    elif migrate:
+        lines.append(f"database check: it lacks {len(pending)} of this API's {len(local)} migrations, which the real "
+                     "run applies (--migrate)")
+    else:
+        problems.append(f"the database lacks {len(pending)} of this API's {len(local)} migrations: back it up and "
+                        "add --migrate")
+    if unknown:
+        lines.append(f"database check: it has {len(unknown)} migrations this API does not know; it may be newer")
+    who = f"{answers['adminEmail']} in the development organisation {answers['organisation']}"
+    if standing == "empty":
+        lines.append("database check: it has no organisation yet, so the first sign-in creates one with "
+                     f"{answers['adminEmail']} as its administrator")
+    elif standing == "admin":
+        lines.append(f"database check: {who} is an administrator")
+    elif standing == "missing":
+        problems.append(f"{who} is not in the database, and setup adds no organisation or person to an existing "
+                        "one; pass the --organisation and --admin-email of an administrator who is there")
+    else:
+        problems.append(f"{who} is not an administrator, and only one may register fleets; pass an administrator's "
+                        "--admin-email")
+    for line in lines:
+        say(line)
+    require(not problems, "The real run would stop: " + "; ".join(problems) + ".")
+
+
 def external_plan(answers, migrate):
     """What setup does with an existing PostgreSQL, for the dry run and the real one. Never prints the URL."""
     url = database_url(answers["databaseUrlFile"])
@@ -1568,6 +1622,8 @@ def configure(args):
         for line in external_plan(answers, args.migrate):
             say(line)
     if args.dry_run:
+        if external_database(answers):
+            database_checks(answers, args.migrate)
         write_inputs(hashlib.sha1(b"dry-run").hexdigest())
         if answers["agentDispatch"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
