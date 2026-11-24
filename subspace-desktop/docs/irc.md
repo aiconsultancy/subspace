@@ -36,14 +36,22 @@ Where the API may serve initiative channels
 (`subspace_api_client::may_serve_initiative_channels`: always for Subspace
 API, and for NETT until the organisation's capability list says otherwise),
 a running hub holds its networks at start until the first read of the
-memberships settles, or 45 seconds pass, as long as Issues allows an API to
-wake (`READ_TIMEOUT`, `Hub::await_first_read`). The pane says *Checking
-initiatives…* meanwhile. A member's configured channels on the initiative's
-server are then not joined only to be left for the initiative's, and
-someone in no initiative never connects. A read refused for want of a
-session settles nothing, since a saved session may still be restoring; the
-next read after sign-in does. The initiative's list replaces the configured
-channels on its server, so those are not joined as well.
+memberships settles, or 45 seconds pass (`READ_TIMEOUT`,
+`Hub::await_first_read`). The pane says *Checking initiatives…* meanwhile,
+and is redrawn when the wait ends. A member's configured channels on the
+initiative's server are then not joined only to be left for the
+initiative's, and someone in no initiative never connects. The 45 seconds
+match the timeout of one API request, but the read makes at least two in
+turn (the account, then its memberships, then any fleet the memberships
+leave out, and on NETT possibly the capability list and further pages), so
+a slow API can still be reading when the wait ends. Once it settles, the
+configured channels may then be joined and left, and someone in no
+initiative, who connected when the wait ended, is disconnected. A read
+refused for want of a session settles nothing, since a saved session may
+still be restoring; the next read after sign-in does. Someone who starts
+signed out therefore waits the full 45 seconds before any network
+connects. The initiative's list replaces the configured channels on its
+server, so those are not joined as well.
 
 Someone whose latest settled read found no memberships has Channels closed
 (`InitiativeIrc::closed`, `initiatives::not_a_member`): the runtime runs no

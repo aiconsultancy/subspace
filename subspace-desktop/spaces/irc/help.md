@@ -303,7 +303,9 @@ time it starts. The IRC server still controls which channels you can join.
 Your initiative's channels take the place of the channels to join that you
 set for the same server in **Settings > Channels**. When Subspace starts, it
 says it is checking your initiatives and connects once it knows them, so it
-does not join those channels first only to leave them.
+does not join those channels first only to leave them. If you are signed
+out, or the Subspace API is slow to answer, it waits up to 45 seconds and
+then connects to your servers anyway.
 
 If you are not a member of any initiative yet, Channels is off: it connects
 to no server, including servers that have nothing to do with initiatives,
