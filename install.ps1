@@ -656,6 +656,9 @@ function Invoke-Install {
     }
     Connect-Target
     if ((Invoke-Vm @('true')) -ne 0) { Die 'Cannot reach the VM over SSH.' }
+    # The fleet's record in the Subspace API names the VM by the host this computer reaches it at.
+    $targetEnv = Get-TargetEnv
+    if ($targetEnv.KIND -eq 'ssh') { $Passthrough.AddRange([string[]]@('--vm-host', ($targetEnv.HOST -split '@', 2)[-1])) }
 
     # subspace-setup --dry-run changes nothing on the VM: the files it is given go to a scratch directory that
     # is removed afterwards, never over the inputs (such as the database URL) that the next real run uses.

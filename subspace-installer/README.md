@@ -897,7 +897,10 @@ As that administrator, setup then creates or updates, as
 [Subspace API registration](#subspace-api-registration) describes:
 
 - **the fleet** with this fleet's slug, its IRC endpoint, standard channels,
-  `vmHost` and Fleet API address. A fleet the organisation already has under
+  `vmHost` (setup's `--vm-host`, which the host installers set to the
+  `--remote` host) and Fleet API address. Its rear admiral and captains come
+  from the agent records below: the `fleets` table's own `rear_admiral_name`
+  column is a legacy one the API no longer fills. A fleet the organisation already has under
   that slug is taken over and brought in step, so give a new fleet a slug of
   its own;
 - **one ship per captain**, and **an agent record** for the rear admiral and

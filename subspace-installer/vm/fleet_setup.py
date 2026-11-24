@@ -221,6 +221,9 @@ def parse_args(argv):
                         "the fleet's enrolment token (senr1.…) from that API's administrator. Never printed")
     parser.add_argument("--switch-to-hosted-api", action="store_true",
                         help="with --api-url on a VM whose API runs here: switch anyway, leaving that tracker behind")
+    parser.add_argument("--vm-host", help="the name or address operators reach this VM by, recorded as the fleet's "
+                        "vmHost in the Subspace API (the host installers pass the --remote host). Kept on later runs; "
+                        "'' removes it")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
     parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
@@ -351,6 +354,13 @@ def gather(args, saved):
     require(not args.irc_operator_account or args.irc_operator,
             "--irc-operator-account is the account the operator's connection signs in to: pass --irc-operator too.")
     hosted_api(args, answers, saved)
+    if args.vm_host == "":
+        answers.pop("vmHost", None)
+    elif args.vm_host is not None:
+        try:
+            answers["vmHost"] = runtime.host(args.vm_host.strip().lower())
+        except runtime.Invalid:
+            raise SetupError("--vm-host must be a DNS name or an IP address, such as fleet.example.com.") from None
     if answers.get("apiUrl"):
         answers["api"] = False  # The hosted API replaces one on this VM.
     elif args.api is not None:
@@ -1947,6 +1957,8 @@ def configure(args):
             answers.update(initiativeId=initiative)
             save_answers(answers)
             api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
+            if answers.get("vmHost"):
+                api_block["vmHost"] = answers["vmHost"]  # The fleet's record in the API names the VM.
             if agent_listener_enabled():
                 # Officers get the API's MCP server at the agent listener, as their own agent records.
                 api_block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"

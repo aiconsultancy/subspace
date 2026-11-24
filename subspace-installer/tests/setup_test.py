@@ -1781,6 +1781,35 @@ class FirstFleetTests(unittest.TestCase):
         self.assertTrue(output[0].startswith("NOTE: the installed Stargate has no Fleet API"))
         self.assertIn("records no Fleet API address", output[0])
 
+    def test_the_fleet_record_names_the_vm_and_its_fleet_api(self):
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Orion", "--vm-host", "10.0.0.5"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            answers = fleet_setup.gather(args, {})
+        self.assertEqual(answers["vmHost"], "10.0.0.5")
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            kept = fleet_setup.gather(fleet_setup.parse_args(["--non-interactive", "--operator", "operator"]), answers)
+            self.assertEqual(kept["vmHost"], "10.0.0.5")
+            cleared = fleet_setup.gather(fleet_setup.parse_args(["--non-interactive", "--operator", "operator",
+                                                                 "--vm-host", ""]), answers)
+            self.assertNotIn("vmHost", cleared)
+            with self.assertRaisesRegex(fleet_setup.SetupError, "--vm-host must be a DNS name"):
+                fleet_setup.gather(fleet_setup.parse_args(["--non-interactive", "--operator", "operator",
+                                                           "--vm-host", "user@host"]), answers)
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        api_block = {"url": "http://127.0.0.1:3000", "initiatives": [], "vmHost": answers["vmHost"]}
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, api_block, stargate_api=True)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"], "header.payload.signature")
+        fields = runtime.fleet_records.fleet_fields(validate(config, secrets, check_files=False))
+        self.assertEqual((fields["vmHost"], fields["fleetApiUrl"]), ("10.0.0.5", "http://127.0.0.1:8484"))
+        # The host installers pass the --remote host to setup.
+        root = Path(fleet_setup.HERE).parents[1]
+        self.assertIn('if [ "$KIND" = ssh ]; then passthrough+=(--vm-host "${HOST#*@}"); fi',
+                      (root / "install.sh").read_text())
+        self.assertIn("$Passthrough.AddRange([string[]]@('--vm-host', ($targetEnv.HOST -split '@', 2)[-1]))",
+                      (root / "install.ps1").read_text())
+
 
 class OutboundTests(unittest.TestCase):
     """setup stops at once, saying what to open, when the VM cannot reach what the install downloads."""
