@@ -259,9 +259,11 @@ An app that cannot be used without its account sets
 whenever a session ends for good, the shell then covers the main window with
 a sign-in dialog that cannot be dismissed into the app: the provider's
 sign-in, its progress, and Quit. While it shows, only Quit acts: no other
-shell action, from a key or the menu bar, reaches the window behind it, and
-it closes Settings, the palette and any dialog that was open. It closes
-once signed in, and focus returns to the Space. A provider that
+shell action, from a key, the menu bar or a toolbar control, reaches the
+window behind it; Tab cycles its own controls; it closes Settings, the
+palette and any dialog that was open; and a notification clicked meanwhile
+opens once signed in. A failed or cancelled sign-in never lets anyone in.
+It closes once signed in, and focus returns to the Space. A provider that
 signs in by itself (`ProviderInfo::browser` false) never shows it, and a
 saved session the shell cannot renew because the service, the network or the
 keychain is out of reach still opens the app. Without the flag, or without

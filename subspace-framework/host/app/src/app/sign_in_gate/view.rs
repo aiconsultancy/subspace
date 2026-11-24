@@ -1,0 +1,219 @@
+//! What the sign-in dialog draws: the organisation, the account's progress
+//! and its controls, each with its own focus handle from [`Handles`].
+
+use gpui_kit::component::{Disableable as _, v_flex};
+use gpui_kit::{
+    AnyElement, Context, Div, Entity, FocusHandle, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
+    div,
+};
+use subspace_account::Error;
+use subspace_dashboard::Tokens;
+use subspace_dashboard::action::{Intent, dialog_button};
+use subspace_dashboard::dialog;
+use subspace_lucide::IconName;
+
+use super::{Handles, SignInGate, cycle};
+use crate::account::{NativeAccount, Status, sign_in_label, status_text};
+use crate::app::SubspaceApp;
+
+pub(super) fn gate(
+    entity: &Entity<NativeAccount>,
+    (shown, handles, order): (&Shown, &Handles, Vec<FocusHandle>),
+    tokens: &Tokens,
+    cx: &mut Context<SubspaceApp>,
+) -> AnyElement {
+    let title = format!("Sign in to {}", crate::product::desktop_name(cx));
+    let frame = dialog::frame(tokens, dialog::DialogWidth::D540, title.clone())
+        .id("sign-in-gate")
+        .track_focus(&handles.frame)
+        .role(Role::Dialog)
+        .aria_label(title)
+        .test_support()
+        .capture_key_down(move |event, window, cx| {
+            let keys = &event.keystroke;
+            let plain = !(keys.modifiers.control || keys.modifiers.alt || keys.modifiers.platform);
+            let quitting = cx
+                .try_global::<SignInGate>()
+                .is_some_and(|state| state.quitting);
+            if keys.key == "tab" && plain && !quitting {
+                cycle(&order, keys.modifiers.shift, window, cx);
+                cx.stop_propagation();
+            }
+        })
+        .child(
+            v_flex()
+                .gap_2()
+                .child(introduction(&shown.organization, &shown.provider))
+                .children(
+                    shown
+                        .progress
+                        .clone()
+                        .map(|text| div().text_color(tokens.muted).child(text)),
+                ),
+        )
+        .child(actions(entity, shown, handles, cx));
+    dialog::backdrop(tokens, frame)
+}
+
+/// What the gate shows of the account, read once per render.
+pub(super) struct Shown {
+    pub(super) status: Status,
+    pub(super) provider: String,
+    organization: String,
+    progress: Option<String>,
+    pub(super) busy: bool,
+}
+
+impl Shown {
+    pub(super) fn of(account: &NativeAccount) -> Self {
+        let code = account
+            .code
+            .as_deref()
+            .filter(|_| account.status == Status::Waiting);
+        Self {
+            status: account.status,
+            provider: account.provider.name.clone(),
+            organization: account.provider.organization.clone(),
+            progress: status_text(account.status, false, &account.provider.name, code),
+            busy: account.busy(),
+        }
+    }
+}
+
+/// The line under the title: whose account, from the build's branding.
+pub(super) fn introduction(organization: &str, provider: &str) -> String {
+    match (organization.is_empty(), provider.is_empty()) {
+        (false, _) => format!("Sign in with your {organization} account to continue."),
+        (true, false) => format!("Sign in with your {provider} account to continue."),
+        (true, true) => "Sign in to continue.".into(),
+    }
+}
+
+/// Quit first, then the sign-in, or while it runs, its Cancel and Open
+/// browser again.
+fn actions(
+    entity: &Entity<NativeAccount>,
+    shown: &Shown,
+    handles: &Handles,
+    cx: &mut Context<SubspaceApp>,
+) -> Div {
+    let quit = dialog_button(
+        "sign-in-gate-quit",
+        Intent::Neutral,
+        Some(IconName::LogOut),
+        "Quit",
+    )
+    .track_focus(&handles.quit)
+    .on_click(cx.listener(|app, _, _, cx| app.request_quit(cx)));
+    let footer = dialog::footer().child(quit);
+    match shown.status {
+        Status::Starting | Status::Waiting => {
+            footer.children(pending(entity, shown.status, handles))
+        }
+        status => footer
+            .children(retry(entity, status, &handles.retry))
+            .child(sign_in(
+                entity,
+                sign_in_label(status, false, &shown.provider),
+                shown.busy,
+                &handles.sign_in,
+            )),
+    }
+}
+
+fn pending(entity: &Entity<NativeAccount>, status: Status, handles: &Handles) -> Vec<AnyElement> {
+    let cancel = entity.clone();
+    let mut buttons = vec![
+        dialog_button(
+            "sign-in-gate-cancel",
+            Intent::Neutral,
+            Some(IconName::X),
+            "Cancel",
+        )
+        .track_focus(&handles.cancel)
+        .on_click(move |_, _, cx| cancel.update(cx, |account, cx| account.cancel(cx)))
+        .into_any_element(),
+    ];
+    if status == Status::Waiting {
+        let reopen = entity.clone();
+        buttons.push(
+            dialog_button(
+                "sign-in-gate-reopen",
+                Intent::Primary,
+                Some(IconName::ExternalLink),
+                "Open browser again",
+            )
+            .track_focus(&handles.reopen)
+            .on_click(move |_, _, cx| reopen.update(cx, |account, cx| account.reopen(cx)))
+            .into_any_element(),
+        );
+    }
+    buttons
+}
+
+/// Whether a failed sign-in offers Retry: one that could not reach the
+/// service.
+pub(super) fn retries(status: Status) -> bool {
+    matches!(
+        status,
+        Status::Failed(Error::Offline | Error::Keychain | Error::Service)
+    )
+}
+
+/// Retry, after a sign-in that could not reach the service.
+fn retry(
+    entity: &Entity<NativeAccount>,
+    status: Status,
+    focus: &FocusHandle,
+) -> Option<AnyElement> {
+    let retry = entity.clone();
+    retries(status).then(|| {
+        dialog_button(
+            "sign-in-gate-retry",
+            Intent::Neutral,
+            Some(IconName::RefreshCw),
+            "Retry",
+        )
+        .track_focus(focus)
+        .on_click(move |_, _, cx| retry.update(cx, |account, cx| account.retry(cx)))
+        .into_any_element()
+    })
+}
+
+fn sign_in(
+    entity: &Entity<NativeAccount>,
+    label: String,
+    busy: bool,
+    focus: &FocusHandle,
+) -> AnyElement {
+    let signin = entity.clone();
+    dialog_button(
+        "sign-in-gate-sign-in",
+        Intent::Primary,
+        Some(IconName::LogIn),
+        label,
+    )
+    .track_focus(focus)
+    .disabled(busy)
+    .on_click(move |_, _, cx| signin.update(cx, |account, cx| account.start(cx)))
+    .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::introduction;
+
+    #[test]
+    fn the_gate_names_the_organisation_from_the_build_s_branding() {
+        assert_eq!(
+            introduction("Example Org", "WorkOS"),
+            "Sign in with your Example Org account to continue."
+        );
+        assert_eq!(
+            introduction("", "WorkOS"),
+            "Sign in with your WorkOS account to continue."
+        );
+        assert_eq!(introduction("", ""), "Sign in to continue.");
+    }
+}

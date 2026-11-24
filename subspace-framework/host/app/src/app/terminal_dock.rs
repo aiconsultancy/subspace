@@ -174,7 +174,11 @@ impl SubspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(dock) = self.terminal.as_mut() else {
+        let Some(dock) = self
+            .terminal
+            .as_mut()
+            .filter(|_| !super::sign_in_gate::shown(cx))
+        else {
             return;
         };
         let before = dock.state;

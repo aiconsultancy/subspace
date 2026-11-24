@@ -2,7 +2,10 @@
 //! name their busy programs through `quit_warnings`; the shell names none. Quit and
 //! restart, after an update installs, takes the same path.
 
-use gpui_kit::{AnyElement, App, Context, IntoElement, ParentElement, SharedString, div};
+use gpui_kit::{
+    AnyElement, App, Context, FocusHandle, Global, InteractiveElement as _, IntoElement, Keystroke,
+    ParentElement, SharedString, Window, div,
+};
 use subspace_dashboard::action::{Intent, dialog_button};
 use subspace_dashboard::{Tokens, dialog, prefs};
 use subspace_lucide::IconName;
@@ -66,6 +69,7 @@ impl SubspaceApp {
     ) -> Option<AnyElement> {
         let warnings = self.quit_warnings.as_ref()?;
         let exit = self.quit_exit;
+        let focus = quit_focus(cx);
         let body = div().child(quit_heading(warnings)).children(
             warnings
                 .iter()
@@ -74,6 +78,7 @@ impl SubspaceApp {
         let footer = dialog::footer()
             .child(
                 dialog_button("cancel-quit", Intent::Neutral, Some(IconName::X), "Cancel")
+                    .track_focus(&focus.cancel)
                     .on_click(cx.listener(|app, _, _, cx| app.cancel_quit(cx))),
             )
             .child(
@@ -83,13 +88,59 @@ impl SubspaceApp {
                     Some(confirm_icon(exit)),
                     exit.title(),
                 )
+                .track_focus(&focus.confirm)
                 .on_click(cx.listener(move |_, _, _, cx| exit_now(exit, cx))),
             );
+        let order = [focus.cancel.clone(), focus.confirm.clone()];
         let frame = dialog::frame(tokens, dialog::DialogWidth::D540, exit.title())
+            .capture_key_down(move |event, window, cx| {
+                if tab_moves(&order, &event.keystroke, window, cx) {
+                    cx.stop_propagation();
+                }
+            })
             .child(body)
             .child(footer);
         Some(dialog::backdrop(tokens, frame).into_any_element())
     }
+}
+
+/// The confirmation's buttons' focus, made once, so the keyboard can
+/// answer it, as over the sign-in dialog.
+#[derive(Clone)]
+pub(super) struct QuitFocus {
+    pub cancel: FocusHandle,
+    pub confirm: FocusHandle,
+}
+
+impl Global for QuitFocus {}
+
+pub(super) fn quit_focus(cx: &mut App) -> QuitFocus {
+    if let Some(focus) = cx.try_global::<QuitFocus>() {
+        return focus.clone();
+    }
+    let focus = QuitFocus {
+        cancel: cx.focus_handle(),
+        confirm: cx.focus_handle(),
+    };
+    cx.set_global(focus.clone());
+    focus
+}
+
+/// Tab and Shift-Tab move between the confirmation's two buttons. True when
+/// `keys` was one of them.
+fn tab_moves(
+    order: &[FocusHandle; 2],
+    keys: &Keystroke,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let plain = !(keys.modifiers.control || keys.modifiers.alt || keys.modifiers.platform);
+    if keys.key != "tab" || !plain {
+        return false;
+    }
+    let next = usize::from(order[0].is_focused(window));
+    window.focus(&order[next], cx);
+    true
 }
 
 /// Save the preferences and quit, then open the app again for a restart.

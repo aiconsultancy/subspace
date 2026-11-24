@@ -109,7 +109,8 @@ impl SubspaceApp {
             .is_open()
             .then(|| div().into_any_element());
         let toasts = self.render_toasts(tokens, cx).into_any_element();
-        let sign_in = super::sign_in_gate::render(tokens, window, cx);
+        let quitting = self.quit_warnings.is_some();
+        let sign_in = super::sign_in_gate::render(tokens, quitting, window, cx);
         let quit = self.render_quit_dialog(tokens, cx);
         // Help is a workspace tool, not an overlay covering the board; a
         // maximized terminal does cover it.
@@ -332,6 +333,8 @@ impl Render for SubspaceApp {
 
 #[cfg(test)]
 mod cover_tests;
+#[cfg(test)]
+mod sign_in_focus_tests;
 
 #[cfg(test)]
 mod tests {

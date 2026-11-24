@@ -8,8 +8,8 @@ use subspace_dashboard::{Dashboard, DashboardEvent};
 use super::SubspaceApp;
 
 /// A board that records whether the shell says something covers it.
-struct Fixture {
-    focus: FocusHandle,
+pub(super) struct Fixture {
+    pub(super) focus: FocusHandle,
     covered: bool,
 }
 impl EventEmitter<DashboardEvent> for Fixture {}
@@ -159,12 +159,12 @@ fn sign_in_covers_the_window_only_while_a_required_account_has_no_session(cx: &m
             Some("Sign in with Example Identity")
         );
         assert!(window.try_find("sign-in-gate-quit").is_some());
-        let focused = window.focused(cx);
-        let gate = cx
-            .global::<crate::app::sign_in_gate::SignInGate>()
-            .focus
-            .clone();
-        assert!(focused.is_some() && focused == gate, "focus is on sign-in");
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("sign-in-gate-sign-in").focused(),
+            Some(true),
+            "focus is on sign-in"
+        );
     })
     .unwrap();
     // While the browser leg runs it stays, with Cancel and the browser.
@@ -179,7 +179,7 @@ fn sign_in_covers_the_window_only_while_a_required_account_has_no_session(cx: &m
 }
 
 /// Draws `window`, runs what the draw deferred, and draws again.
-fn settle(window: gpui_kit::WindowHandle<SubspaceApp>, cx: &mut TestAppContext) {
+pub(super) fn settle(window: gpui_kit::WindowHandle<SubspaceApp>, cx: &mut TestAppContext) {
     cx.update_window(window.into(), |_root, window, cx| {
         window.refresh();
         window.render_frame(cx);
@@ -192,7 +192,7 @@ fn settle(window: gpui_kit::WindowHandle<SubspaceApp>, cx: &mut TestAppContext) 
 
 /// The shell over the fixture board, with the terminal, and a required
 /// account seeded in `state`.
-fn gated(
+pub(super) fn gated(
     state: &str,
     root: &std::path::Path,
     cx: &mut TestAppContext,
