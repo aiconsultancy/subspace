@@ -840,7 +840,25 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
             config[key] = previous[key]
     # Each role's model and effort: this or an earlier run's answer, over one set in fleet.json by hand.
     harness = dict(config.get("harness") or {})
-    for role, choice in answers.get("officerModels", {}).items():
+    officers = answers.get("officerModels", {})
+    resets = [role for role in OFFICER_ROLES if any(key in officers.get(role, {}) and not officers[role][key]
+                                                    for key in ("model", "effort"))]
+    shared = {key: harness[key] for key in ("family", "model", "effort") if key in harness}
+    if resets and shared:
+        # '' returns a role to its default, so a fleet-wide model set by hand no longer applies to it. Each role
+        # takes what it ran as its own block first, so the other role keeps it; the reset below then clears it.
+        resolved = {role: resolved_officer(harness, role) for role in OFFICER_ROLES}
+        for key in shared:
+            harness.pop(key)
+        for role in OFFICER_ROLES:
+            block = {key: val for key, val in (harness.get(role) or {}).items() if key not in ("family", "model", "effort")}
+            harness[role] = {**block, **resolved[role]}
+        kept = [role for role in OFFICER_ROLES if role not in resets]
+        say(f"fleet.json's fleet-wide harness {', '.join(f'{key} {val}' for key, val in shared.items())} no longer "
+            f"applies to {' or '.join(OFFICER_ROLES[role] for role in resets)}"
+            + (f"; {' and '.join(OFFICER_ROLES[role] for role in kept)} keeps it, now as "
+               f"{' and '.join(f'harness.{role}' for role in kept)}." if kept else "."))
+    for role, choice in officers.items():
         block = dict(harness.get(role) or {})
         if choice.get("model"):
             block.update(model=choice["model"], family=runtime.model_family(choice["model"]))
@@ -895,6 +913,23 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     if dispatch or answers.get("agentDispatch"):
         config["agentDispatch"] = {**dispatch, "enabled": bool(answers.get("agentDispatch") and api_block)}
     return config
+
+
+# fleet.json's harness block for each officer role, and who it is.
+OFFICER_ROLES = {"captain": "the captains", "rearAdmiral": "the rear admiral"}
+
+
+def resolved_officer(harness, role):
+    """The family, model and effort a role runs with fleet.json's harness, as the fleet installer resolves it."""
+    key = "captain" if role == "captain" else "rear_admiral"
+    try:
+        hull = runtime.harness_config({k: v for k, v in harness.items() if k not in OFFICER_ROLES},
+                                      {"type": "opencode", **runtime.OFFICER_DEFAULTS[key], "permissions": None})
+        result = runtime.harness_config(harness.get(role) or {}, hull)
+    except runtime.Invalid as error:
+        raise SetupError(f"fleet.json's harness: {error}") from None
+    return {"family": result["family"], "model": result["model"],
+            **({"effort": result["effort"]} if result["effort"] else {})}
 
 
 def fleet_secrets(secret_store, members, admin, token="", local_irc=True, dispatch_token="", certificates=False):

@@ -233,6 +233,37 @@ class SetupInputsTests(unittest.TestCase):
         with self.assertRaisesRegex(runtime.Invalid, "'max' is not available for gpt-5.4"):
             self.officers(config, secrets)
 
+    def test_an_empty_model_returns_one_role_to_its_default_over_a_fleet_wide_one(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--crew-codex-model", "gpt-6.2-sol"]
+        answers, members, config, secrets, _ = self.generate(base)
+        config["harness"] = {"type": "opencode", "family": "codex", "model": "gpt-6.2-sol"}
+        self.assertEqual(self.officers(config, secrets), [("codex", "gpt-6.2-sol", None)] * 2)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            again = self.rerun(answers, config, "--captain-model", "")
+            rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        # The captains return to their default; the rear admiral and the crew keep what they ran.
+        self.assertEqual(self.officers(rebuilt, secrets), [("codex", "gpt-6.2-sol", None),
+                                                           ("claude", "claude-opus-5-5", "xhigh")])
+        self.assertEqual(rebuilt["harness"], {"type": "opencode",
+                                              "rearAdmiral": {"family": "codex", "model": "gpt-6.2-sol"}})
+        self.assertEqual(rebuilt["crew"], config["crew"])
+        self.assertIn("fleet-wide harness family codex, model gpt-6.2-sol no longer applies to the captains; the "
+                      "rear admiral keeps it, now as harness.rearAdmiral.", output.getvalue())
+        # Nothing moves again on a later run.
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            fleet_setup.fleet_config(self.rerun(again, rebuilt), members, "a" * 40)
+        self.assertNotIn("fleet-wide", output.getvalue())
+        # An effort alone: the rear admiral keeps the model at its default effort, and the captains keep both.
+        config["harness"] = {"model": "claude-fable-5-2", "effort": "max"}
+        again = self.rerun(answers, config, "--rear-admiral-effort", "")
+        with contextlib.redirect_stdout(io.StringIO()):
+            rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(self.officers(rebuilt, secrets), [("claude", "claude-fable-5-2", "high"),
+                                                           ("claude", "claude-fable-5-2", "max")])
+
     def test_a_fleet_set_up_before_the_role_defaults_keeps_its_model_until_it_chooses(self):
         base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
         answers, members, config, secrets, _ = self.generate(base)

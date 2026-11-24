@@ -125,8 +125,11 @@ sudo subspace-setup --captain-model '' --rear-admiral-model ''   # back to the d
 - An effort belongs to its model. A new model gets the provider's default
   effort unless the same run names one with `--captain-effort` or
   `--rear-admiral-effort`.
-- Later runs keep each choice. `''` returns a model or an effort to the
-  default, even over one set in `fleet.json` by hand.
+- Later runs keep each choice. `''` returns that role's model or effort to
+  the default, even over one set in `fleet.json` by hand. If a fleet-wide
+  `harness` model or effort is set there, setup moves it into the other
+  role's block, so that role keeps running it, and says so. An officer's
+  own `harness` still wins, and crew are not affected.
 
 `subspace-setup` writes these choices as `harness.captain` and
 `harness.rearAdmiral` in `fleet.json`, for example
