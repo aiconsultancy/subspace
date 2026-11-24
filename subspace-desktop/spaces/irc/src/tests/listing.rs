@@ -13,14 +13,13 @@ use crate::fixtures::{channel, network_id};
 use crate::hub::Hub;
 use crate::{Irc, rows};
 
-/// A connected board in `#subspace` whose network lists `#rust` and
-/// `#subspace`.
+/// A connected board on a saved network with no fleet, in `#subspace`.
 fn board(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
     let (board, hub, cx) = mount(cx, settings());
     let mut events = channel_events();
     events.push(Event::ChannelList {
         network: network_id(),
-        channels: ["#rust", "#subspace"]
+        channels: ["#rust", "#subspace", "#aurora-lyra"]
             .map(|name| ListedChannel {
                 name: name.into(),
                 users: 7,
@@ -57,10 +56,15 @@ fn an_unjoined_channel_is_greyed_and_its_menu_joins_and_opens_it(cx: &mut TestAp
         let board = board.read(cx);
         let rows = &board.list().groups()[0].rows;
         let titles: Vec<&str> = rows.iter().map(|row| row.title.as_ref()).collect();
-        assert_eq!(titles, ["Server", "#subspace", "#rust"]);
-        assert!(rows[2].done, "greyed");
+        assert_eq!(titles, ["Server", "#subspace", "#aurora-lyra", "#rust"]);
+        assert!(
+            board
+                .group_captions(&board.list().groups()[0], cx)
+                .is_empty()
+        );
+        assert!(rows[3].done, "greyed");
         assert_eq!(
-            board.row_accessible_label(&rows[2], cx).as_ref(),
+            board.row_accessible_label(&rows[3], cx).as_ref(),
             "#rust, not joined, 7 users"
         );
     });

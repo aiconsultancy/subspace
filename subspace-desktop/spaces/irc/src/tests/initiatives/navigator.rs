@@ -4,6 +4,8 @@
 //! `People` for private conversations with people. Which fleet groups
 //! start folded is in [`super::folding`].
 
+mod listed;
+
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_client_irc::Event;

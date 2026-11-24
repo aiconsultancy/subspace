@@ -148,13 +148,16 @@ On a network that serves a Subspace fleet, the fleet's channels have a group
 named after the fleet and showing the network's connection state. A fleet's
 group lists its Starbase, its command channel, its ships' channels under
 **Ships**, then the other channels of its initiatives, each without the
-fleet's prefix: `#aurora-lyra` shows as `lyra`. When the network holds only
-that fleet, its group also holds the network's other channels under
+fleet's prefix: `#aurora-lyra` shows as `lyra`. Channels from the server's
+list take their places as soon as the fleet details are available, even
+before you join them. When the network holds only that fleet, its group
+also holds the network's other channels under
 **Other**, with the **Server** row last. When it holds several fleets, the
 network's own group comes after them, named after the network. Every
-channel leads with a `#`, and a ship's channel with its captain's icon as
+channel leads with a `#`. A ship's conversation row can show its captain's icon as
 **Settings > Application > Appearance > Icons** asks: **Large**, **Small**
-(the default) or **Off**, which shows the `#`. A ship's channel ends with a
+(the default) or **Off**, which shows the `#`. Listed ship channels you
+haven't joined show their user counts. A ship's conversation row ends with a
 dot: filled green while any of its crew is working and a ring while none
 is, when Subspace can read the fleet; hover the dot to see who is working
 and on what. Without the fleet's live state the dot follows the captain's

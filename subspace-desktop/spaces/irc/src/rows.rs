@@ -53,9 +53,9 @@ pub(crate) struct Layout {
 }
 
 /// The navigator: on each network, one group per fleet holding its
-/// channels, then `People` with the private conversations with people,
-/// then the network's own group with its server, the channels of no fleet,
-/// any older private conversation with an agent and the listed channels.
+/// channels (including those listed by the server), then `People` with
+/// the private conversations with people, then the network's own group
+/// with its server, channels of no fleet and older agent conversations.
 /// A network that serves no fleet keeps one group, as before.
 /// A ship's dot follows its crew where `lives`, the Fleet API's word on
 /// each fleet the board shows, has them.
@@ -71,27 +71,6 @@ pub(crate) fn layout(state: &IrcState, rosters: &Rosters, lives: &Lives) -> Layo
 /// `network`'s roster, or the empty one when it serves no fleet.
 fn roster_of<'a>(rosters: &'a Rosters, network: &NetworkId) -> &'a Roster {
     rosters.get(network).map_or(&*NO_ROSTER, Rc::as_ref)
-}
-
-/// The channels from `network`'s list that are not in the list already,
-/// greyed, by name, after its buffers.
-pub(super) fn listed_rows(
-    state: &IrcState,
-    network: &NetworkId,
-    keys: &mut HashMap<SharedString, BufferKey>,
-) -> Vec<Row> {
-    unjoined(state, network)
-        .into_iter()
-        .map(|channel| {
-            let key = BufferKey {
-                network: network.clone(),
-                target: Target::Channel(channel.name.clone()),
-            };
-            let row = listed_row(&key, channel.users);
-            keys.insert(row.key.clone(), key);
-            row
-        })
-        .collect()
 }
 
 /// The listed channels of `network` that have no buffer, matched ignoring
@@ -135,6 +114,7 @@ pub(crate) fn search(layout: &Layout) -> ItemSearch {
             let name = layout
                 .buffers
                 .get(&row.key)
+                .or_else(|| layout.listed.get(&row.key))
                 .map_or_else(|| row.title.to_string(), |key| title(key).to_owned());
             let doc = SearchDoc::new(row.key.to_string(), name)
                 .parent(parent.clone())
