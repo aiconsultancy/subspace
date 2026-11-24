@@ -545,6 +545,61 @@ class SetupInputsTests(unittest.TestCase):
         self.assertNotIn("AGENT_ORGANISATION", env())
         self.assertFalse(published())
 
+    def test_the_dry_run_previews_the_api_settings_the_real_run_uses(self):
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40, "--no-demo"]
+        payload = Path(self.directory.name) / "payload"
+        (payload / "subspace-api").mkdir(parents=True)
+        (payload / "subspace-api" / "compose.yaml").write_text("services: {}\n")
+        api_env = fleet_setup.INPUTS / "api.env"
+
+        def dry_run():
+            seen = []
+
+            def installer(config_path, dry_run=False, secrets_dir=None):
+                self.assertTrue(dry_run)
+                folder = Path(config_path).parent
+                seen.append((json.loads(Path(config_path).read_text()),
+                             json.loads((folder / "fleet.secrets.json").read_text())))
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "say"), \
+                    patch.object(fleet_setup, "installer", side_effect=installer):
+                fleet_setup.setup(fleet_setup.parse_args([*argv, "--dry-run"]))
+            config, secrets = seen[-1]
+            return config, validate(config, secrets, check_files=False)
+
+        def mcp(cfg):
+            return [runtime.SUBSPACE_MCP_GRANT in runtime.harness_permissions(cfg, person) for person in cfg["members"]]
+
+        # A new fleet: the real run starts the API with development sign-in and the agent listener.
+        config, cfg = dry_run()
+        self.assertEqual(config["api"], {"url": "http://127.0.0.1:3000", "initiatives": [],
+                                         "agentUrl": "http://127.0.0.1:3001"})
+        self.assertEqual(mcp(cfg), [True, True])
+        # An installed fleet, unchanged: its saved initiative and the api.env the real run keeps.
+        answers, _, _ = answers_for(argv[3:])
+        answers["initiativeId"] = "00000000-0000-4000-8000-000000000001"
+        fleet_setup.save_answers(answers)
+        with patch.object(fleet_setup, "PAYLOAD", payload), \
+                patch.object(fleet_setup, "API_DIR", Path(self.directory.name) / "api"), \
+                patch.object(fleet_setup, "compose"):
+            fleet_setup.api_up(answers, fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None))
+        config, cfg = dry_run()
+        self.assertEqual(config["api"]["initiatives"], [answers["initiativeId"]])
+        real = runtime.validate(*self.generate(argv[3:], fleet_setup.local_api_block(
+            answers, [answers["initiativeId"]], fleet_setup.agent_listener_enabled()))[2:4], check_files=False)
+        for planned, person in zip(cfg["members"], real["members"]):
+            self.assertEqual(runtime.harness_permissions(cfg, planned), runtime.harness_permissions(real, person))
+        self.assertEqual(mcp(cfg), [True, True])
+        # The operator turned the listener off: the officers lose the API's tools in both runs.
+        api_env.write_text(api_env.read_text().replace("AGENT_PORT=3001\n", "AGENT_PORT=\n"))
+        config, cfg = dry_run()
+        self.assertNotIn("agentUrl", config["api"])
+        self.assertEqual(mcp(cfg), [False, False])
+        # Without development sign-in the real run writes no API settings, nor does the dry run.
+        api_env.write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\n")
+        config, cfg = dry_run()
+        self.assertNotIn("api", config)
+
     def test_further_fleet_registration_carries_its_records_and_is_checked(self):
         argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra, Vega",
                 "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"]

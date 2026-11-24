@@ -95,6 +95,9 @@ GATEWAY_USER = "ss-fleet-gateway"  # The fleet installer's shared Stargate gatew
 LINUX_USER = re.compile(r"[a-z_][a-z0-9_.-]{0,31}")
 # Development sign-in is only the default: an operator who switches the API to WorkOS or Entra keeps it.
 DEV_AUTH = {"AUTH_PROVIDERS": "dev", "ENABLE_DEV_AUTH": "true", "NODE_ENV": "development"}
+# Stand-ins, shaped as bearer JWTs, for the tokens a real run gets from the API: the installer checks inputs that
+# name the API before the API runs (planned_inputs), and the dry run never signs in.
+PLANNED_TOKENS = {"apiToken": "planned.administrator.token", "rearAdmiralApiToken": "planned.rear-admiral.token"}
 CIDR = re.compile(r"[0-9a-fA-F:.]+(?:/[0-9]{1,3})?")
 # Agent dispatch: what switching it on does, in the words the prompt and the summary use.
 DISPATCH_SUMMARY = ("issues flagged Ready for agents are offered to the captains in fleet command, and issues "
@@ -1355,26 +1358,18 @@ def external_plan(answers, migrate):
     return lines
 
 
-def api_up(answers, secret_store, migrate=False):
-    source = PAYLOAD / "subspace-api"
-    require((source / "compose.yaml").is_file(), "The payload has no subspace-api/compose.yaml.")
-    API_DIR.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-    staging = API_DIR.with_name("api.new")
-    shutil.rmtree(staging, ignore_errors=True)
-    shutil.copytree(source, staging, ignore=shutil.ignore_patterns("node_modules", ".data", ".env", "__pycache__"))
-    shutil.rmtree(API_DIR, ignore_errors=True)
-    staging.rename(API_DIR)
-    slug = answers["slug"]
-    external = database_url(answers["databaseUrlFile"]) if external_database(answers) else None
-    environment = {
-        # An existing PostgreSQL's URL goes only into this root-only file, single-quoted so Compose takes it
-        # literally; the API's own PostgreSQL gets a generated password instead.
-        **({"DATABASE_URL": f"'{external}'"} if external else {"POSTGRES_PASSWORD": secret_store.password("postgres")}),
-        "API_PORT": API_PORT,
-        "DEV_CHANNELS": f"#{slug}-starbase",
-        "DEV_IRC_HOST": irc_endpoint(answers)[0],
-        "DEV_IRC_PORT": irc_endpoint(answers)[1],
-    }
+def dev_sign_in(environment):
+    """Whether api.env's settings offer development sign-in, which setup uses to act as the admin."""
+    providers = [value.strip() for value in environment.get("AUTH_PROVIDERS", "").split(",")]
+    return environment.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
+
+
+def api_environment(answers, environment, external=False):
+    """api.env as api_up writes it: environment (setup's own settings) over what an earlier run wrote there and
+    the operator kept or changed. Returns the settings and whether the agent listener is on.
+
+    external says the API uses an existing PostgreSQL, whose URL api_up passes in environment.
+    """
     previous = INPUTS / "api.env"
     kept = {}
     offered = False
@@ -1399,16 +1394,60 @@ def api_up(answers, secret_store, migrate=False):
     if re.fullmatch(r"dev:[a-z0-9][a-z0-9-]{0,62}", merged.get("AGENT_ORGANISATION", "")):
         # The installer's own form follows the fleet's development sign-in organisation.
         merged["AGENT_ORGANISATION"] = f"dev:{answers['organisation']}"
-    providers = [value.strip() for value in merged.get("AUTH_PROVIDERS", "").split(",")]
-    dev_sign_in = merged.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
-    if not dev_sign_in and merged.get("AGENT_ORGANISATION", "").startswith("dev:"):
+    if not dev_sign_in(merged) and merged.get("AGENT_ORGANISATION", "").startswith("dev:"):
         # The listener answers for development sign-in's organisation and trusts the network as it does:
         # an operator who turns development sign-in off turns it off too.
         merged["AGENT_PORT"] = ""
         merged.pop("AGENT_ORGANISATION", None)
     if merged.get("NODE_ENV") == "production":
         merged["AGENT_PORT"] = ""
-    listener = str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+    return merged, str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+
+
+def local_api_block(answers, initiatives, listener):
+    """The fleet installer's api block for the API on this VM, which setup registers with as its admin."""
+    block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": initiatives}
+    if answers.get("vmHost"):
+        block["vmHost"] = answers["vmHost"]  # The fleet's record in the API names the VM.
+    if listener:
+        # Officers get the API's MCP server at the agent listener, as their own agent records.
+        block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"
+    return block
+
+
+def planned_api_block(answers):
+    """The api block a real run writes, as far as is known before the API runs: for the dry run, and the check
+    before the API changes, so the installer previews the officers' tool policy with the API's MCP tools a real
+    run gives them. None when a real run writes none: no API on this VM, or one without development sign-in."""
+    if not answers.get("api"):
+        return None
+    environment, listener = api_environment(answers, {})
+    if not dev_sign_in(environment):
+        return None
+    return local_api_block(answers, [answers["initiativeId"]] if answers.get("initiativeId") else [], listener)
+
+
+def api_up(answers, secret_store, migrate=False):
+    source = PAYLOAD / "subspace-api"
+    require((source / "compose.yaml").is_file(), "The payload has no subspace-api/compose.yaml.")
+    API_DIR.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    staging = API_DIR.with_name("api.new")
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.copytree(source, staging, ignore=shutil.ignore_patterns("node_modules", ".data", ".env", "__pycache__"))
+    shutil.rmtree(API_DIR, ignore_errors=True)
+    staging.rename(API_DIR)
+    slug = answers["slug"]
+    external = database_url(answers["databaseUrlFile"]) if external_database(answers) else None
+    environment = {
+        # An existing PostgreSQL's URL goes only into this root-only file, single-quoted so Compose takes it
+        # literally; the API's own PostgreSQL gets a generated password instead.
+        **({"DATABASE_URL": f"'{external}'"} if external else {"POSTGRES_PASSWORD": secret_store.password("postgres")}),
+        "API_PORT": API_PORT,
+        "DEV_CHANNELS": f"#{slug}-starbase",
+        "DEV_IRC_HOST": irc_endpoint(answers)[0],
+        "DEV_IRC_PORT": irc_endpoint(answers)[1],
+    }
+    merged, listener = api_environment(answers, environment, external=bool(external))
     write_private(INPUTS / "api.env", AGENT_OFFERED + "\n" + "".join(
         f"{key}={value}\n" for key, value in merged.items()))
     if external:
@@ -1507,8 +1546,7 @@ def dev_auth_enabled():
     for line in (INPUTS / "api.env").read_text().splitlines():
         key, _, value = line.partition("=")
         environment[key] = value
-    providers = [value.strip() for value in environment.get("AUTH_PROVIDERS", "").split(",")]
-    return environment.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
+    return dev_sign_in(environment)
 
 
 def agent_listener_enabled():
@@ -2161,14 +2199,22 @@ def configure(args):
 
     dispatch_token = ""
 
-    def inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None):
+    def inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None, dispatch=None):
         config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
         private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc,
                                 certificates=answers.get("ircAuth") == "certificate",
-                                dispatch_token=dispatch_token if api_block else "")
+                                dispatch_token=(dispatch_token if dispatch is None else dispatch) if api_block else "")
         if history:
             private["ircHistoryPassword"] = secret_store.password("ergo-history")
         return config, private
+
+    def planned_inputs():
+        """The inputs a real run writes, as far as is known before the API runs, for the installer's check: the
+        API settings it will have (planned_api_block), with stand-ins for the tokens it will get."""
+        block = planned_api_block(answers)
+        dispatch = PLANNED_TOKENS["rearAdmiralApiToken"] if block and answers["agentDispatch"] else ""
+        return inputs(hashlib.sha1(b"dry-run").hexdigest(), block, False,
+                      PLANNED_TOKENS["apiToken"] if block else "", dispatch=dispatch)
 
     def write_inputs(*args):
         config, private = inputs(*args)
@@ -2191,8 +2237,10 @@ def configure(args):
     if args.dry_run:
         if external_database(answers):
             database_checks(answers, args.migrate)
-        write_inputs(hashlib.sha1(b"dry-run").hexdigest())
-        if answers["agentDispatch"]:
+        config, private = planned_inputs()
+        write_json(config_path, config)
+        write_json(secrets_path, private)
+        if answers["agentDispatch"] and not config["agentDispatch"]["enabled"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
         ownership_check(answers, members, read_json(config_path, {}))
@@ -2202,7 +2250,7 @@ def configure(args):
     if answers["api"]:
         # The API comes first (its token and registration go into the fleet's inputs), so check now that the
         # installer will accept those inputs: with --migrate, a refused run must not have migrated the database.
-        preflight(*inputs(hashlib.sha1(b"dry-run").hexdigest()))
+        preflight(*planned_inputs())
 
     if certificates and operator:
         # Before any officer starts: register the accounts, bind the certificates and check each sign-in.
@@ -2237,12 +2285,7 @@ def configure(args):
             initiative = fleet_initiative(token, answers["name"], answers["slug"], answers.get("initiativeId"))
             answers.update(initiativeId=initiative)
             save_answers(answers)
-            api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
-            if answers.get("vmHost"):
-                api_block["vmHost"] = answers["vmHost"]  # The fleet's record in the API names the VM.
-            if agent_listener_enabled():
-                # Officers get the API's MCP server at the agent listener, as their own agent records.
-                api_block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"
+            api_block = local_api_block(answers, [initiative], agent_listener_enabled())
             # Register the fleet, its channels, ships and officers now: agent dispatch signs in as the rear
             # admiral's agent record. The installer's 'fleetctl register' sends the same records again.
             records = register_own(token, *inputs(irc_ref, api_block, bool(stargate_api), token, history))

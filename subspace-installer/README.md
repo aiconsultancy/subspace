@@ -520,7 +520,10 @@ officer's tool policy with the one installed in its engine configuration
 (`/etc/subspace-fleet/opencode-<id>.json`): it lists the rules the run adds
 (`+`) and removes (`-`) in policy order, since the last matching rule wins,
 or says the policy is unchanged or new. Run it as root to read the installed
-policies. The installer applies a changed policy to a pinned root session too
+policies. `subspace-setup --dry-run` gives the installer the API settings a
+real run will write, from `api.env` as the run will leave it (development
+sign-in and the agent listener), the saved initiative and stand-ins for the
+tokens, so the comparison includes the API's tools. The installer applies a changed policy to a pinned root session too
 ([Captain sessions](#captain-sessions)).
 
 To extend the starter policy, list rules in `harness.extraPermissions`: for
