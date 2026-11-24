@@ -1810,6 +1810,14 @@ class FirstFleetTests(unittest.TestCase):
         self.assertIn("$Passthrough.AddRange([string[]]@('--vm-host', ($targetEnv.HOST -split '@', 2)[-1]))",
                       (root / "install.ps1").read_text())
 
+    def test_a_certificate_fleet_is_not_told_to_copy_a_password_bundle(self):
+        answers = {"ircAuth": "certificate", "ircHost": "irc.example.com"}
+        line = fleet_setup.remote_irc_next_step(answers, None)
+        self.assertNotIn("irc-bundle.json", line)
+        self.assertIn("/NS lines printed above", line)
+        self.assertIn("registered and checked", fleet_setup.remote_irc_next_step(answers, ("ircop", "x", None)))
+        self.assertIn("irc-bundle.json", fleet_setup.remote_irc_next_step({"ircAuth": "password"}, None))
+
 
 class OutboundTests(unittest.TestCase):
     """setup stops at once, saying what to open, when the VM cannot reach what the install downloads."""

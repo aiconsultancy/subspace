@@ -1895,7 +1895,7 @@ def configure(args):
         write_json(config_path, config)
         write_json(secrets_path, private)
 
-    certificates = None
+    certificates = operator = None
     if answers.get("ircAuth") == "certificate":
         operator = irc_operator(args)
         certificates = officer_certificates(members, generate=not args.dry_run)
@@ -2030,12 +2030,25 @@ def configure(args):
     else:
         say("agent dispatch is off; 'subspace-setup --agent-dispatch' switches it on.")
     if not local_irc:
-        say(f"add this fleet to the shared IRC server: copy {INPUTS / 'irc-bundle.json'} there and run "
-            "'sudo subspace-setup irc-server add <file>' (the host installer does this with --irc-server).")
+        say(remote_irc_next_step(answers, operator))
     say(f"forward these loopback ports to reach it: {values['SUBSPACE_PORTS']}")
     if run(HERE / "providers.sh", "status", check=False):
         say("next: bring the agents online by signing CLIProxyAPI in to a provider account "
             "(INSTALL.md, 'Bring the agents online').")
+
+
+def remote_irc_next_step(answers, operator):
+    """What is left to do on a remote IRC server once setup is done."""
+    if answers.get("ircAuth") == "certificate":
+        # No password bundle exists in this mode: the officers' accounts are bound to their certificates.
+        if operator:
+            return (f"officers sign in to {answers['ircHost']} with certificates, which setup registered and checked "
+                    "above with --irc-operator.")
+        return (f"officers sign in to {answers['ircHost']} with certificates: each can sign in once the IRC server's "
+                "operator has run the /NS lines printed above for it (or run setup again with --irc-operator). "
+                "'sudo /opt/subspace-fleet/lib/runtime.py irc-fingerprints' prints the fingerprints again.")
+    return (f"add this fleet to the shared IRC server: copy {INPUTS / 'irc-bundle.json'} there and run "
+            "'sudo subspace-setup irc-server add <file>' (the host installer does this with --irc-server).")
 
 
 def isolation_args(answers):
