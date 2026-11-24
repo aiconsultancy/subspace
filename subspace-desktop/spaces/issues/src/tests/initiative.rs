@@ -27,18 +27,24 @@ fn shared_selection_limits_projects_and_the_issues_picker_updates_the_session(
         assert_eq!(board.project.key(), "RPT");
         assert_eq!(project_keys(board), ["OPS", "RPT"]);
     });
-    // The navigator lists the initiative's projects and every initiative.
+    // The navigator lists the initiative's projects and every initiative,
+    // with no choice of all of them.
     for id in [
         "issues-nav-project:OPS",
         "issues-nav-project:RPT",
         "issues-nav-initiative:ops",
         "issues-nav-initiative:design",
-        "issues-nav-initiative:local",
     ] {
         assert!(has(cx, id), "{id}");
     }
-    assert!(!has(cx, "issues-nav-project:SUB"));
-    assert!(!has(cx, "issues-nav-project:*"));
+    for id in [
+        "issues-nav-project:SUB",
+        "issues-nav-project:*",
+        "issues-nav-initiative:*",
+        "issues-nav-initiative:local",
+    ] {
+        assert!(!has(cx, id), "{id}");
+    }
     cx.update(|window, cx| window.click("issues-nav-initiative:design", cx));
     render(cx);
     assert_eq!(selected_initiative(&shared, cx).as_deref(), Some("design"));
@@ -69,7 +75,7 @@ fn shared_selection_limits_projects_and_the_issues_picker_updates_the_session(
 }
 
 #[gpui_kit::test]
-fn empty_initiative_does_not_query_every_project_and_can_be_cleared(cx: &mut TestAppContext) {
+fn empty_initiative_does_not_query_every_project(cx: &mut TestAppContext) {
     let (board, shared, cx) = setup(cx);
     requests(&board, cx);
     shared.update(cx, |catalog, cx| catalog.pick("empty", cx));
@@ -79,14 +85,54 @@ fn empty_initiative_does_not_query_every_project_and_can_be_cleared(cx: &mut Tes
         "an empty initiative does not query every project"
     );
     board.read_with(cx, |board, _| {
-        assert!(crate::initiative::no_initiative_projects(board))
+        assert!(crate::initiative::no_initiative_projects(board));
+        assert!(project_keys(board).is_empty());
     });
-
+    // Choosing another initiative is the way out: there is no choice of none.
     shared.update(cx, |catalog, cx| catalog.pick("local", cx));
+    assert_eq!(selected_initiative(&shared, cx).as_deref(), Some("empty"));
+}
+
+#[gpui_kit::test]
+fn someone_in_no_initiative_sees_why_and_no_projects(cx: &mut TestAppContext) {
+    let (board, shared, cx) = setup(cx);
+    requests(&board, cx);
+    shared.update(cx, |catalog, cx| {
+        catalog.set_memberships_for_test(Some("ada".into()), Ok(Vec::new()), cx);
+    });
     render(cx);
+    assert_eq!(selected_initiative(&shared, cx), None);
     board.read_with(cx, |board, _| {
-        assert_eq!(project_keys(board), ["SUB", "OPS", "RPT", "*"]);
-        assert_eq!(board.project.key(), "RPT", "the saved project is restored");
+        assert!(board.not_a_member);
+        assert!(project_keys(board).is_empty(), "no projects");
+        assert!(!board.can_create_issue());
+    });
+    assert!(requests(&board, cx).is_empty(), "no list is read");
+    assert!(has(cx, "issues-no-initiative"));
+    for id in [
+        "issues-nav-project:SUB",
+        "issues-nav-project:*",
+        "issues-nav-initiative:*",
+    ] {
+        assert!(!has(cx, id), "{id}");
+    }
+    board.update(cx, |board, cx| board.toggle_dock(Dock::Navigator, cx));
+    render(cx);
+    cx.update(|window, _| assert!(window.try_find("issues-initiative-button").is_none()));
+
+    // Added to one: Issues shows its projects.
+    shared.update(cx, |catalog, cx| {
+        let items = serde_json::from_value(json!([
+            {"id":"design", "name":"Design", "channels":"#design"}
+        ]))
+        .unwrap();
+        catalog.set_memberships_for_test(Some("ada".into()), Ok(items), cx);
+    });
+    render(cx);
+    assert!(!has(cx, "issues-no-initiative"));
+    board.read_with(cx, |board, _| {
+        assert!(!board.not_a_member);
+        assert_eq!(project_keys(board), ["SUB"]);
     });
 }
 
@@ -138,9 +184,10 @@ fn setup(
     let (board, cx) = mount(cx);
     let shared = cx.update(|_, cx| Catalog::shared(cx));
     shared.update(cx, |catalog, cx| {
+        // Operations, the first, is selected until another is chosen.
         let items = serde_json::from_value(json!([
-            {"id":"design", "name":"Design", "channels":"#design"},
             {"id":"ops", "name":"Operations", "channels":"#ops"},
+            {"id":"design", "name":"Design", "channels":"#design"},
             {"id":"empty", "name":"Empty initiative", "channels":""}
         ]))
         .unwrap();

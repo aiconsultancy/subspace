@@ -1,4 +1,7 @@
-//! The shared initiative picker and its project scope in Issues.
+//! The shared initiative picker and its project scope in Issues. Issues
+//! shows the one initiative selected for every Space, and only its
+//! projects. Someone who belongs to no initiative sees why, and no
+//! projects.
 
 use gpui_kit::{App, Context, Entity, Subscription, Window};
 use subspace_api_client::initiatives::Catalog;
@@ -7,7 +10,7 @@ use subspace_api_client::model::Project;
 use crate::{Issues, model::ProjectScope};
 
 mod picker;
-pub(crate) use picker::{CLEAR_LABEL, button, command};
+pub(crate) use picker::{button, command};
 
 pub(crate) fn connect(
     window: &Window,
@@ -20,16 +23,28 @@ pub(crate) fn connect(
     let subscription = cx.observe(&catalog, move |board, catalog, cx| {
         let catalog = catalog.read(cx);
         let initiative = selected_id(catalog);
+        let shut_out = excluded(catalog);
         if revision.replace(catalog.revision()) != catalog.revision() {
             dismiss_scope_menu(board, window, cx);
         }
+        let shut_out_changed = std::mem::replace(&mut board.not_a_member, shut_out) != shut_out;
+        let same_initiative = board.initiative_id == initiative;
         initiative_changed(board, initiative, cx);
+        if shut_out_changed && same_initiative {
+            scope_changed(board, cx);
+        }
     });
     (catalog, selected, subscription)
 }
 
 fn selected_id(catalog: &Catalog) -> Option<String> {
     catalog.selected().map(|initiative| initiative.id.clone())
+}
+
+/// Whether the person belongs to no initiative where the API scopes the
+/// tracker by them, so Issues shows why and no projects.
+pub(crate) fn excluded(catalog: &Catalog) -> bool {
+    subspace_api_client::initiatives::not_a_member(subspace_api_client::capabilities(), catalog)
 }
 
 fn dismiss_scope_menu(board: &Issues, window: gpui_kit::AnyWindowHandle, cx: &mut Context<Issues>) {
@@ -81,6 +96,12 @@ fn initiative_changed(issues: &mut Issues, initiative: Option<String>, cx: &mut 
     if issues.project != choice {
         issues.set_list_project(choice);
     }
+    scope_changed(issues, cx);
+}
+
+/// Reads the list again for a new scope, or, for one with no projects,
+/// leaves nothing live.
+fn scope_changed(issues: &mut Issues, cx: &mut Context<Issues>) {
     if issues.hub_changes.is_some() || issues.hub.is_none() {
         issues.rescope(cx);
     } else {
@@ -134,6 +155,9 @@ pub(crate) fn scoped_project(issues: &Issues, current: Option<ProjectScope>) -> 
 }
 
 pub(crate) fn project_in_scope(issues: &Issues, scope: &ProjectScope) -> bool {
+    if issues.not_a_member {
+        return false;
+    }
     let Some(id) = issues
         .initiative_id
         .as_deref()
@@ -144,10 +168,13 @@ pub(crate) fn project_in_scope(issues: &Issues, scope: &ProjectScope) -> bool {
     active_projects(&issues.projects, id).any(|project| project.key == scope.key())
 }
 
+/// Whether the scope has no projects to list: someone in no initiative, or
+/// an initiative without projects.
 pub(crate) fn no_initiative_projects(issues: &Issues) -> bool {
-    !initiative_by_filter()
-        && issues.initiative_id.is_some()
-        && issues.project == ProjectScope::AllProjects
+    issues.not_a_member
+        || (!initiative_by_filter()
+            && issues.initiative_id.is_some()
+            && issues.project == ProjectScope::AllProjects)
 }
 
 fn active_projects<'a>(

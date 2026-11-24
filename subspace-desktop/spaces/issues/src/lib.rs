@@ -90,6 +90,9 @@ pub struct Issues {
     projects: Vec<Project>,
     initiatives: Entity<subspace_api_client::initiatives::Catalog>,
     initiative_id: Option<String>,
+    /// Whether the person belongs to no initiative where the API scopes the
+    /// tracker by them: Issues shows why, and no projects.
+    not_a_member: bool,
     tab: Tab,
     project: ProjectScope,
     sub_issues: SubIssues,

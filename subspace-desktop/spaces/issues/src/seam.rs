@@ -118,6 +118,10 @@ impl Issues {
 
     /// Retry the visible list or reconnect the API.
     pub(crate) fn retry(&mut self, cx: &mut Context<Self>) {
+        if self.not_a_member {
+            crate::initiative::refresh(self, cx);
+            return;
+        }
         if crate::initiative::no_initiative_projects(self) {
             self.request(Request::ReloadProjects, cx);
             return;

@@ -32,6 +32,7 @@ pub(crate) const PROJECT_PREF: &str = "issues.project";
 pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
     let (search, typing) = search_input(window, cx);
     let (initiatives, initiative_id, initiative_changes) = crate::initiative::connect(window, cx);
+    let not_a_member = crate::initiative::excluded(initiatives.read(cx));
     Issues {
         editor: None,
         project_move: None,
@@ -50,6 +51,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
         projects: Vec::new(),
         initiatives,
         initiative_id,
+        not_a_member,
         tab: saved_tab(cx),
         sub_issues: saved_sub_issues(cx),
         filters: Default::default(),
