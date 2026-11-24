@@ -28,8 +28,10 @@ Code. It uses the hosted API's `/mcp` URL or the development URL
 `python3 ~/.subspace/bin/subspace_token.py --header`. Check it with
 `claude mcp get subspace`. Tools appear as `mcp__subspace__subspace_<name>`.
 A deployment repository can register the same server for its own folder in
-`.mcp.json`; Claude Code asks once before it uses it. To talk to the fleet's
-officers on IRC, use the `subspace-irc` skill.
+`.mcp.json`, bound to its own `agent-kit/agent.json`; Claude Code asks once
+before it uses it. There the person signs in with
+`python3 agent-kit/bin/subspace_token.py --config agent-kit/agent.json --login`.
+To talk to the fleet's officers on IRC, use the `subspace-irc` skill.
 
 A fleet's own agents use the API's agent listener and their agent records.
 

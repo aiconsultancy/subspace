@@ -10,6 +10,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -68,11 +69,17 @@ class FixtureApi(BaseHTTPRequestHandler):
 
 
 class FixtureIrc:
-    """Just enough of Ergo: SASL PLAIN, joins, echo, draft/multiline, chathistory and scripted replies."""
+    """Just enough of Ergo: SASL PLAIN, joins, echo, draft/multiline, chathistory and scripted replies.
 
-    def __init__(self, history=(), on_message=None, caps=None):
+    on_message(server, posted) runs after each echo and may return "drop" to close the connection;
+    on_history(server, params) replaces the history reply; after_message="drop" closes the connection
+    as a message arrives, before any echo, and "silent" stops answering instead; drop_on closes it when
+    that command arrives."""
+
+    def __init__(self, history=(), on_message=None, caps=None, on_history=None, after_message=None, drop_on=None):
         self.client, self.server = socket.socketpair()
-        self.history, self.on_message = list(history), on_message
+        self.history, self.on_message, self.on_history = list(history), on_message, on_history
+        self.after_message, self.drop_on, self.silent = after_message, drop_on, False
         self.caps = caps or ("sasl=PLAIN message-tags server-time batch echo-message account-tag "
                              "draft/multiline=max-bytes=4096,max-lines=100 draft/chathistory")
         self.received, self.sasl, self.count = [], None, 0
@@ -109,6 +116,17 @@ class FixtureIrc:
                     line = raw.decode()
                     tags, _, command, params = irc_helper.parse(line)
                     self.received.append(line)
+                    if self.silent:
+                        continue
+                    if command == self.drop_on:
+                        return
+                    message_end = command == "BATCH" and params[0].startswith("-") or \
+                        command == "PRIVMSG" and batch is None
+                    if message_end and self.after_message == "drop":
+                        return
+                    if message_end and self.after_message == "silent":
+                        self.silent = True
+                        continue
                     if command == "CAP" and params[:1] == ["LS"]:
                         self.send(f":srv CAP * LS :{self.caps}")
                     elif command == "CAP" and params[:1] == ["REQ"]:
@@ -129,12 +147,16 @@ class FixtureIrc:
                     elif command == "BATCH" and params[0].startswith("+"):
                         batch = {"tags": tags, "target": params[2], "lines": []}
                     elif command == "BATCH":
-                        self.echo(batch["tags"], batch["target"], batch["lines"])
-                        batch = None
+                        lines, target, batch_tags, batch = batch["lines"], batch["target"], batch["tags"], None
+                        if self.echo(batch_tags, target, lines) == "drop":
+                            return
                     elif command == "PRIVMSG" and batch is not None:
                         batch["lines"].append((tags, params[1]))
                     elif command == "PRIVMSG":
-                        self.echo(tags, params[0], [(tags, params[1])])
+                        if self.echo(tags, params[0], [(tags, params[1])]) == "drop":
+                            return
+                    elif command == "CHATHISTORY" and self.on_history:
+                        self.on_history(self, params)
                     elif command == "CHATHISTORY":
                         self.replay(params)
 
@@ -155,16 +177,16 @@ class FixtureIrc:
         else:
             self.send(f"@msgid={msgid};account=example-person{reply} :example-person!u@h PRIVMSG {target} :{text}")
         self.history.append(posted)
-        if self.on_message:
-            self.on_message(self, posted)
+        return self.on_message(self, posted) if self.on_message else None
 
     def replay(self, params):
         mode, target = params[0], params[1]
         messages = self.history
         if mode == "AFTER":
-            after = params[2].removeprefix("msgid=")
+            after = params[2][len("msgid="):]
             ids = [message["msgid"] for message in messages]
             messages = messages[ids.index(after) + 1:] if after in ids else []
+            messages = messages[:int(params[3])]
         else:
             messages = messages[-int(params[3]):]
         self.send(f":srv BATCH +h chathistory {target}")
@@ -178,7 +200,7 @@ class FixtureIrc:
                 continue
             reply = f";+draft/reply={message['reply']}" if message.get("reply") else ""
             self.send(f"@batch=h;msgid={message['msgid']};account={message['nick']};time=2026-01-01T00:00:00.000Z{reply} "
-                      f":{message['nick']}!u@h PRIVMSG {target} :{message['text']}")
+                      f":{message['nick']}!u@h {message.get('command', 'PRIVMSG')} {target} :{message['text']}")
         self.send(":srv BATCH -h")
 
 
@@ -194,16 +216,18 @@ class IrcHelperTest(unittest.TestCase):
             patch.object(token, "HOME", self.home),
             patch.object(irc_helper, "HOME", self.home),
             patch.object(irc_helper, "TIMEOUT", 5),
+            patch.object(irc_helper, "SETTLE", 0.3),
         ):
             fixture.start()
             self.addCleanup(fixture.stop)
 
     @contextlib.contextmanager
-    def hosted(self, credential_status=200, signed_in=True):
+    def hosted(self, credential_status=200, signed_in=True, settings=None):
+        """A fixture API, with the settings that name it in ~/.subspace/agent.json, or in settings when given."""
         with local_http(FixtureApi) as api:
             api.requests, api.credential_status = [], credential_status
             url = f"http://127.0.0.1:{api.server_port}"
-            (self.home / "agent.json").write_text(json.dumps(
+            (settings or self.home / "agent.json").write_text(json.dumps(
                 {"identity_provider": "workos", "api_url": url, "workos_client_id": "client_EXAMPLE"}))
             session = patch.object(token, "workos_token", return_value="fixture-access") if signed_in else \
                 patch.object(token, "workos_token", side_effect=token.TokenError(token.SIGN_IN_REQUIRED))
@@ -252,7 +276,7 @@ class IrcHelperTest(unittest.TestCase):
                       api.requests)
         self.assertEqual(server.sasl, [b"example-person", b"example-person", PASSWORD.encode()])
         posted = server.history[-1]
-        self.assertEqual(posted["text"], "[on behalf of George (Claude Opus 5.5)] Orion, please take NAV-12.\n"
+        self.assertEqual(posted["text"], "[on behalf of George (Claude Opus 5.5)] Orion, please take NAV-12.\n\n"
                                          "Then tell me what blocks it.")
         self.assertEqual(posted["reply"], "root1")
         self.assertIn("@+draft/reply=root1 BATCH +say draft/multiline #example-fleet-orion", server.received)
@@ -295,6 +319,7 @@ class IrcHelperTest(unittest.TestCase):
         self.assertIn("<example-fleet-orion> On it.  [id r1, reply to fixture1]", output)
         self.assertNotIn("the person typing", output)
         self.assertNotIn("unrelated", output)
+        self.assertIn("To wait for the next reply: wait '#example-fleet-orion' --thread fixture1 --after r1", output)
 
     def test_wait_finds_a_reply_already_in_history_and_times_out_cleanly_otherwise(self):
         history = [
@@ -310,6 +335,207 @@ class IrcHelperTest(unittest.TestCase):
             code, output, errors = self.run_helper("wait", "#example-fleet-orion", "--thread", "q1", "--timeout", "1")
         self.assertIn("no reply within 1 seconds", str(code))
         self.assertEqual(output, "")
+
+    def test_wait_needs_the_thread_and_the_sender_when_given_both(self):
+        history = [
+            {"msgid": "q1", "nick": "example-person", "target": "#example-fleet-orion", "text": "question"},
+            {"msgid": "a1", "nick": "example-fleet-atlas", "target": "#example-fleet-orion", "text": "atlas in the thread",
+             "reply": "q1"},
+            {"msgid": "o1", "nick": "example-fleet-orion", "target": "#example-fleet-orion", "text": "orion elsewhere"},
+        ]
+        with self.hosted(), self.irc(history=history):
+            code, output, _ = self.run_helper("wait", "#example-fleet-orion", "--thread", "q1",
+                                              "--from", "example-fleet-orion", "--timeout", "1")
+        self.assertIn("no reply within 1 seconds", str(code))
+        self.assertEqual(output, "")
+        history.append({"msgid": "o2", "nick": "example-fleet-orion", "target": "#example-fleet-orion",
+                        "text": "orion in the thread", "reply": "q1"})
+        with self.hosted(), self.irc(history=history):
+            code, output, _ = self.run_helper("wait", "#example-fleet-orion", "--thread", "q1",
+                                              "--from", "example-fleet-orion", "--timeout", "5")
+        self.assertEqual(code, 0)
+        self.assertIn("orion in the thread", output)
+        self.assertNotIn("atlas in the thread", output)
+        self.assertNotIn("orion elsewhere", output)
+
+    def test_wait_keeps_one_deadline_even_when_history_stalls_amid_other_traffic(self):
+        def stall(server, params):
+            def chatter():
+                with contextlib.suppress(OSError):
+                    for index in range(2000):
+                        server.send(f"@msgid=c{index} :someone!u@h PRIVMSG #elsewhere :busy {index}")
+                        time.sleep(0.01)
+            threading.Thread(target=chatter, daemon=True).start()
+
+        with self.hosted(), self.irc(on_history=stall):
+            started = time.monotonic()
+            code, output, _ = self.run_helper("wait", "#example-fleet-orion", "--thread", "q1", "--timeout", "1")
+            elapsed = time.monotonic() - started
+        self.assertIn("no reply within 1 seconds", str(code))
+        self.assertLess(elapsed, 3)
+        self.assertNotIn("busy", output)
+
+    def test_wait_after_an_id_waits_for_the_next_reply_and_from_catches_up_too(self):
+        history = [
+            {"msgid": "q1", "nick": "example-person", "target": "#example-fleet-orion", "text": "question"},
+            {"msgid": "r1", "nick": "example-fleet-orion", "target": "#example-fleet-orion", "text": "on it",
+             "reply": "q1"},
+        ]
+        with self.hosted(), self.irc(history=history):
+            code, output, _ = self.run_helper("wait", "#example-fleet-orion", "--thread", "q1")
+        self.assertEqual(code, 0)
+        self.assertIn("on it", output)
+        self.assertIn("To wait for the next reply: wait '#example-fleet-orion' --thread q1 --after r1", output)
+        # The acknowledgement is not news a second time: wait after it.
+        with self.hosted(), self.irc(history=history):
+            code, output, _ = self.run_helper("wait", "#example-fleet-orion", "--thread", "q1", "--after", "r1",
+                                              "--timeout", "1")
+        self.assertIn("Keep waiting with: wait '#example-fleet-orion' --thread q1 --after r1", str(code))
+        self.assertEqual(output, "")
+        history.append({"msgid": "r2", "nick": "example-fleet-orion", "target": "#example-fleet-orion",
+                        "text": "done, see NAV-12", "reply": "q1"})
+        for args in (["--thread", "q1"], ["--from", "example-fleet-orion"]):
+            with self.subTest(args), self.hosted(), self.irc(history=history):
+                code, output, _ = self.run_helper("wait", "#example-fleet-orion", *args, "--after", "r1")
+            self.assertEqual(code, 0)
+            self.assertIn("done, see NAV-12", output)
+            self.assertNotIn("on it", output)
+            self.assertIn("--after r2", output)
+        # Without --after, --from starts now, and its timeout says where to pick up.
+        with self.hosted(), self.irc(history=history):
+            code, output, _ = self.run_helper("wait", "#example-fleet-orion", "--from", "example-fleet-orion",
+                                              "--timeout", "1")
+        self.assertIn("Keep waiting with: wait '#example-fleet-orion' --from example-fleet-orion --after r2", str(code))
+        self.assertEqual(output, "")
+        with self.hosted(), self.irc() as (_, connection):
+            code, _, _ = self.run_helper("wait", "#example-fleet-orion", "--thread", "q1", "--after", "not an id")
+        self.assertIn("take a message ID", str(code))
+        connection.assert_not_called()
+
+    def test_a_failure_after_the_message_is_written_says_it_may_have_been_posted(self):
+        say = ("say", "#example-fleet-orion", "--as", "Model 1", "--for", "George", "Orion, please take NAV-12.")
+        for after_message in ("drop", "silent"):
+            with self.subTest(after_message), self.hosted(), self.irc(after_message=after_message) as (server, _), \
+                    patch.object(irc_helper, "TIMEOUT", 1):
+                code, output, errors = self.run_helper(*say)
+            self.assertEqual(code, irc_helper.POSTED)
+            self.assertIn("may have been posted", errors)
+            self.assertIn("history '#example-fleet-orion' --limit 10", errors)
+            self.assertNotIn("sent message", output)
+        # Once the server has echoed it, a lost connection says it was sent, and how to wait for the reply.
+        with self.hosted(), self.irc(on_message=lambda server, posted: "drop"):
+            code, output, errors = self.run_helper(*say)
+        self.assertEqual(code, irc_helper.POSTED)
+        self.assertIn("The message was sent [id fixture1]; do not send it again. Keep waiting with: "
+                      "wait '#example-fleet-orion' --thread fixture1 --after fixture1", errors)
+
+        def later_drop(server, posted):
+            threading.Timer(0.3, server.server.shutdown, [socket.SHUT_RDWR]).start()
+
+        with self.hosted(), self.irc(on_message=later_drop):
+            code, output, errors = self.run_helper(*say[:-1], "--wait", "5", say[-1])
+        self.assertEqual(code, irc_helper.POSTED)
+        self.assertIn("sent message to #example-fleet-orion", output)
+        self.assertIn("The message was sent [id fixture1]; do not send it again. Keep waiting with:", errors)
+        # A failure before anything is written is an ordinary one.
+        with self.hosted(), self.irc(drop_on="JOIN") as (server, _):
+            code, _, _ = self.run_helper(*say)
+        self.assertNotEqual(code, irc_helper.POSTED)
+        self.assertNotIn("may have been posted", str(code))
+
+    def test_history_keeps_to_the_requested_channels_own_batch(self):
+        channel = "#example-fleet-starbase"
+
+        def busy(server, params):
+            server.send("@msgid=live0 :someone!u@h PRIVMSG #elsewhere :before the batch")
+            server.send(f":srv BATCH +h chathistory {channel}")
+            server.send(f"@batch=h;msgid=m1;account=example-fleet-atlas :example-fleet-atlas!u@h PRIVMSG {channel} "
+                        ":history one")
+            server.send("@msgid=live1 :someone!u@h PRIVMSG #elsewhere :live elsewhere")
+            server.send("@msgid=live2;account=someone :someone!u@h BATCH +l draft/multiline #elsewhere")
+            server.send("@batch=l :someone!u@h PRIVMSG #elsewhere :live multiline one")
+            server.send("@batch=l :someone!u@h PRIVMSG #elsewhere :live multiline two")
+            server.send(":someone!u@h BATCH -l")
+            server.send(f"@msgid=live3 :someone!u@h PRIVMSG {channel} :live here, not history")
+            server.send(f"@batch=h;msgid=m2;account=example-fleet-atlas :example-fleet-atlas!u@h BATCH +m "
+                        f"draft/multiline {channel}")
+            server.send(f"@batch=m :example-fleet-atlas!u@h PRIVMSG {channel} :history two")
+            server.send(f"@batch=m :example-fleet-atlas!u@h PRIVMSG {channel} :and its second line")
+            server.send("@batch=h :srv BATCH -m")
+            server.send(":srv BATCH -h")
+
+        with self.hosted(), self.irc(on_history=busy):
+            code, output, _ = self.run_helper("history", channel)
+        self.assertEqual(code, 0)
+        self.assertEqual(output, "<example-fleet-atlas> history one  [id m1]\n"
+                                 "<example-fleet-atlas> history two\n    and its second line  [id m2]\n")
+
+    def test_long_lines_wrap_without_changing_a_word_a_link_or_a_paragraph(self):
+        url = "https://example.com/" + "a" * 60 + "/" + "b" * 500 + "?q=1"
+        text = ("First paragraph with  two spaces and a link " + url + " after it.\n"
+                "\n\n"
+                "    indented, with é and ✓ and 🚀 " + "ü" * 250 + " end\n"
+                "last line")
+        prefix = "[on behalf of George (Model 1)] "
+        for line in text.split("\n"):
+            for limit in (5, 100, 333):
+                self.assertEqual("".join(irc_helper.wrap(line, limit)), line)
+                self.assertTrue(all(len(piece.encode()) <= limit for piece in irc_helper.wrap(line, limit)))
+        with self.hosted(), self.irc() as (server, _):
+            code, output, _ = self.run_helper("say", "#example-fleet-orion", "--as", "Model 1", "--for", "George",
+                                              "\n" + text + "\n\n")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(server.history[-1]["text"], prefix + text)
+        sent = [line.split(" ", 1)[1] for line in server.received if " PRIVMSG " in line]
+        self.assertTrue(all(len(line.encode()) <= irc_helper.LINE_BYTES for line in sent))
+        # Without multiline each line is its own marked message: blank lines go, but words and links stay whole.
+        with self.hosted(), self.irc(caps="sasl=PLAIN message-tags batch echo-message") as (server, _):
+            code, output, _ = self.run_helper("say", "#example-fleet-orion", "--as", "Model 1", "--for", "George", text)
+        self.assertEqual(code, 0, output)
+        texts = [message["text"] for message in server.history]
+        self.assertTrue(all(posted.startswith(prefix) for posted in texts))
+        joined = "".join(posted[len(prefix):] for posted in texts)
+        self.assertIn(url, joined)
+        self.assertIn("ü" * 250, joined)
+        self.assertIn(f"sent {len(texts)} lines", output)
+        self.assertIn("[ids fixture1, fixture2,", output)
+
+    def test_a_loopback_api_is_never_reached_through_a_proxy(self):
+        with self.hosted() as api, patch.dict(os.environ, http_proxy="http://127.0.0.1:9", HTTP_PROXY="http://127.0.0.1:9"):
+            os.environ.pop("no_proxy", None)
+            os.environ.pop("NO_PROXY", None)
+            code, output, _ = self.run_helper("channels")
+        self.assertEqual(code, 0, output)
+        self.assertIn("You are Example Person", output)
+        self.assertTrue(api.requests)
+        self.assertTrue(all(path.startswith("/api/v1/") for path, _, _ in api.requests), api.requests)
+
+    def test_a_deployment_repositorys_settings_bind_its_commands(self):
+        repository = self.home.resolve() / "example-deployment"
+        (repository / ".git").mkdir(parents=True)
+        (repository / "agent-kit").mkdir()
+        settings = (repository / "agent-kit" / "agent.json").resolve()
+        (self.home / "agent.json").write_text(json.dumps(
+            {"identity_provider": "workos", "api_url": "https://other.example.com", "workos_client_id": "client_EXAMPLE"}))
+        with self.hosted(settings=settings) as api:
+            code, output, _ = self.run_helper("--config", str(settings), "channels")
+        self.assertEqual(code, 0, output)
+        self.assertIn("Example Fleet (fleet example-fleet)", output)
+        self.assertTrue(api.requests)
+        # The machine-wide helper refuses to act for another deployment from inside the repository.
+        here = os.getcwd()
+        self.addCleanup(os.chdir, here)
+        os.chdir(repository / "agent-kit")
+        with self.hosted(settings=settings) as api, self.irc() as (_, connection):
+            code, _, _ = self.run_helper("history", "#example-fleet-orion")
+        self.assertIn("deployment with its own sign-in settings", str(code))
+        self.assertIn(f"--config {settings}", str(code))
+        self.assertEqual(api.requests, [])
+        connection.assert_not_called()
+        with self.hosted(settings=settings, signed_in=False):
+            code, _, _ = self.run_helper("history", "#example-fleet-orion", "--config", str(settings))
+        self.assertIn(f"subspace_token.py --config {settings} --login", str(code))
+        os.chdir(here)
 
     def test_history_assembles_multiline_messages_skips_join_notices_and_filters_a_thread(self):
         history = [

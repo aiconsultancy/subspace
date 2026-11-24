@@ -127,6 +127,10 @@ password only over TLS, or to IRC on this computer.
 If you keep your deployment's configuration in a repository of your own, put
 the skills and the MCP registration in it too, so everyone who clones it has
 them for that folder: see [Your deployment repository](../docs/deployment-repository.md).
+There the helpers run with `--config agent-kit/agent.json`, the repository's
+own settings, which the environment does not override; each API keeps its
+own session, so sign in there with
+`python3 agent-kit/bin/subspace_token.py --config agent-kit/agent.json --login`.
 
 ### Development sign-in
 

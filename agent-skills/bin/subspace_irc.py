@@ -9,10 +9,16 @@ every message it sends starts with who is really speaking:
   subspace_irc.py channels
   subspace_irc.py history '#fleet-starbase' [--limit 30] [--thread ID]
   subspace_irc.py say '#fleet-starbase' --as 'Claude Opus 5.5' [--for George] [--reply-to ID] [--wait SECONDS] 'message'
-  subspace_irc.py wait '#fleet-starbase' --thread ID [--from NICK] [--timeout SECONDS]
+  subspace_irc.py wait '#fleet-starbase' --thread ID [--from NICK] [--after ID] [--timeout SECONDS]
 
 --as (your model and version) is required to post. --for defaults to the name
-saved by `./install.sh skills --name`.
+saved by `./install.sh skills --name`. In a deployment repository, run its own
+copy with --config agent-kit/agent.json, so that you act on that deployment.
+
+`wait --after ID` counts only messages after ID: pass the last ID you saw to
+wait for the next reply. Exit status 3 from say means the connection failed
+after the message was written: it was, or may have been, posted, so check
+history before sending it again.
 
 With a hosted Subspace API ("identity_provider": "workos" in
 ~/.subspace/agent.json) it reads your fleets' channels and IRC servers from the
@@ -35,11 +41,14 @@ import ssl
 import sys
 import time
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, build_opener
+from urllib.parse import urlsplit
+from urllib.request import ProxyHandler, Request, build_opener
 
 HOME = Path(os.environ.get("SUBSPACE_HOME", Path.home() / ".subspace"))
 LINE_BYTES = 400
 TIMEOUT = 20
+SETTLE = 3  # seconds to gather the lines an agent sends straight after its first one
+POSTED = 3  # exit status: the message was, or may have been, posted before a failure
 # Capabilities used when the server offers them; SASL is required.
 CAPS = ("message-tags", "server-time", "batch", "echo-message", "account-tag",
         "draft/multiline", "draft/chathistory", "chathistory")
@@ -144,15 +153,16 @@ class ApiError(Exception):
 class Hosted:
     hint = "Check your connection to the private network the fleet is on."
 
-    def __init__(self, helper, config):
-        self.helper, self.config = helper, config
+    def __init__(self, helper, config, config_file=None):
+        self.helper, self.config, self.config_file = helper, config, config_file
         self.helper_path = Path(helper.__file__).resolve()
         self._fleets = None
         self.human = read_env(HOME / "agents.env").get("SUBSPACE_HUMAN_NAME", "")
 
     def sign_in_required(self):
+        bound = f" --config {self.config_file}" if self.config_file else ""
         fail(f"you are not signed in to Subspace on this computer, or the session ended. "
-             f"Ask the person to run: python3 {self.helper_path} --login")
+             f"Ask the person to run: python3 {self.helper_path}{bound} --login")
 
     def api(self, method, path, body=None):
         try:
@@ -164,8 +174,11 @@ class Hosted:
                               "Accept": "application/json", "Content-Type": "application/json",
                               "Authorization": f"Bearer {token}",
                           })
+        handlers = [self.helper.NoRedirect()]
+        if loopback(urlsplit(self.config.api_url).hostname or ""):
+            handlers.append(ProxyHandler({}))  # a proxy must never carry the bearer token for this computer
         try:
-            with build_opener(self.helper.NoRedirect()).open(request, timeout=TIMEOUT) as response:
+            with build_opener(*handlers).open(request, timeout=TIMEOUT) as response:
                 return json.loads(response.read(4 * 1024 * 1024))
         except HTTPError as error:
             error.close()
@@ -291,19 +304,56 @@ class Hosted:
             return ""
 
 
-def hosted_or_development(target):
+def deployment(config):
+    """What makes two sign-in settings the same deployment, and the same session."""
+    return config and (config.identity_provider, config.api_url, config.workos_client_id, config.workos_api_url)
+
+
+def repository_settings():
+    """agent-kit/agent.json of the Git repository you are working in, when it is a deployment repository."""
+    try:
+        here = Path.cwd()
+    except OSError:
+        return None
+    for directory in (here, *here.parents):
+        if (directory / ".git").exists():
+            settings = directory / "agent-kit" / "agent.json"
+            return settings if settings.is_file() else None
+    return None
+
+
+def hosted_or_development(target, config_file=None):
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import subspace_token as helper
     except ImportError:
         helper = None
-    if helper is None or (not (HOME / "agent.json").is_file() and not os.environ.get("SUBSPACE_IDENTITY_PROVIDER")):
+
+    def settings(path=None):
+        try:
+            return helper.load_config(path)
+        except helper.TokenError as error:
+            fail(str(error))
+
+    if config_file:
+        if helper is None:
+            fail("--config needs subspace_token.py beside this helper.")
+        config = settings(config_file)
+        return Hosted(helper, config, config_file) if config.identity_provider == "workos" else Development(target)
+    configured = (HOME / "agent.json").is_file() or os.environ.get("SUBSPACE_IDENTITY_PROVIDER")
+    config = settings() if helper and configured else None
+    repository = repository_settings()
+    if repository:
+        # A deployment repository's agents act on its deployment only, whatever this computer's default is.
+        bound = settings(repository) if helper else None
+        if not bound or deployment(bound) != deployment(config):
+            own = repository.parent / "bin" / "subspace_irc.py"
+            here = config.api_url if config and config.identity_provider == "workos" else "development sign-in"
+            fail(f"this repository is a deployment with its own sign-in settings ({repository}), and this helper is "
+                 f"set up for {here}. Use the repository's own: python3 {own} --config {repository} ...")
+    if config is None or config.identity_provider != "workos":
         return Development(target)
-    try:
-        config = helper.load_config()
-    except helper.TokenError as error:
-        fail(str(error))
-    return Hosted(helper, config) if config.identity_provider == "workos" else Development(target)
+    return Hosted(helper, config)
 
 
 # IRC ----------------------------------------------------------------------
@@ -388,6 +438,14 @@ def show(message):
     print(f"{line}  [{', '.join(about)}]" if about else line, flush=True)
 
 
+class Lost(Exception):
+    """The IRC connection failed, or the server stopped answering."""
+
+
+class Refused(Exception):
+    """The IRC server refused a history request."""
+
+
 class Irc:
     def __init__(self, mode, server):
         host, port = server["host"], int(server["port"])
@@ -399,6 +457,8 @@ class Irc:
             raw.close()
             fail(f"{host}:{port} is not a TLS connection to this computer; an IRC sign-in is sent only over TLS.")
         self.sock, self.buffer, self.caps, self.pending = raw, b"", {}, []
+        # say: "maybe" once the message is being written, "sent" once the server has echoed it back.
+        self.posted, self.watch = None, None
         # The credential is fetched only once the server is the one named and, over TLS, verified.
         account, password = mode.login(server)
         self.account = self.nick = account
@@ -407,7 +467,7 @@ class Irc:
         self.send(f"USER {account} 0 * :{account}")
         offered, renamed, acknowledged = {}, False, False
         while True:
-            _, _, command, params = self.receive_or_fail()
+            _, _, command, params = self.receive()
             if command == "CAP" and len(params) >= 3 and params[1] == "LS":
                 for item in params[-1].split():
                     key, _, value = item.partition("=")
@@ -447,10 +507,14 @@ class Irc:
         self.sock.sendall((line + "\r\n").encode())
 
     def receive(self, deadline=None):
-        """The next line, parsed, or None once the deadline (time.monotonic()) passes."""
-        if self.pending:
-            return self.pending.pop(0)
+        """The next line, parsed, or None once the deadline (time.monotonic()) has passed.
+
+        Without a deadline, a server that stays silent for TIMEOUT seconds raises Lost."""
         while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                return None
+            if self.pending:
+                return self.pending.pop(0)
             if b"\n" in self.buffer:
                 raw, _, self.buffer = self.buffer.partition(b"\n")
                 line = raw.rstrip(b"\r").decode(errors="replace")
@@ -461,46 +525,42 @@ class Irc:
                     self.send("PONG :" + (parsed[3][-1] if parsed[3] else ""))
                     continue
                 if parsed[2] == "ERROR":
-                    fail("the IRC server closed the connection: " + (parsed[3][-1] if parsed[3] else ""))
+                    raise Lost("the IRC server closed the connection: " + (parsed[3][-1] if parsed[3] else ""))
                 return parsed
-            wait = TIMEOUT if deadline is None else deadline - time.monotonic()
+            wait = TIMEOUT if deadline is None else min(deadline - time.monotonic(), TIMEOUT)
             if wait <= 0:
-                return None
-            self.sock.settimeout(min(wait, TIMEOUT))
+                continue
+            self.sock.settimeout(wait)
             try:
                 data = self.sock.recv(65536)
             except (socket.timeout, TimeoutError):
                 if deadline is None:
-                    raise
+                    raise Lost("the IRC server stopped answering.") from None
                 continue
             if not data:
-                fail("the IRC server closed the connection.")
+                raise Lost("the IRC server closed the connection.")
             self.buffer += data
 
-    def receive_or_fail(self):
-        try:
-            return self.receive()
-        except (socket.timeout, TimeoutError):
-            fail("the IRC server stopped answering.")
-
-    def sync(self, token, check=None):
-        """Read until the server answers a PING, passing each line to check."""
+    def sync(self, token, check=None, deadline=None):
+        """Read until the server answers a PING, passing each other line to check; False if the deadline passes."""
         self.send(f"PING :{token}")
         while True:
-            parsed = self.receive_or_fail()
+            parsed = self.receive(deadline)
+            if parsed is None:
+                return False
             if parsed[2] == "PONG" and parsed[3][-1:] == [token]:
-                return
+                return True
             if check:
                 check(parsed)
 
-    def join(self, channel):
+    def join(self, channel, deadline=None):
         def check(parsed):
             _, _, command, params = parsed
             if command in JOIN_ERRORS and len(params) > 1 and fold(params[1]) == fold(channel):
                 fail(f"cannot join {channel}: {params[-1]}")
         # An attached multiclient session may already be in the channel, so no reply is not an error.
         self.send(f"JOIN {channel}")
-        self.sync("joined", check)
+        return self.sync("joined", check, deadline)
 
     def quit(self):
         try:
@@ -510,29 +570,24 @@ class Irc:
             pass
 
 
-def pieces(word, limit):
-    """Cut one word, such as a long URL, into parts of at most limit bytes without splitting a character."""
-    parts, current = [], ""
-    for character in word:
-        if len((current + character).encode()) > limit:
-            parts.append(current)
-            current = character
-        else:
-            current += character
-    return parts + ([current] if current else [])
+def wrap(line, limit):
+    """Cut a line into pieces of at most limit bytes that join back into exactly that line.
 
-
-def split(text, limit):
-    chunks, current = [], ""
-    for word in text.split():
-        for part in pieces(word, limit):
-            candidate = f"{current} {part}".strip()
-            if len(candidate.encode()) > limit and current:
-                chunks.append(current)
-                current = part
-            else:
-                current = candidate
-    return chunks + ([current] if current else [])
+    A cut goes before a space where one fits, so the space starts the next piece. A word longer than a
+    piece, such as a long URL, is cut between two characters, never inside one, and nothing is added."""
+    pieces = []
+    while len(line.encode()) > limit:
+        size, fits = 0, 0
+        for index, character in enumerate(line):
+            size += len(character.encode())
+            if size > limit:
+                break
+            fits = index + 1
+        space = line.rfind(" ", 1, fits + 1)
+        cut = space if space > 0 else fits
+        pieces.append(line[:cut])
+        line = line[cut:]
+    return pieces + ([line] if line else [])
 
 
 def multiline_limits(caps):
@@ -545,42 +600,111 @@ def multiline_limits(caps):
         return None
 
 
+def has_history(irc):
+    return bool({"draft/chathistory", "chathistory"} & set(irc.caps)) and "batch" in irc.caps
+
+
 def matches(message, irc, channel, threads, senders):
+    """An answer: in the channel, from someone else, and in one of the threads and from one of the senders
+    when those are given (both, when both are)."""
     if fold(message["target"]) != fold(channel):
         return False
     if fold(message["account"] or message["nick"]) in (fold(irc.account), fold(irc.nick)):
         return False  # your own messages, from this session or another
-    if senders:
-        return fold(message["nick"]) in senders
+    if senders and fold(message["nick"]) not in senders:
+        return False
     return not threads or message["reply"] in threads
 
 
-def await_reply(irc, channel, threads, senders, deadline, seen):
-    """Print the replies that match until the first whole message from someone else, or the deadline."""
-    assembler, found = Assembler(), False
-    while True:
-        parsed = irc.receive(deadline)
-        if parsed is None:
-            return found
-        message = assembler.feed(parsed)
-        if not message or not matches(message, irc, channel, threads, senders):
-            continue
+class Watch:
+    """What a wait looks for in a channel, and the newest message it has read there (the next wait's --after)."""
+
+    def __init__(self, irc, channel, threads, senders, anchor):
+        self.irc, self.channel, self.threads, self.senders = irc, channel, list(threads), list(senders)
+        self.anchor, self.seen, self.found, self.ids = anchor, set(), False, []
+
+    def offer(self, message):
+        """Show the message if it answers; True if it did."""
+        if fold(message["target"]) != fold(self.channel):
+            return False
         if message["msgid"]:
-            if message["msgid"] in seen:
-                continue
-            seen.add(message["msgid"])
+            if message["msgid"] in self.seen:
+                return False
+            self.seen.add(message["msgid"])
+            if message["command"] == "PRIVMSG":
+                self.anchor = message["msgid"]
+        if not matches(message, self.irc, self.channel, set(self.threads), {fold(nick) for nick in self.senders}):
+            return False
         if message["command"] == "NOTICE":
             if message["progress"]:
                 print(f"... {message['nick']} is working ({message['progress']}): {message['text']}", flush=True)
-            continue
+            return False
         show(message)
-        if not found:
-            # Gather the lines an agent sends straight after its first one.
-            found, deadline = True, min(deadline, time.monotonic() + 3)
+        self.found = True
+        return True
+
+    def again(self):
+        """The command that waits for the next answer after what this wait has read."""
+        return " ".join([f"wait '{self.channel}'", *(f"--thread {thread}" for thread in self.threads),
+                         *(f"--from {nick}" for nick in self.senders), *([f"--after {self.anchor}"] if self.anchor else [])])
+
+
+def await_reply(irc, watch, deadline):
+    """Read until the first answer, and what follows it for a moment, or until the deadline."""
+    assembler = Assembler()
+    if watch.found:
+        deadline = min(deadline, time.monotonic() + SETTLE)
+    while True:
+        parsed = irc.receive(deadline)
+        if parsed is None:
+            return watch.found
+        message = assembler.feed(parsed)
+        if message and watch.offer(message):
+            deadline = min(deadline, time.monotonic() + SETTLE)
+
+
+def history_batch(irc, channel, deadline=None):
+    """The messages of the server's chathistory batch for channel, or None if the deadline passes first.
+
+    Only lines in that batch, and in the multiline batches inside it, are history. Anything else that
+    arrives meanwhile, such as live messages for another channel of a multiclient account, is kept in
+    order for whatever reads next."""
+    assembler, outer, inner, messages, later = Assembler(), None, set(), [], []
+    try:
+        while True:
+            parsed = irc.receive(deadline)
+            if parsed is None:
+                return None
+            tags, _, command, params = parsed
+            ours = outer is not None and tags.get("batch") in inner | {outer}
+            if command == "BATCH" and params:
+                ref = params[0][1:]
+                if outer is None and params[0].startswith("+") and params[1:2] == ["chathistory"] \
+                        and len(params) > 2 and fold(params[2]) == fold(channel):
+                    outer = ref
+                    continue
+                if outer is not None and params[0] == "-" + outer:
+                    return messages
+                if ours and params[0].startswith("+"):
+                    inner.add(ref)
+                elif params[0].startswith("-") and ref in inner:
+                    inner.discard(ref)
+                    ours = True
+            elif (command == "FAIL" and params[:1] == ["CHATHISTORY"]) or \
+                    (command in ("403", "442") and len(params) > 1 and fold(params[1]) == fold(channel)):
+                raise Refused(" ".join([command, *params]))
+            if not ours:
+                later.append(parsed)
+                continue
+            message = assembler.feed(parsed)
+            if message and fold(message["target"]) == fold(channel):
+                messages.append(message)
+    finally:
+        irc.pending = later + irc.pending
 
 
 def compose(mode, channel, model, human, message, reply_to):
-    """Check a message before connecting: (marker, the lines of each paragraph)."""
+    """Check a message before connecting: (marker, its lines, each cut into pieces that fit an IRC line)."""
     model, human = model.strip(), (human or mode.default_human()).strip()
     if not model or len(model) > 60:
         fail("--as must name your model and version, for example 'Claude Opus 5.5'.")
@@ -589,6 +713,8 @@ def compose(mode, channel, model, human, message, reply_to):
     if SECRET.search(message):
         fail("the message looks like it contains a key or token. Channel history keeps it and the fleet reads it; "
              "remove it.")
+    if "\0" in message:
+        fail("the message contains a NUL character, which IRC cannot carry.")
     if reply_to and not MSGID.fullmatch(reply_to):
         fail("--reply-to takes a message ID as history and say print it.")
     prefix = f"[on behalf of {human} ({model})] "
@@ -596,137 +722,172 @@ def compose(mode, channel, model, human, message, reply_to):
     budget = LINE_BYTES - len(f"PRIVMSG {channel} :{prefix}".encode())
     if budget < 100:
         fail("the channel name and attribution leave too little room for a message.")
-    batch = [(index, chunk) for index, paragraph in enumerate(message.splitlines()) if paragraph.strip()
-             for chunk in split(paragraph, budget)]
-    if not batch:
+    lines = [line if line.strip() else "" for line in message.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    if not lines:
         fail("nothing to say.")
-    return prefix, batch
+    return prefix, [wrap(line, budget) for line in lines]
 
 
-def say(irc, channel, prefix, batch, reply_to, wait):
+def say(irc, channel, prefix, lines, reply_to, wait):
     if reply_to and "message-tags" not in irc.caps:
         fail("this IRC server does not carry replies (message-tags), so there are no threads.")
-    reply_tag = f"+draft/reply={reply_to}" if reply_to else ""
+    reply_tag = f"@+draft/reply={reply_to} " if reply_to else ""
     limits = multiline_limits(irc.caps)
-    text_bytes = len(prefix.encode()) + sum(len(chunk.encode()) + 1 for _, chunk in batch)
+    count = sum(len(pieces) or 1 for pieces in lines)
+    size = len(prefix.encode()) + sum(len(piece.encode()) for pieces in lines for piece in pieces) + len(lines) - 1
     irc.join(channel)
-    if limits and len(batch) > 1 and len(batch) <= limits[1] and (not limits[0] or text_bytes <= limits[0]):
-        # One message of several lines: the marker starts it, and wrapped lines join without a break.
-        irc.send(f"{'@' + reply_tag + ' ' if reply_tag else ''}BATCH +say draft/multiline {channel}")
-        previous = None
-        for index, (paragraph_index, chunk) in enumerate(batch):
-            text = prefix + chunk if index == 0 else chunk
-            if paragraph_index == previous:
-                irc.send(f"@batch=say;draft/multiline-concat PRIVMSG {channel} : {text}")
-            else:
-                irc.send(f"@batch=say PRIVMSG {channel} :{text}")
-            previous = paragraph_index
+    irc.posted = "maybe"  # from here on, a failure may come after the server took the message
+    if count > 1 and limits and count <= limits[1] and (not limits[0] or size <= limits[0]):
+        # One message of several lines, exactly as written: the marker starts it, a blank line keeps a
+        # paragraph break, and the pieces of a long line join again without a break or a space added.
+        irc.send(f"{reply_tag}BATCH +say draft/multiline {channel}")
+        first = True
+        for pieces in lines:
+            for index, piece in enumerate(pieces or [""]):
+                tags = "@batch=say;draft/multiline-concat" if index else "@batch=say"
+                irc.send(f"{tags} PRIVMSG {channel} :{prefix + piece if first else piece}")
+                first = False
         irc.send("BATCH -say")
-        sent = 1
+        expected = [prefix + "\n".join("".join(pieces) for pieces in lines)]
     else:
-        for _, chunk in batch:
-            irc.send(f"{'@' + reply_tag + ' ' if reply_tag else ''}PRIVMSG {channel} :{prefix}{chunk}")
-        sent = len(batch)
-    first = prefix + batch[0][1]
-    assembler, echoed, later = Assembler(), {}, []
+        # Without multiline, each line is its own message with the marker; blank lines are left out.
+        expected = [prefix + (piece.lstrip(" ") if index else piece)
+                    for pieces in lines for index, piece in enumerate(pieces) if piece.strip()]
+        for text in expected:
+            irc.send(f"{reply_tag}PRIVMSG {channel} :{text}")
+    assembler, echoed, later = Assembler(), [], []
+
+    def taken(ids):
+        """The server has the message: what to wait on, its thread and the IDs it was given."""
+        ids = [msgid for msgid in ids if msgid]
+        # An agent may answer a reply in a thread under the thread's first message.
+        threads = list(dict.fromkeys([*ids, *([reply_to] if reply_to else [])])) if ids else []
+        irc.posted, irc.watch = "sent", Watch(irc, channel, threads, [], ids[-1] if ids else "")
+        irc.watch.ids = ids
 
     def check(parsed):
         _, _, command, params = parsed
         # Ergo answers a refused message with an error numeric (for example 404 or 417) or FAIL.
         if command == "FAIL" or (command.isdigit() and 400 <= int(command) < 600):
             irc.quit()
-            fail("the IRC server refused the message: " + " ".join([command, *params]))
-        if echoed:
-            later.append(parsed)  # a quick answer, kept for --wait
-            return
+            fail("the IRC server refused the message: " + " ".join([command, *params])
+                 + (f" ({len(echoed)} of its {len(expected)} lines were posted)" if echoed else ""))
+        later.append(parsed)  # a quick answer, kept for --wait
         message = assembler.feed(parsed)
-        if (message and fold(message["target"]) == fold(channel)
-                and fold(message["nick"]) == fold(irc.nick) and message["text"].startswith(first)):
-            echoed.update(message)
+        if (message and len(echoed) < len(expected) and fold(message["target"]) == fold(channel)
+                and fold(message["nick"]) == fold(irc.nick) and message["text"].rstrip() == expected[len(echoed)].rstrip()):
+            echoed.append(message["msgid"])
+            if len(echoed) == len(expected):
+                taken(echoed)
 
     irc.sync("sent", check)
+    if irc.posted != "sent":
+        taken(echoed)  # without echo-message, the server's answer to the PING is all there is
     irc.pending = later + irc.pending
-    msgid = echoed.get("msgid", "")
-    noun = "message" if sent == 1 else f"{sent} lines"
-    print(f"sent {noun} to {channel} as {irc.account}, marked {prefix.strip()}"
-          + (f" [id {msgid}]" if msgid else ""), flush=True)
+    ids, threads = irc.watch.ids, irc.watch.threads
+    noun = "message" if len(expected) == 1 else f"{len(expected)} lines"
+    print(f"sent {noun} to {channel} as {irc.account}, marked {prefix.strip()}{shown_ids(ids)}", flush=True)
     if wait:
-        # An agent may answer a reply in a thread under the thread's first message.
-        threads = {msgid, reply_to} - {"", None} if msgid else set()
-        print(f"waiting up to {wait} seconds for a reply"
-              + (" in its thread" if threads else " in the channel") + "...", flush=True)
-        if not await_reply(irc, channel, threads, set(), time.monotonic() + wait, {msgid} if msgid else set()):
+        print(f"waiting up to {wait} seconds for a reply" + (" in its thread" if threads else " in the channel")
+              + "...", flush=True)
+        if not await_reply(irc, irc.watch, time.monotonic() + wait):
             print("no reply yet. The message was sent; do not send it again."
-                  + (f" Keep waiting with: wait '{channel}' --thread {msgid}" if msgid else ""), flush=True)
+                  + (f" Keep waiting with: {irc.watch.again()}" if threads else ""), flush=True)
+        elif threads:
+            print(f"To wait for the next reply: {irc.watch.again()}", flush=True)
     irc.quit()
 
 
 def history(irc, channel, limit, thread):
-    if not ({"draft/chathistory", "chathistory"} & set(irc.caps) and "batch" in irc.caps):
+    if not has_history(irc):
         fail("this IRC server keeps no history this helper can read.")
     # Ergo serves history only to members of the channel.
     irc.join(channel)
     irc.send(f"CHATHISTORY LATEST {channel} * {limit}")
-    assembler, reference, messages = Assembler(), None, []
-    while True:
-        parsed = irc.receive_or_fail()
-        tags, nick, command, params = parsed
-        if command == "BATCH" and params and reference is None and params[0].startswith("+") \
-                and params[1:2] == ["chathistory"] and fold(params[2] if len(params) > 2 else "") == fold(channel):
-            reference = params[0][1:]
-            continue
-        if command == "BATCH" and reference and params[:1] == ["-" + reference]:
-            break
-        if command == "FAIL" or command in ("403", "442"):
-            fail(f"cannot read {channel}: {' '.join([command, *params])}")
-        message = assembler.feed(parsed)
-        if message and message["command"] == "PRIVMSG" and message["nick"] != "HistServ":  # Ergo's join and quit notices
-            messages.append(message)
+    try:
+        messages = history_batch(irc, channel)
+    except Refused as error:
+        fail(f"cannot read {channel}: {error}")
     irc.quit()
+    # HistServ's are Ergo's join and quit notices.
+    messages = [message for message in messages if message["command"] == "PRIVMSG" and message["nick"] != "HistServ"]
     if thread:
         messages = [message for message in messages if thread in (message["msgid"], message["reply"])]
     for message in messages:
         show(message)
 
 
-def wait_command(irc, channel, threads, senders, timeout):
-    if not all(MSGID.fullmatch(thread) for thread in threads):
-        fail("--thread takes a message ID as history and say print it.")
-    if not threads and not senders:
-        fail("pass --thread with the ID that say printed, or --from with an agent's nick.")
-    irc.join(channel)
-    anchor, seen, deadline, threads = threads[:1], set(), time.monotonic() + timeout, set(threads)
-    if anchor and {"draft/chathistory", "chathistory"} & set(irc.caps):
-        # Replies may have arrived while nobody was listening.
-        irc.send(f"CHATHISTORY AFTER {channel} msgid={anchor[0]} 100")
-        assembler, reference, found = Assembler(), None, False
-        while True:
-            parsed = irc.receive_or_fail()
-            command, params = parsed[2], parsed[3]
-            if command == "BATCH" and params and reference is None and params[0].startswith("+") \
-                    and params[1:2] == ["chathistory"]:
-                reference = params[0][1:]
-                continue
-            if command == "FAIL" or (command == "BATCH" and reference and params[:1] == ["-" + reference]):
-                break
-            message = assembler.feed(parsed)
-            if message and message["command"] == "PRIVMSG" and matches(message, irc, channel, threads, senders):
-                seen.add(message["msgid"])
-                show(message)
-                found = True
-        if found:
-            irc.quit()
-            return
-    if not await_reply(irc, channel, threads, senders, deadline, seen):
-        irc.quit()
-        sys.exit(f"subspace: no reply within {timeout} seconds. Run wait again to keep waiting.")
+def catch_up(irc, watch, deadline):
+    """Show the answers already in the channel's history after the anchor; None if the deadline passes first."""
+    anchor = watch.anchor
+    for _ in range(10):  # at most 1,000 messages
+        irc.send(f"CHATHISTORY AFTER {watch.channel} msgid={anchor} 100")
+        try:
+            messages = history_batch(irc, watch.channel, deadline)
+        except Refused:
+            break
+        if messages is None:
+            return None
+        for message in messages:
+            watch.offer(message)
+        if len(messages) < 100 or not messages[-1]["msgid"]:
+            break
+        anchor = messages[-1]["msgid"]
+    return watch.found
+
+
+def latest(irc, channel, deadline):
+    """The ID of the channel's newest message, from which a later wait can catch up."""
+    irc.send(f"CHATHISTORY LATEST {channel} * 1")
+    try:
+        messages = history_batch(irc, channel, deadline) or []
+    except Refused:
+        return ""
+    return next((message["msgid"] for message in reversed(messages) if message["command"] == "PRIVMSG"), "")
+
+
+def wait_command(irc, channel, threads, senders, after, timeout):
+    # One deadline for everything: joining, catching up from history and the live wait.
+    deadline = time.monotonic() + timeout
+    watch = Watch(irc, channel, threads, senders, after or (threads[0] if threads else ""))
+    if irc.join(channel, deadline):
+        if has_history(irc) and watch.anchor:
+            catch_up(irc, watch, deadline)  # replies may have arrived while nobody was listening
+        elif has_history(irc):
+            watch.anchor = latest(irc, channel, deadline)  # nothing before now counts
+        await_reply(irc, watch, deadline)
     irc.quit()
+    if not watch.found:
+        sys.exit(f"subspace: no reply within {timeout} seconds. Keep waiting with: {watch.again()}")
+    print(f"To wait for the next reply: {watch.again()}", flush=True)
+
+
+def shown_ids(ids):
+    return f" [id {ids[0]}]" if len(ids) == 1 else f" [ids {', '.join(ids)}]" if ids else ""
+
+
+def unsure(irc, channel, detail):
+    """Exit after a failure that came once the message was written: it was, or may have been, posted."""
+    if irc.posted == "sent":
+        hint = f" Keep waiting with: {irc.watch.again()}" if irc.watch.threads else ""
+        message = f"{detail} The message was sent{shown_ids(irc.watch.ids)}; do not send it again.{hint}"
+    else:
+        message = (f"{detail} This came after the message was written, so it may have been posted. Check with: "
+                   f"history '{channel}' --limit 10, and send it again only if it is not there.")
+    print(f"subspace: {message}", file=sys.stderr, flush=True)
+    sys.exit(POSTED)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--target", help="development sign-in: the installed fleet to use")
     parser.add_argument("--fleet", help="hosted API: the fleet whose IRC server to use, when a channel is ambiguous")
+    parser.add_argument("--config", help="use these sign-in settings, such as a deployment repository's "
+                        "agent-kit/agent.json, instead of ~/.subspace/agent.json")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("channels", help="list your fleets' channels and who answers in each")
     read = sub.add_parser("history", help="print recent messages in a channel, with their IDs")
@@ -744,31 +905,47 @@ def main():
     listen.add_argument("channel")
     listen.add_argument("--thread", dest="threads", action="append", default=[], metavar="ID",
                         help="a message ID whose replies to wait for (repeat for a thread's first message too)")
-    listen.add_argument("--from", dest="senders", action="append", default=[], metavar="NICK")
+    listen.add_argument("--from", dest="senders", action="append", default=[], metavar="NICK",
+                        help="wait for this agent's messages (with --thread: its replies in the thread)")
+    listen.add_argument("--after", metavar="ID", help="count only messages after this one: the last ID you saw, "
+                        "to wait for the next reply (default: the first --thread, or now)")
     listen.add_argument("--timeout", type=int, default=240, metavar="SECONDS")
+    for command in sub.choices.values():  # --config after the command works too
+        command.add_argument("--config", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     args = parser.parse_args()
-    mode = hosted_or_development(args.target)
+    if args.command == "wait":
+        if not all(MSGID.fullmatch(value) for value in [*args.threads, *([args.after] if args.after else [])]):
+            fail("--thread and --after take a message ID as history and say print it.")
+        if not args.threads and not args.senders:
+            fail("pass --thread with the ID that say printed, or --from with an agent's nick.")
+    mode = hosted_or_development(args.target, args.config)
     if args.command == "channels":
         mode.list_channels()
         return
     if not args.channel.startswith("#"):
         fail("name a channel (#name). Direct messages from your account are not supported here.")
     if args.command == "say":
-        prefix, batch = compose(mode, args.channel, args.model, args.human, " ".join(args.message), args.reply_to)
+        prefix, lines = compose(mode, args.channel, args.model, args.human, " ".join(args.message), args.reply_to)
     server = mode.server_for(args.channel, args.fleet)
+    irc = None
     try:
         irc = Irc(mode, server)
         if args.command == "history":
             history(irc, args.channel, max(1, min(args.limit, 200 if not args.thread else 500)), args.thread)
         elif args.command == "say":
-            say(irc, args.channel, prefix, batch, args.reply_to, max(0, min(args.wait, 3600)))
+            say(irc, args.channel, prefix, lines, args.reply_to, max(0, min(args.wait, 3600)))
         else:
-            wait_command(irc, args.channel, args.threads, {fold(nick) for nick in args.senders},
-                         max(1, min(args.timeout, 3600)))
+            wait_command(irc, args.channel, args.threads, args.senders, args.after, max(1, min(args.timeout, 3600)))
     except ssl.SSLCertVerificationError as error:
         fail(f"the IRC server's certificate could not be verified ({error.verify_message}).")
-    except (OSError, ssl.SSLError) as error:
-        fail(f"IRC connection to {server['host']}:{server['port']} failed ({error}). {mode.hint}")
+    except (Lost, OSError, ssl.SSLError) as error:
+        detail = str(error) if isinstance(error, Lost) else \
+            f"IRC connection to {server['host']}:{server['port']} failed ({error})."
+        if irc is not None:
+            irc.sock.close()
+            if irc.posted:
+                unsure(irc, args.channel, detail)
+        fail(f"{detail} {mode.hint}")
 
 
 if __name__ == "__main__":

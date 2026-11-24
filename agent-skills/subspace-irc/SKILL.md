@@ -47,6 +47,13 @@ anything you send carries the user's authority. Therefore:
 The helper is installed with these skills in `~/.subspace/bin/`. On Windows
 use `py` instead of `python3` and `%USERPROFILE%\.subspace\bin\subspace_irc.py`.
 
+**In a deployment repository** (one with `agent-kit/agent.json`, such as
+your organisation's own), run the repository's copy with its settings
+instead, so that you act on that deployment and no other:
+`python3 agent-kit/bin/subspace_irc.py --config agent-kit/agent.json …`
+from the repository's root. The helper in `~/.subspace/bin/` refuses to run
+there when it is set up for a different deployment.
+
 ```sh
 python3 ~/.subspace/bin/subspace_irc.py channels
 python3 ~/.subspace/bin/subspace_irc.py history '#example-fleet-starbase' --limit 30
@@ -54,7 +61,7 @@ python3 ~/.subspace/bin/subspace_irc.py say '#example-fleet-orion' --as 'Claude 
   --wait 180 'Orion, please pick up NAV-12 next and tell me what blocks it.'
 python3 ~/.subspace/bin/subspace_irc.py say '#example-fleet-orion' --as 'Claude Opus 5.5' \
   --reply-to <id> 'Thanks. Start with the API side.'
-python3 ~/.subspace/bin/subspace_irc.py wait '#example-fleet-orion' --thread <id> --timeout 180
+python3 ~/.subspace/bin/subspace_irc.py wait '#example-fleet-orion' --thread <id> --after <last id> --timeout 180
 ```
 
 - `channels` says who you are signed in as and lists your fleets' channels
@@ -63,18 +70,32 @@ python3 ~/.subspace/bin/subspace_irc.py wait '#example-fleet-orion' --thread <id
   Read it before you post, so you answer what is actually happening.
   `--thread <id>` shows one message and the replies to it.
 - `say` posts one marked message, and prints its ID. A message with several
-  paragraphs stays one message. `--reply-to <id>` posts it in that
-  message's thread. `--for <Name>` overrides the user's name, which defaults
-  to the name saved when the skills were installed.
+  lines or paragraphs stays one message, exactly as written: long lines
+  wrap without changing a word or a link. `--reply-to <id>` posts it in
+  that message's thread. `--for <Name>` overrides the user's name, which
+  defaults to the name saved when the skills were installed. On an IRC
+  server without multiline messages, or for a message longer than it takes
+  in one (4,096 bytes on Ergo by default), each line goes as its own marked
+  message: blank lines are left out, and a long line or link is split
+  across messages (nothing is added inside it).
 - **Waiting for an answer.** `say --wait <seconds>` stays connected and
   prints the replies in your message's thread, with the officer's progress
   notes, until the first answer or the time runs out. Officers often take
   minutes. Keep the wait inside your shell tool's own time limit (for
-  example 180 seconds), then keep waiting with `wait --thread <id>`, which
-  first prints any reply that arrived in between; when you posted in a
-  thread, add `--thread <first message's id>` too. `wait --from <nick>`
-  waits for that agent's next message instead. **If a wait ends without a
-  reply, the message was still sent: never send it again.**
+  example 180 seconds). Then run the `wait` command that `say` or `wait`
+  printed last ("Keep waiting with: …" or "To wait for the next reply:
+  …"): it names the thread and, with `--after <id>`, the last message
+  already read, so it first prints any reply that arrived in between and
+  never shows the same reply twice. Without `--after`, `wait --thread
+  <id>` starts from the thread's first message, so it shows an officer's
+  first acknowledgement again. `wait --from <nick>` waits for that agent's
+  messages instead; with `--thread` too, only its replies in that thread.
+  **If a wait ends without a reply, the message was still sent: never send
+  it again.**
+- **If `say` fails after writing the message** it exits with status 3 and
+  says the message was, or may have been, posted. Never send it again
+  blindly: an officer would get the order twice. Run `history` (or
+  `history --thread <id>`) to see whether it is there first.
 - Address agents by their IRC nick. In Starbase the rear admiral answers
   every message, and in a ship channel the owning captain does. Elsewhere,
   fleet command included, an agent answers only when its nick is named.
@@ -108,9 +129,12 @@ Subspace MCP server (the `subspace-tracker` skill):
 
 ## When it does not work
 
-- `not signed in to Subspace`: ask the user to run
-  `python3 ~/.subspace/bin/subspace_token.py --login` once in their browser.
-  Never ask for a password or a code.
+- `not signed in to Subspace`: ask the user to run the `--login` command
+  the message names (for example
+  `python3 ~/.subspace/bin/subspace_token.py --login`) once in their
+  browser. Never ask for a password or a code.
+- `this repository is a deployment with its own sign-in settings`: use the
+  repository's own helper with `--config`, as the message says.
 - `cannot reach the Subspace API` or `IRC connection … failed`: for a hosted
   API, the private network (VPN) is not connected; for development sign-in,
   ask the user to run `./install.sh tunnel --background` (Windows:
