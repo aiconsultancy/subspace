@@ -2,7 +2,7 @@ import { Effect, Result, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { CurrentMember } from "./identity";
-import { mcpTools, ToolName } from "./mcp-tools";
+import { mcpInstructions, mcpTools, ToolName } from "./mcp-tools";
 import { BearerAuth } from "./middleware";
 import { endpointErrors, problem } from "./problems";
 import { Line } from "./validation";
@@ -83,6 +83,7 @@ function receive(request: HttpServerRequest.HttpServerRequest, hidden: ReadonlyS
         protocolVersion,
         serverInfo: { name: "Subspace API", version: "1.0.0" },
         capabilities: { tools: {} },
+        instructions: mcpInstructions,
       });
     }
     if (method === "ping") return jsonResponse(id, {});
