@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
@@ -22,6 +23,11 @@ import fleet_setup  # noqa: E402
 import runtime  # noqa: E402
 from runtime import irc_officer, validate  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
+
+
+# Tests never reach the network: setup's outbound check is replaced here, and OutboundTests checks the real one.
+check_outbound = fleet_setup.check_outbound
+fleet_setup.check_outbound = lambda answers: None
 
 
 def fake_api(api):
@@ -990,6 +996,46 @@ class ExternalDatabaseTests(unittest.TestCase):
         installer = (Path(fleet_setup.HERE).parent / "install.sh").read_text()
         uninstall = re.search(r"^uninstall\(\) \{.*?^\}$", installer, re.M | re.S).group(0)
         self.assertNotRegex(uninstall, r"(?i)docker|compose|psql|postgres|database|/root/fleet")
+
+
+class OutboundTests(unittest.TestCase):
+    """setup stops at once, saying what to open, when the VM cannot reach what the install downloads."""
+
+    def test_the_package_mirrors_come_from_both_apt_source_formats(self):
+        with tempfile.TemporaryDirectory() as temp:
+            apt = Path(temp)
+            (apt / "sources.list.d").mkdir()
+            (apt / "sources.list").write_text("# comment\ndeb [arch=amd64] http://mirror.example.com/ubuntu noble main\n"
+                                              "deb cdrom:[Ubuntu]/ noble main\n")
+            (apt / "sources.list.d/ubuntu.sources").write_text(
+                "Types: deb\nURIs: http://archive.example.org/ubuntu/ http://mirror.example.com/ubuntu\n"
+                "Suites: noble\n")
+            self.assertEqual(fleet_setup.apt_mirrors(apt), ["http://mirror.example.com/ubuntu",
+                                                            "http://archive.example.org/ubuntu/"])
+
+    def test_no_outbound_access_stops_at_once_and_says_what_to_open(self):
+        targets = [("GitHub", "https://github.com"), ("the package mirror", "http://archive.example.org/ubuntu/")]
+        with patch.object(fleet_setup, "outbound_targets", return_value=targets), \
+                patch.object(fleet_setup, "urlopen", side_effect=URLError("timed out")) as opened, \
+                self.assertRaisesRegex(fleet_setup.SetupError, r"no outbound access to GitHub \(github.com\), the "
+                                       r"package mirror \(archive.example.org\).*Open outbound HTTPS \(TCP 443\)"):
+            check_outbound({"api": True})
+        self.assertTrue(all(call.kwargs["timeout"] == fleet_setup.OUTBOUND_TIMEOUT for call in opened.call_args_list))
+        # An HTTP error is an answer: the host is reachable.
+        refused = HTTPError("https://github.com", 403, "Forbidden", {}, None)
+        with patch.object(fleet_setup, "outbound_targets", return_value=targets), \
+                patch.object(fleet_setup, "urlopen", side_effect=refused):
+            check_outbound({"api": True})
+        # Docker's repository only matters when the VM runs containers.
+        with patch.object(fleet_setup, "apt_mirrors", return_value=[]):
+            self.assertNotIn("Docker's package repository",
+                             dict(fleet_setup.outbound_targets({"api": False, "irc": "remote"})))
+            self.assertIn("Docker's package repository", dict(fleet_setup.outbound_targets({"api": True})))
+
+    def test_the_release_lookup_says_why_it_failed(self):
+        with patch.object(fleet_setup, "run", side_effect=fleet_setup.SetupError("git ls-remote did not finish")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "no outbound access to GitHub.*--stargate-ref"):
+            fleet_setup.latest_stargate()
 
 
 class HostInstallerTests(unittest.TestCase):

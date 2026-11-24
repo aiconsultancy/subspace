@@ -29,6 +29,7 @@ after a failure or to change a setting.
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -67,6 +68,10 @@ AGENT_API_PORT = 3001
 AGENT_OFFERED = "# subspace-setup has offered the agent listener (AGENT_PORT=3001); AGENT_PORT= keeps it off."
 STARGATE_API_PORT = 8484
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
+OUTBOUND_TIMEOUT = 8
+OUTBOUND_HELP = ("Open outbound HTTPS (TCP 443) from the VM to github.com and *.githubusercontent.com, "
+                 "download.docker.com and the package mirror in /etc/apt (HTTP, TCP 80, unless it uses HTTPS), in "
+                 "the VM's network security group, firewall or proxy settings, then run setup again.")
 LOOPBACK = "127.0.0.1"
 IRC_PLAIN = 6667
 IRC_TLS = 6697
@@ -153,9 +158,13 @@ def write_json(path, data):
     write_private(path, json.dumps(data, indent=2, sort_keys=False) + "\n")
 
 
-def run(*args, check=True, capture=False, env=None, input_text=None):
-    result = subprocess.run([str(arg) for arg in args], check=False, text=True, env=env, input=input_text,
-                            stdout=subprocess.PIPE if capture else None)
+def run(*args, check=True, capture=False, env=None, input_text=None, timeout=None):
+    try:
+        result = subprocess.run([str(arg) for arg in args], check=False, text=True, env=env, input=input_text,
+                                stdout=subprocess.PIPE if capture else None, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise SetupError(f"{Path(str(args[0])).name} {args[1] if len(args) > 1 else ''} did not finish within "
+                         f"{timeout} seconds.") from None
     if check and result.returncode:
         raise SetupError(f"{Path(str(args[0])).name} {args[1] if len(args) > 1 else ''} failed with exit code {result.returncode}.")
     return result.stdout.strip() if capture else result.returncode
@@ -562,10 +571,60 @@ def demo_channels():
     return [row["name"] for row in channels if isinstance(row, dict) and "name" in row]
 
 
+def apt_mirrors(sources=Path("/etc/apt")):
+    """The package mirrors this VM's apt sources name (one-line and deb822 formats), as base URLs."""
+    found = []
+    files = [sources / "sources.list", *sorted((sources / "sources.list.d").glob("*.list")),
+             *sorted((sources / "sources.list.d").glob("*.sources"))]
+    for path in files:
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        for line in text.splitlines():
+            words = line.split("#", 1)[0].split()
+            if path.suffix == ".sources" and words[:1] == ["URIs:"]:
+                found += words[1:]
+            elif path.suffix == ".list" and words[:1] in (["deb"], ["deb-src"]):
+                found += [word for word in words[1:] if not word.startswith("[")][:1]
+    return list(dict.fromkeys(url for url in found if url.startswith(("http://", "https://"))))
+
+
+def outbound_targets(answers):
+    """What the install downloads from: GitHub (Stargate and the pinned releases), Docker's repository when
+    the VM runs containers, and the package mirror."""
+    targets = [("GitHub", "https://github.com")]
+    if answers.get("api") or answers.get("irc") == "local":
+        targets.append(("Docker's package repository", "https://download.docker.com"))
+    targets += [("the package mirror", url) for url in apt_mirrors()]
+    return targets
+
+
+def reachable(url):
+    try:
+        with urlopen(Request(url, method="HEAD", headers={"User-Agent": "subspace-setup"}), timeout=OUTBOUND_TIMEOUT):
+            return True
+    except HTTPError:
+        return True  # It answered.
+    except (URLError, OSError, ValueError):
+        return False
+
+
+def check_outbound(answers):
+    """Stop at once, saying what to open, when the VM cannot reach what the install downloads; without this a
+    run with no outbound access waits minutes on its first download and fails without saying why."""
+    targets = outbound_targets(answers)
+    with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+        results = list(pool.map(lambda target: reachable(target[1]), targets))
+    missing = [f"{label} ({urlsplit(url).hostname})" for (label, url), ok in zip(targets, results) if not ok]
+    require(not missing, "This VM has no outbound access to " + ", ".join(missing) + ", which the install "
+            "downloads from. " + OUTBOUND_HELP)
+
+
 def latest_stargate():
     """Stargate's newest release (highest vX.Y.Z tag) as (tag, commit), so every run installs the latest."""
     try:
-        output = run("git", "ls-remote", "--tags", STARGATE_REPO, "refs/tags/v*", capture=True)
+        output = run("git", "ls-remote", "--tags", STARGATE_REPO, "refs/tags/v*", capture=True, timeout=60)
     except SetupError:
         output = ""
     releases = {}
@@ -578,8 +637,8 @@ def latest_stargate():
             # An annotated tag's peeled line (^{}) names the commit; prefer it.
             if peeled or tag not in releases:
                 releases[tag] = (version, sha)
-    require(releases, "Could not look up Stargate's latest release on GitHub. "
-            "Check the VM's internet access, or pin one with --stargate-ref <full SHA>.")
+    require(releases, f"Could not look up Stargate's latest release at {STARGATE_REPO}: the VM has no outbound "
+            "access to GitHub, or it is too slow. " + OUTBOUND_HELP + " Or pin a release with --stargate-ref <full SHA>.")
     tag = max(releases, key=lambda name: releases[name][0])
     return tag, releases[tag][1]
 
@@ -1330,6 +1389,7 @@ def configure(args):
     os.chmod(INPUTS, 0o700)
     saved = read_json(INPUTS / "answers.json", {})
     answers = gather(args, saved)
+    check_outbound(answers)
     rear, captains = check_answers(answers)
     if saved.get("slug") and saved["slug"] != answers["slug"]:
         raise SetupError("The fleet ID cannot change on an installed VM. Reinstall on a fresh VM to rename it.")

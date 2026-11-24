@@ -391,7 +391,10 @@ run-command (`az vm run-command invoke --resource-group subspace-fleet-rg
 commands from [Private access](docs/private-access.md). If that cannot reach
 the package repositories, the VM has no outbound access: Azure is retiring
 default outbound access for new virtual networks, so the subnet needs a NAT
-gateway, which the user must agree to. Then read the host key:
+gateway, which the user must agree to. `subspace-setup` checks this first, in
+a dry run too: without outbound HTTPS to GitHub (and `download.docker.com`
+when the VM runs containers) or HTTP to the package mirror, it stops at once
+and names what to open. Then read the host key:
 
 ```sh
 az vm run-command invoke -g subspace-fleet-rg -n subspace-fleet --command-id RunShellScript \
