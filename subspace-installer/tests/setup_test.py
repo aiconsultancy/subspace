@@ -4,13 +4,17 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import socket
+import ssl
 import subprocess
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
@@ -20,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 import fleet_setup  # noqa: E402
+import irc_accounts  # noqa: E402
 import runtime  # noqa: E402
 from runtime import irc_officer, validate  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
@@ -58,7 +63,8 @@ class SetupInputsTests(unittest.TestCase):
         local = answers["irc"] == "local"
         config = fleet_setup.fleet_config(answers, members, "a" * 40, api_block, stargate_api, "b" * 40)
         token = "header.payload.signature" if api_block else ""
-        secrets = fleet_setup.fleet_secrets(store, members, answers["admin"], token, local)
+        secrets = fleet_setup.fleet_secrets(store, members, answers["admin"], token, local,
+                                            certificates=answers.get("ircAuth") == "certificate")
         return answers, members, config, secrets, store
 
     def test_local_fleet_validates_with_api_and_demo_channels(self):
@@ -93,7 +99,8 @@ class SetupInputsTests(unittest.TestCase):
     def test_shared_irc_fleet_validates_without_human_passwords(self):
         answers, _, config, secrets, store = self.generate(
             ["--name", "Fleet One", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "admiral",
-             "--no-demo", "--irc", "remote", "--irc-host", "irc.example.ts.net", "--crew-claude", "1", "--crew-codex", "0"])
+             "--no-demo", "--irc", "remote", "--irc-host", "irc.example.ts.net", "--irc-auth", "password",
+             "--crew-claude", "1", "--crew-codex", "0"])
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(cfg["irc"]["mode"], "remote")
         self.assertEqual((cfg["irc"]["host"], cfg["irc"]["port"], cfg["irc"]["tls"]), ("irc.example.ts.net", 6697, True))
@@ -1029,6 +1036,212 @@ class ExternalDatabaseTests(unittest.TestCase):
         installer = (Path(fleet_setup.HERE).parent / "install.sh").read_text()
         uninstall = re.search(r"^uninstall\(\) \{.*?^\}$", installer, re.M | re.S).group(0)
         self.assertNotRegex(uninstall, r"(?i)docker|compose|psql|postgres|database|/root/fleet")
+
+
+class FakeIrcServer:
+    """A TLS IRC server with an operator, NickServ's SAREGISTER and CERT ADD, and SASL EXTERNAL by certificate."""
+
+    def __init__(self, work, client_bundles, operator=("ircop", "fixture-operator-password")):
+        self.accounts, self.operator, self.requests = {}, operator, []
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                        "-nodes", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+                        "-keyout", str(work / "server.key"), "-out", str(work / "server.pem")],
+                       check=True, capture_output=True)
+        self.ca = str(work / "server.pem")
+        clients = work / "clients.pem"
+        clients.write_text("".join(bundle[:bundle.index("-----END CERTIFICATE-----") + 26] for bundle in client_bundles))
+        self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.context.load_cert_chain(work / "server.pem", work / "server.key")
+        self.context.verify_mode = ssl.CERT_OPTIONAL
+        self.context.load_verify_locations(clients)
+        self.listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self.listener.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                raw, _ = self.listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=self.session, args=(raw,), daemon=True).start()
+
+    def session(self, raw):
+        try:
+            connection = self.context.wrap_socket(raw, server_side=True)
+        except (ssl.SSLError, OSError):
+            raw.close()
+            return
+        peer = connection.getpeercert(binary_form=True)
+        fingerprint = hashlib.sha256(peer).hexdigest() if peer else None
+        stream, oper = connection.makefile("rwb"), False
+
+        def send(line):
+            stream.write(line.encode() + b"\r\n")
+            stream.flush()
+        for raw_line in stream:
+            line = raw_line.decode().rstrip("\r\n")
+            words = line.split(" ")
+            command = words[0].upper()
+            if command == "USER":
+                send(":irc.example.test 001 you :Welcome")
+            elif command == "OPER":
+                oper = tuple(words[1:3]) == self.operator
+                send(":irc.example.test 381 you :You are now an operator" if oper else
+                     ":irc.example.test 464 you :Password incorrect")
+            elif command == "PRIVMSG" and words[1] == "NickServ":
+                request = line.split(" :", 1)[1].split()
+                self.requests.append(request)
+                if not oper:
+                    send(":NickServ!NickServ@services NOTICE you :Insufficient privileges")
+                elif request[0] == "SAREGISTER":
+                    send(f":NickServ!NickServ@services NOTICE you :Successfully registered account {request[1]}")
+                    self.accounts.setdefault(request[1], set())
+                elif request[:2] == ["CERT", "ADD"] and request[2] in self.accounts:
+                    self.accounts[request[2]].add(request[3])
+                    send(":NickServ!NickServ@services NOTICE you :Certificate fingerprint successfully added")
+                else:
+                    send(":NickServ!NickServ@services NOTICE you :No such account")
+            elif line == "CAP REQ :sasl":
+                send(":irc.example.test CAP * ACK :sasl")
+            elif line == "AUTHENTICATE EXTERNAL":
+                send("AUTHENTICATE +")
+            elif line == "AUTHENTICATE +":
+                account = next((name for name, prints in self.accounts.items() if fingerprint in prints), None)
+                send(f":irc.example.test 900 you you!u@h {account} :You are now logged in" if account else
+                     ":irc.example.test 904 you :SASL authentication failed")
+            elif command == "QUIT":
+                break
+        connection.close()
+
+
+class IrcCertificateSetupTests(unittest.TestCase):
+    """A remote IRC server: officers sign in by certificate unless told otherwise, and setup can bind them."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        fleet_setup.INPUTS = self.root / "inputs"
+        fleet_setup.INPUTS.mkdir(mode=0o700)
+        owner = patch.object(fleet_setup, "SECRET_OWNER", os.getuid())
+        owner.start()
+        self.addCleanup(owner.stop)
+
+    def answers(self, *extra, saved=None):
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "remote",
+                                       "--irc-host", "irc.example.com", *extra])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            answers = fleet_setup.gather(args, saved or {})
+            fleet_setup.check_answers(answers)
+        return answers, args
+
+    def test_a_remote_server_signs_officers_in_by_certificate_unless_told_otherwise(self):
+        answers, _ = self.answers()
+        self.assertEqual(answers["ircAuth"], "certificate")
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        config = fleet_setup.fleet_config(answers, members, "a" * 40)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"], local_irc=False, certificates=True)
+        self.assertEqual(config["irc"]["auth"], "certificate")
+        self.assertEqual(secrets["ircPasswords"], {})
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual((cfg["irc"]["auth"], cfg["passwords"]), ("certificate", {}))
+        # Passwords stay an explicit choice and are kept; a remote fleet set up before stays on passwords.
+        self.assertEqual(self.answers("--irc-auth", "password")[0]["ircAuth"], "password")
+        self.assertEqual(self.answers(saved={"irc": "remote", "slug": "example-fleet"})[0]["ircAuth"], "password")
+        self.assertEqual(self.answers(saved={**answers})[0]["ircAuth"], "certificate")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "needs a remote IRC server"):
+            args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                           "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "local",
+                                           "--irc-auth", "certificate"])
+            fleet_setup.gather(args, {})
+        for extra, message in ((["--irc-operator", "ircop"], "together"),
+                               (["--irc-auth", "password", "--irc-operator", "ircop",
+                                 "--irc-operator-password-file", "/x"], "for certificate sign-in")):
+            with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                self.answers(*extra)
+
+    def test_certificates_live_in_the_secrets_directory_and_the_lines_bind_them(self):
+        answers, _ = self.answers()
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        # A dry run generates nothing and says the real run will.
+        planned = fleet_setup.officer_certificates(members, generate=False)
+        self.assertEqual({fingerprint for _, fingerprint in planned.values()}, {None})
+        self.assertFalse((fleet_setup.INPUTS / "fleet.secrets").exists())
+        self.assertIn("the real run generates its certificate", "\n".join(fleet_setup.certificate_lines(answers, planned)))
+        made = fleet_setup.officer_certificates(members, generate=True)
+        self.assertEqual(fleet_setup.officer_certificates(members, generate=True), made)
+        lines = "\n".join(fleet_setup.certificate_lines(answers, made))
+        for person in members:
+            path, fingerprint = made[person["account"]]
+            self.assertEqual(path, fleet_setup.INPUTS / "fleet.secrets" / person["id"] / "irc-client.pem")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+            self.assertIn(f"  {person['account']}: SHA-256 {fingerprint}", lines)
+            self.assertIn(f"/NS SAREGISTER {person['account']}\n", lines)
+            self.assertIn(f"/NS CERT ADD {person['account']} {fingerprint}", lines)
+        self.assertNotIn("PRIVATE", lines)
+        # The fleet installer takes them from there as supplied bundles.
+        config = fleet_setup.fleet_config(answers, members, "a" * 40)
+        cfg = validate(config, {"proxyKey": "fixture-model-proxy-key"}, check_files=False)
+        self.assertEqual(set(runtime.irc_bundles(cfg, fleet_setup.INPUTS / "fleet.secrets")), {"atlas", "orion"})
+
+    def test_the_operator_password_is_read_from_a_root_only_file_and_never_shown(self):
+        secret = "operator-secret-value"
+        path = fleet_setup.INPUTS / "operator"
+        path.write_text(secret + "\n")
+        path.chmod(0o600)
+        _, args = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", str(path))
+        self.assertEqual(fleet_setup.irc_operator(args), ("ircop", secret))
+        path.chmod(0o644)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "mode 0600") as refused:
+            fleet_setup.irc_operator(args)
+        self.assertNotIn(secret, str(refused.exception))
+        path.chmod(0o600)
+        _, args = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", "operator")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "absolute path"):
+            fleet_setup.irc_operator(args)
+        # setup keeps neither in its answers.
+        answers, _ = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", str(path))
+        self.assertFalse({"ircOperator", "ircOperatorPasswordFile"} & answers.keys())
+        self.assertNotIn(secret, json.dumps(answers))
+
+    def test_with_an_operator_setup_registers_binds_and_checks_each_certificate(self):
+        answers, _ = self.answers()
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        certificates = fleet_setup.officer_certificates(members, generate=True)
+        server = FakeIrcServer(self.root, [path.read_text() for path, _ in certificates.values()])
+        self.addCleanup(server.listener.close)
+        answers.update(ircHost="localhost", ircPort=server.port, ircCa=server.ca)
+        output = []
+        operator = ("ircop", "fixture-operator-password")
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            # A dry run only checks the operator and reports that no certificate signs in yet.
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=False)
+            self.assertEqual(server.accounts, {})
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+        accounts = [person["account"] for person in members]
+        self.assertEqual(server.accounts, {account: {certificates[account][1]} for account in accounts})
+        self.assertEqual(server.requests, [request for account in accounts for request in
+                                           (["SAREGISTER", account], ["CERT", "ADD", account, certificates[account][1]])])
+        self.assertIn(f"{accounts[0]}: its certificate does not sign in yet", output)
+        self.assertIn(f"{accounts[1]}: its certificate signs in", output)
+        self.assertNotIn(operator[1], "\n".join(output))
+        self.assertEqual(irc_accounts.check_login("localhost", server.port, server.ca,
+                                                  str(certificates[accounts[1]][0])), accounts[1])
+        # A wrong operator password is refused without repeating it.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "refused the operator credential for ircop") as refused:
+            fleet_setup.check_certificates(answers, members, certificates, ("ircop", "wrong-password"), register=True)
+        self.assertNotIn("wrong-password", str(refused.exception))
+        # A certificate the server does not accept after registration stops the run.
+        server.operator = ("ircop", "other")
+        with patch.object(fleet_setup, "say"), \
+                patch.object(irc_accounts, "register", return_value={}), \
+                patch.object(irc_accounts, "check_login", return_value=None), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "cannot sign in to localhost"):
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
 
 
 class OutboundTests(unittest.TestCase):

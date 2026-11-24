@@ -182,7 +182,18 @@ answer it now.
      they work across fleets while seeing only the channels and captains of
      the fleet they are in.
    - **An IRC server they already run:** collect its DNS name, TLS port and
-     CA certificate, and who can add the fleets' accounts to it.
+     CA certificate, and who can add the fleets' accounts to it. Officers sign
+     in to it by certificate (`--irc remote --irc-host NAME`): setup makes one
+     per officer and prints its account, fingerprint and the two NickServ
+     lines (`/NS SAREGISTER`, `/NS CERT ADD`) that the server's operator runs.
+     If the user holds an IRC operator credential with NickServ's `accreg`
+     capability, pass `--irc-operator NAME --irc-operator-password-file FILE`
+     (a `chmod 600` file on this computer, removed from the VM after the run)
+     and setup registers the accounts and checks each sign-in itself; it
+     never prints or keeps the password. Use `--irc-auth password` only for a
+     server that cannot take certificates, and then its operator sets each
+     officer's password. See
+     [IRC sign-in](subspace-installer/README.md#irc-sign-in).
 
    **If the user cannot answer, put Ergo on the fleet VM**: it creates no
    extra cloud resources and costs nothing more. Tell them that moving to a
@@ -656,8 +667,9 @@ accounts in Ergo.
 
 1. **Each fleet.** Copy `irc-ca.pem` to the fleet VM first (for example
    `scp irc-ca.pem azureuser@fleet-one.example.ts.net:`) and install with
-   `--irc remote --irc-host irc.example.com --irc-ca /home/azureuser/irc-ca.pem`
-   (add `--irc-port` for a port other than 6697). Then fetch its bundle over
+   `--irc remote --irc-host irc.example.com --irc-ca /home/azureuser/irc-ca.pem --irc-auth password`
+   (add `--irc-port` for a port other than 6697): the seeds give each officer
+   a password. Then fetch its bundle over
    the same SSH route the installer uses, add it to the seeds as above and
    restart the server:
 

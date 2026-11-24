@@ -53,6 +53,7 @@ INSTALLER = PAYLOAD / "subspace-installer"
 # The standard fleet channels are defined once, beside the fleet installer that enforces them.
 sys.path.insert(0, str(HERE.parent / "lib"))
 import fleet_records  # noqa: E402
+import irc_accounts  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
 INPUTS = Path("/root/fleet")
@@ -199,6 +200,14 @@ def parse_args(argv):
     parser.add_argument("--irc-host", help="shared IRC server's DNS name (remote mode; must match its TLS certificate)")
     parser.add_argument("--irc-port", type=int, help="shared IRC server's TLS port (default 6697)")
     parser.add_argument("--irc-ca", help="absolute path on this VM to the shared server's CA certificate (PEM)")
+    parser.add_argument("--irc-auth", choices=["certificate", "password"],
+                        help="how officers sign in to a remote IRC server: certificate (SASL EXTERNAL, the default; "
+                        "setup prints the NickServ lines that bind each one) or password (SASL PLAIN, for the shared "
+                        "server ./install.sh irc-server runs). Kept on later runs")
+    parser.add_argument("--irc-operator", help="an IRC operator's name (OPER) with NickServ's accreg capability: setup "
+                        "then registers each officer's account and binds its certificate itself (certificate sign-in)")
+    parser.add_argument("--irc-operator-password-file", help="absolute path to a root-only file (mode 0600) holding "
+                        "that operator's password. Read for this run only; never printed or saved")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
     parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
@@ -308,6 +317,19 @@ def gather(args, saved):
         answers.setdefault("ircPort", IRC_TLS)
         if args.irc_ca is not None:
             answers["ircCa"] = args.irc_ca
+        if args.irc_auth:
+            answers["ircAuth"] = args.irc_auth
+        elif "ircAuth" not in answers:
+            # A remote fleet set up before certificates were the default signs in with passwords; keep it so.
+            answers["ircAuth"] = "password" if saved.get("irc") == "remote" else "certificate"
+    else:
+        require(args.irc_auth in (None, "password"), "--irc-auth certificate needs a remote IRC server (--irc remote): "
+                "officers reach the Ergo on this VM without TLS, which certificates need.")
+        answers.pop("ircAuth", None)
+    require(not (args.irc_operator or args.irc_operator_password_file) or answers.get("ircAuth") == "certificate",
+            "--irc-operator is for certificate sign-in on a remote IRC server (--irc remote --irc-auth certificate).")
+    require(bool(args.irc_operator) == bool(args.irc_operator_password_file),
+            "Pass --irc-operator and --irc-operator-password-file together.")
     if args.api is not None:
         answers["api"] = args.api
     elif args.database_url_file and answers.get("api") is False:
@@ -682,9 +704,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         config["irc"] = {
             "mode": "remote", "host": answers["ircHost"], "port": answers["ircPort"], "tls": True,
             "allowedAccounts": [answers["admin"]],
-            # The shared server (irc_server.py) seeds each officer's account with the password in this fleet's
-            # bundle, so these fleets keep signing in with passwords (installer README, "IRC sign-in").
-            "auth": "password",
+            # Certificates by default. The shared server ./install.sh irc-server runs (irc_server.py) seeds each
+            # officer's account with the password in this fleet's bundle, so those fleets use passwords.
+            "auth": answers.get("ircAuth", "password"),
         }
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
@@ -735,11 +757,12 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     return config
 
 
-def fleet_secrets(secret_store, members, admin, token="", local_irc=True, dispatch_token=""):
-    # A shared IRC server owns the human accounts; a local one is seeded with the admin's.
+def fleet_secrets(secret_store, members, admin, token="", local_irc=True, dispatch_token="", certificates=False):
+    # A shared IRC server owns the human accounts; a local one is seeded with the admin's. Officers who sign in
+    # with certificates have no IRC password at all.
     humans = [admin] if local_irc else []
-    passwords = {account: secret_store.password(f"irc-{account}")
-                 for account in [person["account"] for person in members] + humans}
+    officers = [] if certificates else [person["account"] for person in members]
+    passwords = {account: secret_store.password(f"irc-{account}") for account in officers + humans}
     result = {
         "proxyKey": secret_store.get("proxy-key", lambda: secrets.token_urlsafe(32)),
         "ircPasswords": passwords,
@@ -1333,6 +1356,87 @@ def fleet_channels(answers, members):
     return standard_channels.standard(answers["slug"], [person["id"] for person in members[1:]])
 
 
+def officer_certificates(members, generate):
+    """Each officer's IRC certificate bundle in the fleet's secrets directory, where the fleet installer takes it
+    from, as {account: (path, SHA-256 fingerprint)}. A missing one is generated, once, except in a dry run, which
+    writes nothing: its fingerprint is then None."""
+    result = {}
+    for person in members:
+        path = INPUTS / "fleet.secrets" / person["id"] / runtime.IRC_CLIENT_PEM
+        if not path.exists() and generate:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(path.parent.parent, 0o700)
+            write_private(path, runtime.new_irc_bundle(person["account"]))
+        fingerprint = runtime.irc_fingerprint(path.read_text(), str(path)) if path.exists() else None
+        result[person["account"]] = (path, fingerprint)
+    return result
+
+
+def certificate_lines(answers, certificates):
+    """What the IRC server's operator runs for each officer: register its account with no password, then bind its
+    certificate. Fingerprints only, never key material."""
+    lines = [f"officers sign in to {answers['ircHost']} with certificates (SASL EXTERNAL); an IRC operator with "
+             "NickServ's accreg capability registers each account and binds its certificate (or pass "
+             "--irc-operator and --irc-operator-password-file and setup does it):"]
+    for account, (_, fingerprint) in certificates.items():
+        if fingerprint:
+            lines += [f"  {account}: SHA-256 {fingerprint}", f"    /NS SAREGISTER {account}",
+                      f"    /NS CERT ADD {account} {fingerprint}"]
+        else:
+            lines.append(f"  {account}: the real run generates its certificate and prints these lines for it")
+    return lines
+
+
+def irc_operator(args):
+    """The IRC operator's name and password for this run, or None. The password is read from a root-only file
+    and is never printed or saved."""
+    if not args.irc_operator:
+        return None
+    require(re.fullmatch(r"[A-Za-z0-9_.\[\]{}|^`-]{1,64}", args.irc_operator), "Invalid --irc-operator name.")
+    path = args.irc_operator_password_file
+    require(Path(path).is_absolute(), "--irc-operator-password-file needs an absolute path to a file on this VM.")
+    try:
+        info = os.lstat(path)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == SECRET_OWNER and not info.st_mode & 0o077,
+                f"The IRC operator password file {path} must be a regular file owned by root with mode 0600: "
+                f"chmod 600 {path}.")
+        password = Path(path).read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        raise SetupError(f"Cannot read the IRC operator password file {path}.") from None
+    require(password and len(password) <= 512 and not re.search(r"[\s\x00]", password),
+            f"The IRC operator password file {path} must hold one password on one line.")
+    return args.irc_operator, password
+
+
+def check_certificates(answers, members, certificates, operator, register):
+    """With the operator's credential: check it, register the officers' accounts and bind their certificates
+    (register), and check that each certificate signs in as its account. A dry run only checks."""
+    host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+    name, password = operator
+    try:
+        if register:
+            replies = irc_accounts.register(host, port, ca, name, password,
+                                            {account: fingerprint for account, (_, fingerprint) in certificates.items()})
+            for account, lines in replies.items():
+                say(f"NickServ for {account}: " + " / ".join(lines))
+        else:
+            irc_accounts.register(host, port, ca, name, password, {})
+            say(f"the IRC operator {name} is accepted on {host}")
+        failed = []
+        for account, (path, fingerprint) in certificates.items():
+            if not fingerprint:
+                continue
+            signed_in = irc_accounts.check_login(host, port, ca, str(path))
+            say(f"{account}: its certificate {'signs in' if signed_in == account else 'does not sign in yet'}")
+            if signed_in != account:
+                failed.append(account)
+    except irc_accounts.IrcError as error:
+        raise SetupError(str(error)) from None
+    require(not register or not failed, f"{', '.join(failed)} cannot sign in to {host} with {'its' if len(failed) == 1 else 'their'} "
+            "certificate after registration (see NickServ's replies above). Check that the operator's class has "
+            "NickServ's accreg capability, or bind the fingerprints by hand, then run setup again.")
+
+
 def irc_bundle(answers, members, secret_store):
     """What a shared IRC server needs for this fleet: its SASL accounts and channels."""
     channels = fleet_channels(answers, members)
@@ -1439,7 +1543,8 @@ def configure(args):
     def inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None):
         config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
         private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc,
-                                dispatch_token if api_block else "")
+                                certificates=answers.get("ircAuth") == "certificate",
+                                dispatch_token=dispatch_token if api_block else "")
         if history:
             private["ircHistoryPassword"] = secret_store.password("ergo-history")
         return config, private
@@ -1449,7 +1554,15 @@ def configure(args):
         write_json(config_path, config)
         write_json(secrets_path, private)
 
-    if not local_irc:
+    certificates = None
+    if answers.get("ircAuth") == "certificate":
+        operator = irc_operator(args)
+        certificates = officer_certificates(members, generate=not args.dry_run)
+        for line in certificate_lines(answers, certificates):
+            say(line)
+        if operator and args.dry_run:
+            check_certificates(answers, members, certificates, operator, register=False)
+    elif not local_irc:
         irc_bundle(answers, members, secret_store)
     if external_database(answers):
         for line in external_plan(answers, args.migrate):
@@ -1466,6 +1579,10 @@ def configure(args):
         # The API comes first (its token and registration go into the fleet's inputs), so check now that the
         # installer will accept those inputs: with --migrate, a refused run must not have migrated the database.
         preflight(*inputs(hashlib.sha1(b"dry-run").hexdigest()))
+
+    if certificates and operator:
+        # Before any officer starts: register the accounts, bind the certificates and check each sign-in.
+        check_certificates(answers, members, certificates, operator, register=True)
 
     irc_ref = irc_source() if local_irc else None
     # Releases from v0.40.0 have the Fleet API; a pinned commit is checked after it is installed.
@@ -1673,6 +1790,8 @@ def main(argv):
         print_token(argv[1:])
     elif argv and argv[0] == "irc-bundle":
         bundle = INPUTS / "irc-bundle.json"
+        require(read_json(INPUTS / "answers.json", {}).get("ircAuth") != "certificate",
+                "This fleet's officers sign in with certificates, so it has no password bundle for a shared server.")
         require(bundle.is_file(), "This fleet uses local IRC, so it has no bundle for a shared server.")
         sys.stdout.write(bundle.read_text())
     elif argv and argv[0] == "fleet-registration":

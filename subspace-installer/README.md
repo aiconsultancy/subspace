@@ -565,9 +565,34 @@ Without step 2 the dry run cannot print fingerprints, because the VM
 generates the certificates during the upgrade: the install summary prints
 them, and the officers stay off IRC until you bind them.
 
+**With `subspace-setup` and a remote server**, officers sign in by
+certificate too, unless `--irc-auth password` says otherwise; setup keeps
+the choice, and a remote fleet it set up before this release keeps
+passwords. Setup generates each officer's bundle once, in
+`/root/fleet/fleet.secrets/<officer-id>/irc-client.pem`, from where the
+fleet installer takes it, and prints, for each officer, its account, its
+SHA-256 fingerprint and the two lines the server's operator runs:
+
+```text
+/NS SAREGISTER example-fleet-orion
+/NS CERT ADD example-fleet-orion 4b1d…0c9e
+```
+
+A dry run generates nothing, so it prints these only for certificates a
+real run has made. When you hold an operator credential whose class has
+NickServ's `accreg` capability, pass `--irc-operator NAME` and
+`--irc-operator-password-file FILE` (a root-only file with mode `0600`; from
+your machine, the host installers copy it for that run and remove it
+afterwards). Setup then opers up (`OPER`), sends both lines for every
+officer before any officer starts, and checks that each certificate signs in
+by SASL EXTERNAL as its account, stopping if one does not. A dry run with
+the credential only checks it and reports which certificates already sign
+in. The password is sent only to the server, over TLS, and never printed or
+saved.
+
 **The Ergo the installer manages keeps passwords for now**, in local mode
-and on `subspace-setup`'s shared server alike: `subspace-setup` writes
-`"auth": "password"` for a shared server. Three things are missing:
+and on the shared server `./install.sh irc-server` runs, for which the host
+installer passes `--irc-auth password`. Three things are missing:
 
 - Fleet members reach local Ergo over plain loopback IRC, and Stargate
   presents a client certificate only over TLS. The gateways would need the
@@ -1527,10 +1552,11 @@ one is refused, none of them is applied.
   supply bundles you generated yourself, dry-run to print their
   fingerprints, bind them on the server, then upgrade; "Keep passwords"
   under IRC sign-in has the steps. Local IRC keeps
-  passwords. `subspace-setup` writes `"auth": "password"` for a shared
-  server on its next run, so upgrade those fleets through setup (or the
-  host installer), not with the fleet installer and the installed inputs
-  alone.
+  passwords. `subspace-setup` keeps passwords for a remote fleet it set up
+  before, and writes `"auth": "password"` on its next run, so upgrade those
+  fleets through setup (or the host installer), not with the fleet
+  installer and the installed inputs alone; `--irc-auth certificate` moves
+  one to certificates.
 - **Captains start in their workspace.** Only new captains: a pinned root
   never moves, and an installed captain keeps its root until its
   `sessionRoot` moves it ([Captain sessions](#captain-sessions)). Asking a

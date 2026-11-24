@@ -50,6 +50,10 @@
 #                        copied to the VM as root's; add --migrate to migrate it
 #   --database-ca-file FILE   that server's CA certificate (PEM), when the
 #                        VM does not already trust it
+#   --irc-operator-password-file FILE  with --irc-operator NAME: a private
+#                        (chmod 600) file holding a remote IRC server's operator
+#                        password, so setup registers the officers' certificate
+#                        accounts itself; removed from the VM after the run
 #   --fleet-console ID   (desktop) the Board ID of the Fleet Console web Space
 #                        (default fleet-console, the one built into Subspace)
 #   --yes                never prompt; fail when an answer is missing
@@ -90,6 +94,7 @@ irc_target=
 api_target=
 database_url_file=
 database_ca_file=
+irc_operator_password_file=
 fleet_console=fleet-console
 assume_yes=false
 background=false
@@ -135,6 +140,7 @@ while [ $# -gt 0 ]; do
         --api-target) api_target=${2:?}; shift 2 ;;
         --database-url-file) database_url_file=${2:?}; shift 2 ;;
         --database-ca-file) database_ca_file=${2:?}; shift 2 ;;
+        --irc-operator-password-file) irc_operator_password_file=${2:?}; shift 2 ;;
         --fleet-console) fleet_console=${2:?}; shift 2 ;;
         --yes|-y) assume_yes=true; shift ;;
         --background) background=true; shift ;;
@@ -712,7 +718,8 @@ do_install() {
         irc_host=$(sed -n 's/^SUBSPACE_IRC_HOST=//p' "$home/targets/$irc_target/summary.env")
         irc_port=$(sed -n 's/^SUBSPACE_IRC_PORT=//p' "$home/targets/$irc_target/summary.env")
         self_signed=$(sed -n 's/^SUBSPACE_IRC_SELF_SIGNED=//p' "$home/targets/$irc_target/summary.env")
-        passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port")
+        # The shared server this installer runs seeds each officer's account with a password.
+        passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port" --irc-auth password)
         if [ "$self_signed" = 1 ]; then
             vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/irc-ca.pem'" < "$home/targets/$irc_target/ca.pem"
             passthrough+=(--irc-ca "$inputs/irc-ca.pem")
@@ -737,6 +744,19 @@ do_install() {
             die "Could not copy the database CA certificate to the VM."
         passthrough+=(--database-ca-file "$inputs/database-ca.pem")
     fi
+    # The IRC operator's password is for this run only: it never joins the fleet's inputs and is removed after.
+    local operator_dir=/root/subspace-setup-operator
+    "$dry_run" && operator_dir=$inputs
+    if [ -n "$irc_operator_password_file" ]; then
+        [ -f "$irc_operator_password_file" ] && [ -r "$irc_operator_password_file" ] ||
+            die "Cannot read --irc-operator-password-file $irc_operator_password_file."
+        local operator_perms
+        if [ "$os" = Darwin ]; then operator_perms=$(stat -f %Lp "$irc_operator_password_file"); else operator_perms=$(stat -c %a "$irc_operator_password_file"); fi
+        case $operator_perms in [0-7]00) ;; *) die "--irc-operator-password-file $irc_operator_password_file must be private to you: chmod 600 it." ;; esac
+        vm sudo -n sh -c "'umask 077; mkdir -p $operator_dir; cat > $operator_dir/irc-operator-password'" < "$irc_operator_password_file" ||
+            die "Could not copy the IRC operator password to the VM."
+        passthrough+=(--irc-operator-password-file "$operator_dir/irc-operator-password")
+    fi
 
     local -a setup_args=(setup)
     interactive || setup_args+=(--non-interactive)
@@ -755,7 +775,12 @@ do_install() {
     fi
     send_payload
     say "Running subspace-setup on the VM. This takes a while the first time."
-    vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")"
+    local setup_status=0
+    vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")" || setup_status=$?
+    if [ -n "$irc_operator_password_file" ]; then
+        vm sudo -n rm -rf "$operator_dir" || note "Remove $operator_dir on the VM by hand: it holds the IRC operator's password."
+    fi
+    [ "$setup_status" = 0 ] || die "subspace-setup failed on the VM; read its output above."
 
     fetch_private "$state/summary.env" sudo -n cat /root/fleet/summary.env
     read_summary

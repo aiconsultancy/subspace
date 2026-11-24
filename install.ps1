@@ -24,6 +24,9 @@ reuse it. --host-key always checks the VM's key, and repins a rebuilt VM.
 PostgreSQL: FILE holds its postgresql://...?sslmode=verify-full URL and is
 copied to the VM as root's (add --migrate to migrate it); --database-ca-file
 FILE gives that server's CA certificate (PEM) when the VM does not trust it.
+--irc-operator-password-file FILE, with --irc-operator NAME, gives a remote
+IRC server's operator password, so setup registers the officers' certificate
+accounts itself; it is removed from the VM after the run.
 Every other option goes to subspace-setup on the VM, for example
   --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega --admin admiral --demo
 #>
@@ -38,7 +41,7 @@ $SetupCmd = '/opt/subspace/bootstrap/subspace-installer/vm/setup.sh'
 $FleetConsole = 'fleet-console'
 $Command = 'install'; $Mode = ''; $Target = ''; $Remote = ''; $Identity = ''; $SshPort = 22; $HostKey = ''; $SshProxy = ''
 $Cpus = 4; $Memory = 8; $Disk = 60; $InstallDeps = $false; $IrcTarget = ''; $ApiTarget = ''; $AssumeYes = $false
-$Background = $false; $SkillsFailed = $false; $DatabaseUrlFile = ''; $DatabaseCaFile = ''; $Passthrough = New-Object System.Collections.Generic.List[string]
+$Background = $false; $SkillsFailed = $false; $DatabaseUrlFile = ''; $DatabaseCaFile = ''; $IrcOperatorPasswordFile = ''; $Passthrough = New-Object System.Collections.Generic.List[string]
 
 function Die([string]$Message) { Write-Host "install: $Message" -ForegroundColor Red; exit 1 }
 function Say([string]$Message) { Write-Host "==> $Message" }
@@ -76,6 +79,7 @@ for (; $i -lt $list.Count; $i++) {
         '--api-target' { $ApiTarget = Next-Value }
         '--database-url-file' { $DatabaseUrlFile = Next-Value }
         '--database-ca-file' { $DatabaseCaFile = Next-Value }
+        '--irc-operator-password-file' { $IrcOperatorPasswordFile = Next-Value }
         '--fleet-console' { $FleetConsole = Next-Value }
         { $_ -in @('--yes', '-y') } { $AssumeYes = $true }
         '--background' { $Background = $true }
@@ -642,7 +646,8 @@ function Invoke-Install {
         $ircState = Join-Path (Join-Path $SubspaceHome 'targets') $IrcTarget
         $irc = Read-Env (Join-Path $ircState 'summary.env')
         if (-not $irc.SUBSPACE_IRC_HOST) { Die "No shared IRC server '$IrcTarget'. Run .\install.ps1 irc-server first." }
-        $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT))
+        # The shared server this installer runs seeds each officer's account with a password.
+        $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT, '--irc-auth', 'password'))
         if ($irc.SUBSPACE_IRC_SELF_SIGNED -eq '1') {
             $caScript = "umask 077 && mkdir -p $inputs && cat > $inputs/irc-ca.pem.new && mv -f $inputs/irc-ca.pem.new $inputs/irc-ca.pem"
             if ((Send-VmInput (Join-Path $ircState 'ca.pem') @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the IRC certificate to the VM.' }
@@ -665,6 +670,14 @@ function Invoke-Install {
         if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseCaFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the database CA certificate to the VM.' }
         $Passthrough.AddRange([string[]]@('--database-ca-file', "$inputs/database-ca.pem"))
     }
+    # The IRC operator's password is for this run only: it never joins the fleet's inputs and is removed after.
+    $operatorDir = if ($dryRun) { $inputs } else { '/root/subspace-setup-operator' }
+    if ($IrcOperatorPasswordFile) {
+        if (-not (Test-Path -LiteralPath $IrcOperatorPasswordFile -PathType Leaf)) { Die "Cannot read --irc-operator-password-file $IrcOperatorPasswordFile." }
+        $operatorScript = "umask 077 && mkdir -p $operatorDir && cat > $operatorDir/irc-operator-password"
+        if ((Send-VmInput (Resolve-Path -LiteralPath $IrcOperatorPasswordFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $operatorScript))) -ne 0) { Die 'Could not copy the IRC operator password to the VM.' }
+        $Passthrough.AddRange([string[]]@('--irc-operator-password-file', "$operatorDir/irc-operator-password"))
+    }
 
     $setupArgs = @('setup')
     if (-not (Test-Interactive)) { $setupArgs += '--non-interactive' }
@@ -683,7 +696,11 @@ function Invoke-Install {
     }
     Send-Payload
     Say 'Running subspace-setup on the VM. This takes a while the first time.'
-    if ((Invoke-Vm @('sudo', $SetupCmd, $quoted) -Tty) -ne 0) { Die 'subspace-setup failed on the VM; read its output above.' }
+    $setupStatus = Invoke-Vm @('sudo', $SetupCmd, $quoted) -Tty
+    if ($IrcOperatorPasswordFile -and (Invoke-Vm @('sudo', '-n', 'rm', '-rf', $operatorDir)) -ne 0) {
+        Write-Host "    Remove $operatorDir on the VM by hand: it holds the IRC operator's password."
+    }
+    if ($setupStatus -ne 0) { Die 'subspace-setup failed on the VM; read its output above.' }
 
     Save-Private (Join-Path $State 'summary.env') @('sudo', '-n', 'cat', '/root/fleet/summary.env')
     Confirm-Lockdown
