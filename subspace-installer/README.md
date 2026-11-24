@@ -456,6 +456,15 @@ require an explicit grant. A captain with crew can reach them through its
 crew (see below). Build and test commands can execute code from the project,
 so use trusted repositories.
 
+A standard captain's edit, write and patch tools are refused in its crew's
+worktrees, which it only reads. Its shell is not: OpenCode 2.3.2 checks a
+shell command's working directory, and a `cd` in it, against the same
+`external_directory` rule as the read tools, and its shell rules match the
+command's text, which names no directory. So the policy cannot let the
+captain read a crew worktree without also letting its allowed commands,
+`git add` and `git commit` among them, run there when it works in one. The
+crew who work in those worktrees share its Linux user anyway (see below).
+
 **Delegate captains** (`captainTools: "delegate"`) plan, review and open pull
 requests with `subspace-github gh pr create` and their GitHub App; their crew
 edit, test, commit and push. A delegate captain has no edit, write or patch

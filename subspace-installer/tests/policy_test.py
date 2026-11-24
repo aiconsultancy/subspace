@@ -763,13 +763,19 @@ class CaptainPolicyTests(unittest.TestCase):
             self.assertEqual(fixture.opencode_decision(rules, "external_directory", [directory]), "allow")
         self.assertEqual(fixture.opencode_decision(rules, "external_directory", ["/tmp/*"]), "deny")
         self.assertIn({"action": "external_directory", "resource": f"{self.worktrees}/*", "effect": "allow"}, rules)
+        # It reads them, but its edit, write and patch tools, which name an outside file by its absolute path,
+        # are refused there; its own checkout's files, named relative to its directory, it edits as before.
+        crew_file = f"{self.worktrees}/claude-1/project/src/main.ts"
+        self.assertEqual(fixture.opencode_decision(rules, "read", [crew_file]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "edit", [crew_file]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["project/src/main.ts"]), "allow")
         # A captain without crew has no worktrees; the rear admiral has its reference checkouts only.
         self.assertFalse(any(rule["action"] == "external_directory" for rule in vega["harness"]["permissions"]))
         self.assertEqual([rule["resource"] for rule in rear["harness"]["permissions"]
                           if rule["action"] == "external_directory"], ["/var/lib/subspace-fleet/references/atlas/*"])
         # The starter policy is otherwise what it was.
-        self.assertEqual([rule for rule in rules if rule["action"] != "external_directory"],
-                         default_permissions("captain", None))
+        self.assertEqual([rule for rule in rules if rule["action"] != "external_directory" and
+                          rule["resource"] != f"{self.worktrees}/*"], default_permissions("captain", None))
 
     def test_a_captain_without_crew_keeps_the_standard_policy_in_a_delegate_fleet(self):
         cfg = captain_fleet("delegate")

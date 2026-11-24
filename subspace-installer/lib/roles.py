@@ -187,6 +187,8 @@ def default_permissions(role, references, *, delegate=False, worktrees=None):
         # Its open shell reads whatever its Linux user can, so its tools may work in any directory.
         rules.append({"action": "external_directory", "resource": "*", "effect": "allow"})
     elif worktrees:
+        # OpenCode checks the read, glob and grep tools, the edit tools and a shell's working directory all against
+        # this rule, so it also lets the shell work there; the edit tools are refused there below.
         rules.append({"action": "external_directory", "resource": f"{worktrees}/*", "effect": "allow"})
     for resource in ("*.env", "*.env.*", "*.pem", "*.key"):
         rules.append({"action": "read", "resource": resource, "effect": "deny"})
@@ -196,6 +198,10 @@ def default_permissions(role, references, *, delegate=False, worktrees=None):
     commands = ["git status", "git diff", "git log", "git show"]
     if role != "rear_admiral":
         rules.append({"action": "edit", "resource": "*", "effect": "allow"})
+        if worktrees:
+            # Its crew's worktrees are theirs to change: an edit outside the captain's directory names the file's
+            # absolute path (OpenCode's file-access.ts).
+            rules.append({"action": "edit", "resource": f"{worktrees}/*", "effect": "deny"})
         commands += ["git add", "git commit", "git fetch", "make", "npm test", "npm run", "bun test", "bun run",
                      "cargo check", "cargo test", "cargo build", "go test", "python3 -m unittest", "pytest"]
     rules.extend({"action": "shell", "resource": f"{command} *", "effect": "allow"} for command in commands)
