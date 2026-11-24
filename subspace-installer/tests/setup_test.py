@@ -895,10 +895,11 @@ class ExternalDatabaseTests(unittest.TestCase):
         # Without a test harness for SSH, check the text: in a dry run the host installers send the database
         # URL and the CA files to a scratch directory they remove afterwards, and stop before reading anything back.
         root = Path(fleet_setup.HERE).parents[1]
-        for name, scratch, branch in (("install.sh", "inputs=/root/subspace-setup-dry-run",
-                                       'if "$dry_run"; then\n        # The dry run'),
-                                      ("install.ps1", "'/root/subspace-setup-dry-run'",
-                                       "if ($dryRun) {\n        # The dry run")):
+        cases = (("install.sh", "inputs=/root/subspace-setup-dry-run", 'say "Running subspace-setup --dry-run',
+                  ['transient+=("$inputs")', "trap remove_transient EXIT"], 'name=$operator_dir/$option'),
+                 ("install.ps1", "'/root/subspace-setup-dry-run'", 'Say "Running subspace-setup --dry-run',
+                  ["$transient.Add($inputs)", "} finally {", "'rm', '-rf'"], "$operatorDir/$option"))
+        for name, scratch, branch, cleanup, operator_copy in cases:
             text = (root / name).read_text()
             with self.subTest(name):
                 self.assertIn(scratch, text)
@@ -907,15 +908,18 @@ class ExternalDatabaseTests(unittest.TestCase):
                     self.assertRegex(text, rf"\$inputs/{re.escape(file)}")
                 dry = text[text.index(branch):]
                 dry = dry[:dry.index("return") + len("return")]
-                self.assertIn("rm", dry)
-                self.assertIn("-rf", dry)
                 self.assertNotIn("summary.env", dry)
                 self.assertLess(text.index(branch), text.index("summary.env", text.index(branch)))
-                # The installer copy that the dry run runs goes in the scratch directory too, never over
-                # /opt/subspace/bootstrap, which only the real run replaces, after the dry-run branch.
-                self.assertRegex(dry, r'(send_payload|Send-Payload) "\$inputs/bootstrap"')
+                # The dry run's installer copy goes in the scratch directory too, never over
+                # /opt/subspace/bootstrap, which only the real run replaces.
+                self.assertRegex(text, r'(send_payload|Send-Payload) "\$inputs/bootstrap" *;? *\}? *else *\{? *'
+                                       r'(send_payload|Send-Payload)')
                 self.assertIn("$inputs/bootstrap/subspace-installer/vm/setup.sh", dry)
-                self.assertRegex(text[text.index(branch) + len(dry):], r"\n    (send_payload|Send-Payload)\n")
+                # The scratch directory and the operator's password files are removed however the run ends, and
+                # the passwords reach the VM only after the installer.
+                for part in cleanup:
+                    self.assertIn(part, text)
+                self.assertLess(text.index('"$inputs/bootstrap"'), text.index(operator_copy))
         # Run from that copy, setup keeps the subspace-setup command pointing at the installed one.
         setup = (root / "subspace-installer/vm/setup.sh").read_text()
         self.assertIn('if ! "$dry_run" && [[ $(readlink /usr/local/sbin/subspace-setup', setup)

@@ -651,67 +651,79 @@ function Invoke-Install {
     # is removed afterwards, never over the inputs (such as the database URL) that the next real run uses.
     $dryRun = $Passthrough -contains '--dry-run'
     $inputs = if ($dryRun) { '/root/subspace-setup-dry-run' } else { '/root/fleet' }
-    if ($IrcTarget) {
-        $ircState = Join-Path (Join-Path $SubspaceHome 'targets') $IrcTarget
-        $irc = Read-Env (Join-Path $ircState 'summary.env')
-        if (-not $irc.SUBSPACE_IRC_HOST) { Die "No shared IRC server '$IrcTarget'. Run .\install.ps1 irc-server first." }
-        # The shared server this installer runs seeds each officer's account with a password.
-        $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT, '--irc-auth', 'password'))
-        if ($irc.SUBSPACE_IRC_SELF_SIGNED -eq '1') {
-            $caScript = "umask 077 && mkdir -p $inputs && cat > $inputs/irc-ca.pem.new && mv -f $inputs/irc-ca.pem.new $inputs/irc-ca.pem"
-            if ((Send-VmInput (Join-Path $ircState 'ca.pem') @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the IRC certificate to the VM.' }
-            $Passthrough.AddRange([string[]]@('--irc-ca', "$inputs/irc-ca.pem"))
+    # Directories on the VM that hold this run's own copies (a dry run's files, the IRC operator's passwords),
+    # removed when the run ends, however it ends.
+    $transient = New-Object System.Collections.Generic.List[string]
+    if ($dryRun) { $transient.Add($inputs) }
+    try {
+        if ($IrcTarget) {
+            $ircState = Join-Path (Join-Path $SubspaceHome 'targets') $IrcTarget
+            $irc = Read-Env (Join-Path $ircState 'summary.env')
+            if (-not $irc.SUBSPACE_IRC_HOST) { Die "No shared IRC server '$IrcTarget'. Run .\install.ps1 irc-server first." }
+            # The shared server this installer runs seeds each officer's account with a password.
+            $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT, '--irc-auth', 'password'))
+            if ($irc.SUBSPACE_IRC_SELF_SIGNED -eq '1') {
+                $caScript = "umask 077 && mkdir -p $inputs && cat > $inputs/irc-ca.pem.new && mv -f $inputs/irc-ca.pem.new $inputs/irc-ca.pem"
+                if ((Send-VmInput (Join-Path $ircState 'ca.pem') @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the IRC certificate to the VM.' }
+                $Passthrough.AddRange([string[]]@('--irc-ca', "$inputs/irc-ca.pem"))
+            }
+            if (-not $dryRun) { Write-Private (Join-Path $State 'irc-target') "$IrcTarget`n" }
         }
-        if (-not $dryRun) { Write-Private (Join-Path $State 'irc-target') "$IrcTarget`n" }
-    }
 
-    if ($DatabaseUrlFile) {
-        # The URL holds the database's password: it travels over SSH on standard input, never in a command line.
-        if (-not (Test-Path -LiteralPath $DatabaseUrlFile -PathType Leaf)) { Die "Cannot read --database-url-file $DatabaseUrlFile." }
-        if ($ApiTarget) { Die "--database-url-file runs this VM's own Subspace API, which --api-target leaves out." }
-        $urlScript = "umask 077 && mkdir -p $inputs && cat > $inputs/database-url.new && mv -f $inputs/database-url.new $inputs/database-url"
-        if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseUrlFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $urlScript))) -ne 0) { Die 'Could not copy the database URL to the VM.' }
-        $Passthrough.AddRange([string[]]@('--database-url-file', "$inputs/database-url"))
-    }
-    if ($DatabaseCaFile) {
-        if (-not (Test-Path -LiteralPath $DatabaseCaFile -PathType Leaf)) { Die "Cannot read --database-ca-file $DatabaseCaFile." }
-        $caScript = "umask 077 && mkdir -p $inputs && cat > $inputs/database-ca.pem.new && mv -f $inputs/database-ca.pem.new $inputs/database-ca.pem"
-        if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseCaFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the database CA certificate to the VM.' }
-        $Passthrough.AddRange([string[]]@('--database-ca-file', "$inputs/database-ca.pem"))
-    }
-    # The IRC operator's password is for this run only: it never joins the fleet's inputs and is removed after.
-    $operatorDir = if ($dryRun) { $inputs } else { '/root/subspace-setup-operator' }
-    foreach ($pair in @(@('irc-operator-password', $IrcOperatorPasswordFile), @('irc-operator-account-password', $IrcOperatorAccountPasswordFile))) {
-        $option, $file = $pair
-        if (-not $file) { continue }
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { Die "Cannot read --$option-file $file." }
-        $operatorScript = "umask 077 && mkdir -p $operatorDir && cat > $operatorDir/$option"
-        if ((Send-VmInput (Resolve-Path -LiteralPath $file).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $operatorScript))) -ne 0) { Die "Could not copy the --$option-file to the VM." }
-        $Passthrough.AddRange([string[]]@("--$option-file", "$operatorDir/$option"))
-    }
+        if ($DatabaseUrlFile) {
+            # The URL holds the database's password: it travels over SSH on standard input, never in a command line.
+            if (-not (Test-Path -LiteralPath $DatabaseUrlFile -PathType Leaf)) { Die "Cannot read --database-url-file $DatabaseUrlFile." }
+            if ($ApiTarget) { Die "--database-url-file runs this VM's own Subspace API, which --api-target leaves out." }
+            $urlScript = "umask 077 && mkdir -p $inputs && cat > $inputs/database-url.new && mv -f $inputs/database-url.new $inputs/database-url"
+            if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseUrlFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $urlScript))) -ne 0) { Die 'Could not copy the database URL to the VM.' }
+            $Passthrough.AddRange([string[]]@('--database-url-file', "$inputs/database-url"))
+        }
+        if ($DatabaseCaFile) {
+            if (-not (Test-Path -LiteralPath $DatabaseCaFile -PathType Leaf)) { Die "Cannot read --database-ca-file $DatabaseCaFile." }
+            $caScript = "umask 077 && mkdir -p $inputs && cat > $inputs/database-ca.pem.new && mv -f $inputs/database-ca.pem.new $inputs/database-ca.pem"
+            if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseCaFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the database CA certificate to the VM.' }
+            $Passthrough.AddRange([string[]]@('--database-ca-file', "$inputs/database-ca.pem"))
+        }
+        # The IRC operator's passwords are for this run only: checked here, copied to the VM only after the
+        # installer, never into the fleet's inputs, and removed when the run ends, however it ends.
+        $operatorDir = if ($dryRun) { $inputs } else { '/root/subspace-setup-operator' }
+        $operatorFiles = @(@('irc-operator-password', $IrcOperatorPasswordFile), @('irc-operator-account-password', $IrcOperatorAccountPasswordFile))
+        foreach ($pair in $operatorFiles) {
+            $option, $file = $pair
+            if ($file -and -not (Test-Path -LiteralPath $file -PathType Leaf)) { Die "Cannot read --$option-file $file." }
+        }
 
-    $setupArgs = @('setup')
-    if (-not (Test-Interactive)) { $setupArgs += '--non-interactive' }
-    $setupArgs += $Passthrough
-    $quoted = ($setupArgs | ForEach-Object { Quote-Posix $_ }) -join ' '
-    if ($dryRun) {
         # The dry run's installer copy goes beside its files and is removed with them, so the installed
         # /opt/subspace/bootstrap and the subspace-setup command stay as the last real run left them.
-        Send-Payload "$inputs/bootstrap"
-        Say "Running subspace-setup --dry-run on the VM from $inputs, which is removed afterwards."
-        $status = Invoke-Vm @('sudo', "$inputs/bootstrap/subspace-installer/vm/setup.sh", $quoted) -Tty
-        if ((Invoke-Vm @('sudo', '-n', 'rm', '-rf', $inputs)) -ne 0) { Write-Host "    Remove $inputs on the VM by hand." }
-        if ($status -ne 0) { Die "The dry run failed; read subspace-setup's output above." }
-        Say 'Dry run complete. Run the same command without --dry-run to install.'
-        return
+        if ($dryRun) { Send-Payload "$inputs/bootstrap" } else { Send-Payload }
+        foreach ($pair in $operatorFiles) {
+            $option, $file = $pair
+            if (-not $file) { continue }
+            $transient.Add($operatorDir)
+            $operatorScript = "umask 077 && mkdir -p $operatorDir && cat > $operatorDir/$option"
+            if ((Send-VmInput (Resolve-Path -LiteralPath $file).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $operatorScript))) -ne 0) { Die "Could not copy the --$option-file to the VM." }
+            $Passthrough.AddRange([string[]]@("--$option-file", "$operatorDir/$option"))
+        }
+
+        $setupArgs = @('setup')
+        if (-not (Test-Interactive)) { $setupArgs += '--non-interactive' }
+        $setupArgs += $Passthrough
+        $quoted = ($setupArgs | ForEach-Object { Quote-Posix $_ }) -join ' '
+        if ($dryRun) {
+            Say "Running subspace-setup --dry-run on the VM from $inputs, which is removed afterwards."
+            $status = Invoke-Vm @('sudo', "$inputs/bootstrap/subspace-installer/vm/setup.sh", $quoted) -Tty
+            if ($status -ne 0) { Die "The dry run failed; read subspace-setup's output above." }
+            Say 'Dry run complete. Run the same command without --dry-run to install.'
+            return
+        }
+        Say 'Running subspace-setup on the VM. This takes a while the first time.'
+        $setupStatus = Invoke-Vm @('sudo', $SetupCmd, $quoted) -Tty
+        if ($setupStatus -ne 0) { Die 'subspace-setup failed on the VM; read its output above.' }
+    } finally {
+        if ($transient.Count -and (Invoke-Vm (@('sudo', '-n', 'rm', '-rf') + @($transient | Select-Object -Unique))) -ne 0) {
+            Write-Host "    Remove $($transient -join ' ') on the VM by hand: they hold this run's copies, such as the IRC operator's password."
+        }
     }
-    Send-Payload
-    Say 'Running subspace-setup on the VM. This takes a while the first time.'
-    $setupStatus = Invoke-Vm @('sudo', $SetupCmd, $quoted) -Tty
-    if (($IrcOperatorPasswordFile -or $IrcOperatorAccountPasswordFile) -and (Invoke-Vm @('sudo', '-n', 'rm', '-rf', $operatorDir)) -ne 0) {
-        Write-Host "    Remove $operatorDir on the VM by hand: it holds the IRC operator's password."
-    }
-    if ($setupStatus -ne 0) { Die 'subspace-setup failed on the VM; read its output above.' }
 
     Save-Private (Join-Path $State 'summary.env') @('sudo', '-n', 'cat', '/root/fleet/summary.env')
     Confirm-Lockdown
