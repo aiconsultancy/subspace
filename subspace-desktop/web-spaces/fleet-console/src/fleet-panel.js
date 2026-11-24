@@ -4,7 +4,7 @@
 
 import { normalizeEndpoint } from "./api.js";
 import { cleanName } from "./fleet-store.js";
-import { connectionHelp, describeConnection, tokenProblem } from "./connection.js";
+import { CORS_HELP, connectionHelp, describeConnection, tokenProblem } from "./connection.js";
 import { fleetStatus } from "./scene/landscape.js";
 import { esc } from "./html.js";
 
@@ -44,10 +44,11 @@ export function describeTestError(error, endpoint) {
   if (status === 403) return "Stargate refused this network (403). Reach it over your private network: Tailscale, a Cloudflare Tunnel, or an SSH tunnel.";
   if (status === 404) return "No Fleet API at this address (404). Check the address and that Stargate's api block is enabled.";
   if (Number.isInteger(status)) return `Stargate answered ${status}. Check the fleet VM and Stargate's logs.`;
-  const problem = error?.name === "TimeoutError" || error?.name === "AbortError"
-    ? "Stargate did not answer within ten seconds."
-    : "Cannot reach this address.";
-  return `${problem} ${connectionHelp(endpoint)}`;
+  const help = connectionHelp(endpoint);
+  if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+    return `Stargate did not answer within ten seconds. ${help}`;
+  }
+  return `Cannot reach this address. ${help}${CORS_HELP}`;
 }
 
 /** Words for a successful test connection. */

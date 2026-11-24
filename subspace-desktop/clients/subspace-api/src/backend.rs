@@ -91,7 +91,7 @@ fn unreachable_at(origin: Option<&url::Url>, service: &str) -> String {
         None => false,
     };
     let advice = if local {
-        "Check that the API and any local VM or tunnel it uses are running, then retry."
+        "Check that the API and any local VM or tunnel it uses are running. If the API is hosted elsewhere, check its address in connection.json."
     } else {
         "Check your network connection and connect to your organisation's private network if required. If you use Cloudflare One (WARP), refresh your Access session and complete any private-app sign-in, then retry."
     };
@@ -453,7 +453,7 @@ mod tests {
         let local = url::Url::parse("http://127.0.0.1:3000/api").unwrap();
         assert_eq!(
             super::unreachable_at(Some(&local), "Subspace API"),
-            "No API reachable at http://127.0.0.1:3000. Check that the API and any local VM or tunnel it uses are running, then retry."
+            "No API reachable at http://127.0.0.1:3000. Check that the API and any local VM or tunnel it uses are running. If the API is hosted elsewhere, check its address in connection.json."
         );
         let remote = url::Url::parse("https://api.example.com/api").unwrap();
         let help = super::unreachable_at(Some(&remote), "Subspace API");

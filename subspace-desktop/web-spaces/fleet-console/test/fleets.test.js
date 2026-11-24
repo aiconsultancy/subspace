@@ -216,7 +216,10 @@ test("test-connection words and the reasons adding is blocked", () => {
   assert.match(local, /ten seconds.*local VM or tunnel/);
   assert.doesNotMatch(local, /Cloudflare/);
   const remote = describeTestError(new TypeError("Load failed"), "https://fleet.example.com");
-  assert.match(remote, /private network.*refresh your Access session.*private-app sign-in/);
+  assert.match(remote, /private network.*refresh your Access session.*private-app sign-in.*corsOrigins/);
+  const mapped = describeTestError(new TypeError("Load failed"), "https://[::ffff:127.0.0.1]:8080");
+  assert.match(mapped, /local VM or tunnel.*corsOrigins/);
+  assert.doesNotMatch(mapped, /Cloudflare/);
   assert.equal(describeTestSuccess(sampleFleet().fleet), "Connected to “colonial-fleet”: 5 ships, Stargate 0.18.2.");
   assert.match(addBlocker({ present: false, capabilities: {}, allowed: {} }), /inside Subspace|running inside/);
   assert.match(addBlocker({ present: true, capabilities: { secretsSet: false }, allowed: {} }), /cannot store tokens/);

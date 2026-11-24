@@ -110,10 +110,9 @@ when the server vouches for its sender. Every condition must hold:
 1. **A request Channels knows.** The buffer holds the line whose `msgid` the
    notice's `+draft/reply` names, and it is a `PRIVMSG` or action (not a
    notice). In a private conversation it is our own message.
-2. **The ship that request asks.** A channel request can start with
-   `@nick` or contain one distinct `@nick` elsewhere. When there is no
-   unambiguous explicit mention, a leading `nick:` or `nick,` can also
-   address the request. In a private conversation it is the conversation's
+2. **The ship that request asks.** A leading `@nick` or `nick:` addresses the
+   channel request directly. Otherwise, one distinct `@nick` elsewhere takes
+   precedence over a leading `nick,`. In a private conversation it is the conversation's
    partner. A self-addressed request has no expected ship: its sender's nick
    is the addressed nick, or whose sender's `account` tag, when it has one,
    is the addressed nick (compared case-insensitively in ASCII). It is not a

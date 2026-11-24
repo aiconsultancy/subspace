@@ -107,17 +107,21 @@ fn addressee(request: &Line) -> Option<String> {
     }
 }
 
-/// An explicit @mention takes precedence over a possible bare address,
-/// such as the first word in "Thanks, @pilot". Preserve a leading @mention
-/// when a message also names someone else.
+/// A leading @mention or nick followed by a colon addresses the request
+/// directly. Otherwise an explicit @mention takes precedence over a comma,
+/// as in "Thanks, @pilot".
 fn channel_addressee(text: &str) -> Option<&str> {
     let first = text.split_whitespace().next()?;
     first
         .strip_prefix('@')
-        .map(|nick| nick.trim_end_matches([':', ',']))
+        .and_then(|rest| {
+            rest.split(|character| character != '@' && !is_nick_char(character))
+                .next()
+        })
         .filter(|nick| is_nick(nick))
+        .or_else(|| first.strip_suffix(':').filter(|nick| is_nick(nick)))
         .or_else(|| inline_addressee(text))
-        .or_else(|| first.strip_suffix([':', ',']).filter(|nick| is_nick(nick)))
+        .or_else(|| first.strip_suffix(',').filter(|nick| is_nick(nick)))
 }
 
 /// One request timeline cannot describe two different agents' turns.

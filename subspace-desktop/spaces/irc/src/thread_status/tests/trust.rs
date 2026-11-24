@@ -94,6 +94,8 @@ fn inline_mentions_fold_only_for_one_distinct_addressed_account() {
     for (text, folds) in [
         ("Could you check this, @ASTRA?", true),
         ("Thanks, @astra. Could you check this?", true),
+        ("@astra. Please ask @nova to confirm.", true),
+        ("astra: Please ask @nova to confirm.", true),
         ("Ask (@astra) or wait for @ASTRA.", true),
         ("Compare @astra and @nova.", false),
         ("Contact pilot@astra.example.", false),
