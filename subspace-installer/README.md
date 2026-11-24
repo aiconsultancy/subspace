@@ -588,9 +588,12 @@ afterwards). On a server that admits only signed-in connections (Ergo's
 `--irc-operator-account NAME` and `--irc-operator-account-password-file FILE`
 (the same rules) for an IRC account the connection signs in to first by SASL
 PLAIN; without them setup stops when the server answers `ACCOUNT_REQUIRED`,
-naming these options. Setup then opers up (`OPER`), sends both lines for every
-officer before any officer starts, and checks that each certificate signs in
-by SASL EXTERNAL as its account, stopping if one does not. A dry run with
+naming these options. Setup then opers up (`OPER`) and, before any officer
+starts, sends both lines for every officer whose certificate does not sign in
+yet, binding a certificate only to an account `SAREGISTER` has just created:
+it never changes an existing account's certificates, and stops, naming the
+account, when one exists without the officer's certificate. It then checks
+that each certificate signs in by SASL EXTERNAL as its account, stopping if one does not. A dry run with
 the credential only checks it and reports which certificates already sign
 in. The passwords are sent only to the server, over TLS, and never printed or
 saved.

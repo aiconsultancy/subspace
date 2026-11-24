@@ -1190,9 +1190,11 @@ class FakeIrcServer:
                 self.requests.append(request)
                 if not oper:
                     send(":NickServ!NickServ@services NOTICE you :Insufficient privileges")
+                elif request[0] == "SAREGISTER" and request[1] in self.accounts:
+                    send(":NickServ!NickServ@services NOTICE you :Name reserved due to a prior registration")
                 elif request[0] == "SAREGISTER":
                     send(f":NickServ!NickServ@services NOTICE you :Successfully registered account {request[1]}")
-                    self.accounts.setdefault(request[1], set())
+                    self.accounts[request[1]] = set()
                 elif request[:2] == ["CERT", "ADD"] and request[2] in self.accounts:
                     self.accounts[request[2]].add(request[3])
                     send(":NickServ!NickServ@services NOTICE you :Certificate fingerprint successfully added")
@@ -1344,6 +1346,20 @@ class IrcCertificateSetupTests(unittest.TestCase):
         self.assertNotIn(operator[1], "\n".join(output))
         self.assertEqual(irc_accounts.check_login("localhost", server.port, server.ca,
                                                   str(certificates[accounts[1]][0])), accounts[1])
+        # A rerun finds every certificate signing in and asks NickServ for nothing.
+        requests = len(server.requests)
+        with patch.object(fleet_setup, "say"):
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+        self.assertEqual(len(server.requests), requests)
+        # An account that already exists without this officer's certificate is never changed: the run stops.
+        server.accounts[accounts[0]] = {"0" * 64}
+        with patch.object(fleet_setup, "say"), \
+                self.assertRaisesRegex(fleet_setup.SetupError, f"did not register {accounts[0]} .*Name reserved.*"
+                                       "never changes an existing account's certificates"):
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+        self.assertEqual(server.accounts[accounts[0]], {"0" * 64})
+        self.assertEqual(server.requests[requests:], [["SAREGISTER", accounts[0]]])
+        server.accounts[accounts[0]] = {certificates[accounts[0]][1]}
         # A wrong operator password is refused without repeating it.
         with self.assertRaisesRegex(fleet_setup.SetupError, "refused the operator credential for ircop") as refused:
             fleet_setup.check_certificates(answers, members, certificates, ("ircop", "wrong-password", None),

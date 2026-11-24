@@ -6,11 +6,14 @@ The operator's password goes only to the server, over TLS, and appears in no mes
 """
 
 import base64
+import re
 import secrets
 import socket
 import ssl
 
 TIMEOUT = 20
+# NickServ's reply when SAREGISTER created the account (Ergo: "Successfully registered account NAME").
+CREATED = re.compile(r"successfully registered", re.I)
 
 
 class IrcError(Exception):
@@ -103,10 +106,10 @@ def sign_in(connection, host, account, password):
 def register(host, port, ca_file, operator, password, fingerprints, account=None):
     """As the IRC operator, register each account with no password and bind its certificate fingerprint.
 
-    fingerprints: {account: SHA-256 hex}. account: an IRC account and its password to sign in to first, for a
-    server that admits only signed-in connections (Ergo's require-sasl). Returns NickServ's replies by account,
-    for the operator to read; an account or fingerprint that already exists only gets a reply saying so.
-    check_login says whether it worked.
+    fingerprints: {account: SHA-256 hex}, for accounts whose certificate does not sign in yet. account: an IRC
+    account and its password to sign in to first, for a server that admits only signed-in connections (Ergo's
+    require-sasl). Returns NickServ's replies by account. An account SAREGISTER does not create (it exists, or
+    NickServ refuses it) gets no CERT ADD, and stops the run once every other account is done.
     """
     connection = Connection(host, port, ca_file)
     replies = {}
@@ -131,17 +134,32 @@ def register(host, port, ca_file, operator, password, fingerprints, account=None
         _, command, _ = connection.until("381", "464", "491")
         if command != "381":
             raise IrcError(f"The IRC server {host} refused the operator credential for {operator}.")
+        refused = []
         for account, fingerprint in fingerprints.items():
-            replies[account] = []
-            for request in (f"SAREGISTER {account}", f"CERT ADD {account} {fingerprint}"):
-                connection.send(f"PRIVMSG NickServ :{request}")
-                source, _, params = connection.until("NOTICE")
-                while source.lower() != "nickserv":
-                    source, _, params = connection.until("NOTICE")
-                replies[account].append(params[-1])
+            replies[account] = [nickserv(connection, f"SAREGISTER {account}")]
+            # Bind a certificate only to an account this run created: an existing account's certificates are
+            # never changed, whoever registered it.
+            if not CREATED.search(replies[account][0]):
+                refused.append(f"{account} (NickServ: {replies[account][0]})")
+                continue
+            replies[account].append(nickserv(connection, f"CERT ADD {account} {fingerprint}"))
     finally:
         connection.close()
+    if refused:
+        raise IrcError(f"Setup did not register {', '.join(refused)} on {host}: the account already exists, or "
+                       "NickServ refused it, and its certificate does not sign in to it. Setup never changes an "
+                       "existing account's certificates; an operator of the IRC server must resolve it, for example "
+                       "by binding the fingerprint printed above with NS CERT ADD, then run setup again.")
     return replies
+
+
+def nickserv(connection, request):
+    """Send NickServ a request and return its first reply."""
+    connection.send(f"PRIVMSG NickServ :{request}")
+    source, _, params = connection.until("NOTICE")
+    while source.lower() != "nickserv":
+        source, _, params = connection.until("NOTICE")
+    return params[-1]
 
 
 def check_login(host, port, ca_file, client_pem):

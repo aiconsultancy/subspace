@@ -1485,24 +1485,26 @@ def check_certificates(answers, members, certificates, operator, register):
     (register), and check that each certificate signs in as its account. A dry run only checks."""
     host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
     name, password, signed_in_as = operator
-    try:
-        if register:
-            replies = irc_accounts.register(host, port, ca, name, password,
-                                            {account: fingerprint for account, (_, fingerprint) in certificates.items()},
-                                            signed_in_as)
-            for account, lines in replies.items():
-                say(f"NickServ for {account}: " + " / ".join(lines))
-        else:
-            irc_accounts.register(host, port, ca, name, password, {}, signed_in_as)
-            say(f"the IRC operator {name} is accepted on {host}")
-        failed = []
+
+    def unbound():
+        """The officers whose certificate does not sign in to their account yet."""
+        missing = {}
         for account, (path, fingerprint) in certificates.items():
-            if not fingerprint:
-                continue
-            signed_in = irc_accounts.check_login(host, port, ca, str(path))
-            say(f"{account}: its certificate {'signs in' if signed_in == account else 'does not sign in yet'}")
-            if signed_in != account:
-                failed.append(account)
+            if fingerprint:
+                signed_in = irc_accounts.check_login(host, port, ca, str(path))
+                say(f"{account}: its certificate {'signs in' if signed_in == account else 'does not sign in yet'}")
+                if signed_in != account:
+                    missing[account] = fingerprint
+        return missing
+    try:
+        missing = unbound()
+        # Only accounts whose certificate does not sign in yet are registered; a rerun registers nothing.
+        replies = irc_accounts.register(host, port, ca, name, password, missing if register else {}, signed_in_as)
+        if not register:
+            say(f"the IRC operator {name} is accepted on {host}")
+        for account, lines in replies.items():
+            say(f"NickServ for {account}: " + " / ".join(lines))
+        failed = list(unbound()) if register and missing else []
     except irc_accounts.IrcError as error:
         raise SetupError(str(error)) from None
     require(not register or not failed, f"{', '.join(failed)} cannot sign in to {host} with {'its' if len(failed) == 1 else 'their'} "
