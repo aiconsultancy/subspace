@@ -3,10 +3,7 @@ use crate::listing::{Failure, Listing, Status, updated};
 pub(crate) const SIGN_IN_MESSAGE: &str = "Sign in under Settings › Account, then try again.";
 /// The words for a list that couldn't be reached, naming the service.
 pub(crate) fn network_message() -> String {
-    format!(
-        "Couldn't reach {}. Try again.",
-        subspace_api_client::service_name()
-    )
+    subspace_api_client::unreachable_message()
 }
 /// The words for a read that failed, naming the service.
 pub(crate) fn read_error_message() -> String {

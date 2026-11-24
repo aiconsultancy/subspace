@@ -71,6 +71,23 @@ pub fn backend() -> Backend {
         .unwrap_or(Backend::Subspace)
 }
 
+/// What a Space says when the API cannot be reached: the address the app
+/// is set to, when it has one, and what to do about it.
+pub fn unreachable_message() -> String {
+    unreachable_at(crate::native::origin(), service_name())
+}
+
+/// [`unreachable_message`] for the API at `origin`, named `service`.
+fn unreachable_at(origin: Option<&url::Url>, service: &str) -> String {
+    match origin {
+        Some(url) => format!(
+            "No API reachable at {}. Start it, or set the app's API address in connection.json, then try again.",
+            url.origin().ascii_serialization()
+        ),
+        None => format!("Couldn't reach {service}. Try again."),
+    }
+}
+
 /// The service's name in messages and the Issues header.
 pub fn service_name() -> &'static str {
     match backend() {
@@ -357,6 +374,19 @@ pub(crate) fn parse_features(names: &[String]) -> Vec<Feature> {
 #[cfg(test)]
 mod tests {
     use super::{Backend, Capabilities, Feature, nett_serves, parse_features, record_served};
+
+    #[test]
+    fn an_unreachable_api_is_named_by_its_address_with_what_to_do() {
+        let local = url::Url::parse("http://127.0.0.1:3000/api").unwrap();
+        assert_eq!(
+            super::unreachable_at(Some(&local), "Subspace API"),
+            "No API reachable at http://127.0.0.1:3000. Start it, or set the app's API address in connection.json, then try again."
+        );
+        assert_eq!(
+            super::unreachable_at(None, "Subspace API"),
+            "Couldn't reach Subspace API. Try again."
+        );
+    }
 
     #[test]
     fn nett_offers_only_what_it_says_it_serves_for_each_organisation() {

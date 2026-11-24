@@ -185,7 +185,7 @@ impl Failure {
                 format!("{service} refused access. Try again after access is restored.")
             }
             Failure::Organisation => Error::OrganisationNeeded.to_string(),
-            Failure::Network => format!("Couldn't reach {service}. Try again."),
+            Failure::Network => subspace_api_client::unreachable_message(),
             Failure::Unexpected => format!("{service} couldn't be read. Try again."),
         }
     }
