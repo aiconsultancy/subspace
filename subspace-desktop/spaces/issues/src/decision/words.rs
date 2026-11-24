@@ -95,7 +95,7 @@ pub(crate) fn evidence(kind: DecisionEvidenceKind) -> &'static str {
 pub(crate) fn failure(error: &ReadError, fallback: &'static str) -> String {
     match error {
         ReadError::Network => scope::network_message(),
-        ReadError::SignInNeeded => scope::SIGN_IN_MESSAGE.to_owned(),
+        ReadError::SignInNeeded => scope::sign_in_message().to_owned(),
         _ => fallback.to_owned(),
     }
 }

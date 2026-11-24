@@ -9,6 +9,11 @@ use subspace_framework::dashboard::settings::{BoardSettingsEditor, SettingsEdito
 
 pub(crate) const CONNECTION_NOTE: &str = "Sign in under Settings › Account.";
 
+/// The settings note: where to sign in, or why this run cannot.
+pub(crate) fn connection_note() -> &'static str {
+    subspace_api_client::sign_in_unavailable().unwrap_or(CONNECTION_NOTE)
+}
+
 fn api_address() -> String {
     subspace_api_client::configured_api_origin().map_or_else(
         || format!("No {} configured", subspace_api_client::service_name()),
@@ -55,7 +60,9 @@ impl IssuesSettings {
                 "Connecting… The first load can take up to a minute while {} wakes.",
                 subspace_api_client::service_name()
             ),
-            Access::Failed(crate::listing::Failure::Edge) => "Sign-in required".into(),
+            Access::Failed(crate::listing::Failure::Edge) => {
+                subspace_api_client::sign_in_state().0.into()
+            }
             Access::Failed(crate::listing::Failure::Organisation) => {
                 crate::scope::NoOrganisation::current()
                     .settings_line()

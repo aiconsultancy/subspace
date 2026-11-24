@@ -183,7 +183,7 @@ impl Failure {
     pub(crate) fn message(self) -> String {
         let service = subspace_api_client::service_name();
         match self {
-            Failure::SignIn => subspace_api_client::sign_in_state().1,
+            Failure::SignIn => subspace_api_client::sign_in_state().1.to_owned(),
             Failure::Forbidden => {
                 format!("{service} refused access. Try again after access is restored.")
             }

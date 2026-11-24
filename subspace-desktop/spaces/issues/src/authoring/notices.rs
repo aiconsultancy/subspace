@@ -16,7 +16,7 @@ pub(super) fn failed(
     tokens: &Tokens,
 ) -> impl IntoElement {
     let copy = match error {
-        subspace_api_client::WriteError::SignInNeeded => crate::scope::SIGN_IN_MESSAGE.to_owned(),
+        subspace_api_client::WriteError::SignInNeeded => crate::scope::sign_in_message().to_owned(),
         _ => error.to_string(),
     };
     div()

@@ -30,7 +30,7 @@ pub(super) fn empty(
 fn timeline_failure(error: &ReadError) -> String {
     match error {
         ReadError::Network => crate::scope::network_message(),
-        ReadError::SignInNeeded => crate::scope::SIGN_IN_MESSAGE.into(),
+        ReadError::SignInNeeded => crate::scope::sign_in_message().into(),
         _ => "Couldn’t load this timeline".into(),
     }
 }

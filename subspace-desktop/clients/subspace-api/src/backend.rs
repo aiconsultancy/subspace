@@ -98,17 +98,22 @@ pub fn set_sign_in_unavailable(reason: String) {
 }
 
 /// What a Space says when the API wants a sign-in: the title and what to do.
-pub fn sign_in_state() -> (&'static str, String) {
-    sign_in_state_for(SIGN_IN_UNAVAILABLE.get().map(String::as_str))
+pub fn sign_in_state() -> (&'static str, &'static str) {
+    sign_in_state_for(sign_in_unavailable())
+}
+
+/// Why this run cannot sign in, when the product recorded a reason.
+pub fn sign_in_unavailable() -> Option<&'static str> {
+    SIGN_IN_UNAVAILABLE.get().map(String::as_str)
 }
 
 /// [`sign_in_state`] when sign-in is unavailable for `reason`.
-fn sign_in_state_for(reason: Option<&str>) -> (&'static str, String) {
+fn sign_in_state_for(reason: Option<&'static str>) -> (&'static str, &'static str) {
     match reason {
-        Some(reason) => ("Sign-in unavailable", reason.to_owned()),
+        Some(reason) => ("Sign-in unavailable", reason),
         None => (
             "Sign-in required",
-            "Sign in under Settings › Account, then try again.".to_owned(),
+            "Sign in under Settings › Account, then try again.",
         ),
     }
 }
@@ -446,7 +451,7 @@ mod tests {
             super::sign_in_state_for(Some("Development sign-in reaches only this computer.")),
             (
                 "Sign-in unavailable",
-                "Development sign-in reaches only this computer.".to_owned()
+                "Development sign-in reaches only this computer."
             )
         );
         assert_eq!(
