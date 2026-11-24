@@ -6,6 +6,8 @@ use super::draft::{NetworkText, SaslMode, Secrets, split_list};
 /// The form field a problem belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Field {
+    /// The saved id, which the form does not show.
+    Id,
     Host,
     Port,
     Nickname,
@@ -170,6 +172,18 @@ fn channel_problems(channels: &str) -> Vec<Problem> {
         })
         .into_iter()
         .collect()
+}
+
+/// A saved id in the account networks' namespace, which no saved network
+/// may keep.
+pub(crate) fn reserved_id(saved_id: Option<&str>) -> Option<Problem> {
+    saved_id
+        .filter(|id| crate::managed::reserved(id))
+        .map(|_| Problem {
+            field: Field::Id,
+            message: crate::config::RESERVED.to_owned(),
+            required: false,
+        })
 }
 
 pub(crate) fn parse_port(text: &str) -> Option<u16> {

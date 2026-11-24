@@ -58,6 +58,8 @@ while [ $# -gt 0 ]; do
             token=fixture-access
             curl -s -H "Authorization: Bearer $token" -o /dev/null -w 'subspace-api %{http_code}\n' "${2#*=}/v1/me" >>"$log/servers.txt"
             curl -s -H "Authorization: Bearer $token" -o /dev/null -w 'decisions %{http_code}\n' "${2#*=}/v1/decisions" >>"$log/servers.txt"
+            curl -s -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{}' -o /dev/null \
+                -w 'irc-credential %{http_code}\n' "${2#*=}/v1/me/irc-credential" >>"$log/servers.txt"
             ;;
         esac
         shift
@@ -77,7 +79,7 @@ TMPDIR="$fixture/tmp" XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user
     CAPTURE_FEATURES='' CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" \
     CAPTURE_CONFIG='{"boards": {"actions": true}, "webBoards": {"notes": {"path": "/apps/notes"}}}' \
     CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 CAPTURE_UPLOAD_SCENARIO=unknown \
-    CAPTURE_FLEET_API=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
+    CAPTURE_FLEET_API=1 CAPTURE_IRC_CREDENTIAL=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
 
 args="$fixture/open/args.txt"
 grep -Fq "build --locked -p subspace --features capture" "$fixture/cargo.log" || fail "no capture build"
@@ -105,6 +107,7 @@ done
 grep -Eq '^github [1-5][0-9][0-9]$' "$fixture/open/servers.txt" || fail "the GitHub fixture did not answer"
 grep -Eq '^subspace-api 200$' "$fixture/open/servers.txt" || fail "the Subspace API fixture did not answer"
 grep -Eq '^decisions 403$' "$fixture/open/servers.txt" || fail "the Decisions fixture scenario was not applied"
+grep -Eq '^irc-credential 400$' "$fixture/open/servers.txt" || fail "the IRC credential fixture was not on"
 grep -Eq '^oauth 200$' "$fixture/open/servers.txt" || fail "the sign-in fixture did not answer"
 grep -Eq '^fleet-api 200$' "$fixture/open/servers.txt" || fail "the Fleet API fixture did not answer"
 jq -e '.webBoards["fleet-console"] | (.settings.endpoint | test("^http://127\\.0\\.0\\.1:[0-9]+$")) and .secrets.token == "fixture-fleet"' \

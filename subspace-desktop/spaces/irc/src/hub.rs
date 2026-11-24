@@ -21,6 +21,7 @@ use crate::{agent_tools, notice, store};
 /// Lines asked for around a message that is not held.
 const AROUND: u16 = 50;
 
+mod account;
 mod captain_notifications;
 mod configuration;
 mod persist;
@@ -52,8 +53,13 @@ pub(crate) struct Hub {
     shown: Vec<BufferKey>,
     /// Notification targets: index + 1 is the target number.
     targets: Vec<BufferKey>,
-    /// The settings the runtime and state follow.
+    /// The settings the runtime and state follow: the saved ones and the
+    /// account's networks.
     applied: Settings,
+    /// The settings saved in the board's file.
+    pub(crate) saved: Settings,
+    /// The networks the signed-in account brings.
+    pub(crate) managed: crate::managed::Managed,
     /// The networks the runtime was last configured with: the settings
     /// without the channels the user left.
     running: Vec<NetworkConfig>,
@@ -109,6 +115,13 @@ pub(crate) fn start(cx: &mut App) {
     let initiatives = InitiativeIrc::new(Catalog::shared(cx), loopback_fixture());
     let hub = cx.new(|cx| {
         let mut hub = Hub::new(&settings, removed, Outbox::Runtime(runtime), initiatives);
+        hub.managed = crate::managed::Managed::new(crate::managed::device(cx));
+        if let Some(link) = &link {
+            // Other people's account networks stay stored but out of search.
+            let _ = link
+                .service
+                .set_hidden(crate::ID, hub.managed.search_rule());
+        }
         hub.state.directories = cached_directories(&settings);
         hub.tools = Some(agent_tools::open());
         hub.uploads.session.connect();
@@ -201,6 +214,7 @@ pub(crate) fn install_with_store_for_test(
     let initiatives = InitiativeIrc::new(Catalog::shared(cx), true);
     let hub = cx.new(|cx| {
         let mut hub = Hub::new(settings, removed, Outbox::Recorded(Vec::new()), initiatives);
+        let _ = service.set_hidden(crate::ID, hub.managed.search_rule());
         hub.recall.persist = Some(persist::Persist::new(store::Link::new(service)));
         hub._settings = Some(follow_settings(cx));
         hub.follow_initiatives(cx);
@@ -232,6 +246,8 @@ impl Hub {
             shown: Vec::new(),
             targets: Vec::new(),
             applied: settings.clone(),
+            saved: settings.clone(),
+            managed: Default::default(),
             running: Vec::new(),
             saved_removed,
             tools: None,
@@ -272,7 +288,15 @@ impl Hub {
         }
     }
 
+    /// Sends `command` to the runtime, unless it is for an account network
+    /// whose account is no longer the one signed in.
     pub fn send(&mut self, command: Command) {
+        if command
+            .network()
+            .is_some_and(|network| !self.managed.admits(network))
+        {
+            return;
+        }
         match &mut self.outbox {
             Outbox::Runtime(runtime) => runtime.send(command),
             #[cfg(test)]
@@ -308,10 +332,13 @@ impl Hub {
         receive(self, updates, now, cx);
         self.flush_store(false, cx);
         captain_notifications::tick(self, cx);
+        crate::managed::tick(self, cx);
     }
 
-    /// Answers the agent tool calls that arrived since the last drain.
+    /// Answers the agent tool calls that arrived since the last drain,
+    /// once an account change has stopped that account's networks.
     pub fn serve_tools(&mut self, cx: &mut Context<Self>) {
+        crate::managed::fence(self, cx);
         let requests: Vec<agent_tools::Request> = self
             .tools
             .as_ref()
@@ -345,8 +372,15 @@ impl Hub {
     }
 
     /// Applies `events` in order, reads the visible buffer, raises
-    /// notifications for the others and notifies observers once.
+    /// notifications for the others and notifies observers once. An account
+    /// change first stops that account's networks, and their events are
+    /// dropped unread.
     pub fn ingest(&mut self, events: Vec<Event>, now: DateTime<Utc>, cx: &mut Context<Self>) {
+        crate::managed::fence(self, cx);
+        let events: Vec<Event> = events
+            .into_iter()
+            .filter(|event| self.managed.admits(event.network()))
+            .collect();
         let stored = match self.recall.persist {
             Some(_) => persist::stored_lines(&events),
             None => Vec::new(),

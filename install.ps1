@@ -20,6 +20,10 @@ Commands, options and fleet options are the same as install.sh:
 --api-target NAME installs a further fleet without its own Subspace API and
 registers it with the API of the fleet installed as --target NAME; later runs
 reuse it. --host-key always checks the VM's key, and repins a rebuilt VM.
+--database-url-file FILE runs the VM's Subspace API against an existing
+PostgreSQL: FILE holds its postgresql://...?sslmode=verify-full URL and is
+copied to the VM as root's (add --migrate to migrate it); --database-ca-file
+FILE gives that server's CA certificate (PEM) when the VM does not trust it.
 Every other option goes to subspace-setup on the VM, for example
   --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega --admin admiral --demo
 #>
@@ -34,7 +38,7 @@ $SetupCmd = '/opt/subspace/bootstrap/subspace-installer/vm/setup.sh'
 $FleetConsole = 'fleet-console'
 $Command = 'install'; $Mode = ''; $Target = ''; $Remote = ''; $Identity = ''; $SshPort = 22; $HostKey = ''; $SshProxy = ''
 $Cpus = 4; $Memory = 8; $Disk = 60; $InstallDeps = $false; $IrcTarget = ''; $ApiTarget = ''; $AssumeYes = $false
-$Background = $false; $SkillsFailed = $false; $Passthrough = New-Object System.Collections.Generic.List[string]
+$Background = $false; $SkillsFailed = $false; $DatabaseUrlFile = ''; $DatabaseCaFile = ''; $Passthrough = New-Object System.Collections.Generic.List[string]
 
 function Die([string]$Message) { Write-Host "install: $Message" -ForegroundColor Red; exit 1 }
 function Say([string]$Message) { Write-Host "==> $Message" }
@@ -70,6 +74,8 @@ for (; $i -lt $list.Count; $i++) {
         '--install-deps' { $InstallDeps = $true }
         '--irc-server' { $IrcTarget = Next-Value }
         '--api-target' { $ApiTarget = Next-Value }
+        '--database-url-file' { $DatabaseUrlFile = Next-Value }
+        '--database-ca-file' { $DatabaseCaFile = Next-Value }
         '--fleet-console' { $FleetConsole = Next-Value }
         { $_ -in @('--yes', '-y') } { $AssumeYes = $true }
         '--background' { $Background = $true }
@@ -627,25 +633,52 @@ function Invoke-Install {
     Connect-Target
     if ((Invoke-Vm @('true')) -ne 0) { Die 'Cannot reach the VM over SSH.' }
 
+    # subspace-setup --dry-run changes nothing on the VM: the files it is given go to a scratch directory that
+    # is removed afterwards, never over the inputs (such as the database URL) that the next real run uses.
+    $dryRun = $Passthrough -contains '--dry-run'
+    $inputs = if ($dryRun) { '/root/subspace-setup-dry-run' } else { '/root/fleet' }
     if ($IrcTarget) {
         $ircState = Join-Path (Join-Path $SubspaceHome 'targets') $IrcTarget
         $irc = Read-Env (Join-Path $ircState 'summary.env')
         if (-not $irc.SUBSPACE_IRC_HOST) { Die "No shared IRC server '$IrcTarget'. Run .\install.ps1 irc-server first." }
         $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT))
         if ($irc.SUBSPACE_IRC_SELF_SIGNED -eq '1') {
-            $caScript = 'umask 077 && mkdir -p /root/fleet && cat > /root/fleet/irc-ca.pem.new && mv -f /root/fleet/irc-ca.pem.new /root/fleet/irc-ca.pem'
+            $caScript = "umask 077 && mkdir -p $inputs && cat > $inputs/irc-ca.pem.new && mv -f $inputs/irc-ca.pem.new $inputs/irc-ca.pem"
             if ((Send-VmInput (Join-Path $ircState 'ca.pem') @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the IRC certificate to the VM.' }
-            $Passthrough.AddRange([string[]]@('--irc-ca', '/root/fleet/irc-ca.pem'))
+            $Passthrough.AddRange([string[]]@('--irc-ca', "$inputs/irc-ca.pem"))
         }
-        Write-Private (Join-Path $State 'irc-target') "$IrcTarget`n"
+        if (-not $dryRun) { Write-Private (Join-Path $State 'irc-target') "$IrcTarget`n" }
+    }
+
+    if ($DatabaseUrlFile) {
+        # The URL holds the database's password: it travels over SSH on standard input, never in a command line.
+        if (-not (Test-Path -LiteralPath $DatabaseUrlFile -PathType Leaf)) { Die "Cannot read --database-url-file $DatabaseUrlFile." }
+        if ($ApiTarget) { Die "--database-url-file runs this VM's own Subspace API, which --api-target leaves out." }
+        $urlScript = "umask 077 && mkdir -p $inputs && cat > $inputs/database-url.new && mv -f $inputs/database-url.new $inputs/database-url"
+        if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseUrlFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $urlScript))) -ne 0) { Die 'Could not copy the database URL to the VM.' }
+        $Passthrough.AddRange([string[]]@('--database-url-file', "$inputs/database-url"))
+    }
+    if ($DatabaseCaFile) {
+        if (-not (Test-Path -LiteralPath $DatabaseCaFile -PathType Leaf)) { Die "Cannot read --database-ca-file $DatabaseCaFile." }
+        $caScript = "umask 077 && mkdir -p $inputs && cat > $inputs/database-ca.pem.new && mv -f $inputs/database-ca.pem.new $inputs/database-ca.pem"
+        if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseCaFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the database CA certificate to the VM.' }
+        $Passthrough.AddRange([string[]]@('--database-ca-file', "$inputs/database-ca.pem"))
     }
 
     Send-Payload
     $setupArgs = @('setup')
     if (-not (Test-Interactive)) { $setupArgs += '--non-interactive' }
     $setupArgs += $Passthrough
-    Say 'Running subspace-setup on the VM. This takes a while the first time.'
     $quoted = ($setupArgs | ForEach-Object { Quote-Posix $_ }) -join ' '
+    if ($dryRun) {
+        Say 'Running subspace-setup --dry-run on the VM. It changes nothing there.'
+        $status = Invoke-Vm @('sudo', $SetupCmd, $quoted) -Tty
+        if ((Invoke-Vm @('sudo', '-n', 'rm', '-rf', $inputs)) -ne 0) { Write-Host "    Remove $inputs on the VM by hand." }
+        if ($status -ne 0) { Die "The dry run failed; read subspace-setup's output above." }
+        Say 'Dry run complete. Run the same command without --dry-run to install.'
+        return
+    }
+    Say 'Running subspace-setup on the VM. This takes a while the first time.'
     if ((Invoke-Vm @('sudo', $SetupCmd, $quoted) -Tty) -ne 0) { Die 'subspace-setup failed on the VM; read its output above.' }
 
     Save-Private (Join-Path $State 'summary.env') @('sudo', '-n', 'cat', '/root/fleet/summary.env')

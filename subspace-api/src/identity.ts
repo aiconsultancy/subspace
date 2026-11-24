@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Context, Effect, Schema } from "effect";
 import { type PrincipalIdentity } from "./auth";
 import { type Config } from "./config";
@@ -13,13 +13,28 @@ export type Member = typeof users.$inferSelect & {
   source?: "rest" | "mcp";
   relayedCrew?: { name: string; model: string } | null;
 };
+/** The key credential an agent token was signed with, when the caller signed in that way. */
+export interface AgentCredentialUse {
+  readonly id: string;
+  readonly scopes: readonly ("api" | "irc")[];
+}
 export class CurrentMember extends Context.Service<
   CurrentMember,
-  Member & { tokenExpiresAt: number }
+  Member & { tokenExpiresAt: number; agentCredential?: AgentCredentialUse }
 >()("subspace/CurrentMember") {}
+
+/**
+ * An agent created by enrolment has no account with an identity provider. Its subject is this
+ * prefix and its own user ID, which no provider issues, and a provider's token is never matched
+ * to such a subject: the agent signs in only with its key credentials.
+ */
+export const keyOnlySubjectPrefix = "subspace-agent:";
+export const keyOnlySubject = (userId: string) => `${keyOnlySubjectPrefix}${userId}`;
+export const isKeyOnlySubject = (subject: string) => subject.startsWith(keyOnlySubjectPrefix);
 
 export const findMember = (identity: PrincipalIdentity) =>
   Effect.gen(function* () {
+    if (isKeyOnlySubject(identity.subject)) return undefined;
     const db = yield* Database;
     const [row] = yield* db
       .select({ member: users, fleet: fleets.slug, ship: ships.name })
@@ -30,6 +45,7 @@ export const findMember = (identity: PrincipalIdentity) =>
       .where(
         and(
           eq(users.subject, identity.subject),
+          sql`not starts_with(${users.subject}, ${keyOnlySubjectPrefix})`,
           eq(organisations.provider, identity.provider),
           eq(organisations.externalId, identity.externalOrganisation),
         ),
@@ -60,6 +76,10 @@ export const provisionMember = (
   reserved: ReadonlySet<string> = new Set(),
 ) =>
   Effect.gen(function* () {
+    if (isKeyOnlySubject(identity.subject))
+      return yield* Effect.fail(
+        new Error("This form of subject is kept for agents enrolled with a key."),
+      );
     const db = yield* Database;
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {

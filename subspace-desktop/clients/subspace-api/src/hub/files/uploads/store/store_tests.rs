@@ -308,6 +308,7 @@ fn uploads_kept_aside_are_never_shown_to_another_account() {
         user_id: "first".into(),
         kind: "human".into(),
         display_name: "Fixture".into(),
+        username: None,
     });
     assert!(state.retire_if_account_changed(&Ok("second".into()), None));
     assert!(!state.uploads.contains_transfer("transfer"));

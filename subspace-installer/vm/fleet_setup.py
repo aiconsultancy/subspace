@@ -11,7 +11,8 @@ over SSH. It:
    Azure Key Vault through the VM's managed identity;
 3. runs the fleet installer (Stargate, CLIProxyAPI, OpenCode, AgentsView, the
    agents' Linux users and local Ergo IRC);
-4. starts the Subspace API and PostgreSQL on loopback, signs the admin in
+4. starts the Subspace API and PostgreSQL on loopback (or the API alone against an
+   existing PostgreSQL, --database-url-file, migrating it only with --migrate), signs the admin in
    first so they become the organisation administrator, seeds demo data on
    request, creates an initiative for the fleet and registers the fleet, its
    standard channels, a ship per captain and the rear admiral's and captains'
@@ -36,12 +37,13 @@ import pwd
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import Request, urlopen
 
 HERE = Path(__file__).resolve().parent
@@ -92,6 +94,16 @@ DISPATCH_SUMMARY = ("issues flagged Ready for agents are offered to the captains
 # The fleet installer's repository IDs (also Stargate crew project keys) and its crew limit of nine repositories.
 REPO_ID = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 MAX_REPOSITORIES = 9
+# The API on this VM against an existing PostgreSQL (--database-url-file). The URL file is root's alone; the URL
+# is written only to the root-only api.env, single-quoted so Compose takes it literally, hence no quote in it.
+DATABASE_URL_TEXT = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+")
+DATABASE_URL_MAX = 4096
+SECRET_OWNER = 0  # root
+# A CA certificate the API trusts for that server (--database-ca-file): public, so mounted read-only for the
+# API's own user. The API's PostgreSQL driver ignores the URL's sslrootcert, so Bun's NODE_EXTRA_CA_CERTS adds it.
+DATABASE_CA = "/etc/subspace/database-ca.pem"
+# The exit code of the API's `scripts/migrate.ts --check` when the database lacks migrations the API needs.
+MIGRATIONS_PENDING = 3
 
 
 class SetupError(Exception):
@@ -174,6 +186,13 @@ def parse_args(argv):
     parser.add_argument("--irc-ca", help="absolute path on this VM to the shared server's CA certificate (PEM)")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
+    parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
+                        "PostgreSQL container here: absolute path to a root-only file (mode 0600) holding its "
+                        "postgresql://user:password@host:5432/database?sslmode=verify-full URL. Kept on later runs")
+    parser.add_argument("--database-ca-file", help="absolute path on this VM to the CA certificate (PEM) of that "
+                        "PostgreSQL server, when the system trust store lacks it; '' removes it")
+    parser.add_argument("--migrate", action="store_true", help="apply the API's database migrations to that existing "
+                        "PostgreSQL on this run (never by default; see the installer README)")
     parser.add_argument("--stargate-api", choices=["auto", "on", "off"],
                         help="enable Stargate's Fleet API (default auto: when the pinned Stargate has it)")
     parser.add_argument("--fleet-api-url", help="the HTTPS address at which a desktop reaches Stargate's Fleet API, "
@@ -196,7 +215,7 @@ def parse_args(argv):
     parser.add_argument("--no-lockdown", dest="lockdown", action="store_false", default=None,
                         help="skip the inbound firewall and SSH hardening (not recommended; agent isolation stays)")
     parser.add_argument("--inputs", default=str(INPUTS), help=argparse.SUPPRESS)
-    parser.add_argument("--dry-run", action="store_true", help="write and validate the inputs only")
+    parser.add_argument("--dry-run", action="store_true", help="validate the inputs only, changing nothing")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt; fail on missing answers")
     return parser.parse_args(argv)
 
@@ -268,7 +287,32 @@ def gather(args, saved):
             answers["ircCa"] = args.irc_ca
     if args.api is not None:
         answers["api"] = args.api
+    elif args.database_url_file and answers.get("api") is False:
+        # A fleet set up with --no-api: asking for an existing PostgreSQL asks for the API that uses it.
+        answers["api"] = True
     answers.setdefault("api", True)
+    # An existing PostgreSQL for the API: the file's path is kept, never the URL. --migrate is for this run only.
+    require(not (args.database_url_file and args.api is False),
+            "--database-url-file runs the API on this VM, which --no-api leaves out. Pass one or the other.")
+    if args.database_url_file == "":
+        # The API's tracker is in that server; a PostgreSQL on this VM would start empty, and the API image's
+        # automatic migration would run against whatever DATABASE_URL api.env still names.
+        require(not answers.get("databaseUrlFile"),
+                f"This VM's API keeps its tracker in the existing PostgreSQL named in {answers.get('databaseUrlFile')}, "
+                "and setup has no way back to a PostgreSQL on this VM. Keep --database-url-file, or restore a dump "
+                "of that database on a fresh VM (installer README, 'An existing PostgreSQL').")
+        answers.pop("databaseUrlFile", None)
+    elif args.database_url_file is not None:
+        answers["databaseUrlFile"] = args.database_url_file
+    if args.database_ca_file == "":
+        answers.pop("databaseCaFile", None)
+    elif args.database_ca_file is not None:
+        answers["databaseCaFile"] = args.database_ca_file
+    require(not args.migrate or (answers.get("databaseUrlFile") and answers["api"]),
+            "--migrate is for an existing PostgreSQL (--database-url-file): the API migrates its own PostgreSQL "
+            "on this VM itself.")
+    if answers.get("databaseUrlFile") and args.demo is None:
+        answers["demo"] = False  # Fictional data never goes into a database the installer did not create.
     if args.demo is not None:
         answers["demo"] = args.demo
     elif "demo" not in answers:
@@ -414,6 +458,14 @@ def check_answers(answers):
             "The rear admiral's name is also its agent name in the Subspace API: use letters, digits and hyphens, "
             "at most 64, such as Atlas.")
     require(all(len(name) <= 64 for name in answers["captains"]), "Ship names must be at most 64 characters.")
+    require(not answers.get("databaseCaFile") or answers.get("databaseUrlFile"),
+            "--database-ca-file is the CA of an existing PostgreSQL: pass --database-url-file too.")
+    if external_database(answers):
+        database_url(answers["databaseUrlFile"])
+        require(not answers["demo"], "Demo data is fictional and never goes into a database the installer did not "
+                "create: drop --demo with --database-url-file.")
+        if answers.get("databaseCaFile"):
+            database_ca(answers["databaseCaFile"])
     return rear, ids[1:]
 
 
@@ -557,6 +609,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         config["irc"] = {
             "mode": "remote", "host": answers["ircHost"], "port": answers["ircPort"], "tls": True,
             "allowedAccounts": [answers["admin"]],
+            # The shared server (irc_server.py) seeds each officer's account with the password in this fleet's
+            # bundle, so these fleets keep signing in with passwords (installer README, "IRC sign-in").
+            "auth": "password",
         }
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
@@ -650,12 +705,27 @@ def irc_source():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def installer(config_path, dry_run=False):
+def installer(config_path, dry_run=False, secrets_dir=None):
     args = [INSTALLER / "install.sh", "--config", config_path]
+    if secrets_dir:
+        args += ["--secrets-dir", secrets_dir]
     if dry_run:
         args.append("--dry-run")
     say("running the fleet installer" + (" (dry run)" if dry_run else ""))
     run(*args)
+
+
+def preflight(config, private):
+    """Check the fleet's inputs as the installer will (configuration, credentials, the secrets directory and
+    pinned sessions), before setup changes the API or its database. A run the installer would refuse then
+    migrates nothing and restarts nothing."""
+    secrets_dir = INPUTS / "fleet.secrets"
+    with tempfile.TemporaryDirectory(prefix="subspace-setup-check-") as scratch:
+        config_path = Path(scratch) / "fleet.json"
+        write_json(config_path, config)
+        write_json(Path(scratch) / "fleet.secrets.json", private)
+        say("checking the fleet's configuration before the API changes")
+        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None)
 
 
 def installed_stargate_source():
@@ -672,7 +742,98 @@ def compose(*args, capture=False, check=True, env=None, input_text=None):
                *args, capture=capture, check=check, env=env, input_text=input_text)
 
 
-def api_up(answers, secret_store):
+def external_database(answers):
+    """Whether the API on this VM uses an existing PostgreSQL (--database-url-file) instead of its own."""
+    return bool(answers.get("api") and answers.get("databaseUrlFile"))
+
+
+def database_url(path):
+    """The existing PostgreSQL's URL, read from a root-only file. Messages name the file, never what it holds."""
+    require(isinstance(path, str) and Path(path).is_absolute(),
+            "--database-url-file needs an absolute path to a file on this VM.")
+    try:
+        info = os.lstat(path)
+    except OSError:
+        raise SetupError(f"Cannot read the database URL file {path}. Create it as root with mode 0600.") from None
+    require(stat.S_ISREG(info.st_mode), f"The database URL file {path} must be a regular file, not a link.")
+    require(info.st_uid == SECRET_OWNER and not info.st_mode & 0o077,
+            f"The database URL file {path} must be owned by root and private to it: chmod 600 {path}.")
+    require(info.st_size <= DATABASE_URL_MAX, f"The database URL file {path} is too large for one URL.")
+    try:
+        url = Path(path).read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        raise SetupError(f"Cannot read the database URL file {path} as text.") from None
+    require(DATABASE_URL_TEXT.fullmatch(url),
+            f"The database URL file {path} must hold one postgresql:// URL on a single line. Percent-encode "
+            "spaces, quotes and other special characters in its user name and password.")
+    try:
+        parts = urlsplit(url)
+        hosts = [parts.hostname] if parts.hostname else parse_qs(parts.query).get("host", [])
+        parts.port  # noqa: B018 -- raises ValueError for an invalid port
+    except ValueError:
+        raise SetupError(f"The database URL in {path} is not a valid URL.") from None
+    require(parts.scheme in ("postgres", "postgresql"), f"The database URL in {path} must start with postgresql://.")
+    require(hosts and not {host.lower() for host in hosts} & {"localhost", "127.0.0.1", "::1"},
+            f"The database URL in {path} must name the PostgreSQL server's host. Loopback is the API container "
+            "itself, not this VM.")
+    require(parts.path.strip("/") or parse_qs(parts.query).get("dbname"),
+            f"The database URL in {path} must name the database, as in "
+            "postgresql://subspace:password@db.example.com:5432/subspace?sslmode=verify-full.")
+    require(sslmode(url) in ("", "disable", "allow", "prefer", "require", "verify-ca", "verify-full"),
+            f"The database URL in {path} has an sslmode the API does not know: use verify-full.")
+    return url
+
+
+def sslmode(url):
+    return (parse_qs(urlsplit(url).query).get("sslmode") or [""])[-1]
+
+
+def database_tls(url):
+    """What the API's PostgreSQL driver makes of the URL's sslmode, in words that do not repeat the URL.
+
+    The driver (@effect/sql-pg) verifies the certificate and host name for require, verify-ca and verify-full
+    alike, tries TLS first for prefer and allow, and uses none without an sslmode.
+    """
+    mode = sslmode(url)
+    if mode in ("require", "verify-ca", "verify-full"):
+        return f"over TLS, checking the server's certificate and name (sslmode={mode})"
+    if mode in ("prefer", "allow"):
+        return f"over TLS when the server offers it, else unencrypted (sslmode={mode})"
+    return "unencrypted (sslmode=disable)" if mode == "disable" else "unencrypted (the URL has no sslmode)"
+
+
+def database_ca(path):
+    require(Path(path).is_absolute() and Path(path).is_file(),
+            "--database-ca-file needs an absolute path to a PEM file on this VM.")
+    try:
+        text = Path(path).read_text()
+    except (OSError, UnicodeDecodeError):
+        raise SetupError(f"Cannot read the database CA file {path}.") from None
+    require("-----BEGIN CERTIFICATE-----" in text and "PRIVATE KEY" not in text,
+            f"The database CA file {path} must hold the server's CA certificate (PEM) and no private key.")
+
+
+def external_plan(answers, migrate):
+    """What setup does with an existing PostgreSQL, for the dry run and the real one. Never prints the URL."""
+    url = database_url(answers["databaseUrlFile"])
+    lines = [
+        f"the API runs on this VM against the existing PostgreSQL named in {answers['databaseUrlFile']}, "
+        f"{database_tls(url)}; this VM runs no PostgreSQL container and keeps no database volume",
+        "migrations: " + ("applied before the API starts (--migrate)" if migrate else
+                          "checked before the API starts; setup stops if any are missing, and applies them only "
+                          "with --migrate"),
+        f"API sign-in: setup acts as {answers['adminEmail']}, who must already be an administrator of the development "
+        f"organisation {answers['organisation']} there; it adds no organisation or person unless the database "
+        "has none yet",
+    ]
+    if answers.get("databaseCaFile"):
+        lines.append(f"the API trusts the CA in {answers['databaseCaFile']} for that server")
+    if sslmode(url) not in ("require", "verify-ca", "verify-full"):
+        lines.append("WARNING: the connection can be unencrypted; add sslmode=verify-full to the URL")
+    return lines
+
+
+def api_up(answers, secret_store, migrate=False):
     source = PAYLOAD / "subspace-api"
     require((source / "compose.yaml").is_file(), "The payload has no subspace-api/compose.yaml.")
     API_DIR.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -682,8 +843,11 @@ def api_up(answers, secret_store):
     shutil.rmtree(API_DIR, ignore_errors=True)
     staging.rename(API_DIR)
     slug = answers["slug"]
+    external = database_url(answers["databaseUrlFile"]) if external_database(answers) else None
     environment = {
-        "POSTGRES_PASSWORD": secret_store.password("postgres"),
+        # An existing PostgreSQL's URL goes only into this root-only file, single-quoted so Compose takes it
+        # literally; the API's own PostgreSQL gets a generated password instead.
+        **({"DATABASE_URL": f"'{external}'"} if external else {"POSTGRES_PASSWORD": secret_store.password("postgres")}),
         "API_PORT": API_PORT,
         "DEV_CHANNELS": f"#{slug}-starbase",
         "DEV_IRC_HOST": irc_endpoint(answers)[0],
@@ -699,6 +863,10 @@ def api_up(answers, secret_store):
             key, _, value = line.partition("=")
             if key and not key.startswith("#") and key not in environment:
                 kept[key] = value
+    if not external:
+        # The API's own PostgreSQL: never a URL an earlier run, or anyone, left in api.env, which Compose would
+        # prefer to the local database and the image would migrate on start.
+        kept.pop("DATABASE_URL", None)
     # The agent listener answers for the development sign-in organisation, which the fleet's agents are
     # registered in. Setup offers it once: after that, an operator who sets AGENT_PORT= or deletes it keeps
     # it off, and setup never turns it back on. The API refuses the listener in production.
@@ -721,6 +889,19 @@ def api_up(answers, secret_store):
     listener = str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
     write_private(INPUTS / "api.env", AGENT_OFFERED + "\n" + "".join(
         f"{key}={value}\n" for key, value in merged.items()))
+    if external:
+        ca = ""
+        if answers.get("databaseCaFile"):
+            # A CA certificate is public: the API's own user reads this copy through a read-only mount. It lives
+            # beside API_DIR, which every run replaces, and is rewritten in place so the mount keeps its file.
+            ca = hashlib.sha256(Path(answers["databaseCaFile"]).read_bytes()).hexdigest()
+            shutil.copyfile(answers["databaseCaFile"], database_ca_copy())
+            os.chmod(database_ca_copy(), 0o644)
+        write_private(INPUTS / "api.override.yaml", external_override(listener, ca))
+        external_schema(answers, migrate)
+        say("building and starting the Subspace API (loopback only) against the existing PostgreSQL")
+        compose("up", "--detach", "--wait", "--wait-timeout", "300", "--build")
+        return dev_auth_enabled()
     # PostgreSQL is not published at all; the API is published on loopback only.
     write_private(INPUTS / "api.override.yaml", "\n".join([
         "services:",
@@ -737,6 +918,65 @@ def api_up(answers, secret_store):
     say("building and starting the Subspace API and PostgreSQL (loopback only)")
     compose("up", "--detach", "--wait", "--wait-timeout", "300", "--build")
     return dev_auth_enabled()
+
+
+def database_ca_copy():
+    return API_DIR.with_name("database-ca.pem")
+
+
+def external_override(listener, ca):
+    """The Compose override for an API that uses an existing PostgreSQL (--database-url-file).
+
+    The postgres service moves to a profile nothing activates, so no container or volume is created for it, and
+    the API no longer waits for it. The API starts without migrating (the image's own command migrates first):
+    setup checks and applies migrations as a separate step, and only with --migrate (external_schema). The API and
+    its agent listener are published on loopback exactly as with the API's own PostgreSQL. ca is the SHA-256 of
+    the CA certificate the API trusts for the server, if any: a changed certificate changes the environment, so
+    Compose recreates the API, which reads NODE_EXTRA_CA_CERTS only when it starts.
+    """
+    return "\n".join([
+        "services:",
+        "  postgres:",
+        '    profiles: ["subspace-local-database"]',
+        "  api:",
+        "    restart: unless-stopped",
+        "    depends_on: !reset {}",
+        '    command: ["bun", "src/main.ts"]',
+        "    ports: !override",
+        f'      - "{LOOPBACK}:{API_PORT}:3000"',
+        *([f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"'] if listener else []),
+        *(["    environment:", f"      NODE_EXTRA_CA_CERTS: {DATABASE_CA}", f"      SUBSPACE_DATABASE_CA_SHA256: {ca}",
+           "    volumes:", f'      - "{database_ca_copy()}:{DATABASE_CA}:ro"'] if ca else []),
+        "",
+    ])
+
+
+def external_schema(answers, migrate):
+    """Compare an existing PostgreSQL's migration history with this API's, and migrate it only with --migrate.
+
+    Both run as one-off API containers that publish no port. The check (scripts/migrate.ts --check) changes
+    nothing; it exits MIGRATIONS_PENDING when the database lacks migrations, as an empty one does.
+    """
+    path = answers["databaseUrlFile"]
+    compose("build", "api")
+    one_off = ("run", "--rm", "--no-deps", "-T", "api", "bun", "scripts/migrate.ts")
+    status = compose(*one_off, "--check", check=False)
+    if status == MIGRATIONS_PENDING:
+        require(migrate, "The existing PostgreSQL lacks database migrations this API needs (see above). Setup "
+                "never migrates a database it did not create unless asked: back it up, give the role in "
+                f"{path} the privileges the installer README lists ('An existing PostgreSQL'), and run setup "
+                "again with --migrate.")
+        say("applying the API's database migrations to the existing PostgreSQL (--migrate)")
+        if compose(*one_off, check=False):
+            raise SetupError("The migrations failed (see above); a failed schema migration is rolled back. The "
+                             f"role in {path} needs CREATE on the database and the right to create and alter "
+                             "the API's tables (installer README, 'An existing PostgreSQL').")
+    elif status:
+        raise SetupError("Could not read the existing PostgreSQL's migration history (see above). Check that this "
+                         f"VM reaches the server, the URL in {path} (its sslmode, and --database-ca-file for a "
+                         "private CA) and its role's privileges.")
+    elif migrate:
+        say("the existing PostgreSQL already has every migration this API needs; nothing to apply")
 
 
 def dev_auth_enabled():
@@ -791,10 +1031,30 @@ def history_database(secret_store):
 
 
 def api_token(answers, email=None):
-    token = compose("exec", "-T", "api", "bun", "run", "--silent", "auth:dev",
-                    email or answers["adminEmail"], answers["organisation"], capture=True).splitlines()[-1].strip()
+    # In a database setup did not create, sign in only as someone already there (subspace-api's auth:dev), so a
+    # mistyped --organisation or --admin-email never adds an organisation or a person. An empty one is exempt.
+    existing = ["-e", "DEV_TOKEN_EXISTING_ONLY=true"] if external_database(answers) else []
+    try:
+        token = compose("exec", "-T", *existing, "api", "bun", "run", "--silent", "auth:dev",
+                        email or answers["adminEmail"], answers["organisation"], capture=True).splitlines()[-1].strip()
+    except SetupError:
+        if not existing:
+            raise
+        raise SetupError(f"Could not sign {email or answers['adminEmail']} in to the development organisation "
+                         f"{answers['organisation']} in the existing PostgreSQL (see above). Setup adds no organisation "
+                         "or person to a database it did not create: pass the --organisation and --admin-email of an "
+                         "administrator who is already there.") from None
     require(JWT.fullmatch(token), "The API did not return a development token.")
     return token
+
+
+def existing_administrator(answers, token):
+    """Stop unless the admin's token is an administrator's: in an existing database an ordinary member could
+    create the fleet's initiative before registration refused them, so this comes before any write."""
+    require(api_call(token, "GET", "/me").get("isAdmin"),
+            f"{answers['adminEmail']} is not an administrator of the development organisation "
+            f"{answers['organisation']} in the existing PostgreSQL, and only one may register fleets. "
+            "Pass an administrator's email with --admin-email.")
 
 
 def api_call(token, method, path, body=None):
@@ -1050,6 +1310,22 @@ def setup(args):
     global INPUTS
     INPUTS = Path(args.inputs)
     require(args.dry_run or os.geteuid() == 0, "Run subspace-setup as root (sudo).")
+    if args.dry_run:
+        # A dry run works on a private copy of the inputs, so the answers, generated secrets and fleet files it
+        # writes, a database URL file it is given included, never become the next real run's.
+        original = INPUTS
+        with tempfile.TemporaryDirectory(prefix="subspace-setup-dry-run-") as scratch:
+            INPUTS = Path(scratch) / "inputs"
+            if original.is_dir():
+                shutil.copytree(original, INPUTS, symlinks=True)
+            try:
+                return configure(args)
+            finally:
+                INPUTS = original
+    return configure(args)
+
+
+def configure(args):
     INPUTS.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(INPUTS, 0o700)
     saved = read_json(INPUTS / "answers.json", {})
@@ -1057,8 +1333,15 @@ def setup(args):
     rear, captains = check_answers(answers)
     if saved.get("slug") and saved["slug"] != answers["slug"]:
         raise SetupError("The fleet ID cannot change on an installed VM. Reinstall on a fresh VM to rename it.")
+    # The API has run here with its own PostgreSQL (setup writes api.env only then): its tracker is in that
+    # container's volume, and setup does not move it.
+    require(not (external_database(answers) and not saved.get("databaseUrlFile") and (INPUTS / "api.env").is_file()),
+            "This VM's API already keeps its tracker in its own PostgreSQL, which setup does not move. To use an "
+            "existing PostgreSQL, restore a dump of that database there and set up a fresh VM with "
+            "--database-url-file (installer README, 'An existing PostgreSQL').")
     save_answers(answers)
-    secret_store = Secrets(INPUTS, answers["slug"], answers.get("keyVault"))
+    # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
+    secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
     members = roster(answers, rear, captains)
     local_irc = answers["irc"] == "local"
     config_path = INPUTS / "fleet.json"
@@ -1087,13 +1370,21 @@ def setup(args):
 
     if not local_irc:
         irc_bundle(answers, members, secret_store)
+    if external_database(answers):
+        for line in external_plan(answers, args.migrate):
+            say(line)
     if args.dry_run:
         write_inputs(hashlib.sha1(b"dry-run").hexdigest())
         if answers["agentDispatch"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
-        say(f"dry run complete; inputs are in {INPUTS}")
+        say("dry run complete; nothing on this VM changed")
         return
+
+    if answers["api"]:
+        # The API comes first (its token and registration go into the fleet's inputs), so check now that the
+        # installer will accept those inputs: with --migrate, a refused run must not have migrated the database.
+        preflight(*inputs(hashlib.sha1(b"dry-run").hexdigest()))
 
     irc_ref = irc_source() if local_irc else None
     # Releases from v0.40.0 have the Fleet API; a pinned commit is checked after it is installed.
@@ -1109,12 +1400,16 @@ def setup(args):
     api_block, token, history = None, "", None
     if answers["api"]:
         run(HERE / "docker.sh")
-        dev_auth = api_up(answers, secret_store)
-        if local_irc:
+        dev_auth = api_up(answers, secret_store, args.migrate)
+        if local_irc and not external_database(answers):
             history = history_database(secret_store)
+        elif local_irc:
+            say("Ergo keeps IRC history in its own SQLite file on this VM, not in the existing PostgreSQL")
         if dev_auth:
             # The first sign-in to an organisation becomes its administrator, so sign the admin in first.
             token = api_token(answers)
+            if external_database(answers):
+                existing_administrator(answers, token)
             if answers["demo"]:
                 seed_demo(answers)
             initiative = fleet_initiative(token, answers["name"], answers["slug"], answers.get("initiativeId"))
@@ -1208,7 +1503,9 @@ def isolation_args(answers):
     if answers["api"] or (INPUTS / "api.env").is_file():
         # The API (development sign-in) and PostgreSQL, also through their container addresses,
         # and still after a switch to --no-api in case stopping them failed.
-        args += ["--operator-only-port", str(API_PORT), "--operator-only-port", "5432"]
+        args += ["--operator-only-port", str(API_PORT)]
+        if not answers.get("databaseUrlFile"):
+            args += ["--operator-only-port", "5432"]  # The API's own PostgreSQL; an existing one is elsewhere.
         try:
             pwd.getpwnam(GATEWAY_USER)
             gateway = answers.get("agentDispatch")
@@ -1315,6 +1612,8 @@ def main(argv):
     elif argv and argv[0] == "demo":
         answers = read_json(INPUTS / "answers.json", {})
         require(answers.get("api"), "The Subspace API is not set up on this VM.")
+        require(not external_database(answers), "Demo data is fictional and never goes into a database the installer "
+                "did not create, such as this API's existing PostgreSQL.")
         api_token(answers)
         seed_demo(answers)
     else:

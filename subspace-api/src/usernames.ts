@@ -281,11 +281,12 @@ export const backfillUsernames = (db: Db, reserved: ReadonlySet<string>, batchSi
     return total;
   });
 
-/** A username an administrator sets: a letter, then letters, digits, `-` or `_`, at most 32. */
+/**
+ * A username an administrator sets, for a person or as an agent's IRC nick: a letter, then
+ * letters, digits, `-` or `_`, at most 32, the account names the IRC server's sign-in script
+ * accepts.
+ */
 export const settableUsername = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/u;
-
-/** An agent's IRC nick, which is its username: the agents API's rule, at most 64 characters. */
-const settableNick = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
 
 /** Why an explicit username could not be set or released. Safe to show to the administrator. */
 export class UsernameRefused extends Error {}
@@ -356,10 +357,10 @@ export const setUsername = (
   options: { reuseRetired?: boolean } = {},
 ) =>
   Effect.gen(function* () {
-    if (!settableNick.test(name))
+    if (!settableUsername.test(name))
       return yield* Effect.fail(
         new UsernameRefused(
-          "Use a letter, then letters, digits, - or _, at most 32 characters in all (64 for an agent).",
+          "Use a letter, then letters, digits, - or _, at most 32 characters in all.",
         ),
       );
     // An operator's reserved name may be given deliberately; the IRC server's own may not.
@@ -379,12 +380,6 @@ export const setUsername = (
         if (!org || !record)
           return yield* Effect.fail(
             new UsernameRefused("No member or agent has that organisation and subject."),
-          );
-        if (!record.agentRank && !settableUsername.test(name))
-          return yield* Effect.fail(
-            new UsernameRefused(
-              "Use a letter, then letters, digits, - or _, at most 32 characters in all.",
-            ),
           );
         const [holder] = yield* tx
           .select({ id: users.id })

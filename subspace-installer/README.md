@@ -51,9 +51,16 @@ sudo ./install.sh --config ~/fleet.json
 sudo systemctl status subspace-fleet-gateway.service
 ```
 
+The two example files are the smallest fleet that installs: a rear admiral
+and one captain on a remote IRC server with certificates, so the secrets
+file holds no IRC password, and every optional feature off.
+[Optional settings](#optional-settings) shows the others together.
+
 For remote IRC, register a SASL account for the rear admiral and each
-captain, such as `example-atlas` and `example-orion`, and supply their
-passwords in `ircPasswords`. Crew have no IRC accounts. Add trusted human
+captain, such as `example-atlas` and `example-orion`. They sign in with a
+certificate each, whose fingerprints the installer prints for you to bind to
+the accounts ([IRC sign-in](#irc-sign-in)); with `"auth": "password"` under
+`irc`, supply their passwords in `ircPasswords` instead. Crew have no IRC accounts. Add trusted human
 SASL accounts to `irc.allowedAccounts`. Ask the IRC operator to register the
 fleet's [standard channels](#channels) (`--dry-run` lists them) and any
 initiative channels, and grant access to the appropriate accounts. For local IRC,
@@ -95,16 +102,29 @@ describe the available logins.
 ### Crew and repositories
 
 List repositories in order as `{"id":"project","url":"https://github.com/example/project.git"}`
-objects under `repositories`. Every captain gets a checkout of each one under
-`/var/lib/subspace-fleet/agents/<captain-id>/workspace/<repository-id>`, and
-the first is each agent's default working directory. An empty list gives each
+objects under `repositories`. Every captain gets a checkout of each one, side
+by side, in its workspace,
+`/var/lib/subspace-fleet/agents/<captain-id>/workspace/<repository-id>`. A
+captain's sessions start in the workspace itself, above the checkouts, so one
+session reaches every repository (see [Captain sessions](#captain-sessions)),
+and the first repository is its crew's default. An empty list gives each
 agent an empty workspace and gives captains no crew. Repository IDs start
 with a lowercase letter, `default` is reserved, and a captain with crew takes
 at most nine repositories. The rear admiral gets read-only reference
 checkouts under `/var/lib/subspace-fleet/references/<rear-admiral-id>/` that
-the mirror service refreshes. The rear admiral can inspect them from its own
-Linux account, including Git history. `subspace-setup --repositories` fills
-this list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
+the mirror service refreshes, and works in its reference checkout of the
+first repository. The rear admiral can inspect them from its own Linux
+account, including Git history. `subspace-setup --repositories` fills this
+list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
+
+A repository also takes an optional one-line `description` and `tracker`,
+free text that names where its work is tracked, for example
+`"tracker": "Example issues at https://tracker.example.com/project"`. Both
+appear in each captain's [workspace instructions](#workspace-instructions),
+so a fleet whose repositories use more than one tracker can say which is
+which. A repository without a `tracker` uses the fleet's Subspace tracker
+when `api` is set; otherwise its instructions say the tracker is not
+recorded. Unlike the URL and visibility, both may change at any time.
 
 Set fleet-wide `crew.claude` and `crew.codex` defaults, or override either
 under a captain's `crew`. Each family takes a `count` from 0 to 10 and a
@@ -129,7 +149,9 @@ Linux user, through Stargate's crew plugin:
   `stargate_mail` and `stargate_dm` for messages.
 - A captain's crew roster and first repository are fixed once its
   [session is pinned](#captain-sessions), because Stargate keeps crew
-  identities and worktrees permanent. The installer refuses a later change,
+  identities and worktrees permanent and names the first repository's
+  checkout as the crew's default, wherever the captain's session works. The
+  installer refuses a later change,
   including crew counts of 0 or an empty repository list. Restore the
   recorded roster, or give a new roster to a new captain. Adding
   repositories after the first is allowed. A changed crew model applies to
@@ -167,10 +189,13 @@ member, the worktrees for each repository, a private state directory under
 the captain's home and the pinned Mesij command, `/opt/subspace-fleet/bin/mesij`.
 After the services start, it creates the captain's root session through the
 engine's authenticated loopback API, with the `build` agent, the captain's
-checkout of the first repository and the captain's permissions. Creating a
-session starts no model turn. The session ID goes into both the gateway's
-`backend.sessionID` and the plugin's `captainSessionID`, and the installer
-restarts the services to load the plugin.
+workspace and the captain's permissions. Creating a session starts no model
+turn. The session ID goes into both the gateway's `backend.sessionID` and the
+plugin's `captainSessionID`, and the installer restarts the services to load
+the plugin. The plugin's `captainDirectory` is the workspace and its default
+project is the checkout of the first repository: the layout Stargate's own
+guide uses, a captain directory outside every crew worktree beside a separate
+project checkout.
 
 The record lives in `/etc/subspace-fleet/sessions/<captain-id>.json`, owned
 by root with mode `0600`. The installer first reserves the ID in
@@ -204,6 +229,107 @@ repository. If a confirmed root is missing from the engine, the installer
 stops for that captain. Restore
 `/var/lib/subspace-fleet/sessions/<captain-id>/opencode.db` from a backup, or
 retire the captain and give its crew to a new captain ID.
+
+**Where sessions start.** A captain's sessions start in its workspace,
+`/var/lib/subspace-fleet/agents/<captain-id>/workspace`, above its
+checkouts, with or without crew. Its optional `sessionRoot` chooses:
+`"workspace"`, the default, or `"repository"`, its checkout of the first
+repository, where installers before this one started every captain. The
+rear admiral takes no `sessionRoot`: it works in its reference checkout of
+the first repository, and its root is pinned only for
+[agent dispatch](#agent-dispatch) or its own
+[Slack bot](#slack-for-officers). `--dry-run` prints where each captain's
+sessions will start, and where the rear admiral's root is or will be pinned,
+and says when a pinned or installed root differs from the default or the
+setting. The installer records each captain's root in
+`/etc/subspace-fleet/session-roots.json`.
+
+**Upgrading a running fleet never moves a session.**
+
+- A captain pinned in its first repository stays there, and each run says
+  so until you set its `sessionRoot` to `"repository"`. Setting it to
+  `"workspace"` is refused: the pinned directory is named by Stargate's crew
+  state and by the gateway's records for that captain, and Stargate refuses
+  a changed captain directory once its crew state exists. To work from the
+  workspace, give the crew to a new captain ID, whose session is created
+  there.
+- A captain without a pinned session keeps the root it was installed with;
+  one whose checkout of the first repository already exists started there.
+  To move it, set its `sessionRoot` to `"workspace"`: its conversations then
+  start new sessions in the workspace, and earlier sessions stay in its
+  history. `--dry-run` shows the move first.
+- A new captain starts in its workspace.
+
+**What changes with a workspace root.** The workspace is not a Git
+repository. OpenCode 2.3.2, the pinned release, gives such a directory a
+project of its own, keyed by its path (checked in its source), and:
+
+- takes no snapshots there, so the root session cannot restore files
+  through OpenCode's snapshots; each checkout's Git history is the record;
+- reads `AGENTS.md` from the workspace and the directories above it, up to
+  the captain's home, and `.opencode/`, `opencode.json` and `.claude/` from
+  the workspace and every directory above it, never from the repositories
+  below. The root session therefore no longer loads the first repository's
+  own `AGENTS.md` or `.opencode/` automatically: the
+  [workspace instructions](#workspace-instructions) name each repository's
+  instructions instead, and crew sessions, in their worktrees, still load
+  their repository's;
+- treats every checkout as inside the session's directory, so a captain
+  without crew can work in all of its repositories under its permissions,
+  not only the first, and runs commands in a checkout by setting the shell
+  tool's working directory.
+
+The installer's engine configuration, with the crew plugin, crew agents,
+providers, MCP server and permissions, is the file `OPENCODE_CONFIG` names,
+`/etc/subspace-fleet/opencode-<captain-id>.json`, and the role instructions
+and skills are under `~/.config/opencode/`, so none of it depends on where a
+session starts. Stargate's crew plugin needs no Git repository for the
+captain's directory: it checks only that the directory exists and lies
+outside every crew worktree, and runs Git in the project checkouts and
+worktrees. Its shared working agreement, `WAYS_OF_WORKING.md`, is read from
+the captain's directory, so it now belongs in the workspace rather than in a
+checkout. Stargate's Fleet API reports a ship's repository from its crew's
+default project; for a captain without crew, which has none, it reports no
+repository.
+
+### Workspace instructions
+
+Every install and upgrade writes two files into each captain's workspace,
+beside its checkouts and never inside one:
+
+- `AGENTS.md`, which OpenCode loads for every session in the workspace and,
+  because it reads `AGENTS.md` up to the captain's home, for a session in one
+  of its checkouts too, such as a root pinned in the first repository. It
+  says who the captain is and who its rear admiral is; lists each
+  repository with its ID, `description`, remote, tracker (see
+  [Crew and repositories](#crew-and-repositories)), where its own
+  instructions are and, for a captain with crew, where its crew's worktrees
+  are; lists the fleet's [channels](#channels) and, for a captain with its
+  own [Slack bot](#slack-for-officers), that Slack is another way in; and
+  says that work in a repository follows that repository's own `AGENTS.md`,
+  rules and tracker. The role instructions, with the Slack section that
+  explains Slack requests, stay in `~/.config/opencode/AGENTS.md`, which
+  OpenCode loads as well, so the workspace file adds to them and replaces
+  nothing.
+- `CLAUDE.md`, which imports it (`@AGENTS.md`) for Claude Code. OpenCode
+  reads a `CLAUDE.md` only where a directory has no `AGENTS.md`, so it
+  ignores this one. Stargate's Claude backend loads neither file by default,
+  so a `claude-sdk` captain does not see them.
+
+The text comes from [`lib/roles/captain/WORKSPACE.md`](lib/roles/captain/WORKSPACE.md);
+edit it and re-run the installer to change every captain's file. Both files
+start with a comment that marks them as generated, and the installer writes
+them as the captain's Linux user, mode `0600`, rewriting them only when they
+change.
+
+To add your own guidance for one captain, write it between the two operator
+notes markers at the end of its `AGENTS.md`, as the captain's user, for
+example `sudo -e -u ss-orion /var/lib/subspace-fleet/agents/orion/workspace/AGENTS.md`.
+Everything between the markers survives regeneration; anything else in the
+file is replaced. The captain can add notes there too. If the installer finds
+an `AGENTS.md` or `CLAUDE.md` it did not write, it keeps that text in the
+operator notes. If a file is not a regular UTF-8 file the captain can read,
+such as a symbolic link, it leaves both files unchanged and says so.
 
 ### Instructions, permissions and toolchains
 
@@ -341,6 +467,114 @@ use that same TLS endpoint in remote mode. They can trust a private CA with
 rather than one fleet's Ergo:
 [Run the shared IRC server in a container](../INSTALL.md#run-the-shared-irc-server-in-a-container).
 
+### IRC sign-in
+
+`irc.auth` sets how the rear admiral and the captains sign in to IRC:
+`certificate` (SASL EXTERNAL), the default with a remote server, or
+`password` (SASL PLAIN), the default and for now the only choice with the
+[Ergo the installer manages](#local-irc-and-tls). Crew have no IRC accounts,
+and the [medical ship](#medical-ship) keeps its own password either way.
+
+**With certificates, no IRC password exists for an officer.** The installer
+gives each officer a P-256 key and a self-signed certificate, generated on
+the VM at the first install, and keeps them across upgrades in one PEM
+bundle, `/etc/subspace-fleet/irc-certs/<officer-id>.pem`. The bundle is
+owned by the Linux user whose gateway serves the officer
+(`ss-fleet-gateway`, or the officer's own user for a Claude Agent SDK
+officer), with mode `0600`, and the gateway's Stargate registration names it
+as `clientPemFile`. The installer refuses officer entries in `ircPasswords`
+and passes no password to the gateway.
+
+The pinned Stargate takes exactly one of `passwordEnv` and `clientPemFile`
+per account, presents a client certificate only over TLS, and reads only an
+owner-only regular file of its own user, at most 64 KiB, whose first
+certificate matches an unencrypted private key (`PRIVATE KEY`,
+`EC PRIVATE KEY` or `RSA PRIVATE KEY`). `--dry-run` and every render check
+the same, so a bundle Stargate would refuse stops the installer instead.
+
+**Bind the fingerprints on the IRC server.** An officer can sign in only
+once its certificate's fingerprint is bound to its account. `--dry-run` and
+the install summary print one line per officer, with the SHA-256 fingerprint
+in the lower-case hex form Ergo's NickServ takes, and never key material:
+
+```text
+/msg NickServ CERT ADD example-orion 4b1d…0c9e
+```
+
+Send each line as an IRC operator whose operator class has Ergo's `accreg`
+capability, or signed in as the account itself, leaving out the account name.
+On another server, bind the same fingerprint as its services expect. A dry
+run writes nothing, so a certificate the VM has yet to generate shows its
+fingerprint only in the install summary. Print them again at any time with
+`sudo /opt/subspace-fleet/lib/runtime.py irc-fingerprints`.
+
+**Bring existing certificates.** A fleet whose IRC server already has
+certificates bound can supply them: put each officer's certificate and its
+unencrypted key, certificate first, in
+`<secrets-dir>/<officer-id>/irc-client.pem` with mode `0600`, as for
+[GitHub App keys](#github-apps-per-fleet-member). Dispatch carries them in its
+private bundle. The installer checks each one and installs it in place of the
+officer's current bundle, printing the old and new fingerprints when it
+replaces one. Later runs keep it, with or without the secrets directory.
+`--dry-run` with the secrets directory prints a supplied bundle's
+fingerprint, so you can bind it first. To replace a certificate, supply a new
+bundle, or delete the officer's bundle under `/etc/subspace-fleet/irc-certs/`
+and run the installer again to generate one; then bind the new fingerprint
+and remove the old one with `NickServ CERT DEL`.
+
+**Keep passwords.** For a server that cannot do SASL EXTERNAL, set
+`"auth": "password"` under `irc` and supply each officer's password in
+`ircPasswords`. A remote fleet installed before certificates became the
+default has those passwords: the installer refuses it, a dry run included,
+until you either set `"auth": "password"`, or move to certificates. The
+installed fleet keeps signing in with its passwords until the upgrade, so
+to move without a gap, work on your copies of the inputs in this order:
+
+1. In your secrets file, remove the rear admiral's and the captains'
+   entries from `ircPasswords` (keep any for allowlisted humans in local
+   mode). In `fleet.json`, leave `irc.auth` out or set it to
+   `"certificate"`.
+2. Generate each officer's bundle yourself and put it in your secrets
+   directory as `<officer-id>/irc-client.pem`, mode `0600`, for example
+
+   ```sh
+   umask 077
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+     -days 3650 -sha256 -subj "/CN=example-orion" -keyout key.pem -out irc-client.pem
+   cat key.pem >> irc-client.pem && rm key.pem
+   ```
+
+3. Run the installer with `--dry-run` and those inputs, such as
+   `sudo ./install.sh upgrade --config ~/fleet.json --secrets-dir ~/fleet.secrets --dry-run`.
+   It prints a `NickServ CERT ADD` line with each supplied bundle's
+   fingerprint, marked `(supplied)`.
+4. Bind those fingerprints on the IRC server.
+5. Upgrade with the same inputs, without `--dry-run`.
+
+Without step 2 the dry run cannot print fingerprints, because the VM
+generates the certificates during the upgrade: the install summary prints
+them, and the officers stay off IRC until you bind them.
+
+**The Ergo the installer manages keeps passwords for now**, in local mode
+and on `subspace-setup`'s shared server alike: `subspace-setup` writes
+`"auth": "password"` for a shared server. Three things are missing:
+
+- Fleet members reach local Ergo over plain loopback IRC, and Stargate
+  presents a client certificate only over TLS. The gateways would need the
+  local TLS listener and a CA file for it, but Ergo generates that
+  certificate in its own volume when it starts, so the installer would have
+  to generate or pin it itself.
+- The image seeds every account with a password (`IRC_ACCOUNTS_FILE`).
+  Officers would instead need certificate-only accounts, registered with
+  `NickServ SAREGISTER <account>` and no passphrase, and their fingerprints
+  bound with `NickServ CERT ADD <account> <fingerprint>` as the operator at
+  seed time. `seed-channels.py` already signs in as the operator, so it could
+  do this from a fingerprint file the installer mounts, without changing the
+  entrypoint.
+- For a shared server, each fleet's bundle would carry its officers'
+  fingerprints instead of passwords, and `subspace-setup irc-server add`
+  would seed them the same way.
+
 ## Subspace API registration
 
 With `api` set, `subspace-fleetctl register`, which the installer runs after
@@ -475,6 +709,188 @@ What is not verified yet: the OpenCode release the fleet pins has not been
 checked for the `mcp.servers.<name>.headers` field, and Stargate's curated
 crew permissions allow only listed MCP prefixes, so crew may not be able to
 call `subspace_*` tools until Stargate allows them.
+
+## An existing PostgreSQL
+
+`subspace-setup` normally runs the Subspace API on the fleet VM with a
+PostgreSQL container of its own. To keep the tracker on a PostgreSQL server
+that already exists, such as a managed one, put its URL in a file only root
+can read and give setup the file:
+
+```sh
+sudo install -m 600 /dev/null /root/fleet/database-url
+sudoedit /root/fleet/database-url
+# postgresql://subspace:password@db.example.com:5432/subspace?sslmode=verify-full
+sudo subspace-setup --database-url-file /root/fleet/database-url --dry-run
+sudo subspace-setup --database-url-file /root/fleet/database-url --migrate
+```
+
+From your machine, `./install.sh --remote USER@HOST --database-url-file FILE`
+(or `install.ps1` with the same options) takes a local file that is private to
+you (`chmod 600`), copies it over SSH to `/root/fleet/database-url` as root's
+and passes it on. `--database-ca-file FILE` and `--migrate` work the same way.
+A `--dry-run` changes nothing on the VM: the host installers copy the files
+to a scratch directory they remove afterwards, and `subspace-setup
+--dry-run` works on a private copy of `/root/fleet`, so the saved answers,
+the database URL file and every other input stay as the last real run left
+them.
+
+- **No database on the VM.** The Compose project's `postgres` service moves
+  to a profile nothing starts, so there is no PostgreSQL container, no
+  database volume and no lockdown rule for port 5432. The API and its agent
+  listener are published on loopback as before (`127.0.0.1:3000`, and
+  `127.0.0.1:3001` with the lockdown rule that admits only root, the operator
+  and the officers; see [The API's agent listener](#the-apis-agent-listener)).
+- **The URL stays private.** The file must be a regular file owned by root
+  with mode `0600`, holding one `postgresql://` URL on one line that names the
+  server's host and the database; percent-encode special characters in the
+  user name and password (a single quote is refused). Setup reads it on every
+  run and writes it only to the root-only `/root/fleet/api.env`, single-quoted,
+  from which Compose sets the API container's `DATABASE_URL`. It never appears
+  in a command line, the Compose files under `/opt/subspace/api`,
+  `answers.json`, the summary or setup's output: `--dry-run` and every error
+  name the file, not what it holds. As with any container's environment, root
+  and members of the `docker` group can read it with `docker inspect`.
+- **IRC history.** Local Ergo keeps its history in its own SQLite file on the
+  VM. Setup creates no `ergo` role or database on the existing server.
+- **No demo data.** `--demo` and `subspace-setup demo` are refused: demo data
+  never goes into a database the installer did not create.
+- `--database-url-file` runs the API on this VM, so it cannot be combined with
+  `--no-api` or, on the host, `--api-target`. On a fleet set up with
+  `--no-api`, it turns the API back on.
+
+### Migrations
+
+The API's image migrates its database every time it starts. Against an
+existing PostgreSQL the API container starts without migrating
+(`bun src/main.ts`), and setup takes migrations as a separate step on every
+run, in one-off API containers that publish no port:
+
+1. `bun scripts/migrate.ts --check` reads Drizzle's migration history,
+   `drizzle.__drizzle_migrations`, and changes nothing.
+2. If the database lacks any of the API's migrations, an empty database
+   included, setup stops before the API starts, unless this run has
+   `--migrate`. Then it applies them in one transaction, under the API's
+   migration lock, and starts the API only if they succeed. A failed
+   migration is rolled back. After the transaction commits, the API's
+   migration step also gives every person without a username one, in short
+   transactions of their own; it fills in only missing usernames, and a rerun
+   finishes an interrupted one.
+
+`--migrate` applies to that run only. An upgrade whose API brings new
+migrations stops at the check until you back the database up and run setup
+again with `--migrate`. Before either step, setup has the fleet installer
+check the fleet's configuration, credentials and pinned sessions, as a dry
+run does, so a run the installer would refuse, such as one missing a Slack
+token, stops before it changes the API or migrates anything.
+
+**Privileges.** The role in the URL needs, to migrate: `CREATE` on the
+database, because Drizzle creates its own `drizzle` schema for the history
+table; `CREATE` on the `public` schema, which PostgreSQL 15 and later no
+longer grant to everyone; and ownership of the API's tables, to alter them.
+The database's owner has all three. To run without migrating it needs
+`CONNECT`, `USAGE` on the `public` and `drizzle` schemas, `SELECT`, `INSERT`,
+`UPDATE` and `DELETE` on the API's tables, `USAGE` and `SELECT` on their
+sequences, and `SELECT` on `drizzle.__drizzle_migrations`. To keep the
+running role that narrow, put the owner's URL in the file for a `--migrate`
+run, then the narrow role's URL for the others, and have the owner grant the
+narrow role access to new tables with `ALTER DEFAULT PRIVILEGES`.
+
+### TLS and reaching the server
+
+Setup passes the URL through unchanged. The API's PostgreSQL driver
+(`@effect/sql-pg`) reads its `sslmode`:
+
+| `sslmode` | Connection |
+| --- | --- |
+| `verify-full`, `verify-ca`, `require` | TLS, checking the certificate chain and the host name for all three (stricter than libpq's `require`). |
+| `prefer`, `allow` | TLS, checked, when the server offers it, else unencrypted. |
+| `disable`, or none | Unencrypted. |
+
+Setup warns unless the URL asks for TLS. The driver ignores `sslrootcert`,
+`sslcert` and `sslkey`, so client certificates are not supported. When the
+server's certificate comes from a CA the VM does not trust, pass
+`--database-ca-file /absolute/path/ca.pem`: setup copies it to
+`/opt/subspace/database-ca.pem` (mode `0644`: a CA certificate is public),
+mounts it read-only into the API container at
+`/etc/subspace/database-ca.pem` and adds it to the CAs the API trusts with
+`NODE_EXTRA_CA_CERTS`. A changed certificate recreates the API container;
+`--database-ca-file ''` removes it.
+
+The VM must reach the server: allow the VM's address in the server's
+firewall, and its outbound route to the server's port. The lockdown does not
+limit outbound connections, from the API or from anyone else on the VM.
+
+### An existing organisation
+
+Setup still acts through the API's development sign-in, which reaches only
+development organisations (`dev:<organisation>`), never WorkOS or Entra ones.
+In an existing database it signs in only as someone already there: it mints
+tokens with `DEV_TOKEN_EXISTING_ONLY=true`, so `auth:dev` refuses an
+`--organisation` or `--admin-email` that is not already in the database
+instead of creating it, and setup then stops unless the admin is an
+administrator of that organisation, before it writes anything. The one
+exception is a database with no organisation at all, a new tracker: the first
+sign-in creates the organisation, the admin as its administrator, its
+default `local` fleet and its `Local workspace` initiative, as on the API's
+own PostgreSQL.
+
+As that administrator, setup then creates or updates, as
+[Subspace API registration](#subspace-api-registration) describes:
+
+- **the fleet** with this fleet's slug, its IRC endpoint, standard channels,
+  `vmHost` and Fleet API address. A fleet the organisation already has under
+  that slug is taken over and brought in step, so give a new fleet a slug of
+  its own;
+- **one ship per captain**, and **an agent record** for the rear admiral and
+  for each captain. A captain dropped from the roster has its record
+  deactivated. The rear admiral's name and every IRC nick must be unused in
+  the organisation; registration stops otherwise, possibly after creating
+  the fleet's record, and a run with a new name completes it;
+- **the fleet's initiative**, found by the ID setup saved or by the fleet's
+  name among initiatives that belong to no fleet or to this one, else created
+  with the admin as owner and member, and assigned to the fleet.
+
+It leaves everything else alone: it creates no organisation or person and
+changes no one's role, and it does not touch other fleets, ships, agents,
+initiatives, issues or any other record. With agent dispatch on, the rear
+admiral's token is minted for its existing agent record. Only a `--migrate`
+run changes more: the schema, and the usernames of people who had none.
+
+The API on the VM keeps development sign-in on, on port 3000, which only root
+and the operator can reach. Its sign-in route can still create development
+organisations and people in the database for anyone who reaches it. If the
+database's people sign in with WorkOS or Entra, configure that in
+`/root/fleet/api.env` and set `ENABLE_DEV_AUTH=false`; setup then leaves the
+registration to you, as it does on its own PostgreSQL.
+
+### Upgrade, switching and uninstall
+
+- **Upgrades keep the setting.** Setup saves the file's path in
+  `answers.json` and reads the file on every run, so later runs of setup or
+  of the host installer need no option. To change the URL, edit the file (or
+  pass the host option again) and run setup; Compose recreates the API with
+  the new value.
+- **No switching.** Setup refuses `--database-url-file` on a VM whose API has
+  already run with its own PostgreSQL: the tracker stays in that container's
+  `subspace-api_subspace_postgres` volume, and setup does not move it. Restore
+  a dump of it on the server and set up a fresh VM. Nor is there a way back to
+  a PostgreSQL on the VM: `--database-url-file ''` is refused, and a run in
+  the API's own mode never keeps a `DATABASE_URL` in `api.env`.
+- **Nothing drops the database.** `--no-api` stops the API's containers and
+  keeps the setting for when the API returns. The fleet installer's
+  `uninstall` never runs Compose or connects to a database, and neither
+  setup nor the fleet installer drops, truncates or deletes anything in an
+  existing database. Deleting the VM leaves the database as it is; revoke the
+  VM's role or change its password when you retire it.
+
+What is verified: the start-up, the migration check and `--migrate`, a
+failed migration's rollback, a runtime role with only the privileges above,
+sign-in and registration in an empty and in an existing organisation, the
+refusals for an unknown organisation or person, and TLS with
+`sslmode=verify-full` and a private CA (refused without `--database-ca-file`),
+all in Docker against a throwaway PostgreSQL 17. It has not run on a fleet VM
+or against a managed PostgreSQL service.
 
 ## Agent dispatch
 
@@ -661,8 +1077,10 @@ agent.
 
 ## Stakeholder messaging
 
-Only the rear admiral connects to Slack or Teams. Either transport can
-be configured independently. Captains coordinate over IRC, and crew only
+Stakeholder messaging connects only the rear admiral to Slack or Teams, with
+sessions of their own; to give an officer its own Slack bot on the session
+its IRC uses, see [Slack for officers](#slack-for-officers). Either transport
+can be configured independently. Captains coordinate over IRC, and crew only
 through their captain.
 Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
 
@@ -678,6 +1096,104 @@ Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
   `/api/messages` callback to `/var/lib/subspace-fleet/teams/bot.sock`.
   Set `socketGroup` to an existing Linux group for the trusted reverse
   proxy. Follow [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/teams.md).
+
+## Slack for officers
+
+The rear admiral and any OpenCode captain can have a Slack bot of their own,
+so people reach that officer in Slack as well as on IRC, in the same session.
+
+**Create one Slack app per officer**, named after it. Follow steps 1 to 3 of
+the [Slack guide](../docs/slack.md) for each app, with the officer's member
+ID in place of the rear admiral's, or
+[Stargate's Slack setup](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/setup.md)
+and its [scope list](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/slack-scopes.md).
+Stargate uses Socket Mode, so the VM needs no inbound port and Slack needs no
+signing secret. You need the app's **App ID** (`A…`), an app-level token
+(`xapp-…`) with `connections:write` and, once the app is installed, its bot
+token (`xoxb-…`). Invite each bot to the channels where it should answer.
+
+**Configure** the officer's entry in `fleet.json` (fictional IDs shown):
+
+```json
+{
+  "id": "orion",
+  "name": "Orion",
+  "account": "example-orion",
+  "slack": {
+    "appId": "A0EXAMPLE01",
+    "users": ["U0EXAMPLE01"],
+    "channels": ["C0EXAMPLE01"]
+  }
+}
+```
+
+- `appId` is the officer's own app. Every bot needs a distinct app, distinct
+  from `stakeholders.slack` too.
+- `users` and `channels` say who may address the bot and where: explicit
+  member IDs (`U…` or `W…`) and conversation IDs (`C…`, `G…`, or `D…` for a
+  direct message). Both are required and must not be empty, and `*` is
+  refused, so nobody can address a bot unless you list them.
+- `mentionOnly` defaults to `true`: the bot starts a turn only when it is
+  mentioned. Set `false` to answer every message from a listed user in a
+  listed channel.
+
+**Secrets.** Put the tokens in the officer's secrets directory, never in
+`fleet.json`: `<secrets-dir>/<member-id>/slack-app-token` (`xapp-…`) and
+`slack-bot-token` (`xoxb-…`), owner-only files (mode `0600`) in a directory
+without group or other write access, as for the rear admiral's stakeholder
+bot. The installer keeps root-only copies in
+`/etc/subspace-fleet/extra-secrets.json` and gives them to the gateway only
+through its private runtime settings, as `SLACK_APP_TOKEN_<ID>` and
+`SLACK_BOT_TOKEN_<ID>`, where `<ID>` is the member ID in capitals with
+hyphens as underscores, such as `SLACK_BOT_TOKEN_ORION`. Stargate's
+configuration names only the variables. Two officers cannot share a token.
+The installed copies record their app: after changing an officer's `appId`,
+supply both of the new app's tokens, or the run stops.
+
+**One session on Slack and IRC.** The installer adds the bot to the gateway
+that serves the officer's IRC registration, with the same backend: engine,
+agent, directory, permissions and pinned root (`backend.sessionID`). The
+pinned Stargate, v0.43.0, lets one Slack bot and one IRC registration pin the
+same OpenCode root
+([Stargate's notes](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/irc.md#one-captain-on-slack-and-irc)),
+so a request on either reaches that session. Each transport keeps its own
+queue and answers only the requests it received: a Slack request is answered
+in Slack, an IRC request on IRC. A turn that arrives while the other
+transport's turn runs waits for it, within its time limit, and crew results
+return to the transport that asked. The officer's `AGENTS.md` gains a Slack
+section explaining the source line (`s=slack;c=…;t=…;m=…;u=…`) that Stargate
+puts at the start of each pinned Slack request.
+
+- **A captain with crew** has its pinned root already
+  ([Captain sessions](#captain-sessions)). Its bot, like its IRC
+  registration, joins the gateway once the pin is rendered.
+- **The rear admiral** gets a pinned root when it has its own bot, as it does
+  for [agent dispatch](#agent-dispatch), in its reference checkout of the
+  first repository. Its first repository is then fixed, as for a captain. In
+  a fleet without repositories the root is pinned in the rear admiral's
+  workspace and stays there when repositories are added, because the
+  installer never moves a pinned session. Remove its bot, with dispatch off,
+  and its IRC goes back to a session per conversation.
+- **A captain without crew** has no pinned root, and the installer does not
+  pin one for Slack, because a pin fixes its crew roster. Its bot answers,
+  but Slack threads and IRC conversations keep separate sessions. Give it
+  crew to share one.
+- **`claude-sdk` officers** cannot have a bot: Stargate's Claude backend has
+  no root to share, and their gateway runs as the officer, whose model could
+  read the tokens.
+- **The rear admiral's own bot replaces `stakeholders.slack`**, which keeps
+  sessions of its own and reads the same token files; set one or the other.
+  [Quota notices](#crew-quota) post through whichever it has. Teams keeps
+  its own sessions.
+
+`--dry-run` validates the settings and both tokens, lists each bot with its
+app, allowlists, session and variable names, and refuses an officer whose
+settings or tokens are incomplete. Upgrades keep the settings, and
+`subspace-setup` keeps them as it keeps other fields added to a member by
+hand. Without a secrets directory, an upgrade keeps the installed tokens.
+Remove `slack` from an officer to remove its bot and its variables from the
+gateway. Its tokens stay in the root-only copy until `--prune-secrets`;
+revoke them in Slack, or delete the app.
 
 ## Medical ship
 
@@ -782,12 +1298,13 @@ their crew's assignments through `stargate_crew`.
 | Field | Meaning and default |
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
+| Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
-| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out. See [crew and repositories](#crew-and-repositories). |
-| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. |
+| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
+| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<slug>-<id>` for a captain. Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
@@ -798,21 +1315,89 @@ their crew's assignments through `stargate_crew`.
 | `toolchains` | Mise versions. Defaults to Node 24 plus the base OS tooling. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
-| `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. |
+| `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. The rear admiral posts them through `stakeholders.slack` or its own Slack bot, so one of them is required. |
 | `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) `initiatives` (array of UUIDs) and `agentUrl` (the API's agent listener on this VM's loopback, such as `http://127.0.0.1:3001`; see [The API's agent listener](#the-apis-agent-listener)). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
 | `agentDispatch` | Optional [agent dispatch](#agent-dispatch): `enabled` (default `false`), `pollIntervalSeconds` (120), `answerTimeoutSeconds` (300) and `retryLadderSeconds` (`[3600, 10800, 21600, 43200]`). On, it needs `api`, a captain with crew, an OpenCode rear admiral and `rearAdmiralApiToken`. |
 
 The mode-0600 secrets JSON has `proxyKey` (a random proxy client key),
-`ircPasswords` (map by SASL account: the rear admiral, each captain and, in
-local mode, any allowlisted human; crew have none), `ircOperatorPassword`
+`ircPasswords` (map by SASL account: with `irc.auth` `password`, the rear
+admiral and each captain; in local mode, also any allowlisted human; crew have
+none; officers have none with [certificates](#irc-sign-in)), `ircOperatorPassword`
 for local IRC, `ircHistoryPassword` for PostgreSQL IRC history, and optional
 `apiToken` (bearer JWT) and `rearAdmiralApiToken` (the rear admiral agent's
 bearer JWT, only with [agent dispatch](#agent-dispatch) on).
 A named `fleet.json` looks for `fleet.secrets.json` beside it unless
 `--secrets` is supplied. Installed copies live in `/etc/subspace-fleet/`. The
-gateway receives IRC passwords and its OpenCode authentication headers, plus
+gateway receives IRC passwords or certificate bundles and its OpenCode authentication headers, plus
 any explicitly enabled integration credentials. Each OpenCode engine has an
 independent loopback port and server password.
+
+### Secrets directory
+
+Files that do not belong in either JSON file go in a secrets directory:
+`fleet.secrets/` beside `fleet.json`, or `--secrets-dir DIR`. Use owner-only
+regular files (mode `0600`) in directories without group or other write
+access. Dispatch carries the same layout in its private bundle, and
+`subspace-setup` uses `/root/fleet/fleet.secrets/`, beside its
+`/root/fleet/fleet.json`. Every file is optional unless the setting in its
+row is on.
+
+| Path | Needed for | Installed as |
+| --- | --- | --- |
+| `<member-id>/github-app.pem` | A member's `githubApp` ([GitHub Apps](#github-apps-per-fleet-member)) | The member's `~/.config/subspace/github-app.pem`, and a root-only copy under `/etc/subspace-fleet/github-apps/` |
+| `<member-id>/kubeconfig`, `<member-id>/database-dsn`, `<member-id>/cloud/<name>` | [Read-only cloud access](#read-only-cloud-access) | The member's `~/.config/subspace/cloud/` |
+| `<member-id>/slack-app-token`, `<member-id>/slack-bot-token` | An officer's own [Slack bot](#slack-for-officers), or the rear admiral's `stakeholders.slack` | Root-only `/etc/subspace-fleet/extra-secrets.json`; the gateway gets them as `SLACK_APP_TOKEN_<ID>` and `SLACK_BOT_TOKEN_<ID>` (`SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` for `stakeholders.slack`) |
+| `<member-id>/irc-client.pem` | An officer's existing IRC certificate and key, with `irc.auth` `certificate` ([IRC sign-in](#irc-sign-in)); without it the VM generates one | `/etc/subspace-fleet/irc-certs/<member-id>.pem`, owned by the gateway user that serves the officer |
+| `medical/sentry-auth-token`, `medical/irc-password` | The [medical ship](#medical-ship) | Root-only files that systemd gives its service |
+| `proxy-management-key` | [Crew quota](#crew-quota) notices | Root-only `/etc/subspace-fleet/extra-secrets.json`, and the gateway's quota watcher |
+
+Upgrades without a secrets directory keep the installed copies, and
+`--prune-secrets` with a secrets directory removes the installed cloud
+files, App keys and Slack tokens that it and the configuration no longer
+name. An installed IRC certificate is kept with or without the directory.
+
+`subspace-setup` keeps two more inputs of its own, outside the secrets
+directory, for an [existing PostgreSQL](#an-existing-postgresql):
+`/root/fleet/database-url`, root's alone with mode `0600`, and the optional
+`/root/fleet/database-ca.pem`. The host installers copy them there from
+`--database-url-file` and `--database-ca-file`.
+
+### Optional settings
+
+This fragment of a `fleet.json` adds this page's optional settings to the
+example: repository notes, a captain's `sessionRoot` and Slack bots for the
+rear admiral and the captain. Leave out any of them. Each bot needs its two
+token files in the [secrets directory](#secrets-directory), here
+`fleet.secrets/atlas/` and `fleet.secrets/orion/`. The captain's
+`sessionRoot` names the default, which a captain already pinned in its first
+repository cannot take. With an IRC server that cannot take
+certificates, set `"auth": "password"` and add `ircPasswords` to the
+secrets file. An [existing PostgreSQL](#an-existing-postgresql) for the API
+is a `subspace-setup` option, not part of this file.
+
+```json
+{
+  "rearAdmiral": {
+    "id": "atlas", "name": "Atlas", "account": "example-atlas",
+    "slack": { "appId": "A0EXAMPLE01", "users": ["U0EXAMPLE01"], "channels": ["C0EXAMPLE01"] }
+  },
+  "captains": [
+    {
+      "id": "orion", "name": "Orion", "account": "example-orion",
+      "sessionRoot": "workspace",
+      "slack": { "appId": "A0EXAMPLE02", "users": ["U0EXAMPLE01"], "channels": ["C0EXAMPLE02"], "mentionOnly": true }
+    }
+  ],
+  "repositories": [
+    {
+      "id": "project", "url": "https://github.com/example/project.git",
+      "description": "The example service.",
+      "tracker": "Example issues at https://tracker.example.com/project"
+    }
+  ],
+  "irc": { "mode": "remote", "host": "irc.example.com", "allowedAccounts": ["operator"], "auth": "certificate" }
+}
+```
 
 ## Operate a fleet
 
@@ -912,6 +1497,40 @@ OAuth sessions, and the Docker volume. Back up
 `/etc/subspace-fleet/` and `/var/lib/subspace-fleet/` and, for local IRC,
 the Ergo volume. Keep backups private. The installer leaves OS packages in
 place.
+
+### Upgrade notes
+
+Run the upgrade with `--dry-run` first. The installer checks every
+setting together before it changes the fleet, in the dry run and the real
+run alike, so when an upgrade introduces several new settings at once and
+one is refused, none of them is applied.
+
+- **IRC certificates are the default for a remote server (breaking).** A
+  remote fleet whose secrets file has IRC passwords for its rear admiral or
+  captains, and whose `fleet.json` does not set `irc.auth`, is refused until
+  you either add `"auth": "password"` under `irc` or move to certificates
+  ([IRC sign-in](#irc-sign-in)). To move without a gap, remove the
+  officers' `ircPasswords` entries from your copy of the secrets file and
+  supply bundles you generated yourself, dry-run to print their
+  fingerprints, bind them on the server, then upgrade; "Keep passwords"
+  under IRC sign-in has the steps. Local IRC keeps
+  passwords. `subspace-setup` writes `"auth": "password"` for a shared
+  server on its next run, so upgrade those fleets through setup (or the
+  host installer), not with the fleet installer and the installed inputs
+  alone.
+- **Captains start in their workspace.** Only new captains: a pinned root
+  never moves, and an installed captain keeps its root until its
+  `sessionRoot` moves it ([Captain sessions](#captain-sessions)). Asking a
+  pinned captain to move is refused before anything else in the run
+  applies.
+- **Slack bots for officers.** A rear admiral's new bot pins its root on
+  that run, which fixes its first repository; a captain's bot joins
+  whatever root its IRC registration has, so a captain kept in its first
+  repository is served there on both transports. Supply both tokens for
+  every bot first: a missing one stops the run.
+- **An existing PostgreSQL** is a `subspace-setup` setting, kept in its
+  answers; it changes nothing in the fleet installer's inputs and combines
+  with any of the above.
 
 ## Stargate pin
 

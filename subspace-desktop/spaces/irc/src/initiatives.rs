@@ -17,7 +17,7 @@ mod channels;
 mod endpoint;
 mod picker;
 pub(crate) use channels::{channel_names, focus_channel, initiative_channels};
-pub(crate) use endpoint::Endpoint;
+pub(crate) use endpoint::{Endpoint, comparable_host};
 pub(crate) use picker::{Picker, button, command, dismiss_stale_picker, hint};
 
 pub(crate) struct InitiativeIrc {
@@ -191,6 +191,8 @@ impl Hub {
         self.initiatives._subscription =
             Some(cx.observe(&self.initiatives.catalog, |hub, _, cx| {
                 hub.initiatives.forget_rosters();
+                // The account's networks follow its fleets.
+                hub.reconcile(cx);
                 // Any change is applied, so a selection that went with its
                 // scope also takes its autojoin with it. Without initiative
                 // channels (a NETT organisation that does not serve them),

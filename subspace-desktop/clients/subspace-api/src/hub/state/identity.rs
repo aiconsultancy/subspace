@@ -72,6 +72,7 @@ mod tests {
             user_id: "first".into(),
             kind: "human".into(),
             display_name: "Fixture".into(),
+            username: None,
         });
         state.install_list(IssueGroups {
             group_by: "stateType".into(),
@@ -92,6 +93,7 @@ mod tests {
             user_id: "first".into(),
             kind: "human".into(),
             display_name: "Fixture".into(),
+            username: None,
         });
         let query = ActivityQuery::default().project(Some("SUB"));
         state.snapshot.activity = Some(ActivitySnapshot::new(query.clone()));

@@ -85,8 +85,11 @@ fn write_one(
     Ok(())
 }
 
+/// The documents related to `reference`, without those a board's rule in
+/// `rules` hides, which never count towards the limits.
 pub(crate) fn related(
     stores: &std::collections::BTreeMap<String, database::Store>,
+    rules: &crate::hidden::Rules,
     reference: &ReferenceIdentity,
     query: &RelatedQuery,
 ) -> Result<Vec<RelatedItem>, String> {
@@ -99,15 +102,16 @@ pub(crate) fn related(
         .iter()
         .filter(|(board, _)| query.boards.is_empty() || query.boards.contains(board))
     {
-        items.extend(board_related(board, store, reference, query)?);
+        let shown = |item: &RelatedItem| !crate::hidden::hides(rules, board, &item.hit.document);
+        items.extend(board_related(store, &shown, reference, query)?);
     }
     items.truncate(query.limit);
     Ok(items)
 }
 
 fn board_related(
-    board: &str,
     store: &database::Store,
+    shown: &dyn Fn(&RelatedItem) -> bool,
     reference: &ReferenceIdentity,
     query: &RelatedQuery,
 ) -> Result<Vec<RelatedItem>, String> {
@@ -145,11 +149,12 @@ fn board_related(
             if query.relation_types.is_empty()
                 || query.relation_types.contains(&row.relation_type) =>
         {
-            Some(decode(board, &scope, row))
+            Some(decode(&scope, row))
         }
         Ok(_) => None,
         Err(error) => Some(Err(storage_error(error))),
     })
+    .filter(|item| item.as_ref().map_or(true, shown))
     .take(query.limit)
     .collect()
 }
@@ -163,7 +168,7 @@ struct RelatedRow {
     confidence: Option<f32>,
 }
 
-fn decode(_board: &str, scope: &Scope, row: RelatedRow) -> Result<RelatedItem, String> {
+fn decode(scope: &Scope, row: RelatedRow) -> Result<RelatedItem, String> {
     let document = serde_json::from_str(&row.document).map_err(storage_error)?;
     let matched = if row.exact {
         ReferenceMatch::Exact

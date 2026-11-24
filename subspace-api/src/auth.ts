@@ -11,7 +11,10 @@ import {
 } from "jose";
 import { type Config, type Provider } from "./config";
 
-const externalClockTolerance = 5;
+/** Seconds of clock difference allowed on a token's times. */
+export const externalClockTolerance = 5;
+/** The issuer of agent tokens, which agents sign with their own keys (see `agent-keys.ts`). */
+export const agentTokenIssuer = "subspace-agent";
 const devIssuer = "subspace-dev";
 const devAudience = "subspace-api";
 export const devTokenLifetime = 28_800;
@@ -136,6 +139,20 @@ function entraGuest(payload: JWTPayload, tenantId: string) {
   return idp !== undefined && !(typeof idp === "string" && issuers.includes(idp.toLowerCase()));
 }
 
+/**
+ * A token's issuer before any verification, or undefined. It only selects a verifier, which then
+ * checks the signature and every claim; it never identifies anyone.
+ */
+export function unverifiedIssuer(token: string) {
+  if (!token || token.length > 16_384) return undefined;
+  try {
+    const issuer = decodeJwt(token).iss;
+    return typeof issuer === "string" ? issuer : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function jwtVerifiers(
   options: Config,
   devKey: Uint8Array | null,
@@ -242,8 +259,9 @@ export function jwtVerifiers(
     try {
       // The unverified issuer only selects a configured verifier. Signature,
       // expiration and provider claims are checked before identity is returned.
+      // Agent tokens are never a provider's: their verifier needs the agent's key.
       const issuer = decodeJwt(token).iss;
-      const verify = issuer ? verifiers.get(issuer) : undefined;
+      const verify = issuer && issuer !== agentTokenIssuer ? verifiers.get(issuer) : undefined;
       return verify ? await verify(token) : null;
     } catch {
       return null;

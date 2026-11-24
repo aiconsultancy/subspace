@@ -127,6 +127,7 @@ fn registered_client(id: &str, nick: &str, server: &(String, u16)) -> Client {
         password: PASSWORD.into(),
         password_file: None,
         external: false,
+        credential: None,
     });
     client.config = sasl.clone();
     let from = client.mark();

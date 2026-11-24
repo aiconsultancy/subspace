@@ -102,3 +102,10 @@ impl Rehearsal {
         }
     }
 }
+
+/// What `source` issues, fetched as the runtime does at a connect, on the
+/// caller's thread.
+// qual:api - used by the IRC board's tests through the test-support feature.
+pub fn fetch(source: &crate::model::CredentialSource) -> Result<crate::model::IssuedLogin, String> {
+    source.fetch()
+}

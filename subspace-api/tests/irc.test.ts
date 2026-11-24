@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OpenApi } from "effect/http-api";
 import { Redacted } from "effect";
+import { parseCertificate } from "../src/agent-keys";
 import { documentedApi } from "../src/api";
 import { config, ircServers } from "../src/config";
 import {
@@ -14,6 +15,7 @@ import {
   sameSecret,
 } from "../src/irc";
 import { mcpTools } from "../src/mcp-tools";
+import { agentKey } from "./certificates";
 import { entraTenant, isolatedDatabase, startApi, testDatabase } from "./entra-stack";
 
 const secret = Redacted.make("an example credential secret of at least 32 bytes");
@@ -437,10 +439,109 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
     );
   });
 
+  test("a certfp signs in the agent whose active irc credential it is, as its nick", async () => {
+    const owner = await person({ given_name: "Keeper" });
+    const [{ organisation_id: org }] = (
+      await database.client.query("SELECT organisation_id FROM users WHERE id = $1", [owner.userId])
+    ).rows;
+    const agent = async (name: string, nick: string | null) =>
+      (
+        await database.client.query(
+          `INSERT INTO users (organisation_id, subject, display_name, agent_rank, agent_fleet, agent_model, registered_by_id, agent_irc_nick)
+           VALUES ($1, $2, $3, 'captain', 'alpha', 'example-model', $4, $5) RETURNING id`,
+          [org, crypto.randomUUID(), name, owner.userId, nick],
+        )
+      ).rows[0].id as string;
+    const credential = async (userId: string, scopes: string, organisation = org) => {
+      const key = agentKey(Math.random() < 0.5 ? "ed25519" : "p256");
+      const parsed = await parseCertificate(key.certificate);
+      if (!parsed.ok) throw new Error("The test certificate did not parse.");
+      const [{ id }] = (
+        await database.client.query(
+          `INSERT INTO agent_credentials (organisation_id, user_id, fingerprint, algorithm, certificate, public_key, scopes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [
+            organisation,
+            userId,
+            key.fingerprint,
+            parsed.certificate.algorithm,
+            parsed.certificate.pem,
+            parsed.certificate.publicKey,
+            scopes,
+          ],
+        )
+      ).rows;
+      return { id: id as string, certfp: key.fingerprint };
+    };
+    const lyra = await agent("Lyra", "Lyra-7");
+    const good = await credential(lyra, "{api,irc}");
+    // Ergo reports the fingerprint in lower-case hex; any case is the same fingerprint.
+    expect(await hook({ certfp: good.certfp })).toEqual(yes("Lyra-7"));
+    expect(await hook({ certfp: good.certfp.toUpperCase(), accountName: "" })).toEqual(
+      yes("Lyra-7"),
+    );
+    expect(await hook({ certfp: good.certfp, passphrase: "" })).toEqual(yes("Lyra-7"));
+    const used = await database.client.query(
+      "SELECT last_used_at FROM agent_credentials WHERE id = $1",
+      [good.id],
+    );
+    expect(used.rows[0].last_used_at).toBeInstanceOf(Date);
+    // A passphrase decides when there is one, as before.
+    expect(await hook({ certfp: good.certfp, passphrase: "a local password" })).toEqual(no);
+
+    // A credential without the irc scope, a revoked one, an unknown or malformed fingerprint.
+    const apiOnly = await credential(lyra, "{api}");
+    expect(await hook({ certfp: apiOnly.certfp })).toEqual(no);
+    const revoked = await credential(lyra, "{irc}");
+    expect(await hook({ certfp: revoked.certfp })).toEqual(yes("Lyra-7"));
+    await database.client.query("UPDATE agent_credentials SET revoked_at = now() WHERE id = $1", [
+      revoked.id,
+    ]);
+    expect(await hook({ certfp: revoked.certfp })).toEqual(no);
+    for (const certfp of [
+      "ab".repeat(32),
+      good.certfp.slice(1),
+      `${good.certfp}00`,
+      "zz".repeat(32),
+    ])
+      expect(await hook({ certfp })).toEqual(no);
+
+    // An agent without a nick, a deactivated agent, and another organisation's agent.
+    const vega = await agent("Vega-Nickless", null);
+    expect(await hook({ certfp: (await credential(vega, "{irc}")).certfp })).toEqual(no);
+    const deactivated = await credential(lyra, "{irc}");
+    await database.client.query("UPDATE users SET active = false WHERE id = $1", [lyra]);
+    expect(await hook({ certfp: deactivated.certfp })).toEqual(no);
+    expect(await hook({ certfp: good.certfp })).toEqual(no);
+    await database.client.query("UPDATE users SET active = true WHERE id = $1", [lyra]);
+    expect(await hook({ certfp: good.certfp })).toEqual(yes("Lyra-7"));
+    const [{ id: elsewhere }] = (
+      await database.client.query(
+        "INSERT INTO organisations (provider, external_id) VALUES ('dev', 'elsewhere-irc') RETURNING id",
+      )
+    ).rows;
+    const [{ id: stranger }] = (
+      await database.client.query(
+        "INSERT INTO users (organisation_id, subject, display_name, role) VALUES ($1, 'owner@example.com', 'Owner', 'admin') RETURNING id",
+        [elsewhere],
+      )
+    ).rows;
+    const [{ id: foreign }] = (
+      await database.client.query(
+        `INSERT INTO users (organisation_id, subject, display_name, agent_rank, agent_fleet, agent_model, registered_by_id, agent_irc_nick)
+         VALUES ($1, 'agent@example.com', 'Foreign', 'captain', 'alpha', 'example-model', $2, 'Foreign-1') RETURNING id`,
+        [elsewhere, stranger],
+      )
+    ).rows;
+    expect(await hook({ certfp: (await credential(foreign, "{irc}", elsewhere)).certfp })).toEqual(
+      no,
+    );
+  });
+
   test("anything but a good credential answers success false with 200", async () => {
     const kj = await person({ given_name: "Demelza", family_name: "Rowe" });
     const { body } = await credential(kj.token);
-    // A certificate alone is reserved for agent key credentials.
+    // A certificate alone signs in only an agent whose key credential it is.
     expect(await hook({ accountName: "demelza", certfp: "ab".repeat(32) })).toEqual(no);
     expect(
       await hook({ accountName: "demelza", certfp: "ab".repeat(32), passphrase: body.password }),

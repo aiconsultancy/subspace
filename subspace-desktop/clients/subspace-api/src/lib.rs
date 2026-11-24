@@ -8,6 +8,7 @@ mod dev_sign_in;
 mod fixture;
 pub mod hub;
 pub mod initiatives;
+mod irc_credential;
 pub mod issue_moves;
 pub mod issue_writes;
 mod list;
@@ -30,10 +31,11 @@ pub use backend::{
 };
 pub use dev_sign_in::{DevSignIn, DevUser};
 pub use fixture::fixture_from_env;
+pub use irc_credential::IrcCredential;
 pub use list::{ListQuery, ListTab};
 pub use native::{
     api_base, configure_api_origin, configure_nett_origin, configured_api_origin,
-    use_native_account, use_token_renewal,
+    signed_in_generation, use_native_account, use_token_renewal,
 };
 pub use query::{DecisionQuery, IssueQuery, MAX_DECISION_PAGE_SIZE, PageRequest};
 use serde::de::DeserializeOwned;

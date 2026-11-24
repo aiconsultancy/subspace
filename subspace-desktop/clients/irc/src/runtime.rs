@@ -101,7 +101,7 @@ fn route(networks: &mut BTreeMap<NetworkId, Handle>, command: Command, events: &
 /// Hands `command` to its network. A reaction that no network takes, as
 /// for a network not configured or stopping, is answered as not connected.
 fn forward(networks: &BTreeMap<NetworkId, Handle>, command: Command, events: &EventSink) {
-    let handle = network_of(&command).and_then(|network| networks.get(network));
+    let handle = command.network().and_then(|network| networks.get(network));
     let command = match command {
         Command::Connect(_) => NetCommand::Connect,
         command => NetCommand::Session(command),
@@ -112,31 +112,6 @@ fn forward(networks: &BTreeMap<NetworkId, Handle>, command: Command, events: &Ev
     };
     if let Some(NetCommand::Session(command)) = unsent {
         events.extend_updates(network::refuse_reaction(&command));
-    }
-}
-
-fn network_of(command: &Command) -> Option<&NetworkId> {
-    match command {
-        Command::Connect(network)
-        | Command::Disconnect { network, .. }
-        | Command::SetAutojoin { network, .. }
-        | Command::Join { network, .. }
-        | Command::Query { network, .. }
-        | Command::Anchors { network, .. }
-        | Command::ListChannels { network } => Some(network),
-        Command::Input { buffer, .. }
-        | Command::Say { buffer, .. }
-        | Command::SendAll { buffer, .. }
-        | Command::Part { buffer, .. }
-        | Command::Forget { buffer }
-        | Command::LoadHistory { buffer, .. }
-        | Command::LoadAround { buffer, .. }
-        | Command::MarkRead { buffer, .. }
-        | Command::Typing { buffer, .. }
-        | Command::Reply { buffer, .. }
-        | Command::React { buffer, .. }
-        | Command::Unreact { buffer, .. } => Some(&buffer.network),
-        Command::Configure(_) => None,
     }
 }
 

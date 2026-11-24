@@ -1,6 +1,7 @@
 //! Settings > Channels edits networks, highlight words and captain
 //! notifications in the board's own Save/Cancel draft.
 
+mod account_view;
 mod draft;
 mod form;
 mod ids;
@@ -36,6 +37,9 @@ pub(crate) struct IrcSettings {
     page: Page,
     /// The network whose removal waits for confirmation.
     removing: Option<u64>,
+    /// The networks the signed-in account brings, and a saved network's
+    /// switch to them.
+    account: account_view::Account,
     /// The saved-password field whose locked input was last clicked.
     hint: Option<ElementId>,
     enabled: bool,
@@ -84,7 +88,21 @@ impl IrcSettings {
             input.set_value(words, window, cx);
             input
         });
-        let subscription = cx.subscribe(&highlights, |_, _, _: &InputEvent, cx| cx.notify());
+        let mut subscriptions =
+            vec![cx.subscribe(&highlights, |_, _, _: &InputEvent, cx| cx.notify())];
+        let hub = crate::hub::entity(cx);
+        let account = hub
+            .as_ref()
+            .map(|hub| hub.read(cx).account_networks(cx))
+            .unwrap_or_default();
+        subscriptions.extend(hub.map(|hub| {
+            cx.observe(&hub, |editor, hub, cx| {
+                let hub = hub.read(cx);
+                let account = hub.account_networks(cx);
+                editor.account.saved(&hub.saved.networks);
+                editor.set_account(account, cx);
+            })
+        }));
         Self {
             next_key: networks.len() as u64,
             networks,
@@ -92,10 +110,22 @@ impl IrcSettings {
             captain_notifications: crate::config::captain_notifications(saved),
             page: Page::List,
             removing: None,
+            account: account_view::Account::new(account),
             hint: None,
             enabled,
             settings_file,
-            _subscriptions: vec![subscription],
+            _subscriptions: subscriptions,
+        }
+    }
+
+    /// Shows `account`'s networks, when they changed.
+    pub(crate) fn set_account(
+        &mut self,
+        account: crate::managed::AccountNetworks,
+        cx: &mut Context<Self>,
+    ) {
+        if self.account.set(account) {
+            cx.notify();
         }
     }
 
@@ -166,12 +196,22 @@ impl IrcSettings {
 
     pub(crate) fn ask_remove(&mut self, key: Option<u64>, cx: &mut Context<Self>) {
         self.removing = key;
+        self.account.switching = None;
+        cx.notify();
+    }
+
+    /// Asks to confirm that saved network `key` gives way to the account's
+    /// network on its server.
+    pub(crate) fn ask_switch(&mut self, key: Option<u64>, cx: &mut Context<Self>) {
+        self.account.switching = key;
+        self.removing = None;
         cx.notify();
     }
 
     pub(crate) fn remove(&mut self, key: u64, cx: &mut Context<Self>) {
         self.networks.retain(|network| network.key != key);
         self.removing = None;
+        self.account.switching = None;
         self.page = Page::List;
         cx.notify();
     }
@@ -218,7 +258,11 @@ impl IrcSettings {
     /// The problems of network `key`.
     pub(crate) fn problems(&self, key: u64, cx: &App) -> Vec<Problem> {
         self.network(key).map_or_else(Vec::new, |network| {
-            validate::problems(&network.text(cx), &network.secrets(cx))
+            let reserved = validate::reserved_id(network.saved_id.as_deref());
+            reserved
+                .into_iter()
+                .chain(validate::problems(&network.text(cx), &network.secrets(cx)))
+                .collect()
         })
     }
 
@@ -251,7 +295,7 @@ impl IrcSettings {
             .map(|(network, id)| {
                 let text = network.text(cx);
                 let secrets = network.secrets(cx);
-                if let Some(problem) = validate::problems(&text, &secrets).first() {
+                if let Some(problem) = self.problems(network.key, cx).first() {
                     return Err(format!("{}: {}", network.title(cx), problem.message));
                 }
                 let object = draft::to_json(&network.raw, &id, &text, &secrets);
@@ -288,6 +332,10 @@ impl BoardSettingsEditor for IrcSettings {
     }
 
     fn values(&self, cx: &App) -> Result<Map<String, Value>, String> {
+        let live = crate::hub::entity(cx).map(|hub| hub.read(cx).account_networks(cx));
+        if let Some(refused) = self.account.refused_switch(live.as_ref()) {
+            return Err(refused);
+        }
         let networks = self.network_values(cx)?;
         let highlights = draft::split_list(&self.highlights.read(cx).value());
         Ok(Map::from_iter([

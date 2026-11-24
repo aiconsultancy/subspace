@@ -2,7 +2,7 @@
 
 mod tls;
 
-use std::{io, time::Duration};
+use std::{io, net::IpAddr, time::Duration};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -47,10 +47,21 @@ impl ConnectError {
     }
 }
 
+/// The transport for `config`.
+#[cfg(test)]
 pub async fn connect(
     config: &NetworkConfig,
     timeouts: Timeouts,
 ) -> Result<BoxStream, ConnectError> {
+    connect_to(config, timeouts).await.map(|(stream, _)| stream)
+}
+
+/// The transport for `config` and the address it reached, after any TLS
+/// handshake has verified the server.
+pub async fn connect_to(
+    config: &NetworkConfig,
+    timeouts: Timeouts,
+) -> Result<(BoxStream, IpAddr), ConnectError> {
     let tcp = timeout(
         timeouts.tcp,
         TcpStream::connect((config.host.as_str(), config.port)),
@@ -61,8 +72,9 @@ pub async fn connect(
         secs: timeouts.tcp.as_secs(),
     })??;
     tcp.set_nodelay(true)?;
+    let peer = tcp.peer_addr()?.ip().to_canonical();
     if !config.tls {
-        return Ok(Box::new(tcp));
+        return Ok((Box::new(tcp), peer));
     }
     let (connector, name) = tls::prepare(config).await?;
     let stream = timeout(timeouts.tls, connector.connect(name, tcp))
@@ -72,5 +84,5 @@ pub async fn connect(
             secs: timeouts.tls.as_secs(),
         })?
         .map_err(ConnectError::Handshake)?;
-    Ok(Box::new(stream))
+    Ok((Box::new(stream), peer))
 }

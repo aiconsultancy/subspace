@@ -32,6 +32,9 @@ impl Default for Settings {
 }
 
 pub(crate) const CAPTAIN_NOTIFICATIONS: &str = "captainNotifications";
+/// Why a saved network with an id in the account networks' namespace is
+/// not used.
+pub(crate) const RESERVED: &str = "this id starts with @account., which is kept for networks from your account, so this network is not used until it has another id";
 
 pub(crate) fn captain_notifications(settings: &Map<String, Value>) -> bool {
     settings
@@ -62,6 +65,10 @@ pub(crate) fn parse(settings: Option<&Map<String, Value>>) -> Settings {
         .enumerate()
         .filter_map(
             |(index, value)| match serde_json::from_value::<NetworkConfig>(value.clone()) {
+                Ok(network) if crate::managed::reserved(&network.id.0) => {
+                    errors.push(format!("networks[{index}]: {RESERVED}"));
+                    None
+                }
                 Ok(network) => Some(network),
                 Err(error) => {
                     errors.push(format!("networks[{index}]: {error}"));
@@ -123,6 +130,31 @@ mod tests {
         );
         let error = settings.error.unwrap_or_default();
         assert!(error.starts_with("networks[1]:"), "{error}");
+    }
+
+    #[test]
+    fn a_saved_network_cannot_take_an_account_network_s_id() {
+        let value = json!({"networks": [
+            {"id": "@account.x.y", "host": "irc.example.com", "nickname": "ada"},
+            {"id": "@work", "host": "irc.example.org", "nickname": "ada"},
+            {"id": "local", "host": "127.0.0.1", "nickname": "subspace"}
+        ]});
+        let settings = parse(value.as_object());
+        let ids: Vec<&str> = settings
+            .networks
+            .iter()
+            .map(|network| network.id.0.as_str())
+            .collect();
+        assert_eq!(ids, ["@work", "local"], "only @account. is kept back");
+        let error = settings.error.unwrap_or_default();
+        assert!(
+            error.starts_with("networks[0]: this id starts with @account."),
+            "{error}"
+        );
+        assert!(
+            !error.contains("remove") && !error.contains("delete"),
+            "{error}"
+        );
     }
 
     #[test]

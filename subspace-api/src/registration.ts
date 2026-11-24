@@ -4,7 +4,7 @@ import { recordAudit } from "./audit";
 import { type PrincipalIdentity, type SignInClaims, type VerifiedIdentity } from "./auth";
 import { type Provider } from "./config";
 import { Database } from "./db";
-import { findMember, type Member } from "./identity";
+import { findMember, isKeyOnlySubject, type Member } from "./identity";
 import { organisations, users } from "./schema";
 import { allocateUsername, lockUsernames } from "./usernames";
 import { Email } from "./validation";
@@ -221,6 +221,8 @@ export const ensureUsername = (member: Member, reserved: ReadonlySet<string>) =>
  */
 export const signedInMember = (identity: VerifiedIdentity, policy: SignInPolicy) =>
   Effect.gen(function* () {
+    // No provider account is an enrolled agent, and none is registered under such a subject.
+    if (isKeyOnlySubject(identity.subject)) return undefined;
     const claims = identity.claims ?? { roles: [] };
     const adminRole = identity.provider === "entra" ? policy.entraAdminRole : null;
     const tokenRole =
