@@ -717,6 +717,45 @@ class CaptainPolicyTests(unittest.TestCase):
         self.assertNotIn("## Your tools", standard["instructions"])
         self.assertIn("Crew commit as you, so check", standard["skills"]["fleet-captain"])
 
+    def test_extra_permissions_extend_the_starter_policy_and_an_explicit_policy_still_replaces_it(self):
+        def rule(resource, effect="allow"):
+            return {"action": "shell", "resource": resource, "effect": effect}
+
+        harness = {"type": "opencode", "extraPermissions": [rule("kubectl get *")],
+                   "captain": {"extraPermissions": [rule("git stash *")]},
+                   "rearAdmiral": {"extraPermissions": [rule("make docs *")]}}
+        cfg = captain_fleet("delegate", harness=harness)
+        rear, orion, vega = cfg["members"]
+        # Appended in order, fleet, role, officer, after the starter policy, so they win.
+        self.assertEqual(orion["harness"]["permissions"],
+                         [*default_permissions("captain", None, delegate=True), rule("kubectl get *"), rule("git stash *")])
+        self.assertEqual(rear["harness"]["permissions"][-2:], [rule("kubectl get *"), rule("make docs *")])
+        self.assertEqual(rear["harness"]["permissions"][:-2],
+                         default_permissions("rear_admiral", Path("/var/lib/subspace-fleet/references/atlas")))
+        self.assertEqual(fixture.opencode_decision(orion["harness"]["permissions"], "shell", ["git stash pop"]), "allow")
+        self.assertTrue(orion["delegatesCoding"])
+        # An officer's own rules come last; an explicit harness.permissions replaces the starter policy and is
+        # extended the same way.
+        own = [{"action": "*", "resource": "*", "effect": "allow"}]
+        config = example_config()
+        config["captains"][0]["harness"] = {"permissions": own, "extraPermissions": [rule("git push *", "deny")]}
+        captain = validate(config, officer_secrets())["members"][1]
+        self.assertEqual(captain["harness"]["permissions"], [*own, rule("git push *", "deny")])
+        # Validated like harness.permissions, at every level, and refused for a Claude Agent SDK officer's own.
+        for change in ({"harness": {"extraPermissions": {"action": "shell"}}},
+                       {"harness": {"captain": {"extraPermissions": [{"action": "shell", "resource": "*"}]}}},
+                       {"harness": {"extraPermissions": [{**rule("*"), "effect": "maybe"}]}}):
+            with self.subTest(change), self.assertRaises(Invalid):
+                validate({**example_config(), **change}, officer_secrets())
+        config = example_config()
+        config["captains"][0]["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        config["captains"][0]["harness"] = {"type": "claude-sdk", "family": "claude", "extraPermissions": [rule("*")]}
+        with self.assertRaisesRegex(Invalid, "uses allowedTools"):
+            validate(config, officer_secrets())
+        config["captains"][0]["harness"].pop("extraPermissions")
+        config["harness"] = {**config["harness"], "extraPermissions": [rule("*")]}
+        self.assertEqual(validate(config, officer_secrets())["members"][1]["harness"]["type"], "claude-sdk")
+
 
 class WorkspaceRootTests(unittest.TestCase):
     """A captain's session starts in its workspace above the checkouts, with generated instructions there."""
@@ -1119,6 +1158,16 @@ class AgentDispatchTests(unittest.TestCase):
             self.assertEqual(backend["sessionID"], "ses_rear")
             self.assertNotIn("plugins", saved["opencode-atlas"])
         runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
+
+    def test_the_delegate_policy_and_extra_permissions_meet_stargates_fleet_tool_check(self):
+        self.enable()
+        self.config["captainTools"] = "delegate"
+        cfg = validate(self.config, self.secrets)
+        runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, cfg["members"][1]), "fixture")
+        self.config["harness"] = {**self.config["harness"],
+                                  "extraPermissions": [{"action": "fleet_*", "resource": "*", "effect": "ask"}]}
+        with self.assertRaisesRegex(Invalid, "fleet tools"):
+            validate(self.config, self.secrets)
 
     def test_role_guidance_follows_the_dispatch_switch(self):
         home = Path("/var/lib/subspace-fleet/agents/orion")

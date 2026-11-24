@@ -647,8 +647,19 @@ def claude_efforts(model):
     return EFFORTS["opencode", "claude"]
 
 
+def permission_rules(rules, label):
+    """An ordered list of OpenCode permission rules, each with action, resource and effect."""
+    require(isinstance(rules, list), f"{label} must be an array of OpenCode permission rules.")
+    for rule in rules:
+        fields(rule, "permission", "action resource effect", ["action", "resource", "effect"])
+        pattern(rule["effect"], r"allow|deny|ask", "permission effect")
+        string(rule["action"], "permission action")
+        string(rule["resource"], "permission resource", 1024)
+    return rules
+
+
 def harness_config(value, inherited):
-    value = fields(value, "harness", "type model family effort permissions allowedTools")
+    value = fields(value, "harness", "type model family effort permissions extraPermissions allowedTools")
     backend = pattern(value.get("type", inherited["type"]), r"opencode|claude-sdk", "harness type (opencode or claude-sdk)")
     if "model" in value and "family" not in value and isinstance(value["model"], str):
         # A model named without its family goes where its ID says, as subspace-setup writes it: claude-* through
@@ -679,18 +690,18 @@ def harness_config(value, inherited):
         pattern(tool, r"Agent|Bash|Edit|Glob|Grep|LSP|NotebookEdit|Read|TodoWrite|WebFetch|WebSearch|Write", "Claude built-in tool")
     require(len(set(tools)) == len(tools), "Claude tools must be unique.")
     if backend == "claude-sdk":
-        require(family == "claude" and "permissions" not in value, "Claude Agent SDK requires the Claude family and uses allowedTools.")
+        require(family == "claude" and not {"permissions", "extraPermissions"} & value.keys(),
+                "Claude Agent SDK requires the Claude family and uses allowedTools.")
     else:
         require("allowedTools" not in value, "OpenCode uses permissions.")
     permissions = value.get("permissions", inherited["permissions"])
     require("permissions" not in value or isinstance(permissions, list) and permissions, "Specify a non-empty list of OpenCode permissions.")
-    for permission in permissions or ():
-        fields(permission, "permission", "action resource effect", ["action", "resource", "effect"])
-        pattern(permission["effect"], r"allow|deny|ask", "permission effect")
-        string(permission["action"], "permission action")
-        string(permission["resource"], "permission resource", 1024)
+    permission_rules(permissions or [], "harness.permissions")
+    # Rules that extend the policy rather than replace it: the fleet's, then the role's, then the officer's own.
+    extra = [*inherited.get("extraPermissions", []),
+             *permission_rules(value.get("extraPermissions", []), "harness.extraPermissions")]
     return {"type": backend, "family": family, "model": model, "effort": effort, "permissions": permissions,
-            "allowedTools": tools}
+            "extraPermissions": extra, "allowedTools": tools}
 
 
 def crew_config(value, inherited):
@@ -903,7 +914,7 @@ def validate(config, credentials, check_files=True):
     # Each role's default model, then the fleet's harness, then its captain or rearAdmiral block, then the officer's.
     fleet_harness = cfg.get("harness", {})
     require(isinstance(fleet_harness, dict), "harness must be an object.")
-    roles = {key: fields(fleet_harness.get(key, {}), f"harness.{key}", "family model effort")
+    roles = {key: fields(fleet_harness.get(key, {}), f"harness.{key}", "family model effort extraPermissions")
              for key in ROLE_HARNESS.values()}
     shared = {key: val for key, val in fleet_harness.items() if key not in roles}
     hulls = {role: harness_config(roles[key], harness_config(shared, {"type": "opencode", **OFFICER_DEFAULTS[role],
@@ -1058,6 +1069,9 @@ def validate(config, credentials, check_files=True):
             worktrees = STATE / "agents" / person["id"] / "worktrees" if person["crew"] else None
             person["harness"]["permissions"] = default_permissions(person["role"], references, delegate=delegate,
                                                                    worktrees=worktrees)
+        if extra := person["harness"]["extraPermissions"]:
+            # After the starter policy or an explicit harness.permissions, so the operator's rules win.
+            person["harness"]["permissions"] = [*person["harness"]["permissions"], *extra]
         if dispatch and person["crew"]:
             fleet_ipc_policy(person["harness"]["permissions"], f"Captain {person['id']}'s harness.permissions")
     if api:

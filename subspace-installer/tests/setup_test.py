@@ -215,6 +215,21 @@ class SetupInputsTests(unittest.TestCase):
         again = self.rerun(answers, config)
         self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "delegate")
 
+    def test_extra_permissions_written_by_hand_are_kept_on_a_rerun(self):
+        args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--repositories", "https://github.com/example/project.git"]
+        answers, members, config, _, _ = self.generate(args)
+        rule = {"action": "shell", "resource": "kubectl get *", "effect": "allow"}
+        config["harness"] = {"extraPermissions": [rule], "captain": {"extraPermissions": [rule]}}
+        config["captains"][0]["harness"] = {"extraPermissions": [rule]}
+        # A rerun that also changes the captains' model keeps every level's rules.
+        again = self.rerun(answers, config, "--captain-model", "gpt-6.2-sol")
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"]["extraPermissions"], [rule])
+        self.assertEqual(rebuilt["harness"]["captain"], {"extraPermissions": [rule], "model": "gpt-6.2-sol",
+                                                         "family": "codex"})
+        self.assertEqual(rebuilt["captains"][0]["harness"], {"extraPermissions": [rule]})
+
     def test_officer_models_are_set_by_option_and_kept_on_a_rerun(self):
         base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
         answers, members, config, secrets, _ = self.generate(

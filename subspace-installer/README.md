@@ -505,12 +505,21 @@ standard` or `--captain-tools delegate` on the host installer or
 `subspace-setup`; reruns keep the choice. In a hand-written fleet file, use
 `captainTools`. A fleet file without it means `standard`.
 
-Supply an ordered `harness.permissions` array to replace the starter policy across the fleet
-or for the rear admiral or a single captain. Rules use `action`, `resource`
-and `effect`. Put narrower rules after broader ones. See
-[OpenCode permissions](https://opencode.ai/docs/permissions/). A captain with
-crew also gets `stargate_crew`, `stargate_mail` and `stargate_history`, and
-`stargate_model` for `get`, on its pinned session.
+To extend the starter policy, list rules in `harness.extraPermissions`: for
+the whole fleet, in `harness.captain` or `harness.rearAdmiral` for one role,
+or in an officer's own `harness`. The installer appends them in that order
+after the policy, so they win; for example
+`{"action": "shell", "resource": "kubectl get *", "effect": "allow"}` lets
+standard captains and the rear admiral run read-only `kubectl get`, and a
+`deny` takes a starter rule away. To replace the starter policy instead,
+supply an ordered `harness.permissions` array across the fleet or for the
+rear admiral or a single captain; `extraPermissions` still extends it. Rules
+use `action`, `resource` and `effect` (`allow`, `deny` or `ask`), the last
+matching rule wins, so put narrower rules after broader ones. See
+[OpenCode permissions](https://opencode.ai/docs/permissions/). Neither key
+applies to a Claude Agent SDK officer, which uses `allowedTools`. A captain
+with crew also gets `stargate_crew`, `stargate_mail` and `stargate_history`,
+and `stargate_model` for `get`, on its pinned session.
 
 Crew take no `permissions`. Stargate creates each crew session with its
 crew `coding` profile and curated tool access: reading, searching, skills,
@@ -1638,7 +1647,7 @@ their crew's assignments through `stargate_crew`.
 | `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
-| `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model` and `effort`, apply to one. Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
+| `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model`, `effort` and `extraPermissions`, apply to one. Explicit OpenCode V2 rules in `permissions` replace the starter policy; rules in `extraPermissions` (fleet, role and officer, appended in that order) extend whichever applies. Each rule has `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
