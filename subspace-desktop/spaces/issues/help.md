@@ -356,9 +356,10 @@ Issue content and drafts stay in memory. The board has no agent tools,
 chat context, full-text index, notifications or scheduled background updates.
 Disabling the board stops its retained hub. Drafts do not survive quitting.
 
-Debug builds can use a numeric-loopback API through `SUBSPACE_API_URL`, with
-`SUBSPACE_API_ACCESS_JWT_FILE` passed through the client's fixture seam. Release
-builds ignore both values. The token is never stored or displayed.
+`SUBSPACE_API_URL`, or `api_url` in the connection file, points any build at
+another API. Only debug builds read `SUBSPACE_API_ACCESS_JWT_FILE`, which pairs
+a numeric-loopback API with a fixture token through the client's fixture seam;
+release builds ignore it. The token is never stored or displayed.
 
 The offline fixture (`scripts/subspace_api_test_server.py`) exercises every
 route the board uses.

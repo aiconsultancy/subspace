@@ -1,5 +1,6 @@
 //! Full Subspace composition. The shared shell owns all startup and window code.
 
+mod connection;
 mod fonts;
 mod identity;
 mod launch;
@@ -42,17 +43,21 @@ const SETTINGS_EXTENSIONS: &[subspace_framework::shell::SettingsExtension] = &[
 ];
 
 fn main() -> ExitCode {
-    if let Err(message) = identity::configure_backend(identity::variables()) {
-        eprintln!("{message}");
-        return ExitCode::FAILURE;
-    }
     let mut descriptor = subspace_descriptor::subspace_descriptor();
     identity::adjust_descriptor(&mut descriptor);
+    let desktop = std::env::args_os().len() == 1;
+    let connection = connection::locate(&descriptor, env!("CARGO_PKG_VERSION"));
+    let configured = connection::read(&connection)
+        .map_err(|message| launch::Failure::File(connection.clone(), message))
+        .and_then(|file| identity::configure_backend(file.as_ref(), identity::variables()));
+    if let Err(failure) = configured {
+        return connection::report(&descriptor.display_name, &failure, desktop);
+    }
     // Only the desktop shows Spaces and themes; commands leave the config
     // and state files alone. A new install is told by having neither file,
     // so its theme is recorded before the built-in web Spaces write the
     // config file.
-    if std::env::args_os().len() == 1 {
+    if desktop {
         new_install::record_theme(&descriptor, env!("CARGO_PKG_VERSION"));
         web_spaces::install(&descriptor, env!("CARGO_PKG_VERSION"));
     }

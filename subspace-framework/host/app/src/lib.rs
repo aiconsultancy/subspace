@@ -34,6 +34,7 @@ mod registry;
 mod search_runtime;
 mod settings;
 mod startup;
+mod startup_failure;
 mod startup_path;
 mod status_bar;
 mod terminal;
@@ -48,6 +49,7 @@ pub use registry::{BoardRegistration, ConfiguredBoards};
 pub use search_runtime::RerankerFactory;
 pub use settings::extensions::SettingsExtension;
 pub use startup::{ProductBuild, launch};
+pub use startup_failure::report_startup_failure;
 pub use theme::record_new_install_theme;
 
 #[cfg(any(test, feature = "test-support"))]

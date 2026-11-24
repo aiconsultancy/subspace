@@ -34,19 +34,29 @@ pub(crate) fn valid_api_url(value: &str) -> bool {
     let Ok(url) = url::Url::parse(value) else {
         return false;
     };
-    let loopback = match url.host() {
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(url::Host::Domain(name)) => name == "localhost",
-        None => false,
-    };
-    (url.scheme() == "https" || (url.scheme() == "http" && loopback))
+    (url.scheme() == "https" || (url.scheme() == "http" && is_loopback(&url)))
         && url.host_str().is_some()
         && url.username().is_empty()
         && url.password().is_none()
         && matches!(url.path(), "" | "/" | "/api" | "/api/")
         && url.query().is_none()
         && url.fragment().is_none()
+}
+
+/// Whether `value` is a valid API URL on this computer: a loopback address
+/// or `localhost`, which the development sign-in requires.
+pub(crate) fn loopback_url(value: &str) -> bool {
+    valid_api_url(value) && url::Url::parse(value).is_ok_and(|url| is_loopback(&url))
+}
+
+/// Whether `url`'s host is this computer.
+fn is_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(name)) => name == "localhost",
+        None => false,
+    }
 }
 
 /// The longest client ID the WorkOS dashboard shows, prefix included.

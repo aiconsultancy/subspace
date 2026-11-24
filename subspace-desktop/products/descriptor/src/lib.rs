@@ -78,9 +78,9 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
         boards: vec![
             board("github", true),
             board("github-copilot-agents", false),
-            board("irc", cfg!(debug_assertions)),
-            board("issues", cfg!(debug_assertions)),
-            board("decisions", cfg!(debug_assertions)),
+            board("irc", true),
+            board("issues", true),
+            board("decisions", true),
             #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
             board("space-lab", false),
             board("actions", true),
@@ -353,17 +353,10 @@ mod tests {
     #[test]
     fn board_defaults_follow_the_product_contract() {
         let products = known_products().unwrap();
-        let expected_debug_build_default = cfg!(debug_assertions);
-        for id in ["irc", "issues", "decisions"] {
-            if let Some(board) = products[0]
-                .boards
-                .iter()
-                .find(|board| board.id.as_str() == id)
-            {
-                assert_eq!(board.default_enabled, expected_debug_build_default, "{id}");
-            }
-        }
         for (id, enabled) in [
+            ("irc", true),
+            ("issues", true),
+            ("decisions", true),
             ("github", true),
             ("github-copilot-agents", false),
             ("actions", true),
@@ -415,19 +408,17 @@ mod tests {
         }
     }
 
+    /// Channels, Issues and Decisions start on in every build, release builds
+    /// included; a saved choice in the config file still wins.
     #[test]
-    fn debug_build_enables_and_release_build_disables_release_only_boards() {
+    fn channels_issues_and_decisions_start_on_in_every_build() {
         let defaults = super::subspace_descriptor()
             .boards
             .iter()
-            .filter(|board| matches!(board.id.as_str(), "irc" | "issues"))
+            .filter(|board| matches!(board.id.as_str(), "irc" | "issues" | "decisions"))
             .map(|board| board.default_enabled)
             .collect::<Vec<_>>();
-        if cfg!(debug_assertions) {
-            assert_eq!(defaults, vec![true; defaults.len()]);
-        } else {
-            assert_eq!(defaults, vec![false; defaults.len()]);
-        }
+        assert_eq!(defaults, vec![true; 3]);
     }
 
     #[test]

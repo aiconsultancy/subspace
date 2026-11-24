@@ -154,6 +154,9 @@ If you want to know how to version or publish a release, read
 
 - [Install Subspace](installation.md): source builds, packaging, signing,
   publishing, release installers, pre-releases and updates.
+- [Make your own build](build-your-own.md): the build configuration file, the
+  build environment, the code constants a fork changes, and signing and
+  publishing, with WorkOS and Entra examples.
 - [Releases](../AGENTS.md#releases): the release rules for agents.
 
 ## Product documentation site
@@ -168,6 +171,8 @@ shared quick-start fragments live in `subspace/includes/`.
   installation page.
 - [Boards and board guides](subspace/boards.md): links to every board guide.
 - [Subspace settings](subspace/settings.md): the product settings page.
+- [The connection file](subspace/connection-file.md): pointing a downloaded
+  build at a hosted API and sign-in with `connection.json`.
 - [Logs and retention](subspace/logging.md): finding and keeping the app log.
 - [Documentation versions](versions.md): main and frozen release snapshots of
   the site.

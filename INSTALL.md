@@ -1024,15 +1024,27 @@ does the same as `./install.sh providers`.
 
    Stop the local stack first if it is running (`make stack-down`), because it
    uses the same ports.
-2. **Run the desktop app.** From the repository root, `make run` (see the
-   [README](README.md#run-the-whole-system-locally) for the toolchain). Its
-   default build signs in to `http://127.0.0.1:3000` as `developer@example.com`
-   in organisation `local`, which is the administrator the installer created.
-   If you chose another `--admin-email` or `--organisation`, set
-   `SUBSPACE_DEV_EMAIL` and `SUBSPACE_DEV_ORGANISATION` for the app (on macOS,
-   in a build configuration; see the [desktop README](subspace-desktop/README.md)).
-   Release downloads may be built for another sign-in provider, so build from
-   source for this setup.
+2. **Run the desktop app.** Download the standard release (`Subspace_<version>_darwin_arm64.zip`,
+   not the `-NoAPI` one) or run `make run` from the repository root (see the
+   [README](README.md#run-the-whole-system-locally) for the toolchain). Both
+   sign in to `http://127.0.0.1:3000`, where the tunnel puts the fleet's API,
+   as `developer@example.com` in organisation `local`, which is the
+   administrator the installer created. If you chose another `--admin-email`
+   or `--organisation`, put them in the app's connection file,
+   `connection.json` beside its `config.json` (on macOS
+   `~/Library/Application Support/subspace/connection.json`):
+
+   ```json
+   {
+     "dev_email": "admin@example.com",
+     "dev_organisation": "example"
+   }
+   ```
+
+   To connect the desktop to a hosted API instead of the tunnel, set its
+   address and sign-in there too, such as `"api_url": "https://api.example.com"`
+   with `"identity_provider": "workos"` and `"workos_client_id"`. See
+   [The connection file](subspace-desktop/docs/subspace/connection-file.md).
 3. **Channels.** The installer already added the fleet's IRC network, signed in
    as your account with the password file it saved. Pick the fleet's
    initiative in **Channels** to join its Starbase, fleet command and ship

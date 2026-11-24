@@ -87,7 +87,12 @@ signs in, switches account, retries and signs out. The provider, the API URL
 and optional branding come from `products/subspace/build-config.json`, or
 from the JSON file `SUBSPACE_BUILD_CONFIG` names when you build. The
 same-named environment variables override the provider settings when the app
-starts, which is handy against a local stack.
+starts, which is handy against a local stack, and so does the
+[connection file](docs/subspace/connection-file.md), `connection.json` beside
+the app's `config.json`, which points a downloaded build at a hosted API
+without rebuilding (an environment variable wins over it). To build your own
+app, with its own backend, sign-in, name, logo or update source, see
+[Make your own build](docs/build-your-own.md).
 
 | Build config field | Run-time variable | Meaning |
 | --- | --- | --- |
@@ -182,6 +187,11 @@ with nothing to sign in to:
   "api_backend": "none"
 }
 ```
+
+Each published release carries this build beside the standard one, built from
+`products/subspace/build-config.no-api.json`, as
+`Subspace-NoAPI_<version>_darwin_arm64.zip`; `install-release.sh --no-api`
+installs it.
 
 The build has no API origin and no account. It leaves out what needs the
 API: **Settings > Account** and any sign-in, the Issues and Decisions Spaces,
@@ -445,10 +455,10 @@ registration, graduation and removal. Pi chat is the first app experiment.
 
 You can also set board enablement in the product's `config.json` with Boolean
 values keyed by ID: `{"boards":{"github":false,"irc":true}}`. An omitted
-board uses that product's default for the current build. In a Subspace release
-build, Channels and Issues default to disabled. They remain compiled and
-you can enable them in Settings. Debug builds enable Channels and Issues
-by default. GitHub and Actions default to enabled in both builds; Copilot Agents defaults to disabled.
+board uses that product's default. Channels, Issues, Decisions, GitHub and
+Actions default to enabled in every build, release builds included; Copilot
+Agents defaults to disabled. A build with no API backend has no Issues or
+Decisions.
 An explicit `true` or `false`
 overrides the product default. Restart to apply changes made in the file;
 Settings applies them on Save. Disabled boards have

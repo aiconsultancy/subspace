@@ -14,7 +14,11 @@ source "$root/scripts/product-fixture.sh"
 # shellcheck disable=SC2119 # The fixture reads this workspace, not saved metadata.
 setup_product_fixture
 cp "$root/scripts/release-macos.sh" "$fixture/scripts/"
-archive="$(jq -r .asset_stem "$fixture/metadata/subspace.json")_${version}_darwin_arm64.zip"
+mkdir -p "$fixture/products/subspace"
+cp "$root/products/subspace/"{build-config.json,build-config.no-api.json} "$fixture/products/subspace/"
+stem="$(jq -r .asset_stem "$fixture/metadata/subspace.json")"
+archive="${stem}_${version}_darwin_arm64.zip"
+no_api_archive="${stem}-NoAPI_${version}_darwin_arm64.zip"
 tag="subspace-desktop-v$version"
 
 cat >"$fixture/bin/gh" <<'SH'
@@ -39,7 +43,8 @@ case "$1 $2" in
 	esac
 	exit 0 ;;
 "release upload")
-	for file in "$4" "$5"; do test -f "$file"; done
+	shift 3
+	while [[ "$1" != --repo ]]; do test -f "$1"; shift; done
 	exit 0 ;;
 "release edit") exit 0 ;;
 esac
@@ -50,12 +55,18 @@ cat >"$fixture/package.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'package %s\n' "$*" >>"$FIXTURE/gh.log"
+printf 'config %s\n' "${SUBSPACE_BUILD_CONFIG:-}" >>"$FIXTURE/gh.log"
 test "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}" = "$EXPECTED_OAUTH_SECRET"
 mkdir -p "$FIXTURE/dist"
-printf 'app archive\n' >"$FIXTURE/dist/$FIXTURE_ARCHIVE"
+# Each variant's archive, named as package-macos.sh names it.
+if [[ "$(jq -r '.api_backend // ""' "$SUBSPACE_BUILD_CONFIG")" = none ]]; then
+	printf 'no-api app archive\n' >"$FIXTURE/dist/$FIXTURE_NO_API_ARCHIVE"
+else
+	printf 'app archive\n' >"$FIXTURE/dist/$FIXTURE_ARCHIVE"
+fi
 SH
 chmod 755 "$fixture/bin/gh" "$fixture/package.sh"
-export SUBSPACE_RELEASE_PACKAGE="$fixture/package.sh" FIXTURE_ARCHIVE="$archive"
+export SUBSPACE_RELEASE_PACKAGE="$fixture/package.sh" FIXTURE_ARCHIVE="$archive" FIXTURE_NO_API_ARCHIVE="$no_api_archive"
 # The login keychain holds the OAuth secret (see product-fixture.sh).
 export FAKE_OAUTH_SECRET=keychain-oauth-secret EXPECTED_OAUTH_SECRET=keychain-oauth-secret
 printf '/dist\n/metadata\n/bin\n/package.sh\n/gh.log\n/*.log\n/*.out\n/notes.md\n/scripts/desktop-session.sh\n' >"$fixture/.gitignore"
@@ -74,16 +85,25 @@ release() {
 release >"$fixture/release.out" 2>&1
 if grep -Fq keychain-oauth-secret "$fixture/release.out" "$fixture/gh.log"; then echo 'the OAuth secret was printed' >&2; exit 1; fi
 grep -Fxq 'security find-generic-password' "$fixture/security.log"
-grep -Fq "package Developer ID Application: Fixture (TEAMID) fixture-profile aarch64-apple-darwin" "$fixture/gh.log"
+test "$(grep -c "^package Developer ID Application: Fixture (TEAMID) fixture-profile aarch64-apple-darwin$" "$fixture/gh.log")" = 2
+# Both variants, from the repository's own build configs, the standard app last.
+test "$(grep '^config ' "$fixture/gh.log" | tr '\n' ' ')" = "config $fixture/products/subspace/build-config.no-api.json config $fixture/products/subspace/build-config.json "
 # Release Please's draft gets the files first, then is published.
 grep -Fxq "gh release view $tag --repo aiconsultancy/subspace --json isDraft --jq .isDraft" "$fixture/gh.log"
 grep -Fxq "gh api repos/aiconsultancy/subspace/commits/$tag --jq .sha" "$fixture/gh.log"
-grep -Fxq "gh release upload $tag dist/$archive dist/$archive.sha256 --repo aiconsultancy/subspace --clobber" "$fixture/gh.log"
+grep -Fxq "gh release upload $tag dist/$no_api_archive dist/$no_api_archive.sha256 dist/$archive dist/$archive.sha256 --repo aiconsultancy/subspace --clobber" "$fixture/gh.log"
 grep -Fxq "gh release edit $tag --repo aiconsultancy/subspace --title Subspace $version --draft=false --latest" "$fixture/gh.log"
 test "$(grep -n 'release upload' "$fixture/gh.log" | cut -d: -f1)" -lt "$(grep -n 'release edit' "$fixture/gh.log" | cut -d: -f1)"
 if grep -Fq 'release create' "$fixture/gh.log"; then echo 'a stable release must use the draft' >&2; exit 1; fi
-expected="$(cd "$fixture/dist" && shasum -a 256 "$archive")"
-test "$(cat "$fixture/dist/$archive.sha256")" = "$expected"
+for file in "$archive" "$no_api_archive"; do
+	expected="$(cd "$fixture/dist" && shasum -a 256 "$file")"
+	test "$(cat "$fixture/dist/$file.sha256")" = "$expected"
+done
+
+# A build config left in the shell never reaches either variant.
+SUBSPACE_BUILD_CONFIG=/elsewhere/private-build-config.json release
+if grep -Fq private-build-config "$fixture/gh.log"; then echo 'a stray SUBSPACE_BUILD_CONFIG reached the packaging' >&2; exit 1; fi
+test "$(grep -c '^config ' "$fixture/gh.log")" = 2
 
 # DRAFT=1 leaves it a draft; a notes file replaces the changelog's notes.
 printf 'Fixture notes\n' >"$fixture/notes.md"

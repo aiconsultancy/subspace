@@ -430,6 +430,10 @@ fi
         (project / "Cargo.toml").write_text('[workspace.package]\nversion = "0.2.1"\n')
         (project / "Cargo.lock").write_text('[[package]]\nname = "subspace"\nversion = "0.2.1"\n')
         (project / "mise.toml").write_text('[tools]\nrust = { version = "1.77.0" }\n')
+        # The two build configs every release packages.
+        (project / "products/subspace").mkdir(parents=True)
+        for name in ("build-config.json", "build-config.no-api.json"):
+            shutil.copyfile(TOOL / "products/subspace" / name, project / "products/subspace" / name)
         rust_docs = self.root / "sysroot/share/doc/rust"
         (rust_docs / "licenses").mkdir(parents=True)
         for notice in ("COPYRIGHT-library.html", "licenses/Apache-2.0.txt", "licenses/MIT.txt"):
@@ -467,7 +471,11 @@ echo "package $*" >>"$FIXTURE/gh.log"
 [[ "${FAIL_PACKAGE:-false}" != true ]] || exit 18
 version="$(sed -n 's/^version = "\\(.*\\)"/\\1/p' Cargo.toml)"
 mkdir -p dist
-printf 'fixture app\\n' >"dist/Subspace_${version}_darwin_arm64.zip"
+if [[ "$(jq -r '.api_backend // ""' "$SUBSPACE_BUILD_CONFIG")" = none ]]; then
+  printf 'fixture app with no API\\n' >"dist/Subspace-NoAPI_${version}_darwin_arm64.zip"
+else
+  printf 'fixture app\\n' >"dist/Subspace_${version}_darwin_arm64.zip"
+fi
 """)
         # Never the real keychain: the variable supplies the OAuth secret.
         (self.root / "bin/security").write_text("#!/bin/sh\nexit 44\n")
@@ -487,7 +495,11 @@ printf 'fixture app\\n' >"dist/Subspace_${version}_darwin_arm64.zip"
         self.run_script("release-macos", "--prerelease", "Fixture Developer ID", "fixture-profile")
         log = (self.root / "gh.log").read_text()
         self.assertIn("package Fixture Developer ID fixture-profile aarch64-apple-darwin", log)
-        self.assertIn(f"release create {PREFIX}{version} dist/Subspace_{version}_darwin_arm64.zip", log)
+        self.assertIn(
+            f"release create {PREFIX}{version} dist/Subspace-NoAPI_{version}_darwin_arm64.zip "
+            f"dist/Subspace-NoAPI_{version}_darwin_arm64.zip.sha256 dist/Subspace_{version}_darwin_arm64.zip",
+            log,
+        )
         self.assertIn(f".zip.sha256 --repo aiconsultancy/subspace --target {sha} --title Subspace {version}", log)
         self.assertIn("--prerelease --latest=false", log)
         self.assertIn("repos/aiconsultancy/subspace/releases?per_page=100", log)

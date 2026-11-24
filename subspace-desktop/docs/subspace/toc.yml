@@ -6,6 +6,8 @@
   href: boards.md
 - name: Settings and appearance
   href: settings.md
+- name: The connection file
+  href: connection-file.md
 - name: Logs and retention
   href: logging.md
 - name: Board guides

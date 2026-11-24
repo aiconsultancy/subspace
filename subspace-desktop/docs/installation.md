@@ -17,22 +17,19 @@ The Subspace App and the Subspace Framework use `subspace-desktop-vX.Y.Z`. Do
 not use the repository-wide Latest release. Use the Subspace stable release
 page above.
 
-Application, dependency, mixed and unrecognized changes get full PR CI on
-Linux, macOS and Windows. Narrow workflow-only changes run workflow contracts
-instead. Same-repository Release Please bot PRs can also use this fast lane
-when JSON/TOML comparison proves that only documented version fields, owned
-local lockfile versions and changelogs changed. External dependency changes
-cannot use it. The required PR gate still waits for the selected checks and
-fails if any of them fail.
+The app is checked before it reaches GitHub: the pre-push hooks run the
+project's checks ([Gates](ways-of-working.md#gates)). No GitHub workflow
+builds or tests the app.
 
-Release Please owns version changes, release pull requests and tags. Its PR creation
-does not wait for post-merge cache warming. Only the release PR merge starts
-the three target builds; an existing draft alone does not.
-Release merges rely on the required PR gate instead of repeating main-branch
-host checks and cache builds. Mac signing runs alongside platform packaging.
-Each release stays a draft until its three plain
-archives and signed macOS app pass validation and upload. A missing signing
-secret, rejected notarization, or other app failure prevents publication.
+Release Please owns version changes, release pull requests and tags. Merging
+its release pull request tags the merge commit and creates a draft release;
+nothing is built or uploaded then. The owner then runs `make release-macos`
+on that tag, on a Mac logged in at its desktop. It builds, signs and
+notarizes two Apple silicon app archives, the standard app and the app with
+no API backend, attaches each with its `.sha256` file and publishes the
+release (see [Publish a macOS release](#publish-a-macos-release)). Until
+then the release stays a draft: a missing signing secret, a rejected
+notarization or any other failure leaves it unpublished.
 
 Pre-releases (nightly, alpha and beta) are a separate workflow. Release
 Please does not own them, and they do not change stable versions, tags or
@@ -58,7 +55,17 @@ libssl-dev libzstd-dev libvulkan-dev`.
 
 ## Release targets
 
-A release has one archive for each of these Rust targets:
+A published release carries two signed Apple silicon app archives, each with
+a `.sha256` file:
+
+| Archive | Contains |
+| --- | --- |
+| `Subspace_<version>_darwin_arm64.zip` | The standard app: development sign-in against an API on `http://127.0.0.1:3000`, which [a connection file](subspace/connection-file.md) can point at a hosted API instead |
+| `Subspace-NoAPI_<version>_darwin_arm64.zip` | The app with no API backend: Channels, the GitHub Spaces, web Spaces and the terminal, with nothing to sign in to |
+
+Each updates only from its own archive in later releases. Plain archives for
+Linux, Windows and the macOS command line are not published at present;
+`make package` builds them for these Rust targets:
 
 | Rust target | Archive |
 | --- | --- |
@@ -83,14 +90,13 @@ The archives also include `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES`,
 with asset notices under `licenses/`. In the macOS app archive these files
 live under `Subspace.app/Contents/Resources/`.
 
-Linux ARM64 receives no new CI builds or release archives. For that platform,
-select an older release that includes its archive with the installer's
-`--version` option. Historical installer support remains unchanged.
+Linux ARM64 receives no new release archives. For that platform, select an
+older release that includes its archive with the installer's `--version`
+option. Historical installer support remains unchanged.
 
-Each release also has one signed Apple silicon app archive,
-`Subspace_<version>_darwin_arm64.zip`, containing `Subspace.app`.
-
-The plain `aarch64-apple-darwin.tar.gz` archive remains available for CLI use.
+Both app archives contain `Subspace.app`. The plain
+`aarch64-apple-darwin.tar.gz` archive, built with `make package`, is for
+command-line use.
 
 ## Package a release
 
@@ -280,8 +286,12 @@ git switch --detach subspace-desktop-v<version>
 make release-macos
 ```
 
-This runs `make package-macos`, writes the archive's `.sha256` file,
-attaches both to the draft and publishes it, titled `Subspace <version>`.
+This runs `make package-macos` twice, first with
+`products/subspace/build-config.no-api.json` and then with
+`products/subspace/build-config.json`, ignoring any `SUBSPACE_BUILD_CONFIG`
+in the shell. It writes each archive's `.sha256` file, attaches all four
+files to the draft and publishes it, titled `Subspace <version>`; the
+`dist/Subspace.app` it leaves is the standard app.
 The version is the workspace version in `Cargo.toml`. Before it builds
 anything, it checks that `gh` is signed in, that the project has no local
 changes, that the commit is on GitHub, that the release exists and is still a
@@ -539,6 +549,7 @@ Linux, macOS and Git Bash on Windows:
 ```bash
 sh scripts/install-release.sh                   # newest release
 sh scripts/install-release.sh --version 0.1.0   # one version
+sh scripts/install-release.sh --no-api          # the app with no API backend
 ```
 
 PowerShell:
@@ -546,7 +557,13 @@ PowerShell:
 ```powershell
 ./scripts/install-release.ps1
 ./scripts/install-release.ps1 -Version 0.1.0 -BinDir C:\tools\bin -NoPath
+./scripts/install-release.ps1 -NoApi
 ```
+
+`--no-api` (`-NoApi`, or `SUBSPACE_NO_API=1`) installs the build with no API
+backend, `Subspace-NoAPI_<version>_darwin_arm64.zip` on macOS, instead of the
+standard app. Both install as `Subspace.app`, so installing one replaces the
+other; each then updates only to its own kind.
 
 Release tags are `subspace-desktop-v<version>`. Release assets are the archives
 and `.sha256` files above.

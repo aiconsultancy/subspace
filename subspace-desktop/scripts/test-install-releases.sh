@@ -22,19 +22,26 @@ checksum() {
 }
 
 make_release_archives() {
-	local version="$1" product=subspace app_name=Subspace asset_stem source="$fixture/source-subspace"
+	local version="$1" variant="${2:-}" product=subspace app_name=Subspace asset_stem source="$fixture/source-subspace"
+	local prefix="$product"
 	asset_stem="$app_name"
 	if [[ "$version" = *-nightly.* ]]; then
 		app_name="$app_name (Nightly)"
 		asset_stem="$asset_stem-Nightly"
 	fi
+	# The build with no API backend: its own archive names and binary.
+	if [[ "$variant" = no-api ]]; then
+		asset_stem="$asset_stem-NoAPI"
+		prefix="$product-no-api"
+		source="$fixture/source-subspace-no-api"
+	fi
 	mkdir -p "$source"
-	printf '%s fixture binary\n' "$product" >"$source/$product"
+	printf '%s %s fixture binary\n' "$product" "$variant" >"$source/$product"
 	chmod 755 "$source/$product"
 	cp "$source/$product" "$source/$product.exe"
 	for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
 		aarch64-apple-darwin x86_64-pc-windows-msvc; do
-		archive="$product-$version-$target"
+		archive="$prefix-$version-$target"
 		if [[ "$target" == *windows* ]]; then
 			archive="$archive.zip"
 			if command -v 7z >/dev/null 2>&1; then
@@ -70,6 +77,7 @@ make_release_archives() {
 }
 
 make_release_archives 0.1.0
+make_release_archives 0.1.0 no-api
 make_release_archives 0.1.1-nightly.202611010200.g0123456
 make_release_archives 0.2.2-feat-subspace-desktop.202611151345.gabc1234
 make_release_archives 0.3.0-nightly-fix.202611151345.gabc1234
@@ -200,6 +208,7 @@ for installer in shell powershell; do
 		bin_flag=--bin-dir
 		channel_flag=--channel
 		link_flag=--link
+		no_api_flag=--no-api
 	else
 		export INSTALL_FIXTURE_BIN="$fixture/bin"
 		case "$(uname -s)" in
@@ -220,6 +229,7 @@ for installer in shell powershell; do
 		bin_flag=-BinDir
 		channel_flag=-Channel
 		link_flag=-Link
+		no_api_flag=-NoApi
 	fi
 
 	executable=subspace
@@ -250,6 +260,16 @@ for installer in shell powershell; do
 	grep -F 'startswith("subspace-desktop-v")' "$fixture/gh.log" >/dev/null
 
 	"${command[@]}" "$version_flag" "v$version" >"$fixture/output" 2>&1
+	cmp "$fixture/source-$executable/$executable" "$installed"
+
+	# The build with no API backend, from the same release.
+	: >"$fixture/gh.log"
+	"${command[@]}" "$no_api_flag" >"$fixture/output" 2>&1 || { cat "$fixture/output" >&2; exit 1; }
+	cmp "$fixture/source-$executable-no-api/$executable" "$installed"
+	grep -Eq -- '--pattern (Subspace-NoAPI_0\.1\.0_darwin_arm64\.zip|subspace-no-api-0\.1\.0-)' "$fixture/gh.log"
+	SUBSPACE_NO_API=1 "${command[@]}" >"$fixture/output" 2>&1
+	cmp "$fixture/source-$executable-no-api/$executable" "$installed"
+	"${command[@]}" >"$fixture/output" 2>&1
 	cmp "$fixture/source-$executable/$executable" "$installed"
 
 	if [[ "$installer" = shell ]]; then

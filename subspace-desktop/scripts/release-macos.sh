@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Build, sign and notarize the macOS app and publish its GitHub release with
-# the app archive and its .sha256 file, which install-release.sh reads.
+# the app archives and their .sha256 files, which install-release.sh reads:
+# the standard app, from products/subspace/build-config.json, and the app
+# with no API backend, from build-config.no-api.json, named apart
+# (Subspace-NoAPI_<version>_darwin_arm64.zip) so each updates from its own.
+# A SUBSPACE_BUILD_CONFIG in the shell is ignored: a release ships only the
+# repository's two build configs.
 # A stable release is the draft Release Please created when its release pull
 # request merged: run this on that release's tag, and it attaches the files
 # to the draft and publishes it. It never changes a published release.
@@ -30,6 +35,12 @@ repo="${RELEASE_REPO:-aiconsultancy/subspace}"
 root="${SUBSPACE_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 package="${SUBSPACE_RELEASE_PACKAGE:-$root/scripts/package-macos.sh}"
 cd "$root"
+standard_config="$root/products/subspace/build-config.json"
+no_api_config="$root/products/subspace/build-config.no-api.json"
+unset SUBSPACE_BUILD_CONFIG
+for config in "$standard_config" "$no_api_config"; do
+	test -f "$config" || { echo "missing build config: $config" >&2; exit 2; }
+done
 # The GitHub OAuth secret leaves the environment at once; only the packaging
 # gets it back.
 # shellcheck source-path=SCRIPTDIR/..
@@ -128,15 +139,24 @@ else
 	fi
 fi
 
-# Only the packaging sees the secret.
-SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET="$oauth_secret" bash "$package" "$identity" "$profile" aarch64-apple-darwin
+# Only the packaging sees the secret. The app with no API backend is built
+# first, so dist/<name>.app is the standard app afterwards.
+no_api_stem="$(SUBSPACE_BUILD_CONFIG="$no_api_config" no_api_suffix "$asset_stem" -NoAPI)"
+archives=("${no_api_stem}_${version}_darwin_arm64.zip" "${asset_stem}_${version}_darwin_arm64.zip")
+for config in "$no_api_config" "$standard_config"; do
+	SUBSPACE_BUILD_CONFIG="$config" SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET="$oauth_secret" \
+		bash "$package" "$identity" "$profile" aarch64-apple-darwin
+done
 unset oauth_secret
-archive="${asset_stem}_${version}_darwin_arm64.zip"
-test -f "dist/$archive" || { echo "missing archive: dist/$archive" >&2; exit 1; }
-(cd dist && shasum -a 256 "$archive" >"$archive.sha256")
+files=()
+for archive in "${archives[@]}"; do
+	test -f "dist/$archive" || { echo "missing archive: dist/$archive" >&2; exit 1; }
+	(cd dist && shasum -a 256 "$archive" >"$archive.sha256")
+	files+=("dist/$archive" "dist/$archive.sha256")
+done
 
 if [[ "$create" = true ]]; then
-	release_args=(release create "$tag" "dist/$archive" "dist/$archive.sha256"
+	release_args=(release create "$tag" "${files[@]}"
 		--repo "$repo" --target "$sha" --title "$display_name $version")
 	if [[ -n "${RELEASE_NOTES_FILE:-}" ]]; then
 		release_args+=(--notes-file "$RELEASE_NOTES_FILE")
@@ -152,7 +172,7 @@ fi
 # Still a draft, so replacing files from an earlier DRAFT=1 run is safe. The
 # files go up before publishing: publishing starts the packslip workflow,
 # which signs what the release holds.
-gh release upload "$tag" "dist/$archive" "dist/$archive.sha256" --repo "$repo" --clobber
+gh release upload "$tag" "${files[@]}" --repo "$repo" --clobber
 edit_args=(release edit "$tag" --repo "$repo" --title "$display_name $version")
 if [[ -n "${RELEASE_NOTES_FILE:-}" ]]; then edit_args+=(--notes-file "$RELEASE_NOTES_FILE"); fi
 if [[ "${RELEASE_DRAFT:-}" != 1 ]]; then edit_args+=(--draft=false --latest); fi
