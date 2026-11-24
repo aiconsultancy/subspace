@@ -543,7 +543,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-d
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
 optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`,
 the crew's names as `--crew-names 'Orion=Rigel,Deneb,Mira,Sirius;Vega=...'`
-(question 3; needed once captains have repositories, and so crew), the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`, and
+(question 3; needed once captains have repositories, and so crew; later runs keep them, and an installed crew member's name cannot change this way), the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`, and
 the officers' as `--captain-model MODEL --rear-admiral-model MODEL` (with
 `--captain-effort` and `--rear-admiral-effort`), on this command and on the cloud VM one above. Leave out `--install-deps`
 to stop and ask instead of installing Lima, QEMU or Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first

@@ -417,6 +417,39 @@ class SetupInputsTests(unittest.TestCase):
                                                                   "repositories": [{"id": "project"}]})
         answers_for(base[:6])
 
+    def test_saved_crew_names_follow_the_roster_and_installed_crew_keep_their_ids(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion, Vega", "--no-demo",
+                "--repositories", "https://github.com/example/project.git"]
+        answers, _, config, secrets, _ = self.generate(
+            [*base, "--crew-names", "Orion=Rigel,Deneb,Mira,Sirius;Vega=Altair,Castor,Pollux,Spica"])
+
+        def rebuilt(*argv):
+            again = self.rerun(answers, config, *argv)
+            with patch.object(fleet_setup.pwd, "getpwnam"):
+                rear, captains = fleet_setup.check_answers(again)
+            return again, fleet_setup.fleet_config(again, fleet_setup.roster(again, rear, captains), "a" * 40)
+        # A captain taken out of the roster takes its crew's names along, so later runs still pass.
+        again, fewer = rebuilt("--captains", "Orion")
+        self.assertEqual(set(again["crewNames"]), {"orion"})
+        # With fewer crew, only the remaining slots' names reach fleet.json, which the fleet installer takes.
+        again, fewer = rebuilt("--crew-codex", "0")
+        self.assertEqual(fewer["captains"][1]["crewNames"], {"claude-1": "Altair", "claude-2": "Castor"})
+        validate(fewer, secrets, check_files=False)
+        self.assertEqual(again["crewNames"]["vega"]["codex-1"], "Pollux")  # Kept for when the slot comes back.
+        # Names that would give installed crew new IDs are refused before anything is saved, pointing to the
+        # rename; the names they have already are accepted.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "would give installed crew new IDs: vega's Claude 1 "
+                                    "\\(altair would become lyra\\).*rename-officers --crew-names.*Nothing was "
+                                    "changed"):
+            self.rerun(answers, config, "--crew-names", "Vega=Lyra,Castor,Pollux,Spica")
+        self.rerun(answers, config, "--crew-names", "Vega=ALTAIR,Castor,Pollux,Spica")
+        # A fleet installed before crew names keeps its slot names, which it may also give.
+        for captain in config["captains"]:
+            captain.pop("crewNames")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "orion's Claude 1 \\(claude-1 would become rigel\\)"):
+            self.rerun({**answers, "crewNames": {}}, config, "--crew-names", "Orion=Rigel,Deneb,Mira,Sirius")
+        self.rerun({**answers, "crewNames": {}}, config, "--crew-names", "Orion=Claude 1,Claude 2,Codex 1,Codex 2")
+
     def test_rejects_unsafe_or_ambiguous_answers(self):
         cases = [
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Atlas"],

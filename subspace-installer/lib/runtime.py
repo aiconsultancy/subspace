@@ -816,6 +816,21 @@ def check_crew_names(agents):
             seen[worker["id"]] = f"captain {person['id']}'s {worker['name']}"
 
 
+def check_new_crew_named(cfg, installed):
+    """In a fleet with plain officer names, every crew member of a captain not installed yet has a name of its own
+    in crewNames, as subspace-setup asks: a slot name ('Claude 1') repeats on every ship. installed: the installed
+    fleet.json, {} on a new VM. A captain installed with repositories keeps its crew as they are, named or not."""
+    if cfg["officerNames"] != "plain":
+        return
+    known = {person.get("id") for person in installed.get("captains") or [] if isinstance(person, dict)} \
+        if installed.get("repositories") else set()
+    unnamed = [f"{person['id']} {worker['slot']}" for person in cfg["members"][1:] if person["id"] not in known
+               for worker in person["crew"] if not worker["named"]]
+    require(not unnamed, f"Crew {', '.join(unnamed)} have no name: in a fleet with plain officer names every crew "
+            "member of a new captain needs one, in its captain's crewNames by slot, unique in the fleet (installer "
+            "README, 'Crew names').")
+
+
 def repository_config(value):
     require(isinstance(value, list), "repositories must be an array.")
     repos = {}
@@ -2971,6 +2986,11 @@ def main(args):
             # Refuse a changed crew roster or first repository before anything is installed.
             captain_pins(cfg)
             rear_pin(cfg)
+        # A new captain's crew are named; the installed fleet says which captains are new. A dry run that cannot
+        # read it leaves the check to the real run.
+        installed = ETC / "fleet.json"
+        if not installed.exists() or os.access(installed, os.R_OK):
+            check_new_crew_named(cfg, read_json(installed, private=True) if installed.exists() else {})
         prune = tail[-1] == "true"
         if verb == "render":
             # Say once per install which captains keep a root other than the workspace, and why.

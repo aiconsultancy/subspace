@@ -1537,6 +1537,30 @@ class PlainNamesTests(unittest.TestCase):
                          ["Claude 1", "Claude 2", "Codex 1", "Codex 2"])
         self.assertIn("Claude 1 (Claude 1, claude-sonnet-5-5) [slot name]", "\n".join(runtime.names_plan(cfg)))
 
+    def test_a_new_captains_crew_are_named_in_a_plain_fleet(self):
+        self.config["captains"][1].pop("crewNames")
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            paths = [work / "fleet.json", work / "fleet.secrets.json"]
+            for path, value in zip(paths, (self.config, self.secrets), strict=True):
+                path.write_text(json.dumps(value))
+                path.chmod(0o600)
+            # On a new VM the installer stops before anything else, dry run or not.
+            for verb, tail in (("plan", []), ("prepare", [str(work / "stage")])):
+                with self.subTest(verb), patch.object(runtime, "ETC", work / "etc"), \
+                        patch.object(runtime, "STATE", work / "state"), patch.object(runtime, "SESSIONS", work / "none"), \
+                        self.assertRaisesRegex(Invalid, "Crew vega claude-1, vega claude-2, vega codex-1, vega codex-2 "
+                                               "have no name"):
+                    runtime.main([verb, *map(str, paths), *tail, "", "false"])
+        cfg = validate(self.config, self.secrets)
+        # A captain installed with repositories keeps its crew as they are; a fleet installed with fleet-prefixed
+        # names keeps its slot names.
+        runtime.check_new_crew_named(cfg, {"captains": [{"id": "orion"}, {"id": "vega"}],
+                                           "repositories": [{"id": "project"}]})
+        with self.assertRaisesRegex(Invalid, "vega claude-1"):
+            runtime.check_new_crew_named(cfg, {"captains": [{"id": "orion"}, {"id": "vega"}]})
+        runtime.check_new_crew_named(validate(*fixture_legacy()), {})
+
     def test_an_installed_crew_member_keeps_its_id_under_a_new_name_only_where_stargate_allows(self):
         self.config["captains"][0]["crewNames"] = {"claude-1": "Rigel"}
         self.config["captains"][0]["crewIds"] = {"claude-1": "claude-1"}

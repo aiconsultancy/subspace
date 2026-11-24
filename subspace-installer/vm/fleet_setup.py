@@ -357,8 +357,16 @@ def gather(args, saved):
         elif family not in crew:
             crew[family] = int(prompt(f"{family.title()}-family crew per captain", "2", interactive) or 2)
     named = answers.setdefault("crewNames", {})
+    # A captain taken out of the roster takes its crew's saved names and IDs along; one added again names its crew
+    # anew, as a new captain does.
+    captain_ids = {ident(name, "Captain") for name in answers["captains"]}
+    for key in ("crewNames", "crewIds"):
+        for captain_id in [captain_id for captain_id in answers.get(key) or {} if captain_id not in captain_ids]:
+            del answers[key][captain_id]
     if args.crew_names is not None:
-        named.update(parse_crew_names(args.crew_names, answers))
+        given = parse_crew_names(args.crew_names, answers)
+        refuse_installed_crew_ids(given)
+        named.update(given)
     repositories = answers.get("repositories") or (read_json(INPUTS / "fleet.json", {}) or {}).get("repositories")
     if interactive and repositories:
         # Crew need a repository; ask for their names once a captain has any.
@@ -553,6 +561,38 @@ def crew_installed(captain_id):
         isinstance(person, dict) and person.get("id") == captain_id for person in config.get("captains", []))
 
 
+def installed_crew_ids(captain_id):
+    """An installed captain's crew IDs by slot, from the fleet's inputs, or None for a captain whose crew are not
+    installed: the ID Stargate keeps each one's sessions, worktrees and queued tasks under, from crewIds, else its
+    name (crewNames, else the slot's own name, 'Claude 1')."""
+    if not crew_installed(captain_id):
+        return None
+    config = read_json(INPUTS / "fleet.json", {}) or {}
+    person = next(person for person in config["captains"] if isinstance(person, dict) and person.get("id") == captain_id)
+    counts = {}
+    for family in ("claude", "codex"):
+        team = {**((config.get("crew") or {}).get(family) or {}), **((person.get("crew") or {}).get(family) or {})}
+        counts[family] = team.get("count", 2)  # The fleet installer's default.
+    names, ids = person.get("crewNames") or {}, person.get("crewIds") or {}
+    return {slot: ids.get(slot) or runtime.crew_id(names.get(slot, slot_label(slot))) for slot in crew_slots({"crew": counts})}
+
+
+def refuse_installed_crew_ids(named):
+    """Refuse --crew-names that would give an installed crew member another ID, before anything is saved: its
+    sessions, worktrees and queued tasks are kept under its ID, and a captain whose session is pinned refuses any
+    change on every later run. rename-officers --crew-names names them and keeps their IDs."""
+    changed = []
+    for captain_id, names in named.items():
+        installed = installed_crew_ids(captain_id) or {}
+        changed += [f"{captain_id}'s {slot_label(slot)} ({installed[slot]} would become {runtime.crew_id(name)})"
+                    for slot, name in names.items() if slot in installed and runtime.crew_id(name) != installed[slot]]
+    require(not changed, f"--crew-names would give installed crew new IDs: {'; '.join(changed)}. Stargate keeps a crew "
+            "member's sessions, worktrees and queued tasks under its ID, so setup never changes an installed one. "
+            "Name an installed fleet's crew with 'sudo subspace-setup rename-officers --crew-names ...', which keeps "
+            "their IDs (installer README, 'Crew names'), or give these captains their installed names. Nothing was "
+            "changed.")
+
+
 def parse_repositories(value):
     """'URL' or 'ID=URL' items as [ID, URL, named]. The ID defaults to the repository's name."""
     rows = []
@@ -695,7 +735,10 @@ def check_crew_answers(answers, ids):
     ignoring case, none an officer's name, and one for every crew member of a captain not yet installed."""
     officers = {runtime.crew_id(value) for value in [*ids, answers["rearAdmiral"], *answers["captains"]]}
     seen = {}
-    named = answers.get("crewNames") or {}
+    slots = crew_slots(answers)
+    # Only the enabled slots: names saved for crew a later run no longer has stay unused (roster() passes none).
+    named = {captain_id: {slot: name for slot, name in names.items() if slot in slots}
+             for captain_id, names in (answers.get("crewNames") or {}).items()}
     for captain_id, names in named.items():
         require(captain_id in ids[1:], f"Crew names are given for {captain_id}, which is not one of the captains.")
         for slot, name in names.items():
@@ -712,7 +755,6 @@ def check_crew_answers(answers, ids):
     repositories = answers.get("repositories")
     if repositories is None:
         repositories = (read_json(INPUTS / "fleet.json", {}) or {}).get("repositories") or []
-    slots = crew_slots(answers)
     if not (repositories and slots):
         return  # Without repositories, captains have no crew.
     missing = [captain_id for captain_id in ids[1:] if not crew_installed(captain_id)
@@ -800,13 +842,15 @@ def roster(answers, rear, captains):
     # With plain names (new fleets) an officer's ID is its one name; a fleet set up before them keeps accounts that
     # carry the fleet ID until 'rename-officers' changes them.
     members = [{"id": rear, "name": answers["rearAdmiral"], "account": officer_account(answers, rear)}]
-    named = answers.get("crewNames") or {}
+    slots = set(crew_slots(answers))
     for captain_id, name in zip(captains, answers["captains"], strict=True):
         person = {"id": captain_id, "name": name, "account": officer_account(answers, captain_id)}
-        if named.get(captain_id):
-            person["crewNames"] = dict(named[captain_id])
-        if (answers.get("crewIds") or {}).get(captain_id):
-            person["crewIds"] = dict(answers["crewIds"][captain_id])
+        # Names and IDs for the crew slots this run has: a slot taken away keeps its saved name for later.
+        for key in ("crewNames", "crewIds"):
+            given = {slot: value for slot, value in ((answers.get(key) or {}).get(captain_id) or {}).items()
+                     if slot in slots}
+            if given:
+                person[key] = given
         members.append(person)
     # A renamed fleet's officers keep the account subjects the API bound their records to (rename-officers).
     for person in members:

@@ -293,6 +293,15 @@ sudo subspace-setup --crew-names 'Orion=Rigel,Deneb,Mira,Sirius;Vega=Altair,Cast
 It refuses a new captain with crew whose crew are not all named, and keeps
 the names in `fleet.json` as each captain's `crewNames`, keyed by slot. A
 fleet with a theme (stars, birds, ships of a navy) is easy to tell apart.
+The fleet installer refuses the same for any `fleet.json` with plain
+officer names: a crew member of a captain the installed fleet does not have
+yet needs a name of its own.
+
+Later runs keep the names, and take the same `--crew-names` again.
+`--crew-names` that would give an installed crew member another ID is
+refused before setup saves anything (see below). A captain taken out of
+`--captains` takes its crew's names along, and fewer crew per captain pass
+only the remaining slots' names to `fleet.json`.
 
 - **Rules.** ASCII letters, digits, spaces, hyphens and underscores,
   shortening to a crew ID of at most 32 characters. A name is unique in the
