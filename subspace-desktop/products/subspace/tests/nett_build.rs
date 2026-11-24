@@ -13,6 +13,10 @@ mod settings;
 #[path = "../src/launch.rs"]
 mod launch;
 
+#[allow(dead_code)]
+#[path = "../src/connection.rs"]
+mod connection;
+
 use gpui_kit::TestAppContext;
 use std::time::{Duration, Instant};
 use subspace_api_client::chat_uploads::UploadError;

@@ -55,15 +55,16 @@ pub(crate) fn variables() -> impl Iterator<Item = (String, String)> {
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
 }
 
-/// Resolves the launch from the stamped settings and the run's `variables`
-/// (see [`variables`]), then installs the build's one backend before Spaces
-/// start. A wrong setting installs nothing, so a NETT build never reaches
-/// Subspace API.
+/// Resolves the launch from the stamped settings, the connection file, if
+/// there is one, and the run's `variables` (see [`variables`]), then
+/// installs the build's one backend before Spaces start. A wrong setting
+/// installs nothing, so a NETT build never reaches Subspace API.
 pub(crate) fn configure_backend(
+    connection: Option<&crate::connection::Connection>,
     variables: impl IntoIterator<Item = (String, String)>,
-) -> Result<(), String> {
-    let resolved = launch::resolve(&STAMPED, variables)?;
-    launch::install(&resolved)?;
+) -> Result<(), launch::Failure> {
+    let resolved = launch::resolve_with(&STAMPED, connection, variables)?;
+    launch::install(&resolved).map_err(launch::Failure::Environment)?;
     let _ = LAUNCH.set(resolved);
     Ok(())
 }
@@ -353,7 +354,7 @@ mod tests {
         } else {
             (NETT_API_URL, "https://api.nett.example")
         };
-        assert!(configure_backend([(name.to_owned(), value.to_owned())]).is_err());
+        assert!(configure_backend(None, [(name.to_owned(), value.to_owned())]).is_err());
         assert!(LAUNCH.get().is_none());
         // Without overrides the stamped launch is installed, as at startup.
         // Installing sets the process's one backend and origin and, in a
@@ -414,7 +415,7 @@ mod tests {
             .filter(|name| name.starts_with("SUBSPACE_") && name != INSTALL_CHILD)
             .collect();
         assert!(inherited.is_empty(), "inherited {inherited:?}");
-        configure_backend(Vec::new()).unwrap();
+        configure_backend(None, Vec::new()).unwrap();
         assert_eq!(LAUNCH.get(), Some(&resolve(&STAMPED, Vec::new()).unwrap()));
         assert_eq!(
             subspace_api_client::backend() == subspace_api_client::Backend::Nett,

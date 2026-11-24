@@ -10,8 +10,10 @@
 //! only with WorkOS and needs a valid NETT API URL. A build with no API
 //! backend refuses every API and sign-in setting.
 
+use crate::connection::{Connection, in_file_terms};
 use crate::settings::{
-    ApiBackend, refused_in_nett, refused_without_backend, valid_api_url, valid_workos_client_id,
+    ApiBackend, loopback_url, refused_in_nett, refused_without_backend, valid_api_url,
+    valid_workos_client_id,
 };
 use std::collections::BTreeMap;
 
@@ -67,6 +69,36 @@ pub(crate) struct Launch {
     pub entra_api_scope: String,
     /// Who the local dev issuer signs in.
     pub dev_user: subspace_api_client::DevUser,
+}
+
+/// Why a launch cannot start, and where the setting came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Failure {
+    /// A setting in the connection file at this path.
+    File(std::path::PathBuf, String),
+    /// A run-time variable, or the build itself.
+    Environment(String),
+}
+
+/// Resolves the launch from the stamped settings, the connection file, when
+/// there is one, and the run's variables: a variable wins over the file, and
+/// the file over the stamped value. The file is checked on its own first,
+/// so a problem in it is reported as the file's, in its own words.
+pub(crate) fn resolve_with(
+    stamped: &Stamped,
+    connection: Option<&Connection>,
+    variables: impl IntoIterator<Item = (String, String)>,
+) -> Result<Launch, Failure> {
+    let file: Vec<(String, String)> = connection
+        .map(|c| c.variables().collect())
+        .unwrap_or_default();
+    if let Some(connection) = connection {
+        resolve(stamped, file.clone())
+            .map_err(|message| Failure::File(connection.path.clone(), in_file_terms(&message)))?;
+    }
+    let mut merged: BTreeMap<String, String> = file.into_iter().collect();
+    merged.extend(variables);
+    resolve(stamped, merged).map_err(Failure::Environment)
 }
 
 /// Resolves the launch from the stamped settings and the run's variables,
@@ -153,6 +185,11 @@ fn check_subspace(launch: &Launch, variables: &BTreeMap<String, String>) -> Resu
     if !launch.api_url.is_empty() && !valid_api_url(&launch.api_url) {
         return Err(subspace_url_error());
     }
+    if launch.provider == "dev" && !launch.api_url.is_empty() && !loopback_url(&launch.api_url) {
+        return Err(format!(
+            "The dev provider signs in only against an API on this computer. Set the API URL (api_url or {API_URL}) to a loopback address, such as http://127.0.0.1:3000, or choose another identity_provider."
+        ));
+    }
     // The build refuses an invalid WorkOS client, and so does a run that
     // overrides it: a bad ID fails here, not at sign-in.
     if launch.provider == "workos" && !valid_workos_client_id(&launch.workos_client_id) {
@@ -227,7 +264,8 @@ pub(crate) fn install(launch: &Launch) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiBackend, Stamped, resolve};
+    use super::{ApiBackend, Failure, Stamped, resolve, resolve_with};
+    use crate::connection::{Connection, parse};
 
     const CLIENT: &str = "client_00000000000000000000000000";
 
@@ -489,6 +527,101 @@ mod tests {
             both.contains("Unset SUBSPACE_API_URL, SUBSPACE_IDENTITY_PROVIDER and"),
             "{both}"
         );
+    }
+
+    fn file(json: &str) -> Connection {
+        Connection {
+            path: "/fixture/subspace/connection.json".into(),
+            values: parse(json).unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_variable_wins_over_the_file_and_the_file_over_the_build() {
+        let hosted = file(
+            r#"{"api_url": "https://api.example.com", "identity_provider": "workos",
+                "workos_client_id": "client_01ABC"}"#,
+        );
+        let launch = resolve_with(&SUBSPACE, Some(&hosted), Vec::new()).unwrap();
+        assert_eq!(launch.api_url, "https://api.example.com");
+        assert_eq!(launch.provider, "workos");
+        // A setting the file leaves out falls through to the build's.
+        assert_eq!(launch.dev_user.email, "developer@example.com");
+        let launch = resolve_with(
+            &SUBSPACE,
+            Some(&hosted),
+            vars(&[("SUBSPACE_API_URL", "https://other.example.com")]),
+        )
+        .unwrap();
+        assert_eq!(launch.api_url, "https://other.example.com");
+        assert_eq!(launch.provider, "workos", "the file still sets the rest");
+    }
+
+    #[test]
+    fn without_a_file_nothing_changes() {
+        for stamped in [SUBSPACE, NETT, NONE] {
+            assert_eq!(
+                resolve_with(&stamped, None, Vec::new()).unwrap(),
+                resolve(&stamped, Vec::new()).unwrap()
+            );
+        }
+        let empty = file("{}");
+        assert_eq!(
+            resolve_with(&SUBSPACE, Some(&empty), Vec::new()).unwrap(),
+            resolve(&SUBSPACE, Vec::new()).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_file_is_held_to_the_same_rules_and_named_when_it_breaks_one() {
+        for (json, says) in [
+            (r#"{"api_url": "http://api.example.com"}"#, "must be HTTPS"),
+            (r#"{"identity_provider": "workos"}"#, "workos_client_id"),
+            (
+                r#"{"identity_provider": "workos", "workos_client_id": "wrong"}"#,
+                "workos_client_id",
+            ),
+            (
+                r#"{"nett_api_url": "https://api.nett.example"}"#,
+                "Remove nett_api_url",
+            ),
+            // Development sign-in only ever reaches this computer.
+            (r#"{"api_url": "https://api.example.com"}"#, "dev provider"),
+        ] {
+            match resolve_with(&SUBSPACE, Some(&file(json)), Vec::new()) {
+                Err(Failure::File(path, message)) => {
+                    assert!(path.ends_with("connection.json"));
+                    assert!(message.contains(says), "{json}: {message}");
+                    assert!(!message.contains("SUBSPACE_"), "{json}: {message}");
+                }
+                other => panic!("{json}: {other:?}"),
+            }
+        }
+        // A bad variable over a good file is the variable's.
+        let failure = resolve_with(
+            &SUBSPACE,
+            Some(&file(r#"{"api_url": "http://127.0.0.1:3000"}"#)),
+            vars(&[("SUBSPACE_API_URL", "http://api.example.com")]),
+        )
+        .unwrap_err();
+        assert!(matches!(failure, Failure::Environment(_)), "{failure:?}");
+    }
+
+    #[test]
+    fn a_build_without_a_backend_refuses_a_file_that_would_switch_an_api_on() {
+        for json in [
+            r#"{"api_url": "https://api.example.com"}"#,
+            r#"{"identity_provider": "workos", "workos_client_id": "client_01ABC"}"#,
+        ] {
+            match resolve_with(&NONE, Some(&file(json)), Vec::new()) {
+                Err(Failure::File(_, message)) => {
+                    assert!(message.contains("no API backend"), "{message}");
+                }
+                other => panic!("{json}: {other:?}"),
+            }
+        }
+        // Empty settings switch nothing on.
+        assert!(resolve_with(&NONE, Some(&file(r#"{"api_url": ""}"#)), Vec::new()).is_ok());
     }
 
     #[test]

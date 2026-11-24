@@ -20,6 +20,8 @@ subspace-web-board = { path = "../../spaces/web" }
 subspace-descriptor.workspace = true
 subspace-terminal-panel = { path = "../../terminal/panel", optional = true }
 url.workspace = true
+# Reads the connection file, `src/connection.rs`.
+serde_json.workspace = true
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 subspace-space-lab-board = { path = "../../spaces/space-lab", optional = true }
@@ -53,7 +55,6 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 # The build script's modules, tested through the app's tests.
 serde.workspace = true
-serde_json.workspace = true
 uuid.workspace = true
 
 [build-dependencies]
