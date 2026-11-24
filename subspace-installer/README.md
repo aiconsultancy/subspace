@@ -893,13 +893,19 @@ makes it so, for example one the API's development sign-in created for its
 default `local` fleet. To make that initiative the fleet's own, pass
 `--initiative <its UUID>` (kept on later runs; `--initiative ''` goes back to
 finding one by the fleet's name). With an API on this VM that still offers
-development sign-in, setup then uses it as the fleet's initiative and the
-installer assigns it, and everything below it, to this fleet, moving it from
-the other fleet; the dry run says so first. A hosted API's administrators
-keep its records, as do those of an API without development sign-in, so
-setup prints the request for one of them to make instead
-(`PUT /api/v1/initiatives/<id>/fleet`). A project that lists none of the
-fleet's repositories is not checked.
+development sign-in, setup checks that it exists, and stops before changing
+any tracker record, recording nothing, if it does not; otherwise it uses it
+as the fleet's initiative and assigns it, and everything below it, to this
+fleet, moving it from the other fleet; the dry run says so first. Only a run
+with `--initiative` moves an initiative: if another fleet takes the fleet's
+recorded initiative later, a run without it leaves the initiative there,
+says so and registers none for this fleet, and `subspace-fleetctl register`
+likewise assigns only an initiative of no fleet. A hosted API's
+administrators keep its records, as do those of an API without development
+sign-in, so setup prints the request for one of them to make instead
+(`PUT /api/v1/initiatives/<id>/fleet` with the fleet's UUID, the `id` that
+`GET /api/v1/fleets/<slug>` returns), whether or not it can read the tracker.
+A project that lists none of the fleet's repositories is not checked.
 
 ## The API's agent listener
 
@@ -1117,9 +1123,10 @@ As that administrator, setup then creates or updates, as
   the organisation; registration stops otherwise, possibly after creating
   the fleet's record, and a run with a new name completes it;
 - **the fleet's initiative**, the one `--initiative` names, else found by the
-  ID setup saved or by the fleet's name among initiatives that belong to no
-  fleet or to this one, else created with the admin as owner and member, and
-  assigned to the fleet (see "Who owns the fleet's work" under
+  ID setup saved, while it belongs to no fleet or to this one, or by the
+  fleet's name among initiatives that belong to no fleet or to this one, else
+  created with the admin as owner and member, and assigned to the fleet (see
+  "Who owns the fleet's work" under
   [Subspace API registration](#subspace-api-registration)).
 
 It leaves everything else alone: it creates no organisation or person and
@@ -1845,9 +1852,10 @@ listener policy separately, including Docker-published ports.
 
 The API integration looks up the fleet by slug and creates or patches its
 registration, with its ships and officers (see
-[Subspace API registration](#subspace-api-registration)). It applies the
-listed initiative assignments after startup. An API failure leaves the fleet
-running and can be retried independently.
+[Subspace API registration](#subspace-api-registration)). After startup it
+assigns each listed initiative that belongs to no fleet, and leaves one that
+another fleet has where it is, saying so: `assign` moves it. An API failure
+leaves the fleet running and can be retried independently.
 
 ```sh
 sudo subspace-fleetctl register

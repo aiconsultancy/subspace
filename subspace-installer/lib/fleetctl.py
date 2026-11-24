@@ -73,9 +73,14 @@ def register(cfg):
     if fields["fleetApiUrl"]:
         print(f"Desktops reach its Stargate Fleet API at {fields['fleetApiUrl']}; the desktop app asks for its token once.")
     for initiative in cfg["api"]["initiatives"]:
-        current = api.request("GET", f"/initiatives/{initiative}")
-        if current.get("fleetId") != fleet_id:
+        # An initiative of no fleet becomes this one's. One that belongs to another fleet stays there: a routine
+        # run never moves work between fleets, which 'assign' (or subspace-setup --initiative) does when asked.
+        owner = api.request("GET", f"/initiatives/{initiative}").get("fleetId")
+        if owner is None:
             api.assign(initiative, fleet_id)
+        elif owner != fleet_id:
+            print(f"Initiative {initiative} belongs to another fleet ({owner}), so it was left there. To move it to "
+                  f"{cfg['slug']}, run 'subspace-fleetctl assign {initiative} {cfg['slug']}'.")
 
 
 def attach(member):

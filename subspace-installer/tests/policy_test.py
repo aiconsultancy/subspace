@@ -1524,6 +1524,31 @@ class FleetRecordsTests(unittest.TestCase):
                          ("claude-fable-5-2", runtime.FAMILIES["codex"]))
         self.assertEqual(self.register(), [], "a re-run changes nothing")
 
+    def test_registration_assigns_an_initiative_of_no_fleet_and_never_moves_another_fleets(self):
+        import fleetctl
+        self.api.call("POST", "/fleets", {"slug": "other", "name": "Other"})
+        other, theirs = self.api.fleet_by("other")["id"], "00000000-0000-4000-8000-0000000000a1"
+        self.api.initiatives[theirs] = {"id": theirs, "name": "Their work", "fleetId": other, "channels": ""}
+        self.config["api"]["initiatives"] = [fixture.INITIATIVE, theirs]
+        api = self.api
+
+        class Api(fleetctl.Api):
+            def __init__(self, _cfg):
+                pass
+
+            def request(self, method, path, body=None):
+                return api.call(method, path, body)
+
+        out = io.StringIO()
+        with patch.object(fleetctl, "Api", Api), contextlib.redirect_stdout(out):
+            fleetctl.register(validate(self.config, self.secrets))
+        ours = self.api.fleet_by("example-fleet")["id"]
+        self.assertEqual((self.api.initiatives[fixture.INITIATIVE]["fleetId"], self.api.initiatives[theirs]["fleetId"]),
+                         (ours, other))
+        self.assertIn(f"Assigned initiative {fixture.INITIATIVE}.", out.getvalue())
+        self.assertIn(f"Initiative {theirs} belongs to another fleet ({other}), so it was left there. To move it to "
+                      f"example-fleet, run 'subspace-fleetctl assign {theirs} example-fleet'.", out.getvalue())
+
     def test_a_changed_roster_is_reconciled(self):
         self.register()
         lyra = dict(self.config["captains"].pop())

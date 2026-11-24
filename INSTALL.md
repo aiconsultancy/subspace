@@ -354,9 +354,10 @@ answer it now.
     `--initiative UUID`: the fleet's officers may assign issues only in
     their own fleet's projects. The dry run warns about each project of the
     fleet's repositories that belongs to another fleet, and names the
-    initiative to adopt. With the API on the VM, setup assigns it to the
-    fleet, moving it from any other; with a hosted API, its administrator
-    does. See "Who owns the fleet's work" in
+    initiative to adopt. With the API on the VM, setup checks that it
+    exists and assigns it to the fleet on that run, moving it from any
+    other; later runs never move it back. With a hosted API, setup prints
+    the request its administrator makes. See "Who owns the fleet's work" in
     [Subspace API registration](subspace-installer/README.md#subspace-api-registration).
 18. **Do captains code themselves?** (**no**: `--captain-tools delegate`.)
     By default a captain with crew plans, reviews and opens pull requests,

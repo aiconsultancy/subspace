@@ -226,7 +226,7 @@ class Subspace:
                 self.initiatives[row["id"]] = row
                 return self.initiative(row)
             case "GET", ["initiatives", initiative]:
-                return dict(self.initiatives.get(initiative) or self.missing())
+                return self.initiative(self.initiatives.get(initiative) or self.missing())
             case "PUT", ["initiatives", initiative, "fleet"]:
                 row = self.initiatives.get(initiative) or self.missing()
                 assert body["fleetId"] is None or any(fleet["id"] == body["fleetId"] for fleet in self.fleets.values())
@@ -236,7 +236,7 @@ class Subspace:
 
     def initiative(self, row):
         fleet = next((fleet for fleet in self.fleets.values() if fleet["id"] == row["fleetId"]), None)
-        return {**row, "version": 1, "fleet": fleet and {"slug": fleet["slug"]}}
+        return {**row, "version": 1, "fleet": fleet and {key: fleet[key] for key in ("id", "slug", "name")}}
 
     def missing(self):
         raise Refusal(404, "Not found.")

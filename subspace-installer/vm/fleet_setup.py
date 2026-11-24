@@ -1689,16 +1689,27 @@ def seed_demo(answers):
             "api", "bun", "run", "--silent", "seed:demo")
 
 
-def fleet_initiative(token, name, slug, known=None, exclude=()):
-    """Create, or find, a fleet's initiative.
+def fleet_initiative(token, name, slug, known=None, exclude=(), adopt=False, hint=""):
+    """Create, or find, a fleet's initiative; None when the one setup recorded now belongs to another fleet.
 
-    The initiative is found by its saved ID, else by name among initiatives that belong to no fleet or to
-    this one (slug). Setup lists no channels on it: an initiative's channels are its own, beyond its fleet's
+    known is the initiative setup recorded as the fleet's. With adopt, --initiative named it on this run: it is
+    the fleet's whichever fleet has it now, and adopt_initiative moves it (configure has checked that it exists).
+    Otherwise it stands while it belongs to no fleet or to this one (slug). One that has gone to another fleet
+    since stays there, as only an explicit adoption moves an initiative: setup warns, adding hint, and registers
+    none. One that is gone is replaced by one found by name among initiatives that belong to no fleet or to this
+    one, else created. Setup lists no channels on it: an initiative's channels are its own, beyond its fleet's
     standard channels, which the fleet and its ships record (fleet_records) and the desktop joins.
     """
     mine = {row["id"]: row for row in api_call(token, "GET", "/me/initiatives").get("items", [])}
-    # A saved ID stands while the initiative exists, also one adopted with --initiative that the admin is not in.
-    found = known if known in mine or (known and initiative_exists(token, known)) else None
+    row = initiative_row(token, known) if known else None
+    require(row or not adopt, f"There is no initiative {known} to adopt.")
+    if row and not adopt and row.get("fleetId") and (row.get("fleet") or {}).get("slug") != slug:
+        say(f"WARNING: initiative {row.get('name')} ({known}), recorded as fleet {slug}'s, now belongs to "
+            f"{fleet_label(row)}. Setup leaves it there and registers no initiative for {slug} on this run: only an "
+            f"explicit adoption moves one. To move it back, run 'sudo subspace-fleetctl assign {known} {slug}'"
+            f"{hint}.")
+        return None
+    found = known if row else None
     cursor = ""
     while not found:
         page = api_call(token, "GET", "/initiatives?limit=100" + (f"&cursor={quote(cursor)}" if cursor else ""))
@@ -1721,14 +1732,44 @@ def fleet_initiative(token, name, slug, known=None, exclude=()):
     })["id"]
 
 
-def initiative_exists(token, initiative):
+def initiative_row(token, initiative):
+    """The initiative as the API on this VM has it, or None when there is none with that ID."""
     try:
-        api_call(token, "GET", f"/initiatives/{initiative}")
+        return api_call(token, "GET", f"/initiatives/{initiative}")
     except ApiError as error:
         if error.status == 404:
-            return False
+            return None
         raise
-    return True
+
+
+def fleet_label(row):
+    """The fleet an initiative row belongs to, for a message."""
+    other = row.get("fleet") or {}
+    return f"fleet {other.get('name') or other['slug']} ({other['slug']})" if other.get("slug") else f"fleet {row['fleetId']}"
+
+
+def unknown_initiative(answers, saved):
+    """Stop because the initiative --initiative names does not exist, after putting back the one the answers had,
+    so a later run neither takes the mistyped ID for a recorded one nor finds or creates another in its place."""
+    initiative = answers.pop("initiativeId")
+    if saved.get("initiativeId"):
+        answers["initiativeId"] = saved["initiativeId"]
+    save_answers(answers)
+    raise SetupError(f"There is no initiative {initiative} in the development organisation {answers['organisation']}, "
+                     "so setup stopped before changing any tracker record. Check the ID given with --initiative (the "
+                     "desktop shows it, as does GET /api/v1/initiatives), or leave --initiative out to keep the "
+                     "fleet's current one.")
+
+
+def adopt_initiative(token, slug, initiative):
+    """Assign the initiative --initiative names on this run to this fleet, moving it from any other: the one move
+    of an initiative from another fleet setup makes, and only when asked."""
+    fleet = api_call(token, "GET", f"/fleets/{slug}")["id"]
+    row = api_call(token, "GET", f"/initiatives/{initiative}")
+    if row.get("fleetId") != fleet:
+        api_call(token, "PUT", f"/initiatives/{initiative}/fleet", {"fleetId": fleet})
+        say(f"assigned initiative {row.get('name')} ({initiative}) to this fleet"
+            + (f", moving it from {fleet_label(row)}" if row.get("fleetId") else ""))
 
 
 def agent_reader(answers, members):
@@ -1771,7 +1812,7 @@ def agent_reader(answers, members):
     return get, None
 
 
-def ownership_lines(get, repositories, initiative=None, assigns=False):
+def ownership_lines(get, repositories, initiative=None, assigns=False, adopt=False):
     """What the tracker says about this fleet's work, as its rear admiral reads it (get).
 
     A project belongs to its initiative's fleet, or else to the fleet of the initiative's nearest ancestor with one,
@@ -1779,8 +1820,9 @@ def ownership_lines(get, repositories, initiative=None, assigns=False):
     (subspace-api src/fleet-ownership.ts). So this names each tracker project linked to one of the fleet's GitHub
     repositories that belongs to another fleet, with the initiative that makes it so, and the fleet's own
     initiative (setup's answer, which --initiative sets) when it is not the fleet's yet. assigns says whether setup
-    assigns that initiative to the fleet (an API on this VM with development sign-in); otherwise only an
-    administrator of the API can.
+    can assign that initiative to the fleet (an API on this VM with development sign-in); otherwise only an
+    administrator of the API can. Setup assigns one that belongs to no fleet, and moves one from another fleet
+    only when --initiative names it on this run (adopt).
     """
     me = get("/me")
     fleet = me.get("fleetId")
@@ -1805,10 +1847,6 @@ def ownership_lines(get, repositories, initiative=None, assigns=False):
             initiative_id = row.get("parentId")
         return None, path
 
-    def label(row):
-        other = row.get("fleet") or {}
-        return f"fleet {other['name']} ({other['slug']})" if other.get("slug") else f"fleet {row['fleetId']}"
-
     def remedy(initiative_id, record=True):
         if assigns:
             return f"run setup again with --initiative {initiative_id}, which assigns it, and all below it, to this fleet"
@@ -1817,6 +1855,21 @@ def ownership_lines(get, repositories, initiative=None, assigns=False):
                 + (f", and pass --initiative {initiative_id} to record it as the fleet's" if record else ""))
 
     lines, ours, seen = [], [], set()
+    own, takes = None, False
+    if initiative:
+        try:
+            own = initiative_row(initiative)
+        except ApiError as error:
+            if error.status != 404:
+                raise
+            return [f"WARNING: the tracker has no initiative {initiative}: check the ID given with --initiative"
+                    + ("; a real run stops before changing any tracker record." if assigns else ".")
+                    if adopt else
+                    f"WARNING: the tracker has no initiative {initiative}, which setup recorded as the fleet's"
+                    + ("; a real run finds or creates one by the fleet's name." if assigns else ".")]
+        # The run gives it to this fleet: one of no fleet as the installer registers it, one of another fleet only
+        # when --initiative names it.
+        takes = assigns and (adopt or not own.get("fleetId"))
     for repository in repositories:
         page = get(f"/repositories/projects?repository={quote(repository, safe='')}&limit=100")
         for project in page.get("items", []):
@@ -1827,24 +1880,25 @@ def ownership_lines(get, repositories, initiative=None, assigns=False):
             if not row or row["fleetId"] == fleet:
                 ours.append(project["key"])
                 continue
-            where = (f"tracker project {project['key']} ({repository}) belongs to {label(row)} through initiative "
-                     f"{row.get('name')} ({row['id']})")
-            if initiative in path and assigns:
+            where = (f"tracker project {project['key']} ({repository}) belongs to {fleet_label(row)} through "
+                     f"initiative {row.get('name')} ({row['id']})")
+            if initiative in path and takes:
                 lines.append(f"{where}; setup assigns the fleet's initiative {initiative}, on that path, to this "
                              "fleet, which makes it this fleet's.")
             else:
                 lines.append(f"WARNING: {where}, so this fleet's officers are refused when they assign its issues or "
                              f"mark them Ready for agents. To make it this fleet's, {remedy(row['id'])}.")
-    if initiative:
-        row = initiative_row(initiative)
-        if row.get("fleetId") != fleet:
-            name = f"the fleet's initiative {row.get('name')} ({initiative})"
-            if assigns:
-                moved = f", moving it from {label(row)}" if row.get("fleetId") else ""
-                lines.append(f"setup assigns {name} to this fleet{moved}.")
-            else:
-                other = f" but to {label(row)}" if row.get("fleetId") else ""
-                lines.append(f"WARNING: {name} is not assigned to it{other}: {remedy(initiative, record=False)}.")
+    if own and own.get("fleetId") != fleet:
+        name = f"the fleet's initiative {own.get('name')} ({initiative})"
+        if takes:
+            moved = f", moving it from {fleet_label(own)}" if own.get("fleetId") else ""
+            lines.append(f"setup assigns {name} to this fleet{moved}.")
+        elif assigns:
+            lines.append(f"WARNING: {name} belongs to {fleet_label(own)}, and setup leaves it there. To make it this "
+                         f"fleet's, {remedy(initiative)}.")
+        else:
+            other = f" but to {fleet_label(own)}" if own.get("fleetId") else ""
+            lines.append(f"WARNING: {name} is not assigned to it{other}: {remedy(initiative, record=False)}.")
     if ours:
         lines.append(f"tracker projects {', '.join(sorted(set(ours)))} belong to this fleet or to none, so its "
                      "officers may assign their issues")
@@ -1854,19 +1908,42 @@ def ownership_lines(get, repositories, initiative=None, assigns=False):
     return lines
 
 
-def ownership_check(answers, members, config):
-    """Say what ownership_lines finds; a check that cannot run says why, and never stops setup."""
+def manual_adoption(answers, initiative):
+    """The request for an administrator of the Subspace API that adopts the initiative --initiative names, for a
+    fleet whose setup cannot assign it: with a hosted API, or one on this VM without development sign-in."""
+    why = ("a hosted API's administrators keep its records" if answers.get("apiUrl") else
+           "this VM's API no longer offers development sign-in, through which setup acts as its administrator")
+    return (f"WARNING: setup cannot assign the initiative given with --initiative ({initiative}) to this fleet, as "
+            f"{why}. Ask an administrator of the Subspace API to assign it: PUT /api/v1/initiatives/{initiative}/fleet "
+            f'with {{"fleetId": "<the fleet\'s ID>"}}, where the fleet\'s ID is the "id" that GET /api/v1/fleets/'
+            f"{answers['slug']} returns.")
+
+
+def ownership_check(answers, members, config, adopt=False):
+    """Say what ownership_lines finds; a check that cannot run says why, and never stops setup.
+
+    adopt says --initiative named the fleet's initiative on this run. When setup cannot assign it, the request
+    for an administrator follows a check that cannot run; one that runs names the fleet's own ID in it.
+    """
+    initiative = answers.get("initiativeId")
+    local = bool(answers.get("api")) and not answers.get("apiUrl")
+    # Setup acts as the admin through development sign-in, which a new fleet's API offers.
+    assigns = local and (not (INPUTS / "api.env").is_file() or dev_auth_enabled())
+    manual = adopt and initiative and (local or answers.get("apiUrl")) and not assigns
     get, reason = agent_reader(answers, members)
     repositories = [name for row in config.get("repositories", []) if isinstance(row, dict)
                     if (name := runtime.github_repository(str(row.get("url", ""))))]
     if not get:
         say(f"not checking which fleet owns this fleet's tracker projects: {reason}")
+        if manual:
+            say(manual_adoption(answers, initiative))
         return
-    assigns = bool(answers.get("api")) and not answers.get("apiUrl") and dev_auth_enabled()
     try:
-        lines = ownership_lines(get, repositories, answers.get("initiativeId"), assigns=assigns)
+        lines = ownership_lines(get, repositories, initiative, assigns=assigns, adopt=adopt)
     except (ApiError, ValueError, KeyError, TypeError, AttributeError) as error:
         say(f"could not check which fleet owns this fleet's tracker projects: {error}")
+        if manual:
+            say(manual_adoption(answers, initiative))
         return
     for line in lines:
         say(line)
@@ -1950,14 +2027,15 @@ def register_fleet(registration):
         raise SetupError(str(error)) from None
     registered = answers.setdefault("registeredFleets", {}).setdefault(slug, {})
     initiative = fleet_initiative(token, name, slug, registered.get("initiativeId"), exclude=[answers.get("initiativeId")])
-    assigned = api_call(token, "GET", f"/initiatives/{initiative}").get("fleetId")
-    require(assigned in (None, fleet["id"]), f"Initiative {initiative} already belongs to another fleet.")
-    if assigned != fleet["id"]:
-        api_call(token, "PUT", f"/initiatives/{initiative}/fleet", {"fleetId": fleet["id"]})
+    if initiative:
+        assigned = api_call(token, "GET", f"/initiatives/{initiative}").get("fleetId")
+        require(assigned in (None, fleet["id"]), f"Initiative {initiative} already belongs to another fleet.")
+        if assigned != fleet["id"]:
+            api_call(token, "PUT", f"/initiatives/{initiative}/fleet", {"fleetId": fleet["id"]})
+        registered.update(initiativeId=initiative)
     registered.pop("channels", None)
-    registered.update(initiativeId=initiative)
     write_json(INPUTS / "answers.json", answers)
-    say(f"registered fleet {name} ({slug}), its ships and officers, with initiative {initiative}")
+    say(f"registered fleet {name} ({slug}), its ships and officers" + (f", with initiative {initiative}" if initiative else ""))
 
 
 # Summary ---------------------------------------------------------------------
@@ -2243,7 +2321,7 @@ def configure(args):
         if answers["agentDispatch"] and not config["agentDispatch"]["enabled"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
-        ownership_check(answers, members, read_json(config_path, {}))
+        ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
         say("dry run complete; nothing on this VM changed")
         return
 
@@ -2280,15 +2358,27 @@ def configure(args):
             token = api_token(answers)
             if external_database(answers):
                 existing_administrator(answers, token)
+            # Only --initiative on this run adopts an initiative, and only one that exists: checked before any
+            # tracker record changes.
+            adopt = bool(args.initiative)
+            if adopt and not initiative_row(token, answers["initiativeId"]):
+                unknown_initiative(answers, saved)
             if answers["demo"]:
                 seed_demo(answers)
-            initiative = fleet_initiative(token, answers["name"], answers["slug"], answers.get("initiativeId"))
-            answers.update(initiativeId=initiative)
-            save_answers(answers)
-            api_block = local_api_block(answers, [initiative], agent_listener_enabled())
+            initiative = fleet_initiative(token, answers["name"], answers["slug"], answers.get("initiativeId"),
+                                          adopt=adopt, hint=", or setup with --initiative "
+                                          f"{answers.get('initiativeId')}; to have setup find or create one by the "
+                                          "fleet's name instead, pass --initiative ''")
+            if initiative:
+                answers.update(initiativeId=initiative)
+                save_answers(answers)
+            api_block = local_api_block(answers, [initiative] if initiative else [], agent_listener_enabled())
             # Register the fleet, its channels, ships and officers now: agent dispatch signs in as the rear
-            # admiral's agent record. The installer's 'fleetctl register' sends the same records again.
+            # admiral's agent record. The installer's 'fleetctl register' sends the same records again, and
+            # assigns the initiative when it belongs to no fleet; an adopted one setup moves here itself.
             records = register_own(token, *inputs(irc_ref, api_block, bool(stargate_api), token, history))
+            if adopt:
+                adopt_initiative(token, answers["slug"], initiative)
             if answers["agentDispatch"]:
                 dispatch_token = rear_admiral_token(answers, records)
         else:
@@ -2317,7 +2407,7 @@ def configure(args):
             installer(config_path)
     elif stargate_api:
         confirm_fleet_api(True, installed_stargate_source())
-    ownership_check(answers, members, read_json(config_path, {}))
+    ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
 
     lockdown_id = ""
     if answers["lockdown"]:
