@@ -162,10 +162,13 @@ def write_json(path, data):
     write_private(path, json.dumps(data, indent=2, sort_keys=False) + "\n")
 
 
-def run(*args, check=True, capture=False, env=None, input_text=None, timeout=None):
+def run(*args, check=True, capture=False, env=None, input_text=None, timeout=None, keep_stdin=True):
+    """keep_stdin=False gives the command no standard input (unless input_text is its input), so it cannot read
+    on from setup's own: a script piped to 'subspace-setup token' over SSH, say."""
+    stdin = subprocess.DEVNULL if input_text is None and not keep_stdin else None
     try:
         result = subprocess.run([str(arg) for arg in args], check=False, text=True, env=env, input=input_text,
-                                stdout=subprocess.PIPE if capture else None, timeout=timeout)
+                                stdin=stdin, stdout=subprocess.PIPE if capture else None, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise SetupError(f"{Path(str(args[0])).name} {args[1] if len(args) > 1 else ''} did not finish within "
                          f"{timeout} seconds.") from None
@@ -950,9 +953,11 @@ def confirm_fleet_api(requested, source):
 # Subspace API ----------------------------------------------------------------
 
 def compose(*args, capture=False, check=True, env=None, input_text=None):
+    # Docker Compose passes its standard input to 'exec' and 'run' commands, which would otherwise read on from
+    # setup's own, so it gets none unless it has input of its own.
     return run("docker", "compose", "--project-name", API_PROJECT, "--project-directory", API_DIR,
                "--env-file", INPUTS / "api.env", "-f", API_DIR / "compose.yaml", "-f", INPUTS / "api.override.yaml",
-               *args, capture=capture, check=check, env=env, input_text=input_text)
+               *args, capture=capture, check=check, env=env, input_text=input_text, keep_stdin=False)
 
 
 def hosted_api(args, answers, saved):

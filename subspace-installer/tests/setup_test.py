@@ -1818,6 +1818,32 @@ class FirstFleetTests(unittest.TestCase):
         self.assertIn("registered and checked", fleet_setup.remote_irc_next_step(answers, ("ircop", "x", None)))
         self.assertIn("irc-bundle.json", fleet_setup.remote_irc_next_step({"ircAuth": "password"}, None))
 
+    def test_docker_compose_never_reads_setups_standard_input(self):
+        with patch.object(fleet_setup.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "x.y.z")) \
+                as ran:
+            fleet_setup.compose("exec", "-T", "api", "bun", "run", "auth:dev", capture=True)
+            self.assertIs(ran.call_args.kwargs["stdin"], subprocess.DEVNULL)
+            fleet_setup.compose("exec", "-T", "api", "psql", input_text="SELECT 1;")
+            self.assertIsNone(ran.call_args.kwargs["stdin"])
+            self.assertEqual(ran.call_args.kwargs["input"], "SELECT 1;")
+            fleet_setup.run("true")
+            self.assertIsNone(ran.call_args.kwargs["stdin"])
+        # As 'subspace-setup token' runs it: a script piped after it over SSH stays unread.
+        script = self.root / "rest.sh"
+        script.write_text("echo rest\n")
+        fake = self.root / "docker"
+        fake.write_text("#!/bin/sh\ncat > /dev/null; echo header.payload.signature\n")
+        fake.chmod(0o755)
+        with open(script) as stdin, patch.dict(os.environ, {"PATH": f"{self.root}:{os.environ['PATH']}"}):
+            saved = os.dup(0)
+            os.dup2(stdin.fileno(), 0)
+            try:
+                fleet_setup.compose("exec", "-T", "api", "bun", "run", "auth:dev", capture=True)
+                self.assertEqual(sys.stdin.read(), "echo rest\n")
+            finally:
+                os.dup2(saved, 0)
+                os.close(saved)
+
 
 class OutboundTests(unittest.TestCase):
     """setup stops at once, saying what to open, when the VM cannot reach what the install downloads."""
