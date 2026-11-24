@@ -21,7 +21,7 @@
 #   skills        install Subspace skills and the API's MCP server into your local
 #                 agents' user profiles (--agents claude,codex,opencode --name YOU)
 #   desktop       write the desktop app's IRC connection for this fleet
-#   ssh           open a shell on the VM
+#   ssh           open a shell on the VM, or run a command: ./install.sh ssh -- uptime
 #   status        show the VM, the fleet and its services
 #   audit         run the privacy audit on the VM
 #   stop | start  stop or start a local VM
@@ -192,6 +192,16 @@ ssh_opts() {
     else
         ssh_args=(-F "$state/ssh_config" subspace-target)
     fi
+}
+
+do_ssh() {
+    # ./install.sh ssh [ssh options] [-- command...]: ssh options go before the host, the command after it.
+    local -a options=() remote_command=()
+    while [ $# -gt 0 ]; do
+        if [ "$1" = -- ]; then shift; remote_command=("$@"); break; fi
+        options+=("$1"); shift
+    done
+    exec ssh ${options[@]+"${options[@]}"} "${ssh_args[@]}" ${remote_command[@]+"${remote_command[@]}"}
 }
 
 vm() {
@@ -930,7 +940,7 @@ case $command in
             fetch_private "$state/stargate-api.token" sudo -n subspace-setup stargate-token || true
         fi
         IRC_TARGET=$irc_target write_desktop_config ;;
-    ssh) load_target; ssh_opts; exec ssh ${passthrough[@]+"${passthrough[@]}"} "${ssh_args[@]}" ;;
+    ssh) load_target; ssh_opts; do_ssh ${passthrough[@]+"${passthrough[@]}"} ;;
     audit) load_target; vm sudo -n subspace-setup audit ;;
     status)
         load_target

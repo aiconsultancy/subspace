@@ -5,6 +5,7 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -989,6 +990,32 @@ class ExternalDatabaseTests(unittest.TestCase):
         installer = (Path(fleet_setup.HERE).parent / "install.sh").read_text()
         uninstall = re.search(r"^uninstall\(\) \{.*?^\}$", installer, re.M | re.S).group(0)
         self.assertNotRegex(uninstall, r"(?i)docker|compose|psql|postgres|database|/root/fleet")
+
+
+class HostInstallerTests(unittest.TestCase):
+    """The host install.sh, run with a fake ssh that prints its arguments."""
+
+    def test_ssh_puts_options_before_the_host_and_a_command_after_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            (work / "bin").mkdir()
+            (work / "home/targets/example").mkdir(parents=True)
+            (work / "home/targets/example/target.env").write_text("KIND=remote\n")
+            fake = work / "bin/ssh"
+            fake.write_text('#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done\n')
+            fake.chmod(0o755)
+            installer = Path(fleet_setup.HERE).parents[1] / "install.sh"
+            environment = {**os.environ, "PATH": f"{work / 'bin'}:{os.environ['PATH']}", "SUBSPACE_HOME": str(work / "home")}
+
+            def ssh(*argv):
+                result = subprocess.run(["bash", str(installer), "ssh", "--target", "example", *argv],
+                                        env=environment, capture_output=True, text=True, check=True)
+                return result.stdout.splitlines()
+            config = str(work / "home/targets/example/ssh_config")
+            self.assertEqual(ssh("--", "sudo", "uptime"), ["-F", config, "subspace-target", "sudo", "uptime"])
+            self.assertEqual(ssh("-L", "8080:127.0.0.1:8080"),
+                             ["-L", "8080:127.0.0.1:8080", "-F", config, "subspace-target"])
+            self.assertEqual(ssh(), ["-F", config, "subspace-target"])
 
 
 class IrcServerTests(unittest.TestCase):

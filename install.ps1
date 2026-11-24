@@ -871,7 +871,23 @@ switch ($Command) {
         }
         Write-DesktopConfig $IrcTarget
     }
-    'ssh' { Get-TargetEnv | Out-Null; Update-SshConfig; & ssh.exe -F (Join-Path $State 'ssh_config') @Passthrough subspace-target }
+    'ssh' {
+        Get-TargetEnv | Out-Null; Update-SshConfig
+        # SSH options go before the host and a command after it: .\install.ps1 ssh uptime. PowerShell drops a
+        # '--' typed at its prompt, so the command starts at the first word that is neither an option nor the
+        # value of an ssh option that takes one; a '--' that does arrive (pwsh -File) also ends the options.
+        $options = New-Object System.Collections.Generic.List[string]
+        $command = New-Object System.Collections.Generic.List[string]
+        for ($n = 0; $n -lt $Passthrough.Count; $n++) {
+            $word = [string]$Passthrough[$n]
+            if ($word -eq '--') { $command.AddRange([string[]]@($Passthrough)[($n + 1)..($Passthrough.Count)]); break }
+            if (-not $word.StartsWith('-')) { $command.AddRange([string[]]@($Passthrough)[$n..($Passthrough.Count)]); break }
+            $options.Add($word)
+            if ($word -cmatch '^-[BbcDEeFIiJLlmOoPpQRSWw]$' -and $n + 1 -lt $Passthrough.Count) { $n++; $options.Add([string]$Passthrough[$n]) }
+        }
+        & ssh.exe -F (Join-Path $State 'ssh_config') @options subspace-target @command
+        exit $LASTEXITCODE
+    }
     'audit' { Get-TargetEnv | Out-Null; Update-SshConfig; exit (Invoke-Vm @('sudo', '-n', 'subspace-setup', 'audit')) }
     'status' { Get-Content (Join-Path $State 'target.env'); Update-SshConfig; Invoke-Vm @('sudo', '-n', 'subspace-setup', 'status') | Out-Null }
     { $_ -in @('stop', 'start') } {
