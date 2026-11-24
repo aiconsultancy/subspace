@@ -242,3 +242,26 @@ fn restoring_drops_a_conversation_removed_from_the_list(cx: &mut TestAppContext)
     assert!(!restored.contains(&query("mira")), "{restored:?}");
     assert!(restored.contains(&channel("#subspace")));
 }
+
+#[gpui_kit::test]
+fn the_layout_is_saved_while_an_initiative_is_selected(cx: &mut TestAppContext) {
+    // The selection is remembered across restarts, so its conversations
+    // come back with it.
+    let (board, hub, cx) = board_with_buffers(cx);
+    let initiative = serde_json::from_value(serde_json::json!([
+        {"id": "initiative-local", "name": "Local", "channels": "#subspace, #crew"}
+    ]))
+    .unwrap();
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(initiative), cx)
+        })
+    });
+    settle(cx);
+    hub.read_with(cx, |hub, _| assert!(hub.initiatives.selected_for_runtime()));
+    open(&board, &channel("#crew"), Where::Tab, cx);
+    open(&board, &query("mira"), Where::Below, cx);
+    let saved = layout(&board, cx);
+    let stored = cx.update(|_, cx| subspace_framework::dashboard::prefs::get(cx, KEY));
+    assert_eq!(decode(stored.as_deref()), Some(saved));
+}

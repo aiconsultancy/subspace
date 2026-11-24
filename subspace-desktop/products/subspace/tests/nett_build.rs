@@ -249,8 +249,11 @@ fn assert_catalogue_reads_nett(cx: &mut TestAppContext) {
     catalog.update(cx, |catalog, cx| catalog.refresh(cx));
     cx.run_until_parked();
     catalog.read_with(cx, |catalog, _| {
-        assert_eq!(catalog.hint(), None, "the catalogue read completed");
-        assert!(catalog.memberships().is_empty());
+        assert!(
+            catalog.no_memberships(),
+            "the catalogue read completed and found none"
+        );
+        assert!(catalog.memberships().is_empty() && catalog.selected().is_none());
     });
 }
 

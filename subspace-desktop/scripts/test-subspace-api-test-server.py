@@ -8,6 +8,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 import threading
+import time
 import unittest
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -455,6 +456,39 @@ class FixtureTests(unittest.TestCase):
                 worker.join()
         # The shared record is never changed by a server's address.
         self.assertEqual(FIXTURE.FLEET_INITIATIVE['fleet']['fleetApiUrl'], 'http://127.0.0.1:18484')
+
+    def test_a_person_in_no_initiative_lists_none(self):
+        status, value, _ = self.request('/me/initiatives')
+        self.assertEqual(status, 200, value)
+        self.assertTrue(value['items'])
+        lonely = FIXTURE.FixtureServer(0, 'fixture-access', memberships=False)
+        worker = threading.Thread(target=lonely.serve_forever, daemon=True)
+        worker.start()
+        try:
+            request = Request(lonely.origin + '/api/v1/me/initiatives',
+                              headers={'Authorization': 'Bearer fixture-access'})
+            with urlopen(request, timeout=3) as response:
+                self.assertEqual(json.load(response)['items'], [])
+        finally:
+            lonely.shutdown()
+            lonely.server_close()
+            worker.join()
+
+    def test_the_memberships_read_can_be_held_as_a_waking_api_would(self):
+        slow = FIXTURE.FixtureServer(0, 'fixture-access', initiatives_delay=0.3)
+        worker = threading.Thread(target=slow.serve_forever, daemon=True)
+        worker.start()
+        try:
+            request = Request(slow.origin + '/api/v1/me/initiatives',
+                              headers={'Authorization': 'Bearer fixture-access'})
+            started = time.monotonic()
+            with urlopen(request, timeout=3) as response:
+                self.assertTrue(json.load(response)['items'])
+            self.assertGreaterEqual(time.monotonic() - started, 0.3)
+        finally:
+            slow.shutdown()
+            slow.server_close()
+            worker.join()
 
     def test_irc_credentials_are_issued_only_when_asked_for(self):
         fleet = {'host': 'irc.example.test', 'port': 6697}

@@ -28,8 +28,8 @@ fn borealis() -> MemberInitiative {
     .unwrap()
 }
 
-/// Two fleets on one network, the aurora initiative picked when `pick`,
-/// with a channel of each fleet joined.
+/// Two fleets on one network, the aurora initiative picked when `pick` and
+/// otherwise selected as the first, with a channel of each fleet joined.
 fn two_fleets(
     cx: &mut TestAppContext,
     pick: bool,
@@ -161,13 +161,20 @@ fn a_network_s_only_fleet_keeps_its_other_channels_open_when_another_fleet_is_pi
 }
 
 #[gpui_kit::test]
-fn with_no_initiative_selected_every_fleet_starts_open(cx: &mut TestAppContext) {
+fn without_a_pick_the_first_initiative_s_fleet_starts_open_and_the_others_fold(
+    cx: &mut TestAppContext,
+) {
+    // A member always has an initiative selected: the first, until they
+    // choose another, folds the other fleets as a choice would.
     let (board, _, cx) = two_fleets(cx, false);
     board.read_with(cx, |board, _| {
-        for fleet in ["aurora", "borealis"] {
-            let key = rows::fleet_group_key(&network_id(), fleet);
-            assert!(!board.list.is_folded(&key), "{fleet}");
-        }
+        let aurora = rows::fleet_group_key(&network_id(), "aurora");
+        let borealis = rows::fleet_group_key(&network_id(), "borealis");
+        assert!(
+            !board.list.is_folded(&aurora),
+            "the first initiative's fleet"
+        );
+        assert!(board.list.is_folded(&borealis));
     });
 }
 

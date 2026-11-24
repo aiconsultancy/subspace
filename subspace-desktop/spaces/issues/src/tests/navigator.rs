@@ -105,19 +105,17 @@ fn initiatives_list_the_pickers_options_once_there_is_a_choice() {
     let options = [
         MenuOption::new("ops", "Operations").checked(true),
         MenuOption::new("design", "Design"),
-        MenuOption::new("local", "All initiatives"),
     ];
     assert_eq!(
         initiatives(&options),
         [
             entry("ops", "Operations", true),
             entry("design", "Design", false),
-            entry("local", "All initiatives", false),
         ]
     );
     assert!(
-        initiatives(&options[2..]).is_empty(),
-        "no memberships: nothing to choose"
+        initiatives(&options[1..]).is_empty(),
+        "one membership: nothing to choose"
     );
 }
 

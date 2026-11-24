@@ -225,7 +225,10 @@ fn the_shared_service_asks_for_the_initiatives_that_name_the_fleets(cx: &mut Tes
         let catalog = subspace_api_client::initiatives::Catalog::shared(cx);
         assert_eq!(catalog.read(cx).hint(), None);
         FleetApi::shared(cx);
-        assert_eq!(catalog.read(cx).hint(), Some("Checking initiatives…"));
+        assert_eq!(
+            catalog.read(cx).hint().as_deref(),
+            Some("Checking initiatives…")
+        );
     });
 }
 

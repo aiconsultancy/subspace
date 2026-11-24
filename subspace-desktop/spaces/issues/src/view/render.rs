@@ -108,6 +108,9 @@ fn special_page(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> Op
 }
 
 fn no_projects_state(issues: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> AnyElement {
+    if issues.not_a_member {
+        return super::states::not_a_member(tokens, cx);
+    }
     if let crate::listing::Status::Failed(failure) = &issues.listing.status {
         return super::states::render(issues, &scope::Screen::Failed(failure.clone()), tokens, cx);
     }

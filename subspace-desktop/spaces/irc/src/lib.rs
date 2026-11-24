@@ -293,11 +293,15 @@ impl Dashboard for Irc {
     }
 
     /// The service, the networks and how many are connected, then any
-    /// initiative hint: what the Space's heading used to say.
+    /// initiative hint: what the Space's heading used to say. While Channels
+    /// is closed no network runs, so only the hint follows the service.
     fn status(&self, cx: &App) -> Option<SharedString> {
         let state = &self.hub.as_ref()?.read(cx).state;
         let hint = initiatives::hint(self, cx);
-        let (total, connected) = (state.networks().len(), state.connected_count());
+        let (total, connected) = match view::closed(self, cx) {
+            true => (0, 0),
+            false => (state.networks().len(), state.connected_count()),
+        };
         view::status_line(total, connected, hint.as_deref()).map(SharedString::from)
     }
 
@@ -310,17 +314,27 @@ impl Dashboard for Irc {
     }
 
     fn badge(&self, cx: &App) -> Option<SharedString> {
+        if view::closed(self, cx) {
+            return None;
+        }
         let count = self.hub.as_ref()?.read(cx).state.attention_count();
         (count > 0).then(|| count.to_string().into())
     }
 
-    fn subject(&self, _cx: &App) -> Option<subspace_framework::dashboard::Row> {
+    /// The selected row, none while Channels is closed.
+    fn subject(&self, cx: &App) -> Option<subspace_framework::dashboard::Row> {
+        if view::closed(self, cx) {
+            return None;
+        }
         self.list.selected_row().cloned()
     }
 
     /// The conversation in front, else the selected buffer, with its recent
-    /// messages.
+    /// messages; none while Channels is closed.
     fn agent_context(&self, cx: &App) -> Option<subspace_framework::dashboard::AgentContext> {
+        if view::closed(self, cx) {
+            return None;
+        }
         let buffer = self
             .dock
             .focused
@@ -335,12 +349,19 @@ impl Dashboard for Irc {
     }
 
     fn commands(&self, cx: &Context<Self>) -> Vec<subspace_framework::dashboard::PaletteCommand> {
+        if view::closed(self, cx) {
+            return Vec::new();
+        }
         let mut commands = commands::commands(self, cx);
         commands.extend(initiatives::command(self, cx));
         commands
     }
 
-    fn search(&self, _cx: &App) -> Option<subspace_framework::dashboard::Search> {
+    /// Channels and conversations to search, none while Channels is closed.
+    fn search(&self, cx: &App) -> Option<subspace_framework::dashboard::Search> {
+        if view::closed(self, cx) {
+            return None;
+        }
         Some(subspace_framework::dashboard::Search {
             placeholder: "Search channels and conversations".into(),
             items: self.search.clone(),
@@ -390,6 +411,9 @@ impl Dashboard for Irc {
             return;
         };
         hub.update(cx, |hub, _| {
+            // The account's check and logins are asked again now, so an API
+            // that came back is no longer named unreachable for minutes.
+            hub.managed.retry_now();
             let idle: Vec<NetworkId> = hub
                 .state
                 .networks()

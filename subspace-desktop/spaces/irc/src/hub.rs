@@ -185,16 +185,47 @@ fn follow_settings(cx: &mut Context<Hub>) -> Subscription {
     })
 }
 
+/// What an agent tool hears while Channels is closed.
+fn closed_to_tools() -> String {
+    format!(
+        "Channels is off: the signed-in person is not a member of any initiative yet. An administrator adds them in {}.",
+        subspace_api_client::service_name()
+    )
+}
+
 /// A hub with no runtime that records the commands it would send, with the
 /// removals saved in the state file, as at startup.
 #[cfg(test)]
 pub(crate) fn install_for_test(settings: &Settings, cx: &mut App) -> Entity<Hub> {
+    install_recorded(settings, None, cx)
+}
+
+/// [`install_for_test`] as a running hub starts where the API may serve
+/// initiative channels: it reads the memberships with `read` and holds the
+/// networks until that read settles.
+#[cfg(test)]
+pub(crate) fn install_awaiting_read_for_test(
+    settings: &Settings,
+    read: impl FnOnce(&mut Catalog, &mut gpui_kit::Context<Catalog>) + 'static,
+    cx: &mut App,
+) -> Entity<Hub> {
+    install_recorded(settings, Some(Box::new(read)), cx)
+}
+
+#[cfg(test)]
+type TestRead = Box<dyn FnOnce(&mut Catalog, &mut gpui_kit::Context<Catalog>)>;
+
+#[cfg(test)]
+fn install_recorded(settings: &Settings, read: Option<TestRead>, cx: &mut App) -> Entity<Hub> {
     let removed = Removed::decode(prefs::get(cx, REMOVED_KEY).as_deref());
     let initiatives = InitiativeIrc::new(Catalog::shared(cx), true);
     let hub = cx.new(|cx| {
         let mut hub = Hub::new(settings, removed, Outbox::Recorded(Vec::new()), initiatives);
         hub._settings = Some(follow_settings(cx));
         hub.follow_initiatives(cx);
+        if let Some(read) = read {
+            hub.await_first_read(true, read, cx);
+        }
         hub.begin(cx);
         hub
     });
@@ -289,11 +320,12 @@ impl Hub {
     }
 
     /// Sends `command` to the runtime, unless it is for an account network
-    /// whose account is no longer the one signed in.
+    /// whose account is no longer the one signed in, or for any network
+    /// while Channels is closed.
     pub fn send(&mut self, command: Command) {
         if command
             .network()
-            .is_some_and(|network| !self.managed.admits(network))
+            .is_some_and(|network| self.initiatives.closed() || !self.managed.admits(network))
         {
             return;
         }
@@ -345,6 +377,13 @@ impl Hub {
             .map(|tools| tools.try_iter().collect())
             .unwrap_or_default();
         if requests.is_empty() {
+            return;
+        }
+        if self.initiatives.closed() {
+            let refusal = closed_to_tools();
+            for request in requests {
+                agent_tools::refuse(request, &refusal);
+            }
             return;
         }
         let (initiatives, networks) = (&self.initiatives, &self.applied.networks);

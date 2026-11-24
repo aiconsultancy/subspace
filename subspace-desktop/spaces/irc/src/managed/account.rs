@@ -139,6 +139,9 @@ pub(crate) struct Schedule {
     settled: bool,
     retry_at: Option<Instant>,
     failures: u32,
+    /// Whether the latest request to the API, a check or a login, could
+    /// not reach it at all. The retries go on; Channels says why meanwhile.
+    pub unreachable: bool,
 }
 
 impl Schedule {
@@ -160,6 +163,13 @@ impl Schedule {
         self.failures = self.failures.saturating_add(1);
         self.running = false;
         self.retry_at = Some(now + RETRY_FIRST.saturating_mul(1 << doublings).min(cap));
+    }
+
+    /// Checks again now, as Reload asks, while no check has settled.
+    pub fn retry_now(&mut self) {
+        if !self.settled {
+            self.retry_at = None;
+        }
     }
 
     /// The account changed: check again now. A check still running is let

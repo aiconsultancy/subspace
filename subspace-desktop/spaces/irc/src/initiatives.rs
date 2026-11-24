@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::{Context, Entity, Subscription};
-use subspace_api_client::initiatives::{Catalog, IdentityObservation};
+use subspace_api_client::initiatives::{Catalog, IdentityObservation, not_a_member};
 use subspace_api_client::model::{Fleet, MemberInitiative};
 use subspace_client_irc::{BufferKey, Command, NetworkConfig, NetworkId, Target};
 
@@ -20,11 +20,29 @@ pub(crate) use channels::{channel_names, focus_channel, initiative_channels};
 pub(crate) use endpoint::{Endpoint, comparable_host};
 pub(crate) use picker::{Picker, button, command, dismiss_stale_picker, hint};
 
+/// The longest the networks wait at start for the first read of the
+/// memberships: long enough for an API that is waking up, as Issues allows.
+pub(crate) const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
 pub(crate) struct InitiativeIrc {
     pub(crate) catalog: Entity<Catalog>,
     selection: Option<MemberInitiative>,
     /// The network on which an initiative replaces local autojoin.
     network: Option<NetworkId>,
+    /// Whether the person switched to the selected initiative and its first
+    /// channel is still to be shown, once a network carries its channels.
+    focus_pending: bool,
+    /// The catalogue's count of the person's own picks when last followed.
+    picks: u64,
+    /// The user the selection was followed for.
+    actor: Option<String>,
+    /// Whether Channels is closed: the API serves initiative channels and
+    /// found that the person belongs to none, so no network runs until an
+    /// administrator adds them to one.
+    closed: bool,
+    /// Whether the networks wait for the first read of the memberships to
+    /// settle.
+    awaiting_read: bool,
     /// The server initiatives use when their fleet names none.
     default: Endpoint,
     loopback_fixture: bool,
@@ -40,6 +58,11 @@ impl InitiativeIrc {
             catalog,
             selection: None,
             network: None,
+            focus_pending: false,
+            picks: 0,
+            actor: None,
+            closed: false,
+            awaiting_read: false,
             default: Endpoint::configured(),
             loopback_fixture,
             rosters: RefCell::default(),
@@ -111,8 +134,48 @@ impl InitiativeIrc {
             .map(|initiative| initiative.fleet_id.as_deref())
     }
 
+    #[cfg(test)]
     pub(crate) fn selected_for_runtime(&self) -> bool {
         self.network.is_some()
+    }
+
+    /// Whether Channels is closed until the person belongs to an initiative.
+    /// Only with an API that serves initiative channels, and only once their
+    /// memberships were read: never while they are read, after a read
+    /// failed, or in a build without an API, where the configured networks
+    /// run as before.
+    pub(crate) fn closed(&self) -> bool {
+        self.closed
+    }
+
+    /// Whether the networks wait for the first read of the memberships.
+    pub(crate) fn awaiting_read(&self) -> bool {
+        self.awaiting_read
+    }
+
+    /// Follows the catalogue's word on whether Channels is closed; true when
+    /// that changed. While another account's or organisation's memberships
+    /// are read it stays as it is, so nobody connects only to stop again.
+    fn sync_closed(&mut self, cx: &gpui_kit::App) -> bool {
+        let catalog = self.catalog.read(cx);
+        let closed = match unsettled(catalog) {
+            true => self.closed,
+            false => not_a_member(subspace_api_client::capabilities(), catalog),
+        };
+        std::mem::replace(&mut self.closed, closed) != closed
+    }
+
+    /// Ends the wait for the first read once it settled; true when it ended.
+    /// A read refused for want of a session does not settle it: at start a
+    /// saved session may still be restored, and a person who is signed out
+    /// is asked to sign in first.
+    fn settle_first_read(&mut self, cx: &gpui_kit::App) -> bool {
+        let catalog = self.catalog.read(cx);
+        let settled = self.awaiting_read && !catalog.reading() && !catalog.sign_in_needed();
+        if settled {
+            self.awaiting_read = false;
+        }
+        settled
     }
 
     pub(crate) fn serves_route(
@@ -159,6 +222,19 @@ impl InitiativeIrc {
     }
 }
 
+/// Whether a hub holds its networks for the first read of the memberships:
+/// a `running` one, where the API `may_serve` initiative channels, before
+/// they are `known`.
+pub(crate) fn holds_for_first_read(running: bool, may_serve: bool, known: bool) -> bool {
+    running && may_serve && !known
+}
+
+/// Whether `catalog` is reading memberships it knows nothing of yet, as for
+/// a new account or organisation.
+fn unsettled(catalog: &Catalog) -> bool {
+    catalog.reading() && !catalog.memberships_known() && !catalog.no_memberships()
+}
+
 /// The initiatives with a fleet whose server is `network` among `networks`.
 fn initiatives_on<'a>(
     initiatives: &'a [MemberInitiative],
@@ -188,20 +264,71 @@ pub(crate) fn loopback_fixture() -> bool {
 impl Hub {
     pub(crate) fn follow_initiatives(&mut self, cx: &mut Context<Self>) {
         self.initiatives.sync_selection(cx);
+        self.initiatives.sync_closed(cx);
+        self.await_first_read(self.is_running(), Catalog::refresh, cx);
         self.initiatives._subscription =
             Some(cx.observe(&self.initiatives.catalog, |hub, _, cx| {
                 hub.initiatives.forget_rosters();
+                let selection_changed = hub.initiatives.sync_selection(cx);
+                let reopened_or_closed = hub.initiatives.sync_closed(cx);
+                let first_read = hub.initiatives.settle_first_read(cx);
                 // The account's networks follow its fleets.
                 hub.reconcile(cx);
+                if reopened_or_closed || first_read {
+                    hub.rerun();
+                }
                 // Any change is applied, so a selection that went with its
                 // scope also takes its autojoin with it. Without initiative
                 // channels (a NETT organisation that does not serve them),
                 // nothing new switches network or autojoins.
-                if let Some(focus) = hub.initiatives.sync_selection(cx) {
-                    hub.apply_initiative(focus);
+                if selection_changed {
+                    hub.apply_initiative();
                 }
                 cx.notify();
             }));
+    }
+
+    /// For a `running` hub whose API may serve initiative channels, before
+    /// the memberships are known: reads them with `read` and holds the
+    /// networks until that read settles, or [`READ_TIMEOUT`] passes, so a
+    /// member's configured channels are not joined only to be left for
+    /// their initiative's, and someone in no initiative never connects.
+    /// NETT's capability list may not be read yet; the read decides.
+    pub(crate) fn await_first_read(
+        &mut self,
+        running: bool,
+        read: impl FnOnce(&mut Catalog, &mut Context<Catalog>),
+        cx: &mut Context<Self>,
+    ) {
+        let catalog = self.initiatives.catalog.clone();
+        let known = {
+            let catalog = catalog.read(cx);
+            catalog.memberships_known() || catalog.no_memberships()
+        };
+        if !holds_for_first_read(
+            running,
+            subspace_api_client::may_serve_initiative_channels(),
+            known,
+        ) {
+            return;
+        }
+        catalog.update(cx, read);
+        self.hold_for_first_read(cx);
+    }
+
+    /// Holds the networks until the first read settles or [`READ_TIMEOUT`]
+    /// passes.
+    pub(crate) fn hold_for_first_read(&mut self, cx: &mut Context<Self>) {
+        self.initiatives.awaiting_read = true;
+        cx.spawn(async move |hub, cx| {
+            cx.background_executor().timer(READ_TIMEOUT).await;
+            _ = hub.update(cx, |hub, _| {
+                if std::mem::take(&mut hub.initiatives.awaiting_read) {
+                    hub.rerun();
+                }
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn observe_initiative_identity(
@@ -228,7 +355,11 @@ impl Hub {
 
     /// Synchronise the selected initiative with the configured Subspace
     /// IRC connection. Also called after run-time settings replace a connection.
-    pub(crate) fn apply_initiative(&mut self, focus: bool) {
+    /// Leaving a network takes the focus with it; arriving on one shows the
+    /// initiative's first channel only after the person switched to it, so
+    /// the selection made for them at start never takes the conversation
+    /// they are in.
+    pub(crate) fn apply_initiative(&mut self) {
         let selection = self
             .initiatives
             .selection
@@ -242,14 +373,19 @@ impl Hub {
         let new_network = intent.as_ref().map(|(network, ..)| network.clone());
         let old_network = std::mem::replace(&mut self.initiatives.network, new_network.clone());
         let changed_network = old_network != new_network;
+        let left = changed_network && old_network.is_some();
         if let Some(network) = old_network.filter(|_| changed_network) {
             self.send(Command::SetAutojoin {
                 network,
                 channels: None,
             });
         }
-        if focus || changed_network {
+        let show = self.initiatives.focus_pending && intent.is_some();
+        if show || left {
             self.focus_initiative(intent.as_ref().and_then(first_channel));
+        }
+        if show {
+            self.initiatives.focus_pending = false;
         }
         if let Some((network, channels, _)) = intent {
             self.send(Command::SetAutojoin {
@@ -261,17 +397,40 @@ impl Hub {
 }
 
 impl InitiativeIrc {
-    /// Reports whether the runtime needs to update and whether to focus a new room.
-    fn sync_selection(&mut self, cx: &gpui_kit::App) -> Option<bool> {
-        let selected = self.catalog.read(cx).selected().cloned();
-        if self.selection == selected {
-            return None;
+    /// Follows the catalogue's selection; true when the runtime needs to
+    /// update. Only a switch from one initiative to another leaves its first
+    /// channel to show: the first selection, made for the person once their
+    /// memberships are read, joins its channels without taking the
+    /// conversation they are in.
+    fn sync_selection(&mut self, cx: &gpui_kit::App) -> bool {
+        let catalog = self.catalog.read(cx);
+        let selected = catalog.selected().cloned();
+        if self.selection == selected || self.keeps_through_scope_read(catalog, &selected) {
+            return false;
         }
-        let focus = selected
-            .as_ref()
-            .is_some_and(|new| self.selection.as_ref().is_none_or(|old| old.id != new.id));
+        let picked = catalog.picked_since(&mut self.picks);
+        let id = |item: &Option<MemberInitiative>| item.as_ref().map(|item| item.id.clone());
+        if id(&self.selection) != id(&selected) {
+            self.focus_pending = picked && selected.is_some();
+        }
+        self.actor = catalog.actor().map(str::to_owned);
         self.selection = selected;
-        Some(focus)
+        true
+    }
+
+    /// Whether to keep following the previous initiative while the same
+    /// person's memberships in another organisation are read, rather than
+    /// the configured channels in between. Another person's never are.
+    fn keeps_through_scope_read(
+        &self,
+        catalog: &Catalog,
+        selected: &Option<MemberInitiative>,
+    ) -> bool {
+        selected.is_none()
+            && self.selection.is_some()
+            && unsettled(catalog)
+            && catalog.actor().is_some()
+            && catalog.actor() == self.actor.as_deref()
     }
 }
 

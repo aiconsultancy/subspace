@@ -65,7 +65,13 @@ it. `CAPTURE_FLEET=1` adds the fleet's issues to the Subspace API fixture.
 for the servers its fleets use, such as the aurora fleet's with
 `CAPTURE_FLEET=1` (`POST /api/v1/me/irc-credential` with the server's `host`
 and `port`; 404 for any other server, and for all without it), so Channels
-keeps a network for each of them. `CAPTURE_NO_UPDATES_STREAM=1` starts the Subspace API fixture
+keeps a network for each of them. `CAPTURE_NO_MEMBERSHIPS=1` has the
+fixture's person belong to no initiative, for the state Channels and Issues
+show then. `CAPTURE_API_UNREACHABLE=1` gives the app a loopback Subspace API
+address nothing listens on, for the state every Space shows when the API
+cannot be reached. `CAPTURE_INITIATIVES_DELAY=<seconds>` holds each
+memberships read that long, for the state Channels shows while it waits for
+the first. `CAPTURE_NO_UPDATES_STREAM=1` starts the Subspace API fixture
 without its live updates stream. `CAPTURE_CHANGE_AFTER=<seconds>` retitles
 SUB-1 that long after the first detail read to simulate a change made
 elsewhere. `CAPTURE_ITEM_DELAY=<seconds>` holds each GitHub
@@ -162,9 +168,11 @@ conversation between people and captains that names fixture issues and links
 the GitHub fixture's pull requests, and stays connected so the server keeps
 it as chat history. Pass `CAPTURE_IRC_CONFIG` a config for that server with
 `#aurora-lyra` in its channels, with `CAPTURE_FLEET=1` so the issue tiles
-resolve. `CAPTURE_FLEET=1` also lists the aurora fleet's initiative,
-never selected, so Channels marks its captains and rear admiral on any
-loopback connection. `--status` gives `aurora-lyra` a nick status, and
+resolve. `CAPTURE_FLEET=1` also lists the aurora fleet's initiative, after
+the fixture's others, so Channels marks its captains and rear admiral on any
+loopback connection. The fixture's first initiative, **Design Studio**, is
+selected unless a choice is remembered, and its channels take the place of
+the configuration's on the loopback connection. `--status` gives `aurora-lyra` a nick status, and
 `--late-after <s>` posts three more lines that many seconds after the
 capture build joins, so a capture that shows another buffer meanwhile finds
 them new; `--thread` adds two requests to `aurora-lyra` with its threaded

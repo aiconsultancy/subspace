@@ -448,9 +448,9 @@ Run `make stack-desktop-config` to apply it using the existing credentials.
 `make stack-reset` keeps the desktop settings and removes the password files.
 The next `make stack-up` generates passwords and refreshes the connections.
 
-The desktop reads the file at startup. In **Channels**, pick an initiative
-to join its channels on its fleet's IRC server. Picking an initiative of
-the other fleet switches connection.
+The desktop reads the file at startup. **Channels** joins the channels of
+your first initiative, or of the one you last chose, on its fleet's IRC
+server. Picking an initiative of the other fleet switches connection.
 
 | Command | Effect |
 | --- | --- |

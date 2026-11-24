@@ -1,5 +1,8 @@
 mod ask;
+mod closed;
+mod default;
 mod direct;
+mod first_read;
 mod fleet;
 mod folding;
 mod header;
@@ -12,6 +15,7 @@ mod scope;
 mod thread;
 mod thread_gone;
 mod thread_reactions;
+mod unreachable;
 mod views;
 
 use gpui_kit::test::TestWindowExt as _;
@@ -156,15 +160,18 @@ fn an_unresolved_fleet_keeps_autojoin_off_until_its_lookup_succeeds(cx: &mut Tes
     };
     let (board, hub, cx) = mount(cx, settings());
     let catalog = hub.read_with(cx, |hub, _| hub.initiatives.catalog.clone());
+    // Selected as the person's only initiative, without a pick.
     catalog.update(cx, |catalog, cx| {
         catalog.set_memberships_for_test(
             Some("fixture-user".into()),
             Ok(initiative(json!(null))),
             cx,
         );
-        catalog.pick(ID, cx);
     });
     settle(cx);
+    catalog.read_with(cx, |catalog, _| {
+        assert_eq!(catalog.selected().map(|item| item.id.as_str()), Some(ID));
+    });
     let joined = Command::SetAutojoin {
         network: network_id(),
         channels: Some(vec!["#data".into()]),

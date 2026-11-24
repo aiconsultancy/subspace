@@ -94,6 +94,22 @@ pub(crate) fn serve(
     }
 }
 
+/// Refuses `request` with `message`, as while Channels is closed.
+pub(crate) fn refuse(request: Request, message: &str) {
+    let message = message.to_owned();
+    match request {
+        Request::Read(_, reply) => {
+            let _ = reply.send(Err(message));
+        }
+        Request::Check(_, reply) => {
+            let _ = reply.send(Err(message));
+        }
+        Request::Write(_, reply) => {
+            let _ = reply.send(Err(message));
+        }
+    }
+}
+
 fn answer<T>(
     reply: Reply<T>,
     (result, commands): (Result<T, String>, Vec<Command>),

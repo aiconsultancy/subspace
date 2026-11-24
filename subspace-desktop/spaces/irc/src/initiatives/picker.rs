@@ -9,7 +9,6 @@ use subspace_framework::dashboard::anchored::Anchor;
 use subspace_framework::dashboard::menu::{Menu, MenuAnchors, MenuEvent};
 
 const ANCHOR: &str = "irc-initiative";
-const LOCAL_LABEL: &str = "Local channels";
 
 #[derive(Default)]
 pub(crate) struct Picker {
@@ -29,25 +28,31 @@ impl Picker {
     }
 }
 
-/// What the status bar adds about initiatives: the connection the selected
-/// one still needs, or that the memberships are being read or unavailable.
+/// What the status bar adds about initiatives: that the API cannot be
+/// reached, in the words every Space uses for it, the connection the
+/// selected initiative still needs, that the memberships are being read or
+/// unavailable, or that the person belongs to no initiative yet.
 pub(crate) fn hint(board: &Irc, cx: &App) -> Option<String> {
     if !subspace_api_client::capabilities().initiative_channels {
         return None;
     }
     let hub = board.hub.as_ref()?.read(cx);
+    if hub.api_unreachable(cx) {
+        return Some(subspace_api_client::unreachable_message());
+    }
     let catalog = hub.initiatives.catalog.read(cx);
     if catalog.has_memberships()
         && let Some(missing) = hub.missing_initiative_network()
     {
         return Some(missing);
     }
-    catalog.hint().map(str::to_owned)
+    catalog.hint()
 }
 
 /// The picker shows while any initiative (or the default server) has a
 /// connection, including while the selected one's server has none, so
-/// another initiative can be chosen.
+/// another initiative can be chosen. It offers initiatives only: a member
+/// always has one selected, so Local channels is not a choice.
 fn catalog<'a>(board: &'a Irc, cx: &'a App) -> Option<&'a Catalog> {
     // Where the organisation does not serve initiative channels and fleets,
     // Channels uses its configured connections and offers no initiative
@@ -64,7 +69,7 @@ fn catalog<'a>(board: &'a Irc, cx: &'a App) -> Option<&'a Catalog> {
 /// The picker's button, while there is an initiative to choose.
 pub(crate) fn button(board: &Irc, cx: &mut Context<Irc>) -> Option<AnyElement> {
     let button = catalog(board, cx)?
-        .button("irc-initiative-button", LOCAL_LABEL)
+        .button("irc-initiative-button")
         .on_click(cx.listener(|this, _, window, cx| open(this, window, cx)));
     Some(board.initiative_menu.anchors.trigger(ANCHOR, button, cx))
 }
@@ -85,7 +90,7 @@ fn open(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
         return;
     };
     let revision = catalog.revision();
-    let menu = catalog.menu(LOCAL_LABEL);
+    let menu = catalog.menu();
     let anchor = board.initiative_menu.anchors.anchor(ANCHOR, cx);
     let Some(menu) = board.initiative_menu.anchors.open(anchor, menu, window, cx) else {
         return;

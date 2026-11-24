@@ -76,6 +76,17 @@ impl Servers {
         self.entries.clear();
     }
 
+    /// Makes every probe waiting after a failure due now, and lets each
+    /// server's login be asked for again, as Reload asks.
+    pub fn retry_now(&mut self) {
+        for entry in &mut self.entries {
+            if matches!(entry.probe, Probe::Due(Some(_))) {
+                entry.probe = Probe::Due(None);
+            }
+            entry.login.retry_now();
+        }
+    }
+
     /// The servers whose probe is due at `now`, now marked as asking.
     pub fn due(&mut self, now: Instant) -> Vec<(Endpoint, Arc<ServerLogin>)> {
         self.entries

@@ -38,8 +38,9 @@ The first load can take up to a minute while Subspace API wakes.
 Issues uses the same layout as every Space. The navigator on the left lists
 where you are looking: **Views** (**My issues**, with the count of your open
 issues, **Active**, **Backlog**, **All issues** and **Activity**),
-**Projects** (**All projects** and each active project in the current
-initiative) and, when you belong to initiatives, **Initiatives**. The selected
+**Projects** (each active project in the selected initiative, or every
+project and **All projects** until your initiatives are read) and, when you
+belong to several initiatives, **Initiatives**. The selected
 row is the one showing. **New issue** sits in the navigator's header. The tab
 above the list names the view, and the toolbar under it holds search, filters
 and actions. The inspector on the right shows the selected issue.
@@ -95,8 +96,8 @@ toolbar.
 | **Backlog** | Backlog issues. |
 | **All issues** | Issues across workflow states. |
 | **Search issues** | Searches the current view after a short typing pause. If only **All issues** has matches, it becomes the selected view and keeps the query and explicit filters. From **My issues**, this can show work assigned to other people. An exact identifier takes precedence over text matches. |
-| Initiatives | Choose from your Subspace initiative memberships in the navigator, or the initiative picker while the navigator is hidden. This stays in sync with Channels. **All initiatives** clears the filter. |
-| Projects | Choose an active project in the current initiative in the navigator, or the project picker while the navigator is hidden. Clearing the initiative makes the full project list and **All projects** available. |
+| Initiatives | Choose from your Subspace initiative memberships in the navigator, or the initiative picker while the navigator is hidden. One initiative is selected at a time, the same in Channels: the one you last chose, or your first. |
+| Projects | Choose an active project in the current initiative in the navigator, or the project picker while the navigator is hidden. Once your initiatives are read, Issues lists the selected initiative's projects only; before then, or while they cannot be read or the API does not list them, it lists every project and **All projects**. |
 | **Assignee** | **Me**, **No assignee** or **All assignees**. In My issues, choose **All assignees** to open All issues. |
 | **Priority** | Select priorities from **No priority** to **Low**, or clear with **Any priority**. |
 | **Filters** | Workflow statuses for one project, or state types for all projects; issue or tracker type, due date and **Show archived**. |
@@ -337,6 +338,9 @@ needed**, **Offline**, or a connecting message. This page has no inputs.
 ## Troubleshooting
 
 - **Sign-in required:** Sign in under **Settings > Account**, then reload Issues.
+- **Not a member of any initiative yet:** Issues lists the projects of your
+  initiatives, and you belong to none. Once an administrator adds you to one
+  in Subspace, choose **Reload**.
 - **Offline:** “Couldn't reach Subspace API. Try again.” Check the connection
   and reload. The first load can take up to a minute while the API wakes.
 - A failed list or detail read can offer **Copy details**, which copies the

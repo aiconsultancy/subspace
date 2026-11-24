@@ -21,6 +21,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use gpui_kit::{App, AppContext as _, Context};
+use subspace_api_client::Error;
 use subspace_api_client::initiatives::Catalog;
 use subspace_api_client::model::MemberInitiative;
 use subspace_client_irc::{NetworkConfig, NetworkId};
@@ -200,6 +201,25 @@ impl Managed {
         self.publish_searchable();
     }
 
+    /// Whether the account side's latest request to the API, a check or a
+    /// login, could not reach it at all.
+    pub(crate) fn unreachable(&self) -> bool {
+        self.schedule.unreachable
+    }
+
+    /// Asks the API again at once, as Reload does: the account check while
+    /// it has not settled, and the login of each server.
+    pub(crate) fn retry_now(&mut self) {
+        self.schedule.retry_now();
+        self.servers.retry_now();
+    }
+
+    /// Notes whether the latest request to the API reached it; true when
+    /// that changed.
+    pub(crate) fn note_reach(&mut self, unreachable: bool) -> bool {
+        std::mem::replace(&mut self.schedule.unreachable, unreachable) != unreachable
+    }
+
     /// Takes a finished check: the account it showed, or a later retry.
     /// True when the account changed.
     fn finish(&mut self, checked: account::Checked, now: Instant) -> bool {
@@ -208,6 +228,7 @@ impl Managed {
             self.schedule.running = false;
             return false;
         }
+        self.note_reach(matches!(checked.result, Err(Error::Network)));
         self.checked = Some(checked.generation);
         match account::outcome(checked.result) {
             account::Outcome::Settled(account) => {
@@ -307,7 +328,12 @@ fn begin(hub: &mut Hub, cx: &mut Context<Hub>) {
 /// not known yet, and the networks follow when either arrives.
 fn finish(hub: &mut Hub, checked: account::Checked, cx: &mut Context<Hub>) {
     let now = Instant::now();
-    if !hub.managed.finish(checked, now) {
+    let unreachable = hub.managed.unreachable();
+    let changed = hub.managed.finish(checked, now);
+    if hub.managed.unreachable() != unreachable {
+        cx.notify();
+    }
+    if !changed {
         return;
     }
     reread(hub, now, cx);
@@ -325,10 +351,15 @@ fn probe(hub: &mut Hub, now: Instant, cx: &mut Context<Hub>) {
     for (endpoint, login) in hub.managed.servers.due(now) {
         let client = Arc::clone(&binding.client);
         cx.spawn(async move |hub, cx| {
-            let answer = cx
-                .background_spawn(async move { login.login(&client).map(|login| login.account) })
+            let (answer, reached) = cx
+                .background_spawn(async move {
+                    let (answer, reached) = login.ask(&client);
+                    (answer.map(|login| login.account), reached)
+                })
                 .await;
-            let _ = hub.update(cx, |hub, cx| answered(hub, (epoch, &endpoint), answer, cx));
+            let _ = hub.update(cx, |hub, cx| {
+                answered(hub, (epoch, &endpoint), (answer, reached), cx)
+            });
         })
         .detach();
     }
@@ -338,10 +369,16 @@ fn probe(hub: &mut Hub, now: Instant, cx: &mut Context<Hub>) {
 fn answered(
     hub: &mut Hub,
     (epoch, endpoint): (u64, &Endpoint),
-    answer: Result<String, login::Unavailable>,
+    (answer, reached): (Result<String, login::Unavailable>, Option<bool>),
     cx: &mut Context<Hub>,
 ) {
     let current = hub.managed.epoch == epoch;
+    if current
+        && let Some(reached) = reached
+        && hub.managed.note_reach(!reached)
+    {
+        cx.notify();
+    }
     if current && hub.managed.servers.answer(endpoint, answer, Instant::now()) {
         hub.reconcile(cx);
         cx.notify();
