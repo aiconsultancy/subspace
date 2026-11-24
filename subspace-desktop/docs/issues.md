@@ -480,15 +480,17 @@ NETT implementation is not a compatibility layer.
 
 ## Debug overrides and offline fixtures
 
-Debug builds pair `SUBSPACE_API_URL` with `SUBSPACE_API_ACCESS_JWT_FILE` for
-offline fixtures; without the file, `SUBSPACE_API_URL` only selects the API and
-the signed-in account supplies the token, as in release builds. The URL must
-be numeric-loopback HTTP, for example `http://127.0.0.1:18161/api`; the client
+In every build, release builds included, `SUBSPACE_API_URL` selects the API
+(see [Identity providers and the API URL](../README.md#identity-providers-and-the-api-url)),
+and the signed-in account supplies the token. Only the pairing with
+`SUBSPACE_API_ACCESS_JWT_FILE` is debug-only: debug builds use it for offline
+fixtures, sending the file's token instead of the account's. For that pairing
+the URL must be numeric-loopback HTTP, for example `http://127.0.0.1:18161/api`; the client
 validates it through the fixture URL boundary. The file holds the token sent
 as `Authorization: Bearer`. The client reads it when created and trims
 trailing newlines. This applies only with an explicit
 loopback URL; loopback requests bypass environment proxies. Never log or display
-a real JWT. Release builds ignore both variables.
+a real JWT. Release builds ignore `SUBSPACE_API_ACCESS_JWT_FILE`.
 
 Start the memory-only fixture with a deliberately fake token:
 

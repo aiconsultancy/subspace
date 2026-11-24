@@ -959,7 +959,7 @@ Open **Settings** and choose **Channels** in the sidebar.
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| **Enabled** | Off in release builds, on in debug builds | Turning the board off disconnects every network. |
+| **Enabled** | On | Turning the board off disconnects every network. |
 | **Networks** (**Saved networks** while networks from your account show) | None | The networks to connect to. **Add network** adds one; **Edit…** and **Remove…** change one. |
 | **From your account** | — | Shown while you are signed in: one network for each of your fleets' IRC servers that Subspace API issues sign-ins for, read-only. They sign in as the account name it issues, follow your account and go when you sign out. |
 | **Highlight words** | None | Words, separated by commas, that mark a message as mentioning you on every network, besides your nick. |

@@ -24,6 +24,16 @@ private network up for you. To just try Subspace out, a VM on your own
 computer is the quickest way. Either way it installs the agents, IRC and the
 API on the VM and connects the desktop app.
 
+**Download the desktop app** from the
+[Subspace releases](https://github.com/aiconsultancy/subspace/releases?q=subspace-desktop&expanded=true).
+`Subspace_<version>_darwin_arm64.zip` signs in to an API on your computer,
+such as the local stack or a fleet's tunnel; a
+[connection file](subspace-desktop/docs/subspace/connection-file.md) points
+it at a hosted API instead. `Subspace-NoAPI_<version>_darwin_arm64.zip` has no
+API and nothing to sign in to: Channels, the GitHub Spaces, web Spaces and the
+terminal. For your own name, logo, sign-in or update source,
+[make your own build](subspace-desktop/docs/build-your-own.md).
+
 **Bring your own agents.** Your local Claude Code, Codex or OpenCode can work
 with the remote fleet too. They use the issue tracker, decisions, documents,
 projects and initiatives through the Subspace API's MCP server, and talk to
