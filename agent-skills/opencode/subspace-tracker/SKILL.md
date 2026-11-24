@@ -15,30 +15,29 @@ input schema; this skill names them without the harness's prefix.
 
 ## Connecting
 
-There are two ways in, and they never mix:
+**A person's local agent** uses the person's Subspace account. For a hosted
+WorkOS API, ask the person to run
+`python3 ~/.subspace/bin/subspace_token.py --login` and complete browser
+sign-in. The helper shares and refreshes that session across agents. For
+development sign-in, use the fleet's tunnel. Get the person's name with
+`python3 ~/.subspace/bin/subspace_token.py --me`, or ask them.
 
-- **A fleet agent** (a rear admiral or captain on a fleet VM, and the crew
-  on a captain's server) is connected by the fleet installer: the `subspace`
-  server points at the API's **agent listener** on the VM's loopback
-  (`http://127.0.0.1:3001/mcp` by default) and sends
-  `X-Subspace-Agent: <your IRC account>`. There is no token to refresh. The
-  agent listener acts only as a registered agent and serves no sign-in or
-  administrator route.
-- **A person's local agent** signs in with that person's login through the
-  fleet's tunnel. The token comes from the API's development sign-in and lasts
-  about eight hours; a WorkOS or Entra deployment needs a token from that
-  provider instead. Get the person's name from
-  `python3 ~/.subspace/bin/subspace_token.py --me`, or ask them.
-
-For a local agent, the installer added the remote server `subspace` to
-`~/.config/opencode/opencode.json`: `http://127.0.0.1:3000/mcp`, sending
-`Authorization: Bearer {env:SUBSPACE_API_TOKEN}`. Start OpenCode with the
-token set:
+The installer registers `subspace` in `~/.config/opencode/opencode.json`.
+For WorkOS, it runs the helper to forward MCP requests to the hosted
+`/mcp` URL with a current access token. With development sign-in it uses
+`http://127.0.0.1:3000/mcp` and reads the bearer token from the environment.
 
 ```sh
 export SUBSPACE_API_TOKEN="$(python3 ~/.subspace/bin/subspace_token.py)"
 opencode
 ```
+
+**A fleet agent** (a rear admiral or captain on a fleet VM, and the crew
+on a captain's server) uses the fleet installer's MCP registration. It
+connects to the API's agent listener on the VM's loopback
+(`http://127.0.0.1:3001/mcp` by default) and sends
+`X-Subspace-Agent: <your IRC account>`. The listener serves registered
+agents and has no sign-in or administrator route.
 
 <!-- shared:start -->
 ## Who you are in the tracker
@@ -285,13 +284,14 @@ person. A 403 means the same: report it, never work around it.
 
 ## Troubleshooting
 
-- **Cannot connect**: on a fleet VM, the API is not running; tell a person.
-  Locally, the fleet's tunnel is not running: ask the person to run
+- **Cannot connect on a fleet VM**. Tell a person.
+- **Development connection failed**. Ask the person to run
   `./install.sh tunnel --background` (Windows: `.\install.ps1 tunnel
   --background`) in the Subspace repository.
 - **HTTP 401 naming `X-Subspace-Agent`**: the fleet's API has no active agent
   registered under your IRC account. Tell a person; do not try another name.
-- **HTTP 401 locally**: the token expired. Ask the person to export a fresh
+- **HTTP 401 locally**. For WorkOS, ask the person to check `--me` and run
+  `--login` if prompted. For development sign-in, export a fresh
   `SUBSPACE_API_TOKEN` as above and restart OpenCode.
 - **HTTP 403**: you may not do that; tell a person rather than working around
   it. A deactivated agent also receives 403.

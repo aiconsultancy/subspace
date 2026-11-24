@@ -9,9 +9,9 @@ the fleet's IRC channels.
 | --- | --- |
 | [`subspace-irc/`](subspace-irc/SKILL.md) | Read and post in Starbase and the ship channels. The same skill works in every agent. |
 | [`claude/subspace-tracker/`](claude/subspace-tracker/SKILL.md) | The tracker through MCP, for Claude Code (`mcp__subspace__*` tools; tokens refresh through `headersHelper`). |
-| [`codex/subspace-tracker/`](codex/subspace-tracker/SKILL.md) | The same, for Codex (`codex mcp`, bearer token from `SUBSPACE_API_TOKEN`). |
-| [`opencode/subspace-tracker/`](opencode/subspace-tracker/SKILL.md) | The same, for OpenCode (remote MCP server in `opencode.json`). |
-| [`bin/subspace_token.py`](bin/subspace_token.py) | Mints and caches your API token through the fleet's tunnel. |
+| [`codex/subspace-tracker/`](codex/subspace-tracker/SKILL.md) | The tracker through MCP, for Codex (`codex mcp`). |
+| [`opencode/subspace-tracker/`](opencode/subspace-tracker/SKILL.md) | The tracker through MCP, for OpenCode (`opencode.json`). |
+| [`bin/subspace_token.py`](bin/subspace_token.py) | Signs in to WorkOS or mints a development API token through the fleet's tunnel. |
 | [`bin/subspace_irc.py`](bin/subspace_irc.py) | A small IRC client that signs in as you and marks every line as from your agent. |
 
 ## The fleet's own agents
@@ -53,14 +53,16 @@ for.
 
 ## Install
 
-From the repository root, after installing a fleet:
+From the repository root, run the skills installer. For a hosted WorkOS
+API, configure the helper first as described below.
 
 ```sh
 ./install.sh skills --name "Your Name"                      # every agent found on this computer
 ./install.sh skills --agents claude,codex --name "Your Name"
 ```
 
-On Windows, use `.\install.ps1 skills ...`. The command:
+On Windows, use `.\install.ps1 skills ...`. The command needs Python 3.9
+or later and does the following.
 
 - copies the helpers to `~/.subspace/bin/` and saves your name and fleet in
   `~/.subspace/agents.env`;
@@ -68,22 +70,61 @@ On Windows, use `.\install.ps1 skills ...`. The command:
   `~/.codex/skills/` (or `$CODEX_HOME/skills/`) and
   `~/.config/opencode/skills/`, replacing only `subspace-irc` and
   `subspace-tracker`;
-- registers the MCP server `subspace` at `http://127.0.0.1:3000/mcp`: with
-  `claude mcp add-json --scope user` (and a `headersHelper`), with `codex mcp
-  add --bearer-token-env-var SUBSPACE_API_TOKEN`, and under `mcp.subspace` in
-  `opencode.json`.
+- registers the MCP server `subspace` in Claude Code, Codex and OpenCode.
 
-The helpers need Python 3. Codex and OpenCode read the token from the
-environment, so start them with:
+### Hosted API with WorkOS
+
+Create `~/.subspace/agent.json` (under `SUBSPACE_HOME` if set) with the
+API URL and the WorkOS AuthKit client ID used by that API.
+
+```json
+{
+  "identity_provider": "workos",
+  "api_url": "https://api.example.com",
+  "workos_client_id": "client_EXAMPLE"
+}
+```
+
+Register `http://127.0.0.1:*/callback` for the AuthKit client in WorkOS, or
+register a fixed port such as `http://127.0.0.1:8787/callback` and set
+`"workos_redirect_port": 8787` in the file. Set `workos_api_url` only if
+your desktop connection uses a different WorkOS API origin. The corresponding
+`SUBSPACE_IDENTITY_PROVIDER`, `SUBSPACE_API_URL`, `SUBSPACE_WORKOS_CLIENT_ID`,
+`SUBSPACE_WORKOS_API_URL` and `SUBSPACE_WORKOS_REDIRECT_PORT` environment
+variables override the file. Use the file to share the settings across agents.
+
+Run the skills installer, then sign in with your browser and check your
+tracker identity.
+
+```sh
+./install.sh skills --agents claude,codex,opencode --name "Your Name"
+python3 ~/.subspace/bin/subspace_token.py --login
+python3 ~/.subspace/bin/subspace_token.py --me
+```
+
+On Windows, run `py "$HOME/.subspace/bin/subspace_token.py" --login` and
+`py "$HOME/.subspace/bin/subspace_token.py" --me` in PowerShell. The helper
+saves the session in the macOS login Keychain where available and otherwise
+uses owner-only storage under `~/.subspace/workos/`. Use `--logout` to
+forget that session on this computer.
+
+Claude Code calls the headers helper for the hosted `/mcp` URL. Codex and
+OpenCode run the helper as a local stdio MCP server that forwards requests
+to the same hosted URL with a current access token. All three reuse the
+same session and refresh it when needed. If sign-in expires, run `--login`
+again. Re-run the skills installer when you change the Subspace API URL.
+
+### Development sign-in
+
+The default `dev` mode uses the installed fleet and registers
+`http://127.0.0.1:3000/mcp`. Keep the fleet's tunnel running
+(`./install.sh tunnel --background`). Claude Code calls the helper itself.
+Codex and OpenCode read the development token from the environment, so start
+them with:
 
 ```sh
 export SUBSPACE_API_TOKEN="$(python3 ~/.subspace/bin/subspace_token.py)"
 ```
-
-The token lasts about eight hours. Keep the fleet's tunnel running
-(`./install.sh tunnel --background`). The token comes from the API's
-development sign-in. A WorkOS or Entra deployment needs a token from that
-provider instead.
 
 To remove the skills, delete those two folders from each agent's skills
 folder and run `claude mcp remove --scope user subspace`, `codex mcp remove
