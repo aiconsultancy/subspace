@@ -14,7 +14,9 @@ its captain: crew have no IRC accounts.
 
 Stargate routes IRC conversations to the rear admiral and captains. The
 installer defaults to OpenCode V2, using CLIProxyAPI for models. Configure
-the model and harness per role and the model per crew family. The dashboard
+the model, reasoning effort and harness per role, and the model per crew
+family; captains default to Claude Opus 5.5 and the rear admiral to Claude
+Fable 5.2 ([officer models](#officer-models)). The dashboard
 shows the primary Stargate gateway, and AgentsView indexes OpenCode session
 databases, including crew sessions, for local browsing and search. The
 installer can run a [medical ship](#medical-ship) to flag Sentry errors and
@@ -101,6 +103,78 @@ Provider credentials are kept under `/var/lib/subspace-fleet/proxy/auth`. Restar
 `subspace-fleet-proxy.service` if the process has not picked up the new
 credentials. CLIProxyAPI uses its standard routing. The [upstream CLI flags](https://github.com/router-for-me/CLIProxyAPI/blob/v8.0.78/cmd/server/main.go)
 describe the available logins.
+
+### Officer models
+
+Captains run `claude-opus-5-5` at reasoning effort `xhigh`, and the rear
+admiral runs `claude-fable-5-2` at `high`, both through `claude-proxy`, so the
+model proxy needs a Claude account (`./install.sh providers login claude`).
+Crew keep their own family defaults (see [Crew and
+repositories](#crew-and-repositories)).
+
+Choose others with `subspace-setup` (or the same options on `./install.sh`):
+
+```sh
+sudo subspace-setup --captain-model gpt-6.2-sol --captain-effort high
+sudo subspace-setup --rear-admiral-model claude-opus-5-5 --rear-admiral-effort max
+sudo subspace-setup --captain-model '' --rear-admiral-model ''   # back to the defaults
+```
+
+- A `claude-*` model goes through the Claude family (`claude-proxy`), and any
+  other through the Codex family (`openai-proxy`).
+- An effort belongs to its model. A new model gets the provider's default
+  effort unless the same run names one with `--captain-effort` or
+  `--rear-admiral-effort`.
+- Later runs keep each choice. `''` returns a model or an effort to the
+  default, even over one set in `fleet.json` by hand.
+
+`subspace-setup` writes these choices as `harness.captain` and
+`harness.rearAdmiral` in `fleet.json`, for example
+`"captain": {"family": "codex", "model": "gpt-6.2-sol", "effort": "high"}`.
+
+The installer resolves each officer's harness in this order:
+
+1. The role's default.
+2. The fleet-wide `harness` (its `model`, `family` and `effort` apply to
+   both roles).
+3. The role's block.
+4. The officer's own `harness`.
+
+How the effort reaches the model:
+
+- **OpenCode.** OpenCode gives each model reasoning variants for its
+  provider package, and the installer names the variant in the model
+  reference, as in `claude-proxy/claude-opus-5-5#xhigh`. Claude models take
+  `low`, `medium`, `high`, `xhigh` and `max`. Claude 4.6 has no `xhigh`.
+  Claude 3.7 and 4.0 to 4.5, except Opus 4.5, take only `high` and `max`.
+  The Codex family takes `low`, `medium` and `high`.
+- **Claude Agent SDK.** An officer with `"type": "claude-sdk"` passes the
+  effort to Stargate's Claude backend as `effort`.
+
+The installer refuses an effort that the officer's harness does not offer.
+
+Both the dry run and the install stop if the model proxy has signed-in
+accounts but none can serve an officer's model:
+
+- A `claude-*` model needs a Claude account.
+- A `gpt-*` model needs a Codex account.
+
+The message names the officers and the login to run. Before the first
+sign-in the dry run only names the account type the officers need. Models
+of other providers are not checked.
+
+A fleet that `subspace-setup` set up before these defaults, and whose
+`fleet.json` names no officer model, keeps `gpt-5.4` at the provider's
+default effort. Setup says so once. To move it to the defaults, sign the
+proxy in to a Claude account, then run:
+
+```sh
+sudo subspace-setup --captain-model '' --rear-admiral-model '' --dry-run
+sudo subspace-setup --captain-model '' --rear-admiral-model ''
+```
+
+A hand-written `fleet.json` with no officer model takes the new defaults
+on its next run.
 
 ### Crew and repositories
 
@@ -1494,7 +1568,7 @@ their crew's assignments through `stargate_crew`.
 | `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
-| `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
+| `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model` and `effort`, apply to one. Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |

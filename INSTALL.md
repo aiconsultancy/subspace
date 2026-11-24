@@ -243,7 +243,11 @@ answer it now.
    settle the counts now. Ask which model each kind of crew member uses
    (**`claude-sonnet-5-5` and `gpt-5.4`**), for example
    `--crew-claude-model claude-opus-5-5 --crew-codex-model gpt-6.2-sol`; the
-   models, unlike the counts, can change later.
+   models, unlike the counts, can change later. The officers themselves run
+   Claude: captains `claude-opus-5-5` at reasoning effort `xhigh`, the rear
+   admiral `claude-fable-5-2` at `high`, which needs a Claude account. If the
+   user has only a ChatGPT account, choose models it serves, for example
+   `--captain-model gpt-5.4 --rear-admiral-model gpt-5.4`.
 6. **Their IRC account name** (**admiral**), used as their nickname. The
    agents only take orders from this account.
 7. **Demo data?** (**yes**) Fictional fleets, initiatives and issues so they can
@@ -516,8 +520,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-d
 
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
 optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`
-and the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`,
-on this command and on the cloud VM one above. Leave out `--install-deps`
+the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`, and
+the officers' as `--captain-model MODEL --rear-admiral-model MODEL` (with
+`--captain-effort` and `--rear-admiral-effort`), on this command and on the cloud VM one above. Leave out `--install-deps`
 to stop and ask instead of installing Lima, QEMU or Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first
 run downloads an Ubuntu image, the agents' tools and the container images, so
 it takes a while. Running it again is safe: it keeps the answers, secrets and
@@ -990,13 +995,19 @@ forwards that port to the VM for the login. The proxy restarts afterwards and
 the agents come online. CLIProxyAPI also supports `antigravity`, `kimi`,
 `kimi-ai`, `xai`, `devin` and `meta` accounts.
 
-The default models are `gpt-5.4` for Codex-family agents and
-`claude-sonnet-5-5` for Claude-family crew. Use model IDs your accounts can
-reach. Set the crew's with `sudo subspace-setup --crew-claude-model MODEL
---crew-codex-model MODEL` (or the same options on `./install.sh`); setup
-keeps them on later runs, and `''` returns to the default. Change the rear
-admiral's and captains' model under `harness` in `/root/fleet/fleet.json`
-and run `sudo subspace-setup`, which keeps it.
+The default models are `claude-opus-5-5` at reasoning effort `xhigh` for
+captains, `claude-fable-5-2` at `high` for the rear admiral, and
+`claude-sonnet-5-5` and `gpt-5.4` for Claude-family and Codex-family crew.
+Use model IDs your accounts can reach: the officers' defaults need a Claude
+account. Once an account is signed in, the dry run and the install stop if
+none can serve an officer's Claude or GPT model. Set the officers' models
+with `sudo subspace-setup --captain-model MODEL --captain-effort EFFORT
+--rear-admiral-model MODEL --rear-admiral-effort EFFORT`, and the crew's with
+`--crew-claude-model MODEL --crew-codex-model MODEL` (or the same options on
+`./install.sh`). Setup keeps them on later runs, and `''` returns to the
+default. A fleet set up before the officers' defaults keeps `gpt-5.4`;
+`sudo subspace-setup --captain-model '' --rear-admiral-model ''` moves it to
+them ([officer models](subspace-installer/README.md#officer-models)).
 The [fleet installer's guide](subspace-installer/README.md#model-provider-sign-in)
 covers models and harnesses. On the VM, `sudo subspace-setup providers`
 does the same as `./install.sh providers`.
