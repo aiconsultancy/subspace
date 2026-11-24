@@ -30,6 +30,10 @@
 #   CAPTURE_DECISION_SCENARIO=<normal|missing|forbidden|unavailable>  Decisions fixture
 #   CAPTURE_IRC_CREDENTIAL=1   the Subspace API fixture issues fictional IRC sign-ins, so Channels
 #                              keeps a network for each server the fixture's fleets use
+#   CAPTURE_NO_MEMBERSHIPS=1   the Subspace API fixture's person belongs to no initiative
+#   CAPTURE_API_UNREACHABLE=1  the app's Subspace API address is a loopback port nothing listens on,
+#                              so every read finds the API unreachable
+#   CAPTURE_INITIATIVES_DELAY=<secs>  the Subspace API fixture holds each memberships read
 #   CAPTURE_CHANGE_AFTER=<s>   the fixture retitles SUB-1 after <s> seconds, as a change elsewhere
 #   CAPTURE_FLEET=1            the fixture adds the neutral FLT project and the demo world's NAV, MAP,
 #                              WARP and RELAY issues for web Space evidence
@@ -148,6 +152,10 @@ if [ -n "${CAPTURE_NO_UPDATES_STREAM:-}" ]; then api_args+=(--no-updates-stream)
 if [ -n "${CAPTURE_CHANGE_AFTER:-}" ]; then api_args+=(--change-after "$CAPTURE_CHANGE_AFTER"); fi
 if [ -n "${CAPTURE_DECISION_SCENARIO:-}" ]; then api_args+=(--decision-scenario "$CAPTURE_DECISION_SCENARIO"); fi
 if [ -n "${CAPTURE_IRC_CREDENTIAL:-}" ]; then api_args+=(--irc-credential); fi
+if [ -n "${CAPTURE_NO_MEMBERSHIPS:-}" ]; then api_args+=(--no-memberships); fi
+if [ -n "${CAPTURE_INITIATIVES_DELAY:-}" ]; then
+    api_args+=(--initiatives-delay "$CAPTURE_INITIATIVES_DELAY")
+fi
 if [ -n "${CAPTURE_FLEET:-}" ]; then api_args+=(--fleet); fi
 fleet_api=""
 if [ -n "${CAPTURE_FLEET_API:-}" ]; then
@@ -238,6 +246,10 @@ app_env=(
     "SUBSPACE_GITHUB_API_URL=$github" "SUBSPACE_GITHUB_OAUTH_URL=$github" SUBSPACE_IDENTITY_PROVIDER=
     "SUBSPACE_CAPTURE_DIR=$out" "SUBSPACE_CAPTURE_STEPS=$steps"
 )
+if [ -n "${CAPTURE_API_UNREACHABLE:-}" ]; then
+    # Port 9 (discard) on loopback, where no capture server listens.
+    subspace_api="http://127.0.0.1:9"
+fi
 if [ -z "${CAPTURE_NO_API:-}" ]; then
     app_env+=("SUBSPACE_API_URL=$subspace_api/api" "SUBSPACE_API_ACCESS_JWT_FILE=$fixture/access-jwt")
 fi

@@ -11,6 +11,7 @@ import queue
 import re
 import secrets
 import threading
+import time
 import uuid
 import struct
 import zlib
@@ -1308,7 +1309,8 @@ class FixtureServer(ThreadingHTTPServer):
     request_queue_size = 128
 
     def __init__(self, port, access_jwt, fail_chat_uploads=None, updates_stream=True, change_after=None,
-                 decision_scenario='normal', fleet=False, fleet_api_url=None, irc_credential=False):
+                 decision_scenario='normal', fleet=False, fleet_api_url=None, irc_credential=False,
+                 memberships=True, initiatives_delay=0.0):
         if not access_jwt:
             raise ValueError('A non-empty fixture Access JWT is required.')
         self.access_jwt = access_jwt
@@ -1321,6 +1323,10 @@ class FixtureServer(ThreadingHTTPServer):
         self.decision_scenario = decision_scenario
         self.fleet_api_url = fleet_api_url
         self.irc_credential = irc_credential
+        # Off: the fixture person belongs to no initiative.
+        self.memberships = memberships
+        # Seconds GET /me/initiatives waits before answering, as a waking API.
+        self.initiatives_delay = initiatives_delay
         super().__init__(('127.0.0.1', port), Handler)
 
     def change_later(self, seconds, identifier='SUB-1'):
@@ -1456,6 +1462,10 @@ class Handler(BaseHTTPRequestHandler):
                              fleet=None, ship=None)
         if method == 'POST' and path == '/api/v1/me/irc-credential':
             return self.irc_credential()
+        if method == 'GET' and path == '/api/v1/me/initiatives' and self.server.initiatives_delay:
+            time.sleep(self.server.initiatives_delay)
+        if method == 'GET' and path == '/api/v1/me/initiatives' and not self.server.memberships:
+            return 200, dict(items=[])
         if method == 'GET' and path == '/api/v1/me/initiatives':
             return 200, dict(items=[
                 dict(id='ca2aabe7-68bd-4e82-9b76-d577ddf987ac', name='Design Studio', channels='#design, #releases'),
@@ -1717,11 +1727,17 @@ def main():
                         help="With --fleet, the aurora fleet's Fleet API address (default http://127.0.0.1:18484).")
     parser.add_argument('--irc-credential', action='store_true',
                         help='Issue fictional IRC sign-ins at POST /api/v1/me/irc-credential (404 without it).')
+    parser.add_argument('--no-memberships', action='store_true',
+                        help='The fixture person belongs to no initiative: GET /api/v1/me/initiatives lists none.')
+    parser.add_argument('--initiatives-delay', type=float, default=0.0, metavar='SECONDS',
+                        help='Wait this long before answering GET /api/v1/me/initiatives, as a waking API.')
     args = parser.parse_args()
     with FixtureServer(args.port, args.access_jwt, fail_chat_uploads=args.fail_chat_uploads,
                        updates_stream=not args.no_updates_stream, change_after=args.change_after,
                        decision_scenario=args.decision_scenario, fleet=args.fleet,
-                       fleet_api_url=args.fleet_api_url, irc_credential=args.irc_credential) as server:
+                       fleet_api_url=args.fleet_api_url, irc_credential=args.irc_credential,
+                       memberships=not args.no_memberships,
+                       initiatives_delay=args.initiatives_delay) as server:
         print(f'Subspace API fixture on {server.origin}', flush=True)
         print(f'SUBSPACE_API_URL={server.origin}/api', flush=True)
         server.serve_forever()
