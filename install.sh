@@ -727,7 +727,17 @@ do_install() {
     esac
     vm true || die "Cannot reach the VM over SSH."
 
-    if [ -z "$api_target" ] && [ -f "$state/api-target" ]; then api_target=$(cat "$state/api-target"); fi
+    # A Subspace API on another host (--api-url, passed to setup) replaces another fleet's API, so a saved
+    # --api-target from an earlier run is set aside, and forgotten once a real run succeeds.
+    local hosted=false arg
+    for arg in ${passthrough[@]+"${passthrough[@]}"}; do [ "$arg" = --api-url ] && hosted=true; done
+    if [ -z "$api_target" ] && [ -f "$state/api-target" ]; then
+        if "$hosted"; then
+            note "Leaving out the saved --api-target $(cat "$state/api-target"): --api-url names this fleet's API now."
+        else
+            api_target=$(cat "$state/api-target")
+        fi
+    fi
     if [ -n "$api_target" ]; then
         [ "$api_target" != "$target" ] || die "--api-target must name another fleet."
         grep -qs '^SUBSPACE_API=1$' "$home/targets/$api_target/summary.env" ||
@@ -741,7 +751,7 @@ do_install() {
     fi
     # subspace-setup --dry-run changes nothing on the VM: the files it is given go to a scratch directory that
     # is removed afterwards, never over the inputs (such as the database URL) that the next real run uses.
-    local dry_run=false inputs=/root/fleet arg
+    local dry_run=false inputs=/root/fleet
     for arg in ${passthrough[@]+"${passthrough[@]}"}; do
         if [ "$arg" = --dry-run ]; then dry_run=true; inputs=/root/subspace-setup-dry-run; fi
     done
@@ -750,9 +760,7 @@ do_install() {
     transient=()
     trap remove_transient EXIT
     "$dry_run" && transient+=("$inputs")
-    # A Subspace API on another host (--api-url, passed to setup) excludes another fleet's API and a database here.
-    local hosted=false
-    for arg in ${passthrough[@]+"${passthrough[@]}"}; do [ "$arg" = --api-url ] && hosted=true; done
+    # A Subspace API on another host excludes another fleet's API and a database here.
     if "$hosted"; then
         [ -z "$api_target" ] || die "--api-url names the fleet's API, so --api-target does not apply."
         [ -z "$database_url_file" ] || die "--api-url uses an API on another host, which keeps its own database: leave out --database-url-file."
@@ -861,6 +869,7 @@ do_install() {
         rm -f "$registration"
         printf '%s\n' "$api_target" > "$state/api-target"
     fi
+    if "$hosted"; then rm -f "$state/api-target"; fi
     IRC_TARGET=$irc_target write_desktop_config
     say "Done. Fleet '$SUBSPACE_FLEET_NAME' is running on a private VM."
     note "1. Bring the agents online: ./install.sh providers login codex-device --target $target"

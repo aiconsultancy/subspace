@@ -1638,6 +1638,49 @@ class HostedApiSetupTests(unittest.TestCase):
                                         (powershell, "if ($Passthrough -contains '--api-url')", "database-url.new")):
             self.assertLess(text.index(check), text.index(first_copy))
 
+    def test_a_refused_switch_leaves_the_fleet_as_it_was(self):
+        # An installed fleet whose API runs here, with an existing PostgreSQL, tries to switch and is refused.
+        saved = {"api": True, "slug": "example-fleet", "name": "Example Fleet", "databaseUrlFile": "/root/fleet/db"}
+        fleet_setup.write_json(fleet_setup.INPUTS / "answers.json", saved)
+        (fleet_setup.INPUTS / "api.env").write_text("DATABASE_URL='postgresql://example'\n")
+        before = {path.name: path.read_bytes() for path in fleet_setup.INPUTS.iterdir() if path.is_file()}
+        argv = ["--non-interactive", "--operator", "operator", "--rear-admiral", "Atlas", "--captains", "Orion",
+                "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40, "--api-url",
+                "https://subspace.example.com", "--switch-to-hosted-api", "--api-enrolment-token-file",
+                str(self.token_file)]
+        for failing in ("stargate_agents", "hosted_checks"):
+            with self.subTest(failing), patch.object(fleet_setup.pwd, "getpwnam"), \
+                    patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "stargate_agents", return_value=failing != "stargate_agents"), \
+                    patch.object(fleet_setup, "hosted_checks", side_effect=fleet_setup.SetupError("refused")
+                                 if failing == "hosted_checks" else None), \
+                    patch.object(fleet_setup, "installer") as installer, patch.object(fleet_setup, "say"), \
+                    self.assertRaises(fleet_setup.SetupError):
+                fleet_setup.setup(fleet_setup.parse_args(argv))
+            installer.assert_not_called()
+            self.assertEqual({path.name: path.read_bytes() for path in fleet_setup.INPUTS.iterdir() if path.is_file()},
+                             before)
+            self.assertFalse((fleet_setup.INPUTS / "fleet.secrets").exists())
+
+    def test_a_saved_api_target_gives_way_to_a_hosted_api(self):
+        # A fleet once set up with --api-target keeps that in its host state; --api-url sets it aside instead of
+        # refusing, and a successful real run forgets it, after the dry-run branch has returned.
+        root = Path(fleet_setup.HERE).parents[1]
+        shell, powershell = (root / "install.sh").read_text(), (root / "install.ps1").read_text()
+        for text, load, keep, forget, dry in (
+                (shell, 'if "$hosted"; then\n            note "Leaving out the saved --api-target',
+                 'api_target=$(cat "$state/api-target")', 'if "$hosted"; then rm -f "$state/api-target"; fi',
+                 'say "Dry run complete.'),
+                (powershell, 'if ($hosted) { Write-Host "    Leaving out the saved --api-target',
+                 "else { $script:ApiTarget = (Get-Content $apiFile -Raw).Trim() }",
+                 "if ($hosted) { Remove-Item -Force -ErrorAction SilentlyContinue $apiFile }",
+                 "Say 'Dry run complete.")):
+            self.assertLess(text.index(load), text.index(keep))
+            self.assertLess(text.index(dry), text.index(forget))
+        # The explicit option with --api-url is still refused.
+        self.assertIn('[ -z "$api_target" ] || die "--api-url names the fleet\'s API, so --api-target does not apply."',
+                      shell)
+
     def test_a_dry_run_on_the_pinned_release_stops_before_anything_else(self):
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
                 "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40,

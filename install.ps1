@@ -621,7 +621,13 @@ function Start-Tunnel {
 function Invoke-Install {
     # A further fleet shares the first fleet's Subspace API instead of running its own.
     $apiFile = Join-Path $State 'api-target'
-    if (-not $ApiTarget -and (Test-Path $apiFile)) { $script:ApiTarget = (Get-Content $apiFile -Raw).Trim() }
+    # A Subspace API on another host (--api-url, passed to setup) replaces another fleet's API, so a saved
+    # --api-target from an earlier run is set aside, and forgotten once a real run succeeds.
+    $hosted = $Passthrough -contains '--api-url'
+    if (-not $ApiTarget -and (Test-Path $apiFile)) {
+        if ($hosted) { Write-Host "    Leaving out the saved --api-target $((Get-Content $apiFile -Raw).Trim()): --api-url names this fleet's API now." }
+        else { $script:ApiTarget = (Get-Content $apiFile -Raw).Trim() }
+    }
     if ($ApiTarget) {
         if ($ApiTarget -ceq $Target) { Die '--api-target must name another fleet, the one whose Subspace API this fleet shares.' }
         $api = Read-Env (Join-Path (Join-Path (Join-Path $SubspaceHome 'targets') $ApiTarget) 'summary.env')
@@ -770,6 +776,7 @@ function Invoke-Install {
         } finally { Remove-Item -Force $registration -ErrorAction SilentlyContinue }
         Write-Private $apiFile "$ApiTarget`n"
     }
+    if ($hosted) { Remove-Item -Force -ErrorAction SilentlyContinue $apiFile }
     Write-DesktopConfig $IrcTarget
     Say "Done. Fleet '$($s.SUBSPACE_FLEET_NAME)' is running on a private VM."
     Note "1. Bring the agents online: .\install.ps1 providers login codex-device --target $Target"
