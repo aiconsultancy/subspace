@@ -1046,9 +1046,10 @@ does the same as `./install.sh providers`.
    with `"identity_provider": "workos"` and `"workos_client_id"`. See
    [The connection file](subspace-desktop/docs/subspace/connection-file.md).
 3. **Channels.** The installer already added the fleet's IRC network, signed in
-   as your account with the password file it saved. Pick the fleet's
-   initiative in **Channels** to join its Starbase, fleet command and ship
-   channels. Say hello to the rear admiral in Starbase. If the desktop's settings file could not
+   as your account with the password file it saved. **Channels** joins the
+   Starbase, fleet command and ship channels of your first initiative, or of
+   the one you last chose; switch initiative from its menu. Say hello to the
+   rear admiral in Starbase. If the desktop's settings file could not
    be updated automatically, the installer printed the network to add under
    **Settings > Channels > Add network**; `./install.sh desktop` writes it
    again.
@@ -1212,6 +1213,9 @@ them. Agent isolation stays, because it never blocks your login.
 - **The desktop shows no initiatives.** Check that the tunnel runs and that
   `curl http://127.0.0.1:3000/health` answers. Re-run the installer if the API
   was not up.
+- **Channels says you are not a member of any initiative.** The API answered,
+  and lists no initiative for your account. An administrator adds you to one
+  in Subspace; then reload Channels.
 - **Channels names a server to add.** The desktop's IRC network must match the
   fleet's host, port and TLS setting exactly: `127.0.0.1`, `6667`, TLS off for
   IRC on the fleet VM. Run `./install.sh desktop`.

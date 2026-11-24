@@ -41,7 +41,13 @@ around the list and `view/issue.rs` around the issue page.
   Activity), Projects (Teams in NETT: the project picker's options) and
   Initiatives (the initiative picker's options, once there is a choice).
   Rows call the existing `set_tab`, `open_activity`, `set_project` and
-  `Catalog::pick`; from the issue page they close it first.
+  `Catalog::pick`; from the issue page they close it first. Issues shows
+  the one initiative selected for every Space and only its projects; there
+  is no choice of all initiatives. Where the API serves initiative
+  channels, someone whose memberships were read and found empty sees
+  *Not a member of any initiative yet* with **Reload** in place of the
+  list, and no projects (`Issues::not_a_member`,
+  `initiatives::not_a_member`).
 - **Tab strip**: the list shows one tab named after the view
   (`issues-tabs`). The issue page adds the issue's tab, its identifier as
   the tab's key (`TabSpec::key`) and its title, selected and closable
