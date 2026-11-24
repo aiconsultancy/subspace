@@ -129,6 +129,12 @@ session the app cannot renew because the network or the API is out of reach
 still opens the app, which shows that it is retrying. `dev` signs in by
 itself and never shows the dialog, nor does a build with no API backend.
 
+Channels, Issues and Decisions start on in every build. A choice saved in
+Settings still wins, but the app saved one only when it differed from the
+old default, off in a release build: a Space you turned on and back off in
+an earlier release comes back on after upgrading, and you turn it off
+again in Settings.
+
 Example build config for a hosted API with WorkOS:
 
 ```json

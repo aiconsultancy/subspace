@@ -50,9 +50,13 @@ app's built-in value.
 
 The rules are those of the same-named `SUBSPACE_*` environment variables
 ([Identity providers and the API URL](../../README.md#identity-providers-and-the-api-url)),
-and an environment variable wins over the file. Development sign-in only ever
-reaches an API on this computer. With `workos` or `entra`, the app asks you
-to sign in when it opens; with `dev`, it signs in by itself.
+and an environment variable wins over the file: a variable can complete or
+correct the file, and an empty one, such as `SUBSPACE_IDENTITY_PROVIDER=`,
+turns the file's setting off for that run. With `workos` or `entra`, the app
+asks you to sign in when it opens; with `dev`, it signs in by itself.
+Development sign-in only ever reaches an API on this computer: set to an API
+on another computer, the app opens, and Issues and Decisions say **Sign-in
+unavailable** and why.
 
 The file holds public addresses and client IDs only. Never put a secret,
 token or password in it: none of the settings is one, and the app does not
@@ -69,14 +73,19 @@ connection file that would switch an API or sign-in on, the same way it
 refuses the environment variables; a file with no such setting, or only
 empty ones, is fine.
 
-Both apps keep their settings in the same folder and read the same file, so
-before moving from the standard app to the `-NoAPI` one, rename or remove a
-connection file that sets an API or sign-in, and put it back when you move
-again.
+Both apps keep their settings in the same folder and read the same file. If
+you move from the standard app to the `-NoAPI` one while the file sets an
+API or sign-in, the `-NoAPI` app does not start: it shows the start-up
+problem window naming the file. Rename or remove the file before moving,
+and put it back when you move again.
 
 ## When something is wrong
 
 If the file cannot be read, is not JSON, names a setting it cannot hold or
-breaks a rule, the app does not start. It shows a window naming the file, the
-setting and the problem, with **Quit**. Correct or remove the file and open
-the app again. Started from a terminal, it also prints the problem there.
+breaks a rule, the app does not start. That includes a sign-in setting
+sign-in could not use, such as `"WorkOS"` for `workos` (names are lower
+case) or a malformed `workos_api_url`. It shows a window naming the file,
+the setting and the problem, with **Quit**; closing the window quits too.
+Correct or remove the file and open the app again. Started from a terminal,
+it also prints the problem there. `subspace upgrade`, `subspace about` and
+`subspace --version` read no settings and work whatever the file holds.
