@@ -44,7 +44,7 @@ app's built-in value.
 | `workos_redirect_port` | A fixed loopback port for WorkOS's redirect, as text or a number |
 | `entra_tenant_id`, `entra_client_id` | The Microsoft Entra tenant and its public-client registration, such as `00000000-0000-0000-0000-000000000000` |
 | `entra_authority` | The Entra authority; the default is `https://login.microsoftonline.com` |
-| `entra_api_scope` | The API's delegated scope, such as `api://00000000-0000-0000-0000-000000000000/API.Access` |
+| `entra_api_scope` | The API's delegated scope, such as `api://00000000-0000-0000-0000-000000000000/API.Access`; needed with `entra` whenever the app has an API address |
 | `dev_email`, `dev_name`, `dev_organisation` | Who development sign-in (`dev`) signs in as |
 | `nett_api_url` | A NETT build's API; other builds refuse it |
 
@@ -82,7 +82,10 @@ and put it back when you move again.
 ## When something is wrong
 
 If the file cannot be read, is not JSON, names a setting it cannot hold or
-breaks a rule, the app does not start. That includes a sign-in setting
+breaks a rule once the environment variables apply, the app does not
+start. The file's values are checked after the variables, so a variable can
+correct one. A problem is the file's when the setting at fault took its
+value from the file, and the variable's otherwise. That includes a sign-in setting
 sign-in could not use, such as `"WorkOS"` for `workos` (names are lower
 case) or a malformed `workos_api_url`. It shows a window naming the file,
 the setting and the problem, with **Quit**; closing the window quits too.

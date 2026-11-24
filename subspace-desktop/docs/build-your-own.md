@@ -33,7 +33,7 @@ local development stack.
 | `workos_redirect_port` | A fixed loopback port for the WorkOS redirect, registered in WorkOS as `http://127.0.0.1:<port>/callback`. Not with `nett` |
 | `entra_tenant_id`, `entra_client_id` | The Entra tenant and its public-client registration, both non-nil UUIDs; required for `entra` |
 | `entra_authority` | The Entra authority; the default is `https://login.microsoftonline.com` |
-| `entra_api_scope` | The API's delegated scope |
+| `entra_api_scope` | The API's delegated scope; required with `entra` when `api_url` is set |
 | `dev_email`, `dev_name`, `dev_organisation` | Who `dev` signs in as; `dev` also needs `api_url` |
 | `organization_name` | The organisation the account is labelled with, such as in the sign-in dialog |
 | `title_prefix` | A prefix for the window title, menus and About |

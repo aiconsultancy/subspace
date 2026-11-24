@@ -45,8 +45,12 @@ how.
   file, and the file over the built-in value, so a variable can complete or
   correct the file, and an empty `SUBSPACE_IDENTITY_PROVIDER=` turns sign-in
   off for the run; a setting the file leaves out falls through; no file
-  changes nothing. When the merged settings fail and the file alone fails
-  too, the problem is reported as the file's; otherwise as the variable's.
+  changes nothing. The file parser checks only the JSON shape; values are
+  checked after the variables apply, so a variable can correct a mistyped
+  value. A failure is the file's when the setting it names took its value
+  from the file (`connection::blames_file`), or when it names no setting a
+  variable set and the file alone fails too; otherwise it is the
+  variable's.
   When the app's config folder cannot be found, no file is read. It cannot
   change the backend, branding or update source, and names those settings
   when it tries. A build with no API backend refuses a file that would
@@ -61,7 +65,10 @@ how.
   configuration is built before the shell (`sign_in::workos_config`,
   `sign_in::entra_config`, the same builders sign-in uses), so `"WorkOS"` or
   a malformed `workos_api_url` stops the app naming the setting instead of
-  leaving sign-in silently off.
+  leaving sign-in silently off. Entra with an API address needs
+  `entra_api_scope`, at start-up and in the build config
+  (`build/branding.rs`), since without it browser sign-in succeeds and
+  every API token request fails.
 - **Development sign-in on a hosted API opens.** Development sign-in still
   reaches only an API on this computer, a rule kept in the dev provider. A
   launch whose `api_url`, from the file or a variable, is on another
@@ -97,11 +104,17 @@ how.
     and named when it breaks one (including an unknown provider, a
     malformed WorkOS API URL and unusable Entra IDs), a provider variable
     sign-in would refuse named by its variable, development sign-in on a
-    hosted API opening with sign-in unavailable, and a build with no API
-    backend refusing a file that switches an API on.
+    hosted API opening with sign-in unavailable, a failure blamed on where
+    its setting came from in both directions, a variable correcting a
+    mistyped redirect port in the file, Entra with an API needing its scope
+    (missing, or cleared by a variable), and a build with no API backend
+    refusing a file that switches an API on.
+  - `build/branding.rs`: an Entra build config with `api_url` and no
+    `entra_api_scope` is refused.
   - `clients/subspace-api/src/backend.rs`: the unreachable message names the
     address; the sign-in state says why sign-in is unavailable when the
-    product recorded a reason.
+    product recorded a reason, which the Issues header, settings note,
+    activity rows and timelines and Decisions all show.
   - `products/descriptor/src/lib.rs`: Channels, Issues and Decisions start
     on in every build.
   - `scripts/test-release-macos.sh`: both variants packaged from the
