@@ -30,6 +30,29 @@ resolve_target_dir() {
     esac
 }
 
+# The api_backend of the build config the next build reads: the file
+# SUBSPACE_BUILD_CONFIG names, relative to products/subspace as build.rs
+# reads it, or the checked-in one.
+build_api_backend() {
+    local root="${root:?}" config="${SUBSPACE_BUILD_CONFIG:-build-config.json}"
+    [[ "$config" = /* ]] || config="$root/products/subspace/$config"
+    # The build itself refuses a config it cannot read.
+    [[ -f "$config" ]] || return 0
+    jq -r '.api_backend // ""' "$config"
+}
+
+# Adds a build with no API backend's suffix to an asset stem (`-NoAPI`) or an
+# archive prefix (`-no-api`), as products/subspace/src/surfaces.rs does, so
+# its releases are its own and only it installs them.
+no_api_suffix() {
+    local name="$1" suffix="$2"
+    if [[ "$(build_api_backend)" = none ]]; then
+        printf '%s%s\n' "$name" "$suffix"
+    else
+        printf '%s\n' "$name"
+    fi
+}
+
 load_product() {
     local root="${root:?}"
     product=subspace
@@ -44,7 +67,10 @@ load_product() {
     # shellcheck disable=SC2034
     bundle_id="$(jq -er '.bundle_id' <<<"$product_metadata")"
     # shellcheck disable=SC2034
-    asset_stem="$(jq -er '.asset_stem' <<<"$product_metadata")"
+    asset_stem="$(no_api_suffix "$(jq -er '.asset_stem' <<<"$product_metadata")" -NoAPI)"
+    # The plain archives' name before the version.
+    # shellcheck disable=SC2034
+    archive_prefix="$(no_api_suffix "$binary_name" -no-api)"
     channel="$(jq -er '.channel' <<<"$product_metadata")"
     if [[ "$channel" = stable ]]; then
         if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then

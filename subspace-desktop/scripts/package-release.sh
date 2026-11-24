@@ -62,7 +62,7 @@ fi
 cp "$root/README.md" "$stage/"
 chmod 755 "$stage/$binary_name$exe"
 printf '%s\n' "$product_metadata" >"$stage/product.json"
-name="$binary_name-$version-$target"
+name="$archive_prefix-$version-$target"
 files=("$binary_name$exe" README.md product.json LICENSE NOTICE THIRD_PARTY_LICENSES licenses)
 case "$target" in
     *-linux-*)

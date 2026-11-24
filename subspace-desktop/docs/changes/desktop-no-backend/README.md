@@ -84,13 +84,22 @@ Not present, so nothing to leave out:
   settings surface.
 - **Updates.** The updater reads the product's release source on GitHub,
   with the GitHub credential when there is one, and never the Subspace API
-  or its account, so a `none` build updates as every build does.
+  or its account. A `none` build updates only from its own archives:
+  `surfaces::adjust_descriptor` adds `-no-api` to the plain archives'
+  prefix and `-NoAPI` to the macOS zip's stem and marks the source
+  `exclusive`, so the updater offers only a release that publishes that
+  archive and its checksum, and never installs the standard build in its
+  place. `scripts/product.sh` (`no_api_suffix`) names the packaged
+  archives the same way when `SUBSPACE_BUILD_CONFIG` selects `none`. The
+  standard build's names and updates are unchanged.
 
-### No Framework change
+### One Framework change
 
 The Framework already lets a product leave out an account
-(`ProductBuild::account`), the Settings extensions and the Spaces. Every change is in the desktop: the product crate, the API client
-and two lines in Channels.
+(`ProductBuild::account`), the Settings extensions and the Spaces. Its one
+change is `UpdateSource::exclusive`, so a variant with its own archive
+names is offered only releases that publish them; without it the updater
+behaves as before.
 
 ### Not changed
 

@@ -192,8 +192,12 @@ initiative picker, fleet context, captain notices (and their switch in
 Channels connects to the networks you add in **Settings > Channels**. Fleet
 Console shows the fleets you give it: the Stargate API address and token in
 **Settings > Spaces > Fleet Console** (which the installer can fill in), and
-any you add inside it. Updates work as in every build: they come from GitHub
-releases and never need the API.
+any you add inside it. Updates come from GitHub releases and never need the
+API, but only from the build's own archives
+(`Subspace-NoAPI_<version>_darwin_arm64.zip`,
+`subspace-no-api-<version>-<target>.tar.gz`), which the packaging scripts
+name so; a release without them is no update, so the standard build never
+replaces it. See [Installation](docs/installation.md).
 
 The build refuses `identity_provider`, `api_url`, `nett_api_url` and every
 `workos_`, `entra_` and `dev_` setting, and will not start while

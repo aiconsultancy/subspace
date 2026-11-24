@@ -24,6 +24,12 @@ test "$(resolve_target_dir /var/tmp/subspace-target)" = /var/tmp/subspace-target
 test "$(resolve_target_dir relative-target)" = "$root/relative-target"
 test "$(resolve_target_dir '\\fixture\share\target')" = "$fixture/target"
 grep -Fxq -- '\\fixture\share\target' "$fixture/cygpath.log"
+# A build with no API backend names its own archives; the standard one's
+# names are unchanged.
+printf '{"api_backend":"none"}\n' >"$fixture/no-api.json"
+test "$(no_api_suffix Subspace -NoAPI)" = Subspace
+test "$(SUBSPACE_BUILD_CONFIG="$fixture/no-api.json" no_api_suffix Subspace -NoAPI)" = Subspace-NoAPI
+test "$(SUBSPACE_BUILD_CONFIG="$fixture/no-api.json" no_api_suffix subspace -no-api)" = subspace-no-api
 
 : >"$fixture/actions.log"
 metadata="$fixture/metadata/subspace.json"

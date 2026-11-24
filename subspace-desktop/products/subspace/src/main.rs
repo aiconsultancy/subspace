@@ -539,9 +539,8 @@ mod tests {
         assert_eq!(pages(ApiBackend::None), ["web-boards"]);
 
         // Its descriptor lists exactly those Spaces, so Settings and Add a
-        // Space offer no other, and it updates as every build does.
-        let original = subspace_descriptor::subspace_descriptor();
-        let mut descriptor = original.clone();
+        // Space offer no other.
+        let mut descriptor = subspace_descriptor::subspace_descriptor();
         super::surfaces::adjust_descriptor(&mut descriptor);
         let described: Vec<_> = descriptor
             .boards
@@ -549,7 +548,6 @@ mod tests {
             .map(|board| board.id.as_str())
             .collect();
         assert_eq!(described, none);
-        assert_eq!(descriptor.update, original.update);
 
         // The stamped build serves its own backend's set.
         let stamped: Vec<_> = board_registrations().iter().map(|board| board.id).collect();
@@ -559,6 +557,22 @@ mod tests {
             .map(|extension| extension.id)
             .collect();
         assert_eq!(offered, pages(super::identity::backend()));
+    }
+
+    /// A build with no API backend updates only from its own archives, in
+    /// the same releases, so the standard build never replaces it; the
+    /// standard build's source is unchanged.
+    #[test]
+    fn a_build_without_a_backend_updates_only_from_its_own_archives() {
+        let original = subspace_descriptor::subspace_descriptor();
+        let mut descriptor = original.clone();
+        super::surfaces::adjust_descriptor(&mut descriptor);
+        let (update, standard) = (descriptor.update.unwrap(), original.update.unwrap());
+        assert_eq!(update.archive_prefix, "subspace-no-api");
+        assert_eq!(update.app_bundle, format!("{}-NoAPI", standard.app_bundle));
+        assert!(update.exclusive && !standard.exclusive);
+        assert_eq!(update.tag_prefix, standard.tag_prefix, "the same releases");
+        assert_eq!(standard.archive_prefix, "subspace");
     }
 
     /// Space Lab and the Component gallery are in the binary only with their

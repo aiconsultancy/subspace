@@ -55,9 +55,22 @@ pub(crate) fn settings_extensions(
         .collect()
 }
 
-/// A build with no API backend lists no Space that needs the API.
+/// What a build with no API backend adds to its release asset names: the
+/// plain archives' prefix and the macOS bundle zip's stem. The packaging
+/// scripts add the same (`scripts/product.sh`).
+pub(crate) const NO_API_ARCHIVE_SUFFIX: &str = "-no-api";
+pub(crate) const NO_API_BUNDLE_SUFFIX: &str = "-NoAPI";
+
+/// A build with no API backend lists no Space that needs the API, and
+/// updates only from its own archives, so an update never installs the
+/// standard build with its account and API in its place.
 pub(crate) fn adjust_descriptor(descriptor: &mut ProductDescriptor) {
     descriptor
         .boards
         .retain(|board| keeps(ApiBackend::None, board.id.as_str(), &API_SPACES));
+    if let Some(update) = &mut descriptor.update {
+        update.archive_prefix.push_str(NO_API_ARCHIVE_SUFFIX);
+        update.app_bundle.push_str(NO_API_BUNDLE_SUFFIX);
+        update.exclusive = true;
+    }
 }

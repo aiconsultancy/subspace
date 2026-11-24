@@ -135,6 +135,7 @@ fn release_source(
         app_bundle: asset_stem(&channel.display_name(app_bundle)),
         token_variable: token_variable.into(),
         channel,
+        exclusive: false,
     }
 }
 
