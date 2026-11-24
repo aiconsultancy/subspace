@@ -358,6 +358,15 @@ answer it now.
     fleet, moving it from any other; with a hosted API, its administrator
     does. See "Who owns the fleet's work" in
     [Subspace API registration](subspace-installer/README.md#subspace-api-registration).
+18. **Do captains code themselves?** (**no**: `--captain-tools delegate`.)
+    By default a captain with crew plans, reviews and opens pull requests,
+    and its crew edit, test, commit and push: the captain has no edit tool,
+    and its shell runs any command but Git's writes and `sed -i` or
+    `perl -i`, a working agreement rather than a security boundary.
+    `--captain-tools standard` lets captains edit and commit as well. A fleet
+    installed before this choice existed keeps captains that code until you
+    pass `--captain-tools delegate`. See
+    [Instructions, permissions and toolchains](subspace-installer/README.md#instructions-permissions-and-toolchains).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.

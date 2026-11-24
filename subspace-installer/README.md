@@ -500,10 +500,20 @@ keeps the standard policy, and the dry run names it. The `fleet-captain`
 skill and a delegate captain's instructions follow `captainTools`, whatever
 `harness.permissions` says.
 
-Interactive setup asks which policy captains use. Set `--captain-tools
-standard` or `--captain-tools delegate` on the host installer or
-`subspace-setup`; reruns keep the choice. In a hand-written fleet file, use
-`captainTools`. A fleet file without it means `standard`.
+**New fleets delegate.** `subspace-setup` gives a new fleet `delegate`, the
+default of its question and of an unattended run, and writes it to
+`fleet.json`; [`fleet.example.json`](fleet.example.json) has it too. Choose
+with `--captain-tools standard` or `--captain-tools delegate` on the host
+installer or `subspace-setup`; reruns keep the choice. In a hand-written
+fleet file, use `captainTools`.
+
+**Existing fleets keep theirs.** A fleet file without `captainTools` means
+`standard`. That is how a fleet installed before `captainTools` existed is
+read, so an upgrade leaves its captains coding as they were installed to,
+perhaps part-way through work, rather than taking their edits and commits
+away unannounced; `--captain-tools delegate` moves it. Setup sets no default
+on a VM it already has answers or inputs for, or whose fleet the fleet
+installer set up alone.
 
 `--dry-run` says which captains delegate, and compares each OpenCode
 officer's tool policy with the one installed in its engine configuration
@@ -1696,7 +1706,7 @@ their crew's assignments through `stargate_crew`.
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model`, `effort` and `extraPermissions`, apply to one. Explicit OpenCode V2 rules in `permissions` replace the starter policy; rules in `extraPermissions` (fleet, role and officer, appended in that order) extend whichever applies. Each rule has `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
-| `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`. |
+| `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`, as for a fleet installed before the setting; `subspace-setup` and `fleet.example.json` give a new fleet `delegate`. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
@@ -1928,6 +1938,28 @@ one is refused, none of them is applied.
 - **An existing PostgreSQL** is a `subspace-setup` setting, kept in its
   answers; it changes nothing in the fleet installer's inputs and combines
   with any of the above.
+- **Captain policies.** A fleet without `captainTools` keeps the standard
+  policy. Captains with crew may now read their crew's worktrees, and with a
+  hosted API every officer may run `subspace-request`. A delegate fleet's
+  captains trade their allowlist for the open shell with writes refused
+  ([Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)).
+  An officer with a hand-written `harness.permissions` keeps it. To move
+  captains from one to the starter policy, remove it, keep any rule you
+  still need in `harness.extraPermissions`, and check the dry run's policy
+  changes, as root:
+
+  ```sh
+  sudo cp -p /root/fleet/fleet.json /root/fleet/fleet.json.before-starter-policy
+  sudo sh -c 'jq "del(.harness.permissions, .captains[].harness.permissions)" \
+    /root/fleet/fleet.json.before-starter-policy > /root/fleet/fleet.json'
+  sudo subspace-setup --dry-run
+  sudo subspace-setup
+  ```
+
+  A fleet-wide `harness.permissions` applies to the rear admiral too, so
+  removing it returns the rear admiral to its starter policy as well. With
+  the fleet installer alone, edit your `fleet.json` the same way and run
+  `sudo ./install.sh upgrade --config ~/fleet.json --dry-run`.
 
 ## Stargate pin
 

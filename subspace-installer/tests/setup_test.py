@@ -219,6 +219,41 @@ class SetupInputsTests(unittest.TestCase):
         again = self.rerun(answers, config)
         self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "delegate")
 
+    def test_a_new_fleet_delegates_and_an_existing_one_keeps_its_captain_tools(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        repositories = ["--repositories", "https://github.com/example/project.git"]
+        answers, members, config, secrets, _ = self.generate([*base, *repositories])
+        self.assertEqual((answers["captainTools"], config["captainTools"]), ("delegate", "delegate"))
+        self.assertTrue(validate(config, secrets, check_files=False)["members"][1]["delegatesCoding"])
+        # Without repositories the captains have no crew, so they keep the standard policy until crew come.
+        _, _, bare, bare_secrets, _ = self.generate(base)
+        self.assertEqual(bare["captainTools"], "delegate")
+        captain = validate(bare, bare_secrets, check_files=False)["members"][1]
+        self.assertFalse(captain.get("delegatesCoding"))
+        self.assertEqual(captain["harness"]["permissions"], roles.default_permissions("captain", None))
+        # A rerun keeps the answer, and --captain-tools changes it.
+        self.assertEqual(fleet_setup.fleet_config(self.rerun(answers, config), members, "a" * 40)["captainTools"],
+                         "delegate")
+        again = self.rerun(answers, config, "--captain-tools", "standard")
+        self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "standard")
+        # A fleet set up before captainTools existed has neither the answer nor the key, and gets neither: a
+        # fleet.json without captainTools means standard, as its captains were installed to code.
+        legacy = {key: value for key, value in answers.items() if key != "captainTools"}
+        config.pop("captainTools")
+        again = self.rerun(legacy, config)
+        self.assertNotIn("captainTools", again)
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertNotIn("captainTools", rebuilt)
+        self.assertEqual(validate(rebuilt, secrets, check_files=False)["captainTools"], "standard")
+        # So does a fleet the fleet installer set up alone, which setup has no answers or inputs for.
+        (fleet_setup.INPUTS / "answers.json").unlink()
+        (fleet_setup.INPUTS / "fleet.json").unlink()
+        etc = Path(self.directory.name) / "etc"
+        etc.mkdir()
+        (etc / "fleet.json").write_text("{}")
+        with patch.object(fleet_setup, "FLEET_ETC", etc):
+            self.assertNotIn("captainTools", answers_for([*base, *repositories])[0])
+
     def test_extra_permissions_written_by_hand_are_kept_on_a_rerun(self):
         args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
                 "--repositories", "https://github.com/example/project.git"]

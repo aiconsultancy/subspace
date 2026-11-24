@@ -280,8 +280,9 @@ def parse_args(argv):
                         "to this fleet, moving it from any other; a hosted API's administrator assigns it. '' goes "
                         "back to finding one by name. Kept on later runs")
     parser.add_argument("--captain-tools", choices=["standard", "delegate"],
-                        help="standard lets captains code; delegate reserves coding for crew and lets captains "
-                        "inspect changes, create GitHub PRs and use the Subspace API. Kept on later runs")
+                        help="delegate (the default for a new fleet) leaves edits, commits and pushes to the crew and "
+                        "gives captains an open shell without them; standard lets captains code. Kept on later runs; "
+                        "a fleet set up before this option keeps standard")
     return parser.parse_args(argv)
 
 
@@ -344,9 +345,11 @@ def gather(args, saved):
             crew[family] = int(prompt(f"{family.title()}-family crew per captain", "2", interactive) or 2)
     if args.captain_tools is not None:
         answers["captainTools"] = args.captain_tools
-    elif interactive and not saved and not (INPUTS / "fleet.json").exists():
-        policy = prompt("Captain tools: standard (captains can code) or delegate (crew code; captains manage work, PRs and issues)",
-                        "standard", interactive)
+    elif not saved and not (INPUTS / "fleet.json").exists() and not (FLEET_ETC / "fleet.json").exists():
+        # A new fleet: captains with crew leave coding to them. A fleet set up before captainTools existed has no
+        # answer and keeps the standard policy, which a fleet.json without captainTools means.
+        policy = prompt("Captain tools: delegate (crew edit, commit and push; captains plan, review and open pull "
+                        "requests) or standard (captains code too)", "delegate", interactive)
         require(policy in ("standard", "delegate"), "Choose standard or delegate for --captain-tools.")
         answers["captainTools"] = policy
     if args.initiative == "":

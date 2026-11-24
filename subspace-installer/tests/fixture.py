@@ -566,7 +566,11 @@ def check_shape():
         assert engine["mcp"]["servers"]["subspace"]["url"] == "http://127.0.0.1:3001/mcp"
         assert {"action": "subspace_*", "resource": "*", "effect": "allow"} in permissions
         assert (opencode / "skills/subspace-tracker/SKILL.md").is_file()
-        assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role != "rear-admiral")
+        # The example's captains delegate: no edit tool, and an open shell that refuses Git's writes.
+        delegate = role == "captain" and json.loads((etc / "fleet.json").read_text()).get("captainTools") == "delegate"
+        assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role == "captain" and not delegate)
+        assert ({"action": "shell", "resource": "*", "effect": "allow"} in permissions) == delegate
+        assert ({"action": "shell", "resource": "git push *", "effect": "deny"} in permissions) == delegate
     ref = Path("/var/lib/subspace-fleet/references/atlas/sample")
     assert subprocess.check_output(["runuser", "-u", "ss-atlas", "--", "git", "-C", ref, "show", "HEAD:README.md"], text=True).strip() == "sample"
     for user in ("ss-atlas", "ss-orion"):

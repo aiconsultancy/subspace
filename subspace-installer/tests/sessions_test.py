@@ -354,6 +354,8 @@ def crew_fleet(*captains):
     config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
     config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
     config["irc"]["auth"] = "password"
+    # Without captainTools, as a fleet installed before it existed: captains keep the standard policy.
+    config.pop("captainTools")
     config["captains"] = [{"id": name, "name": name.title(), "account": f"example-{name}"} for name in captains]
     secrets = secrets_for("example-atlas", *(f"example-{name}" for name in captains))
     return config, secrets
