@@ -572,6 +572,152 @@ def workspace_fleet(**api):
     return validate(config, secrets)
 
 
+def captain_fleet(tools=None, **changes):
+    """The example fleet with a repository, a captain with crew (orion) and one without (vega)."""
+    config = example_config()
+    config.pop("captainTools", None)
+    if tools:
+        config["captainTools"] = tools
+    config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+    config["captains"].append({"id": "vega", "name": "Vega", "account": "example-vega",
+                               "crew": {"claude": {"count": 0}, "codex": {"count": 0}}})
+    config.update(changes)
+    return validate(config, officer_secrets("example-vega"))
+
+
+# Command lines and the resources OpenCode 2.3.2's shell scanner (packages/core/src/shell/scan.ts and parse.ts)
+# gives their commands, from reading its source: a command line splits at &&, ||, ;, | and newlines; a subshell's
+# or group's commands are listed; a command substitution's commands follow the command that holds them; `cd` to a
+# literal directory is no resource (only an external_directory check); and each resource is the command's text
+# from its first word, variable assignments included, to its last, quoted as typed.
+DELEGATE_ALLOWED = (
+    ("pwd", ["pwd"]),
+    ("head -n 40 README.md", ["head -n 40 README.md"]),
+    ("git fetch origin && git log --oneline origin/main..HEAD | head -20",
+     ["git fetch origin", "git log --oneline origin/main..HEAD", "head -20"]),
+    ("cd project && git diff origin/main...HEAD --stat", ["git diff origin/main...HEAD --stat"]),
+    ("git -C project status --short; git -C project branch --show-current",
+     ["git -C project status --short", "git -C project branch --show-current"]),
+    ("GIT_PAGER=cat git log -3 --format=%s", ["GIT_PAGER=cat git log -3 --format=%s"]),
+    ("git branch -a && git stash list && git worktree list && git tag --list",
+     ["git branch -a", "git stash list", "git worktree list", "git tag --list"]),
+    ("git config --get user.email && git remote -v", ["git config --get user.email", "git remote -v"]),
+    ("rg -n 'git push' scripts | wc -l", ["rg -n 'git push' scripts", "wc -l"]),
+    ("git -C project log --grep 'stash'", ["git -C project log --grep 'stash'"]),
+    ("make test", ["make test"]),
+    ("subspace-github gh pr create --title 'Fix the parser' --body-file /tmp/body.md",
+     ["subspace-github gh pr create --title 'Fix the parser' --body-file /tmp/body.md"]),
+    ("subspace-api /api/v1/me", ["subspace-api /api/v1/me"]),
+)
+DELEGATE_REFUSED = (
+    ("git commit -m 'Fix the parser'", ["git commit -m 'Fix the parser'"]),
+    ("git add -A && git commit -m wip", ["git add -A", "git commit -m wip"]),
+    ("git status; git push origin HEAD", ["git status", "git push origin HEAD"]),
+    ("(cd project && git push)", ["git push"]),
+    ("echo $(git push)", ["echo $(git push)", "git push"]),
+    ("GIT_TERMINAL_PROMPT=0 git push origin crew/example", ["GIT_TERMINAL_PROMPT=0 git push origin crew/example"]),
+    ("env git push", ["env git push"]),
+    ("git -C project push", ["git -C project push"]),
+    ("git -c user.name=Orion commit --amend --no-edit", ["git -c user.name=Orion commit --amend --no-edit"]),
+    ("git ls-files -z | xargs -0 git rm", ["git ls-files -z", "xargs -0 git rm"]),
+    ("git stash", ["git stash"]),
+    ("git stash pop", ["git stash pop"]),
+    ("git branch -D crew/example", ["git branch -D crew/example"]),
+    ("git checkout -b fix", ["git checkout -b fix"]),
+    ("git switch main", ["git switch main"]),
+    ("git reset --hard origin/main", ["git reset --hard origin/main"]),
+    ("git merge --ff-only origin/main", ["git merge --ff-only origin/main"]),
+    ("git config user.email orion@example.com", ["git config user.email orion@example.com"]),
+    # A read form in a write's arguments allows nothing: Git's writes are refused after the read forms.
+    ("git -C project commit -m 'stash list'", ["git -C project commit -m 'stash list'"]),
+    ("sed -i 's/a/b/' src/main.ts", ["sed -i 's/a/b/' src/main.ts"]),
+    ("find . -name '*.ts' | xargs sed -i 's/a/b/'", ["find . -name '*.ts'", "xargs sed -i 's/a/b/'"]),
+    ("perl -pi -e 's/a/b/' src/main.ts", ["perl -pi -e 's/a/b/' src/main.ts"]),
+    # The README's known false refusal: a bare Git write word after a global option.
+    ("git -C project log --grep stash", ["git -C project log --grep stash"]),
+)
+# What the rules cannot see, as the README says: they match command text, so these still run.
+DELEGATE_NOT_REFUSED = (
+    ("bash -c 'git push'", ["bash -c 'git push'"]),
+    ("/usr/bin/git push", ["/usr/bin/git push"]),
+    ("echo fix > src/main.ts", ["echo fix > src/main.ts"]),
+    ("cp /tmp/main.ts src/main.ts", ["cp /tmp/main.ts src/main.ts"]),
+    ("python3 -c 'import pathlib; pathlib.Path(\"x\").write_text(\"y\")'",
+     ["python3 -c 'import pathlib; pathlib.Path(\"x\").write_text(\"y\")'"]),
+)
+
+
+class CaptainPolicyTests(unittest.TestCase):
+    """captainTools: standard captains code; delegate captains have an open shell with writes refused."""
+
+    worktrees = "/var/lib/subspace-fleet/agents/orion/worktrees"
+
+    def test_a_delegate_captain_runs_any_command_but_writes(self):
+        cfg = captain_fleet("delegate")
+        rules = cfg["members"][1]["harness"]["permissions"]
+        for line, resources in DELEGATE_ALLOWED + DELEGATE_NOT_REFUSED:
+            with self.subTest(line):
+                self.assertEqual(fixture.opencode_decision(rules, "shell", resources), "allow")
+        for line, resources in DELEGATE_REFUSED:
+            with self.subTest(line):
+                self.assertEqual(fixture.opencode_decision(rules, "shell", resources), "deny")
+        # No edit, write or patch tool (OpenCode's edit action); reads, but not of secrets, in any directory.
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "read", ["src/main.ts", "/tmp/notes.md"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "read", ["deploy/.env"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "external_directory", ["/tmp/*"]), "allow")
+
+    def test_a_standard_captain_keeps_its_policy_and_reads_its_crews_worktrees(self):
+        cfg = captain_fleet()
+        self.assertEqual(cfg["captainTools"], "standard")
+        rear, orion, vega = cfg["members"]
+        rules = orion["harness"]["permissions"]
+        self.assertFalse(orion.get("delegatesCoding"))
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["git add -A", "git commit -m wip"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["git push origin HEAD"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["git status", "head -20"]), "deny")
+        # Its crew's worktrees, and nothing else outside its workspace (the read tool and a shell's directory).
+        for directory in (f"{self.worktrees}/claude-1/project/*", f"{self.worktrees}/codex-2/project/src/*"):
+            self.assertEqual(fixture.opencode_decision(rules, "external_directory", [directory]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "external_directory", ["/tmp/*"]), "deny")
+        self.assertIn({"action": "external_directory", "resource": f"{self.worktrees}/*", "effect": "allow"}, rules)
+        # A captain without crew has no worktrees; the rear admiral has its reference checkouts only.
+        self.assertFalse(any(rule["action"] == "external_directory" for rule in vega["harness"]["permissions"]))
+        self.assertEqual([rule["resource"] for rule in rear["harness"]["permissions"]
+                          if rule["action"] == "external_directory"], ["/var/lib/subspace-fleet/references/atlas/*"])
+        # The starter policy is otherwise what it was.
+        self.assertEqual([rule for rule in rules if rule["action"] != "external_directory"],
+                         default_permissions("captain", None))
+
+    def test_a_captain_without_crew_keeps_the_standard_policy_in_a_delegate_fleet(self):
+        cfg = captain_fleet("delegate")
+        _, orion, vega = cfg["members"]
+        self.assertTrue(orion["delegatesCoding"])
+        self.assertFalse(vega.get("delegatesCoding"))
+        self.assertEqual(vega["harness"]["permissions"], default_permissions("captain", None))
+        self.assertIn("orion leave edits, commits and pushes to their crew", runtime.captain_tools_line(cfg))
+        self.assertIn("vega has no crew, so keeps the standard policy", runtime.captain_tools_line(cfg))
+        self.assertIn("Captain tools: standard", runtime.captain_tools_line(captain_fleet()))
+
+    def test_the_delegate_guidance_follows_captain_tools_not_the_permissions(self):
+        own = [{"action": "*", "resource": "*", "effect": "allow"}]
+        for harness in ({}, {"permissions": own}):
+            with self.subTest(harness=harness):
+                cfg = captain_fleet("delegate", harness={**harness, "type": "opencode"})
+                orion = cfg["members"][1]
+                self.assertTrue(orion["delegatesCoding"])
+                documents = roles.role_documents(cfg, orion, None, Path("/var/lib/subspace-fleet/agents/orion"))
+                self.assertIn("## Your tools", documents["instructions"])
+                self.assertIn("open the pull request with `subspace-github gh pr create`",
+                              documents["skills"]["fleet-captain"])
+                if harness:
+                    self.assertEqual(orion["harness"]["permissions"], own)
+        standard = roles.role_documents(captain_fleet(), captain_fleet()["members"][1], None, Path("/h"))
+        self.assertNotIn("## Your tools", standard["instructions"])
+        self.assertIn("Crew commit as you, so check", standard["skills"]["fleet-captain"])
+
+
 class WorkspaceRootTests(unittest.TestCase):
     """A captain's session starts in its workspace above the checkouts, with generated instructions there."""
 

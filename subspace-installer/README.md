@@ -444,20 +444,66 @@ report to their captain, never in a ship channel. Edit the templates in
 receive the same role guidance and skill procedure in their system prompt.
 
 The default OpenCode policy grants read, glob, grep, skills and Git inspection.
-Captains can edit their checkout, stage and commit locally, and run common
-build and test commands. For a captain without crew, external paths,
-publication and other shell commands require an explicit grant. A captain
-with crew can reach them through its crew (see below). Build and test
-commands can execute code from the project, so use trusted repositories.
+A captain with crew can also read its crew's worktrees,
+`/var/lib/subspace-fleet/agents/<captain-id>/worktrees/`, with OpenCode's
+read tools and as its shell's working directory. What else a captain may do
+depends on `captainTools`.
 
-Interactive setup asks whether captains should use the standard policy or
-delegate coding to crew. Set `--captain-tools standard` or
-`--captain-tools delegate` on the host installer or `subspace-setup`. The
-default is `standard`, and reruns retain the choice. In `delegate` mode,
-each captain needs crew and a repository. Captains inspect changes, delegate
-edits, tests and branch pushes, and use `subspace-github gh pr create` with
-their GitHub App to open pull requests. Configured Subspace tracker tools
-remain available. In a hand-written fleet file, use `captainTools`.
+**Standard captains** (`captainTools: "standard"`) can edit their checkouts,
+stage and commit locally, and run common build and test commands. For a
+captain without crew, external paths, publication and other shell commands
+require an explicit grant. A captain with crew can reach them through its
+crew (see below). Build and test commands can execute code from the project,
+so use trusted repositories.
+
+**Delegate captains** (`captainTools: "delegate"`) plan, review and open pull
+requests with `subspace-github gh pr create` and their GitHub App; their crew
+edit, test, commit and push. A delegate captain has no edit, write or patch
+tool, may work in any directory, and has an open shell with writes refused:
+any command runs, chained, piped or in a subshell, except
+
+- the Git commands that change a checkout or publish it: `push`, `commit`,
+  `merge`, `merge-file`, `mergetool`, `rebase`, `cherry-pick`, `revert`,
+  `am`, `pull`, `reset`, `add`, `stage`, `rm`, `mv`, `restore`, `checkout`,
+  `switch`, `clean`, `apply`, `bisect`, `init`, `update-ref`,
+  `update-index`, `read-tree`, `checkout-index`, `replace`,
+  `filter-branch`, `filter-repo` and `fast-import`;
+- `branch`, `tag`, `stash`, `notes`, `worktree`, `submodule`,
+  `sparse-checkout`, `config` and `remote`, but for their listing forms,
+  such as `git branch -a`, `git branch --show-current`, `git tag --list`,
+  `git stash list`, `git worktree list`, `git config --get` and
+  `git remote -v` (`DELEGATE_GIT_READS` in [`lib/roles.py`](lib/roles.py));
+- the in-place editors `sed -i` and `perl -i`.
+
+Each Git refusal covers `git` itself, Git's global options before the
+subcommand (`git -C project push`) and anything before `git`
+(`GIT_TERMINAL_PROMPT=0 git push`, `env git push`, `xargs git rm`).
+`git fetch`, `git log`, `git diff`, builds, tests and everything else run.
+
+**This is a working agreement, not a security boundary.** OpenCode 2.3.2
+checks each command of a command line separately, by the command's text, and
+the last matching rule decides. Text cannot tell every write from a read:
+
+- Still allowed: a redirect (`echo … > file`), `tee`, `cp`, `mv`, `rm`, a
+  script or build that writes, an interpreter (`python3 -c …`,
+  `bash -c 'git push'`), a path to Git (`/usr/bin/git push`) and a Git alias.
+- Refused although it only reads: a command in which one of those Git words
+  follows `git` and its options as a bare word, such as
+  `git -C project log --grep stash` (quote the word, or set the shell's
+  working directory instead of using `-C`), and an argument, such as a pull
+  request body, that contains ` git push ` or the like.
+
+The captain's instructions state the agreement, and its crew can do all of
+it anyway (see below), so protect the branches that matter on the server. A
+captain without crew has no one to delegate to, so in a delegate fleet it
+keeps the standard policy, and the dry run names it. The `fleet-captain`
+skill and a delegate captain's instructions follow `captainTools`, whatever
+`harness.permissions` says.
+
+Interactive setup asks which policy captains use. Set `--captain-tools
+standard` or `--captain-tools delegate` on the host installer or
+`subspace-setup`; reruns keep the choice. In a hand-written fleet file, use
+`captainTools`. A fleet file without it means `standard`.
 
 Supply an ordered `harness.permissions` array to replace the starter policy across the fleet
 or for the rear admiral or a single captain. Rules use `action`, `resource`
@@ -1593,6 +1639,7 @@ their crew's assignments through `stargate_crew`.
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model` and `effort`, apply to one. Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
+| `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |

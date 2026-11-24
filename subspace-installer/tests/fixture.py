@@ -767,6 +767,24 @@ def api():
           "and reassign passed.")
 
 
+def opencode_match(value, pattern):
+    """OpenCode 2.3.2's Wildcard.match on Linux (packages/core/src/util/wildcard.ts): `*` is any text, `?` one
+    character, and a trailing " *" also matches nothing."""
+    escaped = re.sub(r"[.+^${}()|\[\]\\]", lambda found: "\\" + found.group(0), pattern.replace("\\", "/"))
+    escaped = escaped.replace("*", ".*").replace("?", ".")
+    if escaped.endswith(" .*"):
+        escaped = escaped[:-3] + "( .*)?"
+    return re.fullmatch(escaped, value.replace("\\", "/"), re.S) is not None
+
+
+def opencode_decision(rules, action, resources):
+    """What OpenCode 2.3.2 decides for one tool call (packages/core/src/permission.ts, evaluateInput): each
+    resource takes its last matching rule, or ask; any deny refuses the call, else any ask asks."""
+    effects = [next((rule["effect"] for rule in reversed(rules) if opencode_match(action, rule["action"])
+                     and opencode_match(resource, rule["resource"])), "ask") for resource in resources]
+    return "deny" if "deny" in effects else "ask" if "ask" in effects else "allow"
+
+
 if __name__ == "__main__":
     mode, work, *args = sys.argv[1:]
     WORK = Path(work)

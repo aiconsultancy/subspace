@@ -206,13 +206,12 @@ class SetupInputsTests(unittest.TestCase):
         rear, captain = cfg["members"]
         self.assertFalse(rear.get("delegatesCoding"))
         self.assertTrue(captain["delegatesCoding"])
-        grants = {(rule["action"], rule["resource"]) for rule in captain["harness"]["permissions"]
-                  if rule["effect"] == "allow"}
-        self.assertIn(("shell", "subspace-github gh pr create *"), grants)
-        self.assertIn(("shell", "git diff *"), grants)
-        self.assertNotIn(("edit", "*"), grants)
-        self.assertNotIn(("shell", "git commit *"), grants)
-        self.assertNotIn(("shell", "make *"), grants)
+        rules = captain["harness"]["permissions"]
+        for command in ("subspace-github gh pr create --fill", "git diff main", "git fetch origin", "make test", "pwd"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow", command)
+        for command in ("git commit -m wip", "git push origin HEAD"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "deny", command)
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "deny")
         again = self.rerun(answers, config)
         self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "delegate")
 

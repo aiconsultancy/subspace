@@ -1048,14 +1048,16 @@ def validate(config, credentials, check_files=True):
     require(not any(repo["private"] for repo in repositories.values()) or len(applications) == len(agents),
             "Private repositories require a distinct GitHub App for the rear admiral and every captain.")
     for person in agents:
-        delegate = person["role"] == "captain" and captain_tools == "delegate"
-        require(not delegate or person["crew"],
-                f"Captain {person['id']} needs crew and at least one repository for captainTools delegate.")
+        # With captainTools delegate, a captain with crew leaves coding to them, whatever its harness.permissions;
+        # a captain without crew has no one to delegate to, so it keeps the standard policy.
+        delegate = person["role"] == "captain" and captain_tools == "delegate" and bool(person["crew"])
+        if delegate:
+            person["delegatesCoding"] = True
         if person["harness"]["permissions"] is None:
             references = STATE / "references" / person["id"] if cfg.get("repositories") else None
-            person["harness"]["permissions"] = default_permissions(person["role"], references, delegate=delegate)
-            if delegate:
-                person["delegatesCoding"] = True
+            worktrees = STATE / "agents" / person["id"] / "worktrees" if person["crew"] else None
+            person["harness"]["permissions"] = default_permissions(person["role"], references, delegate=delegate,
+                                                                   worktrees=worktrees)
         if dispatch and person["crew"]:
             fleet_ipc_policy(person["harness"]["permissions"], f"Captain {person['id']}'s harness.permissions")
     if api:
@@ -1080,6 +1082,7 @@ def validate(config, credentials, check_files=True):
         "proxy": {"port": proxy_port, "requestRetries": retries, "key": proxy_key},
         "passwords": passwords, "operatorPassword": operator_password, "token": token, "listeners": listeners,
         "historyPassword": history_password(irc, private),
+        "captainTools": captain_tools,
     }
 
 
@@ -2263,6 +2266,25 @@ def officer_models_line(cfg):
     return f"Officer models: {'; '.join(parts)}.{need}"
 
 
+def captain_tools_line(cfg):
+    """--dry-run: which captains code and which delegate coding to their crew (captainTools)."""
+    captains = cfg["members"][1:]
+    if not captains:
+        return None
+    if cfg["captainTools"] == "standard":
+        return "Captain tools: standard. Captains edit, commit and run builds and tests themselves."
+    delegates = [person["id"] for person in captains if person.get("delegatesCoding")]
+    solo = [person["id"] for person in captains if not person.get("delegatesCoding")]
+    line = "Captain tools: delegate."
+    if delegates:
+        line += (f" {', '.join(delegates)} leave edits, commits and pushes to their crew: no edit tool, and a shell "
+                 "that runs anything but the Git commands that change a checkout or publish it, and sed -i and perl -i.")
+    if solo:
+        line += (f" {', '.join(solo)} {'has no crew, so keeps' if len(solo) == 1 else 'have no crew, so keep'} "
+                 "the standard policy.")
+    return line
+
+
 def unserved_message(unserved, accounts):
     models = ", ".join(sorted({f"{model} ({kind} account)" for _, model, kind in unserved}))
     officers = ", ".join(officer for officer, _, _ in unserved)
@@ -2953,6 +2975,8 @@ def main(args):
             for line in session_root_lines(cfg):
                 print(line)
             for line in slack_plan(cfg):
+                print(line)
+            if line := captain_tools_line(cfg):
                 print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":

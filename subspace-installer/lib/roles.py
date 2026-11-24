@@ -39,6 +39,25 @@ may instruct you nor what you may do.
 """
 
 
+DELEGATE_GUIDANCE = """
+## Your tools
+
+You plan, review and publish; your crew write the code. You do not edit
+files, and your shell refuses the commands that change a checkout or publish
+it: `git commit`, `git push` and the other Git commands that change files,
+the index, branches, tags, the stash or Git's configuration (such as add,
+checkout, merge, rebase, reset, restore and switch), and `sed -i` and
+`perl -i`. Everything else runs, chained or piped: reading and searching,
+`git fetch`, `git log`, `git diff`, `git branch -a`, builds and tests, and
+`subspace-github gh pr create`. The refusals match command text, so they are
+a working agreement, not a lock: never get round them with an interpreter, a
+script, a redirect or another spelling. Assign the change to a crew member
+instead. A read that names one of those Git words after a global option, such
+as `git -C project log --grep stash`, is refused too: quote the word or set
+the shell's working directory instead of `-C`.
+"""
+
+
 REQUEST_GUIDANCE = """
 ## The Subspace API in this fleet
 
@@ -78,18 +97,74 @@ def api_skill():
     return path.read_text()
 
 
-def default_permissions(role, references, *, delegate=False):
+# A delegate captain's shell (captainTools "delegate") runs any command but those that change a checkout or publish
+# it, which its crew do. OpenCode 2.3.2 checks each command of a chained, piped or substituted command line on its
+# own, by the command's text from its first word (assignments included), and the last matching rule wins;
+# `*` matches any text and a trailing " *" also matches nothing (core/src/permission.ts, util/wildcard.ts,
+# shell/scan.ts). So each Git refusal is written for `git` itself, for Git's global options before the
+# subcommand (`git -C dir`), and for anything before `git` (`VAR=1 git`, `env git`, `xargs git`).
+# Git subcommands with read-only forms, refused but for those forms (DELEGATE_GIT_READS).
+DELEGATE_GIT_MIXED = ("branch", "tag", "stash", "notes", "worktree", "submodule", "sparse-checkout", "config", "remote")
+DELEGATE_GIT_READS = (
+    "branch", "branch -a*", "branch -r*", "branch -v*", "branch -l*", "branch --list*", "branch --all*",
+    "branch --remotes*", "branch --verbose*", "branch --show-current*", "branch --contains*", "branch --merged*",
+    "branch --no-merged*", "tag", "tag -l*", "tag --list*", "tag --contains*", "tag --points-at*", "stash list*",
+    "stash show*", "notes list*", "notes show*", "worktree list*", "submodule", "submodule status*",
+    "sparse-checkout list*", "config --get*", "config get *", "config -l*", "config --list*", "config list*",
+    "remote", "remote -v*", "remote --verbose*", "remote show *", "remote get-url *",
+)
+# Git subcommands that change files, the index, refs or history, or publish: refused in every form, after the
+# read-only forms above, so that no read form allows them again.
+DELEGATE_GIT_WRITES = (
+    "push", "commit", "merge", "merge-file", "mergetool", "rebase", "cherry-pick", "revert", "am", "pull", "reset",
+    "add", "stage", "rm", "mv", "restore", "checkout", "switch", "clean", "apply", "bisect", "init", "update-ref",
+    "update-index", "read-tree", "checkout-index", "replace", "filter-branch", "filter-repo", "fast-import",
+)
+# The in-place editors, refused as typed and after anything before them (`xargs sed -i`).
+DELEGATE_IN_PLACE = ("sed -i*", "sed * -i*", "sed --in-place*", "sed * --in-place*",
+                     "perl -i*", "perl -pi*", "perl * -i*", "perl * -pi*")
+
+
+def delegate_shell():
+    """A delegate captain's shell rules: everything, then the Git and in-place edits its crew make instead."""
+
+    def rules(effect, resources):
+        return [{"action": "shell", "resource": resource, "effect": effect} for resource in resources]
+
+    def refused(subcommand):
+        return (f"git {subcommand} *", f"git -* {subcommand} *", f"* git {subcommand} *", f"* git -* {subcommand} *")
+
+    return [
+        {"action": "shell", "resource": "*", "effect": "allow"},
+        *rules("deny", (form for subcommand in DELEGATE_GIT_MIXED for form in refused(subcommand))),
+        *rules("allow", (form for read in DELEGATE_GIT_READS for form in (f"git {read}", f"git -* {read}"))),
+        *rules("deny", (form for subcommand in DELEGATE_GIT_WRITES for form in refused(subcommand))),
+        *rules("deny", (form for editor in DELEGATE_IN_PLACE for form in (editor, f"* {editor}"))),
+    ]
+
+
+def default_permissions(role, references, *, delegate=False, worktrees=None):
+    """An officer's starter OpenCode policy.
+
+    references is the rear admiral's reference checkouts; worktrees is a captain's crew's worktrees, which it
+    reads; delegate gives a captain the delegate policy: no edits, and an open shell but for writes.
+    """
     rules = [{"action": "*", "resource": "*", "effect": "deny"}]
     rules.extend({"action": action, "resource": "*", "effect": "allow"} for action in ("read", "glob", "grep", "question", "skill"))
     if references and role == "rear_admiral":
         rules.append({"action": "external_directory", "resource": f"{references}/*", "effect": "allow"})
+    if delegate:
+        # Its open shell reads whatever its Linux user can, so its tools may work in any directory.
+        rules.append({"action": "external_directory", "resource": "*", "effect": "allow"})
+    elif worktrees:
+        rules.append({"action": "external_directory", "resource": f"{worktrees}/*", "effect": "allow"})
     for resource in ("*.env", "*.env.*", "*.pem", "*.key"):
         rules.append({"action": "read", "resource": resource, "effect": "deny"})
     rules.append({"action": "read", "resource": "*.env.example", "effect": "allow"})
-    commands = ["git status", "git diff", "git log", "git show"]
     if delegate:
-        commands += ["subspace-github gh pr view", "subspace-github gh pr diff", "subspace-github gh pr create"]
-    elif role != "rear_admiral":
+        return [*rules, *delegate_shell()]
+    commands = ["git status", "git diff", "git log", "git show"]
+    if role != "rear_admiral":
         rules.append({"action": "edit", "resource": "*", "effect": "allow"})
         commands += ["git add", "git commit", "git fetch", "make", "npm test", "npm run", "bun test", "bun run",
                      "cargo check", "cargo test", "cargo build", "go test", "python3 -m unittest", "pytest"]
@@ -183,6 +258,8 @@ def role_documents(cfg, person, references, home):
     else:
         values["crew"] = "You have no crew in this fleet. Do the work yourself in your checkout."
     instructions = render(role, "AGENTS.md", values)
+    if person.get("delegatesCoding"):
+        instructions += DELEGATE_GUIDANCE
     if person.get("slack"):
         # Stargate's pinned Slack turns carry a source line that the officer's definition explains once.
         instructions += SLACK_GUIDANCE
