@@ -58,8 +58,8 @@ how.
   unchanged: `workos` or `entra` asks, `dev` does not.
 - **Sign-in settings checked at start-up.** The identity provider must be
   `dev`, `workos`, `entra` or empty, and the selected provider's
-  configuration is built before the shell (`launch::workos_config`,
-  `launch::entra_config`, the same builders sign-in uses), so `"WorkOS"` or
+  configuration is built before the shell (`sign_in::workos_config`,
+  `sign_in::entra_config`, the same builders sign-in uses), so `"WorkOS"` or
   a malformed `workos_api_url` stops the app naming the setting instead of
   leaving sign-in silently off.
 - **Development sign-in on a hosted API opens.** Development sign-in still

@@ -7,6 +7,7 @@ mod launch;
 mod new_install;
 #[path = "../build/settings.rs"]
 mod settings;
+mod sign_in;
 mod surfaces;
 mod web_spaces;
 

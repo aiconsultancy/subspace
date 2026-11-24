@@ -7,8 +7,9 @@
 //! "none"`) has no provider, so it registers no account and never asks
 //! anyone to sign in. Nothing here names a real tenant, client or API.
 
-use crate::launch::{self, API_RESOURCE, Launch, Stamped};
+use crate::launch::{self, Launch, Stamped};
 use crate::settings::ApiBackend;
+use crate::sign_in::{self, API_RESOURCE};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use subspace_framework::account::{Error, Provider};
@@ -106,7 +107,7 @@ fn nett_provider(namespace: &str) -> Option<Arc<dyn Provider>> {
     use subspace_framework::workos_auth::SessionManager;
     let built = (|| -> Result<Arc<dyn Provider>, Error> {
         let launch = LAUNCH.get().ok_or(Error::Unconfigured)?;
-        let config = launch::workos_config(launch)
+        let config = sign_in::workos_config(launch)
             .map_err(|_| Error::Unconfigured)?
             .with_organization(ORGANIZATION_NAME)
             .with_resource(NETT_RESOURCE)?
@@ -165,7 +166,7 @@ fn dev(launch: &Launch) -> Result<Arc<dyn Provider>, Error> {
 }
 
 fn workos(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> {
-    let config = launch::workos_config(launch)
+    let config = sign_in::workos_config(launch)
         .map_err(|_| Error::Unconfigured)?
         .with_organization(ORGANIZATION_NAME)
         .with_resource(API_RESOURCE)?;
@@ -175,7 +176,7 @@ fn workos(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> 
 }
 
 fn entra(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> {
-    let config = launch::entra_config(launch)
+    let config = sign_in::entra_config(launch)
         .map_err(|_| Error::Unconfigured)?
         .with_organization(ORGANIZATION_NAME);
     Ok(Arc::new(

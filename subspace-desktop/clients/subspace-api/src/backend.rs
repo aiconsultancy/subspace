@@ -92,6 +92,7 @@ static SIGN_IN_UNAVAILABLE: OnceLock<String> = OnceLock::new();
 
 /// Records, once and before any Space starts, why this run cannot sign in
 /// at all, such as development sign-in set to an API on another computer.
+// qual:api — the product calls it at startup, from a launch module its tests also compile.
 pub fn set_sign_in_unavailable(reason: String) {
     let _ = SIGN_IN_UNAVAILABLE.set(reason);
 }
