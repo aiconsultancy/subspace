@@ -192,9 +192,12 @@ pub struct CrewContext {
     pub recent_count: u32,
     pub git: Option<Git>,
     pub pull_request: Option<PullRequest>,
+    /// The lookup settled, even when there is no pull request.
+    pub pull_request_known: bool,
 }
 
-/// One task of a crew member. Text is bounded and redacted by Stargate.
+/// One task of a crew member. The fleet summary bounds the text; the crew
+/// detail route returns it in full.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 #[non_exhaustive]

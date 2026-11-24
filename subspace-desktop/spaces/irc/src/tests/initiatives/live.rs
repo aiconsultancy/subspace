@@ -66,11 +66,15 @@ fn a_live_ship_channel_s_inspector_has_ship_thread_and_people_tabs(cx: &mut Test
     cx.update(|window, _| {
         for id in [
             "irc-inspector-state",
-            "irc-inspector-crew:0",
-            "irc-inspector-crew:3",
+            "irc-inspector-crew:wren",
+            "irc-inspector-crew:talon",
         ] {
             assert!(window.find(id).visible(), "{id}");
         }
+        assert_eq!(
+            window.find("irc-inspector-crew:wren").label(),
+            Some("Open crew member Wren")
+        );
         assert!(
             window.try_find("irc-member:mira").is_none(),
             "no member list here"
@@ -134,7 +138,7 @@ fn a_fleet_that_is_not_live_says_why_and_shows_no_figure(cx: &mut TestAppContext
                 "{state:?}: no card"
             );
             assert!(
-                window.try_find("irc-inspector-crew:0").is_none(),
+                window.try_find("irc-inspector-crew:wren").is_none(),
                 "{state:?}: no crew"
             );
             window

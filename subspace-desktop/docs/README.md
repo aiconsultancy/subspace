@@ -231,6 +231,8 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels navigator, request lines and composer hints](changes/channels-navigator-and-requests/README.md):
   the navigator grouped by fleet with a People section, request status lines
   that settle into `Done in …`, and the composer's hint row with `/ask`.
+- [Channels crew details](changes/channels-crew-details/README.md): open a
+  crew member from the Ship tab to see their current work and project state.
 - [Channels fleet live](changes/channels-fleet-live/README.md): each
   fleet's live state from its Fleet API in Channels: a ship's dot, the
   header pill and the Ship, Starbase and People inspector tabs.

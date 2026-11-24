@@ -1,0 +1,61 @@
+use super::{CrewContext, Project};
+
+#[test]
+fn project_keeps_full_progress_git_counts_and_pull_request_details() {
+    let summary = "Chart the coast and mark safe approaches. ".repeat(80);
+    let progress = "Tests passed; reviewing the final changes. ".repeat(80);
+    let context: CrewContext = serde_json::from_value(serde_json::json!({
+        "project": "charts", "activity": "running",
+        "current": {"summary": &summary, "phase": "Testing", "progress": &progress},
+        "git": {"branch": "feat/coast", "head": "abcdef0", "base": "origin/main", "ahead": 2, "behind": 0, "changedFiles": 5},
+        "pullRequest": {"number": 7, "title": "Chart the coast", "url": "https://example.com/maps/charts/pull/7", "state": "draft", "checks": "running"}
+    })).unwrap();
+    let project = Project::of(&context);
+    assert_eq!(project.name, "charts");
+    for (label, expected) in [
+        ("Current task", summary.as_str()),
+        ("Progress", progress.as_str()),
+        ("Branch", "feat/coast"),
+        ("Base", "origin/main"),
+        ("Ahead", "2"),
+        ("Behind", "0"),
+        ("Changed paths", "5"),
+        ("Pull request", "#7 Chart the coast"),
+        ("PR state", "draft"),
+        ("Checks", "running"),
+    ] {
+        assert!(
+            project
+                .facts
+                .iter()
+                .any(|(key, value)| *key == label && value == expected),
+            "{label}"
+        );
+    }
+    assert!(
+        project.pull_request.is_none(),
+        "no dead button for an unsupported PR URL"
+    );
+}
+
+#[test]
+fn project_distinguishes_no_checkout_from_an_unavailable_git_read() {
+    for (json, expected) in [
+        (
+            r#"{"provisioned":"pending","git":null}"#,
+            "No checkout yet.",
+        ),
+        (
+            r#"{"provisioned":"ready","git":{"error":"Git state unavailable."}}"#,
+            "Git state unavailable.",
+        ),
+        (r#"{"git":null}"#, "Git state unavailable."),
+    ] {
+        let context = serde_json::from_str(json).unwrap();
+        let project = Project::of(&context);
+        assert_eq!(project.name, "Default project");
+        assert!(project.facts.contains(&("Git", expected.to_owned())));
+        assert!(!project.facts.iter().any(|(key, _)| *key == "Ahead"));
+        assert!(project.pull_request.is_none());
+    }
+}

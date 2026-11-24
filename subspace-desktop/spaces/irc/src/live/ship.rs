@@ -1,7 +1,7 @@
-//! A Fleet API ship and its crew as Channels shows them: the figures the
-//! API gives, each crew member's current work, and every name and task
-//! bounded and stripped of control characters, as the API's text is
-//! untrusted. Pure, so the mapping is tested on its own.
+//! A Fleet API ship and its crew as Channels shows them in the roster.
+//! The one-line roster bounds names and tasks for layout and strips
+//! control characters. The separate crew detail view draws the full text
+//! from the crew detail route. This mapping is pure and tested on its own.
 
 use std::cmp::Reverse;
 
@@ -45,6 +45,8 @@ pub(crate) struct ShipLive {
 /// One crew member and what they are on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CrewLine {
+    /// The member's Fleet API route key, not their display name.
+    pub id: String,
     pub name: String,
     /// Whether the member has a current task, as Stargate counts busy.
     pub working: bool,
@@ -162,6 +164,7 @@ fn lines(members: &[CrewMember]) -> Vec<CrewLine> {
 fn line(member: &CrewMember) -> CrewLine {
     let task = member.current_task();
     CrewLine {
+        id: member.id.clone(),
         name: name_or(&member.name, &member.id),
         working: task.is_some(),
         task: task.and_then(|task| present(Some(&task.summary), MAX_TASK_CHARS)),

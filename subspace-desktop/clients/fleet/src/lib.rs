@@ -12,6 +12,7 @@
 
 mod address;
 mod client;
+mod crew;
 mod directory;
 mod error;
 mod events;
@@ -24,6 +25,7 @@ mod tokens;
 
 pub use address::FleetAddress;
 pub use client::FleetClient;
+pub use crew::CrewDetail;
 pub use directory::{FleetRecord, FleetState, SharedFleet, fleets_of};
 pub use error::Error;
 pub use events::FleetEvent;

@@ -474,6 +474,13 @@ in `live.rs` and `live/`.
   While the fleet is not live the tab says why in one sentence
   (`view/inspector/reason.rs`): the state's `label()` and its `help()`, and
   for **No token** or **Address changed** where to act, Settings › Fleets.
+
+  Select a **Crew** row to see the member's state, model, current task and
+  progress inside the Ship tab. Each project shows the Git state the fleet
+  reports, including the base used for ahead and behind counts, and its pull
+  request when known. **Open PR** uses the PRs Space when available. If the
+  gateway does not serve a separate crew detail, the view uses the ship's
+  roster instead. **Back to Ship** returns to the crew list.
 - **Left out** because no API gives it yet: **Last decision** (the Decisions
   data has no per-conversation record Channels can reach), the Fleet
   Console footer action (the built-in Fleet Console takes no request to open

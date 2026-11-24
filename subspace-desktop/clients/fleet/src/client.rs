@@ -10,6 +10,7 @@ use subspace_framework::core::Secret;
 use ureq::Body;
 use ureq::http::{Response, StatusCode};
 
+use crate::crew::CrewDetail;
 use crate::model::{FleetOverview, ShipDetail};
 use crate::{Error, FleetAddress};
 
@@ -51,6 +52,13 @@ impl FleetClient {
     /// `GET /api/v1/ships/{id}`: one ship with its crew and their work.
     pub fn ship(&self, id: &str) -> Result<ShipDetail, Error> {
         self.get(&["ships", id])
+    }
+
+    /// `GET /api/v1/ships/{ship}/crew/{member}`. Run in the background.
+    /// `NotFound` can mean an absent member or a gateway without this route.
+    pub fn crew(&self, ship: &str, member: &str) -> Result<CrewDetail, Error> {
+        self.get::<CrewDetail>(&["ships", ship, "crew", member])?
+            .matching(ship, member)
     }
 
     fn get<T: DeserializeOwned>(&self, segments: &[&str]) -> Result<T, Error> {

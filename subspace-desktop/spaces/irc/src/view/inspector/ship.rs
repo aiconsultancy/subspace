@@ -7,8 +7,8 @@
 use chrono::{DateTime, Utc};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, TestSupportExt as _, div,
+    AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Styled as _, TestSupportExt as _,
 };
 use subspace_client_fleet::model::Activity;
 use subspace_framework::dashboard::avatar::{self, AgentIcons, AgentRank};
@@ -16,7 +16,7 @@ use subspace_framework::dashboard::badge::Pill;
 use subspace_framework::dashboard::{Tokens, Tone, dates, feedback, truncated, workspace};
 
 use super::reason;
-use super::{Front, play};
+use super::{Front, crew, play};
 use crate::Irc;
 use crate::live::ship::state_word;
 use crate::live::{CrewLine, ShipLive};
@@ -26,28 +26,38 @@ const HERE_NAMED: usize = 4;
 
 /// The Ship tab's body for the ship of `captain`, the roster's captain of
 /// the channel in front.
-pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &App) -> AnyElement {
+pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &mut Context<Irc>) -> AnyElement {
     let ship = front.fleet.as_ref().and_then(|fleet| fleet.ship(captain));
+    let fleet = crate::live::fleet_id(&front.roster, &front.channel);
+    if let Some(detail) = crew::body(board, fleet, captain, ship.as_ref(), cx) {
+        return detail;
+    }
     let hub = board.hub.as_ref().map(|hub| hub.read(cx));
     let now = hub.map_or_else(Utc::now, |hub| hub.now);
     let here = hub.map(|hub| here_now(board, hub)).unwrap_or_default();
+    let route = ShipRoute { fleet, captain };
     v_flex()
         .w_full()
         .min_w_0()
         .gap_4()
-        .child(fleet_part(ship.as_ref(), front, captain, now, cx))
+        .child(fleet_part(ship.as_ref(), front, route, now, cx))
         .children(play::section(board, cx))
         .children(here_section(&here, cx))
         .into_any_element()
+}
+
+struct ShipRoute<'a> {
+    fleet: Option<&'a str>,
+    captain: &'a str,
 }
 
 /// The card and the crew while the ship is live, else why not.
 fn fleet_part(
     ship: Option<&ShipLive>,
     front: &Front,
-    captain: &str,
+    ShipRoute { fleet, captain }: ShipRoute<'_>,
     now: DateTime<Utc>,
-    cx: &App,
+    cx: &mut Context<Irc>,
 ) -> AnyElement {
     let state = super::state_of(front.fleet.as_ref());
     match (ship, reason::reason(&state)) {
@@ -56,7 +66,7 @@ fn fleet_part(
             .min_w_0()
             .gap_4()
             .child(card(ship, captain, cx))
-            .child(crew_section(ship, now, cx))
+            .child(crew_section(ship, fleet, now, cx))
             .into_any_element(),
         (None, Some((title, sentence))) => reason::view(title, sentence, cx),
         (None, None) => {
@@ -139,7 +149,7 @@ const STATE_TONES: [(Activity, Tone); 2] = [
     (Activity::Uncertain, Tone::Yellow),
 ];
 
-fn state_tone(activity: Activity) -> Tone {
+pub(super) fn state_tone(activity: Activity) -> Tone {
     STATE_TONES
         .iter()
         .find(|(state, _)| *state == activity)
@@ -158,7 +168,12 @@ pub(crate) fn figures(ship: &ShipLive) -> Vec<(&'static str, String)> {
 }
 
 /// **Crew**: each member, what they are on and since when.
-fn crew_section(ship: &ShipLive, now: DateTime<Utc>, cx: &App) -> AnyElement {
+fn crew_section(
+    ship: &ShipLive,
+    fleet: Option<&str>,
+    now: DateTime<Utc>,
+    cx: &mut Context<Irc>,
+) -> AnyElement {
     let tokens = Tokens::current(cx);
     let section = workspace::section("Crew", cx);
     if ship.members.is_empty() {
@@ -175,8 +190,7 @@ fn crew_section(ship: &ShipLive, now: DateTime<Utc>, cx: &App) -> AnyElement {
         .children(
             ship.members
                 .iter()
-                .enumerate()
-                .map(|(index, member)| crew_row(index, member, now, &tokens)),
+                .map(|member| crew::list::row(member, ship, fleet, now, cx)),
         )
         .into_any_element()
 }
@@ -191,43 +205,6 @@ pub(crate) fn crew_note(ship: &ShipLive) -> &'static str {
         Some((_, people)) if people > 0 => "The crew's detail has not arrived yet.",
         _ => "This ship has no crew.",
     }
-}
-
-/// One crew member: their dot, name, work and how long.
-fn crew_row(index: usize, member: &CrewLine, now: DateTime<Utc>, tokens: &Tokens) -> AnyElement {
-    let since = member.since.map(|at| age(at, now)).unwrap_or_default();
-    h_flex()
-        .id(SharedString::from(format!("irc-inspector-crew:{index}")))
-        .test_support()
-        .w_full()
-        .min_w_0()
-        .gap_2()
-        .items_center()
-        .text_size(tokens.secondary_size())
-        .child(avatar::activity_dot(member.working, tokens))
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_color(if member.working {
-                    tokens.fg_strong
-                } else {
-                    tokens.muted
-                })
-                .child(member.name.clone()),
-        )
-        .child(
-            truncated::text(format!("irc-inspector-crew-work:{index}"), work(member))
-                .flex_1()
-                .text_color(tokens.muted),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_size(tokens.caption_size())
-                .text_color(tokens.muted)
-                .child(since),
-        )
-        .into_any_element()
 }
 
 /// What a crew member is on: the task's phase and summary while working,

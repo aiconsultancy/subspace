@@ -18,7 +18,7 @@ mod details;
 mod empty;
 mod frame;
 mod hosting;
-mod inspector;
+pub(crate) mod inspector;
 mod navigator;
 
 use details::{kind, kind_icon};
@@ -54,6 +54,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         captions: Default::default(),
         watch: Default::default(),
         inspector_tab: Default::default(),
+        inspector_crew: None,
         threads: Default::default(),
         seen_fleets: Default::default(),
         absorbing: Default::default(),

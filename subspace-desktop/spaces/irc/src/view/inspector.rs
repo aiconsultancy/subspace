@@ -25,6 +25,7 @@ use crate::live::{self, FleetLive};
 use crate::members::MemberList;
 use crate::{Irc, dock};
 
+pub(crate) mod crew;
 mod play;
 mod reason;
 mod ship;
@@ -223,7 +224,7 @@ fn people(members: Option<Entity<MemberList>>, cx: &App) -> AnyElement {
 
 /// The subject tab: the ship or the Starbase. Like every tab, it starts
 /// at the inspector body's own text edge, with no inset of its own.
-fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
+fn subject_body(board: &Irc, front: &Front, cx: &mut Context<Irc>) -> AnyElement {
     let content = match &front.subject {
         Subject::Ship { captain } => ship::body(board, front, captain, cx),
         Subject::Starbase => starbase::body(front, cx),

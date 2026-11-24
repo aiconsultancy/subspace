@@ -47,6 +47,59 @@ fn reads_the_fleet_and_a_ship_with_its_crew() {
 }
 
 #[test]
+fn reads_the_selected_member_and_its_projects() {
+    let (address, server) = answer_once(concat!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+        r#"{"ship":"lyra","member":{"id":"wren","contexts":[{"project":null,"git":null},{"project":"maps","current":{"progress":"Two checks left"},"git":{"branch":"feat/maps","changedFiles":0},"pullRequest":{"number":3,"url":"https://example.com/maps/pull/3"}}]}}"#
+    ));
+    let detail = FleetClient::new(address, Secret::new(TOKEN))
+        .crew("lyra", "wren")
+        .unwrap();
+    let head = server.join().unwrap();
+    assert_eq!(
+        head.lines().next().unwrap(),
+        "GET /stargate/api/v1/ships/lyra/crew/wren HTTP/1.1"
+    );
+    assert!(
+        head.lines()
+            .any(|line| line.eq_ignore_ascii_case(&format!("authorization: Bearer {TOKEN}")))
+    );
+    let projects = &detail.member.contexts;
+    assert_eq!(projects.len(), 2);
+    assert!(projects[0].project.is_none() && projects[0].git.is_none());
+    assert_eq!(
+        projects[1].current.as_ref().unwrap().progress,
+        "Two checks left"
+    );
+    assert_eq!(projects[1].git.as_ref().unwrap().changed_files, Some(0));
+    assert_eq!(projects[1].pull_request.as_ref().unwrap().number, 3);
+}
+
+#[test]
+fn a_crew_read_reports_missing_or_mismatched_members() {
+    for (reply, error) in [
+        (
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            Error::NotFound,
+        ),
+        (
+            concat!(
+                "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
+                r#"{"ship":"lyra","member":{"id":"other"}}"#
+            ),
+            Error::InvalidResponse,
+        ),
+    ] {
+        let (address, server) = answer_once(reply);
+        assert_eq!(
+            FleetClient::new(address, Secret::new(TOKEN)).crew("lyra", "wren"),
+            Err(error)
+        );
+        server.join().unwrap();
+    }
+}
+
+#[test]
 fn a_refused_token_is_reported_and_the_feed_stops_using_it() {
     let fixture = FleetFixture::start(&[]);
     let client = fixture.client("not-the-token");
