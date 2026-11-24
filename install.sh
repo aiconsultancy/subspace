@@ -57,6 +57,9 @@
 #   --irc-operator-account-password-file FILE  with --irc-operator-account
 #                        NAME: the same for the IRC account the operator's
 #                        connection signs in to first (servers with require-sasl)
+#   --api-enrolment-token-file FILE  with --api-url URL (a Subspace API on
+#                        another host): a private (chmod 600) file holding the
+#                        fleet's enrolment token; removed from the VM after the run
 #   --fleet-console ID   (desktop) the Board ID of the Fleet Console web Space
 #                        (default fleet-console, the one built into Subspace)
 #   --yes                never prompt; fail when an answer is missing
@@ -99,6 +102,7 @@ database_url_file=
 database_ca_file=
 irc_operator_password_file=
 irc_operator_account_password_file=
+api_enrolment_token_file=
 fleet_console=fleet-console
 assume_yes=false
 background=false
@@ -151,6 +155,7 @@ while [ $# -gt 0 ]; do
         --database-ca-file) database_ca_file=${2:?}; shift 2 ;;
         --irc-operator-password-file) irc_operator_password_file=${2:?}; shift 2 ;;
         --irc-operator-account-password-file) irc_operator_account_password_file=${2:?}; shift 2 ;;
+        --api-enrolment-token-file) api_enrolment_token_file=${2:?}; shift 2 ;;
         --fleet-console) fleet_console=${2:?}; shift 2 ;;
         --yes|-y) assume_yes=true; shift ;;
         --background) background=true; shift ;;
@@ -208,6 +213,15 @@ ssh_opts() {
     else
         ssh_args=(-F "$state/ssh_config" subspace-target)
     fi
+}
+
+run_only_file() {
+    # The local file for one of the run-only options, by the option's name without --...-file.
+    case $1 in
+        irc-operator-password) printf '%s' "$irc_operator_password_file" ;;
+        irc-operator-account-password) printf '%s' "$irc_operator_account_password_file" ;;
+        api-enrolment-token) printf '%s' "$api_enrolment_token_file" ;;
+    esac
 }
 
 remove_transient() {
@@ -736,6 +750,15 @@ do_install() {
     transient=()
     trap remove_transient EXIT
     "$dry_run" && transient+=("$inputs")
+    # A Subspace API on another host (--api-url, passed to setup) excludes another fleet's API and a database here.
+    local hosted=false
+    for arg in ${passthrough[@]+"${passthrough[@]}"}; do [ "$arg" = --api-url ] && hosted=true; done
+    if "$hosted"; then
+        [ -z "$api_target" ] || die "--api-url names the fleet's API, so --api-target does not apply."
+        [ -z "$database_url_file" ] || die "--api-url uses an API on another host, which keeps its own database: leave out --database-url-file."
+    else
+        [ -z "$api_enrolment_token_file" ] || die "--api-enrolment-token-file goes with --api-url."
+    fi
     if [ -n "$irc_target" ]; then
         [ -f "$home/targets/$irc_target/summary.env" ] || die "No shared IRC server '$irc_target'. Run ./install.sh irc-server first."
         local irc_host irc_port self_signed
@@ -768,12 +791,13 @@ do_install() {
             die "Could not copy the database CA certificate to the VM."
         passthrough+=(--database-ca-file "$inputs/database-ca.pem")
     fi
-    # The IRC operator's passwords are for this run only: checked here, copied to the VM only after the
-    # installer, never into the fleet's inputs, and removed when the run ends.
+    # The IRC operator's passwords and the hosted API's enrolment token are for this run only: checked here,
+    # copied to the VM only after the installer, never into the fleet's inputs (setup keeps what it needs), and
+    # removed when the run ends.
     local operator_dir=/root/subspace-setup-operator option file name operator_perms
     "$dry_run" && operator_dir=$inputs
-    for option in irc-operator-password irc-operator-account-password; do
-        if [ "$option" = irc-operator-password ]; then file=$irc_operator_password_file; else file=$irc_operator_account_password_file; fi
+    for option in irc-operator-password irc-operator-account-password api-enrolment-token; do
+        file=$(run_only_file "$option")
         [ -n "$file" ] || continue
         [ -f "$file" ] && [ -r "$file" ] || die "Cannot read --$option-file $file."
         if [ "$os" = Darwin ]; then operator_perms=$(stat -f %Lp "$file"); else operator_perms=$(stat -c %a "$file"); fi
@@ -783,8 +807,8 @@ do_install() {
     # The dry run's installer copy goes beside its files and is removed with them, so the installed
     # /opt/subspace/bootstrap and the subspace-setup command stay as the last real run left them.
     if "$dry_run"; then send_payload "$inputs/bootstrap"; else send_payload; fi
-    for option in irc-operator-password irc-operator-account-password; do
-        if [ "$option" = irc-operator-password ]; then file=$irc_operator_password_file; else file=$irc_operator_account_password_file; fi
+    for option in irc-operator-password irc-operator-account-password api-enrolment-token; do
+        file=$(run_only_file "$option")
         [ -n "$file" ] || continue
         name=$operator_dir/$option
         transient+=("$operator_dir")

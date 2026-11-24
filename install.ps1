@@ -30,6 +30,9 @@ accounts itself; it is removed from the VM after the run.
 --irc-operator-account-password-file FILE, with --irc-operator-account NAME,
 does the same for the IRC account the operator's connection signs in to first,
 for a server that admits only signed-in connections (require-sasl).
+--api-enrolment-token-file FILE, with --api-url URL (a Subspace API on another
+host), gives the fleet's enrolment token; it too is removed from the VM after
+the run.
 Every other option goes to subspace-setup on the VM, for example
   --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega --admin admiral --demo
 #>
@@ -44,7 +47,7 @@ $SetupCmd = '/opt/subspace/bootstrap/subspace-installer/vm/setup.sh'
 $FleetConsole = 'fleet-console'
 $Command = 'install'; $Mode = ''; $Target = ''; $Remote = ''; $Identity = ''; $SshPort = 22; $HostKey = ''; $SshProxy = ''
 $Cpus = 4; $Memory = 8; $Disk = 60; $InstallDeps = $false; $IrcTarget = ''; $ApiTarget = ''; $AssumeYes = $false
-$Background = $false; $SkillsFailed = $false; $DatabaseUrlFile = ''; $DatabaseCaFile = ''; $IrcOperatorPasswordFile = ''; $IrcOperatorAccountPasswordFile = ''; $Passthrough = New-Object System.Collections.Generic.List[string]
+$Background = $false; $SkillsFailed = $false; $DatabaseUrlFile = ''; $DatabaseCaFile = ''; $IrcOperatorPasswordFile = ''; $IrcOperatorAccountPasswordFile = ''; $ApiEnrolmentTokenFile = ''; $Passthrough = New-Object System.Collections.Generic.List[string]
 
 function Die([string]$Message) { Write-Host "install: $Message" -ForegroundColor Red; exit 1 }
 function Say([string]$Message) { Write-Host "==> $Message" }
@@ -89,6 +92,7 @@ for (; $i -lt $list.Count; $i++) {
         '--database-ca-file' { $DatabaseCaFile = Next-Value }
         '--irc-operator-password-file' { $IrcOperatorPasswordFile = Next-Value }
         '--irc-operator-account-password-file' { $IrcOperatorAccountPasswordFile = Next-Value }
+        '--api-enrolment-token-file' { $ApiEnrolmentTokenFile = Next-Value }
         '--fleet-console' { $FleetConsole = Next-Value }
         { $_ -in @('--yes', '-y') } { $AssumeYes = $true }
         '--background' { $Background = $true }
@@ -655,6 +659,11 @@ function Invoke-Install {
     # removed when the run ends, however it ends.
     $transient = New-Object System.Collections.Generic.List[string]
     if ($dryRun) { $transient.Add($inputs) }
+    # A Subspace API on another host (--api-url, passed to setup) excludes another fleet's API and a database here.
+    if ($Passthrough -contains '--api-url') {
+        if ($ApiTarget) { Die "--api-url names the fleet's API, so --api-target does not apply." }
+        if ($DatabaseUrlFile) { Die '--api-url uses an API on another host, which keeps its own database: leave out --database-url-file.' }
+    } elseif ($ApiEnrolmentTokenFile) { Die '--api-enrolment-token-file goes with --api-url.' }
     try {
         if ($IrcTarget) {
             $ircState = Join-Path (Join-Path $SubspaceHome 'targets') $IrcTarget
@@ -687,7 +696,7 @@ function Invoke-Install {
         # The IRC operator's passwords are for this run only: checked here, copied to the VM only after the
         # installer, never into the fleet's inputs, and removed when the run ends, however it ends.
         $operatorDir = if ($dryRun) { $inputs } else { '/root/subspace-setup-operator' }
-        $operatorFiles = @(@('irc-operator-password', $IrcOperatorPasswordFile), @('irc-operator-account-password', $IrcOperatorAccountPasswordFile))
+        $operatorFiles = @(@('irc-operator-password', $IrcOperatorPasswordFile), @('irc-operator-account-password', $IrcOperatorAccountPasswordFile), @('api-enrolment-token', $ApiEnrolmentTokenFile))
         foreach ($pair in $operatorFiles) {
             $option, $file = $pair
             if ($file -and -not (Test-Path -LiteralPath $file -PathType Leaf)) { Die "Cannot read --$option-file $file." }
