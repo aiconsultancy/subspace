@@ -15,6 +15,7 @@ import {
   enrolmentAuth,
   enrolmentGroup,
   enrolmentHandlers,
+  enrolmentCheckPath,
   enrolmentPath,
   enrolmentTokenGroup,
   enrolmentTokenHandlers,
@@ -539,8 +540,8 @@ const sharedProblems = (unauthorised: string) =>
         const { title, status, detail, currentVersion, errors } = JSON.parse(
           body.text ?? new TextDecoder().decode(body.body),
         );
-        // The enrolment route's own refusals say which enrolment token was refused, and why.
-        const keepDetail = path === enrolmentPath;
+        // The enrolment routes' own refusals say which enrolment token was refused, and why.
+        const keepDetail = path === enrolmentPath || path === enrolmentCheckPath;
         return HttpServerResponse.jsonUnsafe(
           {
             type: `https://httpstatuses.com/${status}`,

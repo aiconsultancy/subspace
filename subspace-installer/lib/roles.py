@@ -289,7 +289,7 @@ def role_documents(cfg, person, references, home):
     )
     if person.get("crew"):
         roster = "\n".join(f"- {worker['name']} (`{worker['id']}`, {worker['family'].title()} family, "
-                           f"model `{worker['model']}`)" for worker in person["crew"])
+                           f"slot {worker['slot']}, model `{worker['model']}`)" for worker in person["crew"])
         values["crew"] = render("captain", "CREW.md", {**values, "roster": roster}).rstrip("\n")
     else:
         values["crew"] = "You have no crew in this fleet. Do the work yourself in your checkout."

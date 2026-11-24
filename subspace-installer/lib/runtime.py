@@ -205,11 +205,11 @@ def channel(value):
     return pattern(value, r"#[a-z0-9][a-z0-9_-]{0,48}", "IRC channel")
 
 
-def not_standard(slug, label, value, expected):
+def not_standard(slug, label, value, expected, plain=False):
     """Refusal for a renamed standard channel: every fleet keeps the standard names."""
     shown = value if isinstance(value, str) and len(value) <= 64 and value.isprintable() else "another name"
     return (f"{label} is {shown}, but it must be {expected}. Every fleet has the standard channels "
-            f"{standard_channels.summary(slug)}, and the desktop recognises them by name, so they cannot be "
+            f"{standard_channels.summary(slug, plain)}, and the desktop recognises them by name, so they cannot be "
             "renamed or dropped. Leave the setting out or use the standard name. Extra channels are welcome: "
             "seed them with irc.compose.channels on local IRC, register them on a shared server, or list them "
             "on an initiative.")
@@ -260,13 +260,14 @@ def source(value, label, repo, ref=None):
 def member(value):
     require(not isinstance(value, dict) or "crewGitHubApps" not in value,
             "Remove crewGitHubApps: crew run as their captain and commit and push with the captain's githubApp.")
-    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames serviceTokenClientId sessionRoot slack", ["id", "name", "account"])
+    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames crewIds serviceTokenClientId sessionRoot slack", ["id", "name"])
     pattern(value["id"], r"[a-z][a-z0-9-]{0,19}", "member ID")
     require(not value["id"].startswith("fleet-"), "Member IDs cannot start with fleet-.")
     require(value["id"] != SENTRY_TOKEN[0], "The medical member ID is reserved for integration credentials.")
     require(value["id"] not in {"all", "captain"}, "The member IDs all and captain are reserved for crew messaging.")
     string(value["name"], "member name")
-    require(isinstance(value["account"], str) and re.fullmatch(ACCOUNT, value["account"]),
+    # An officer's IRC account: its ID in a fleet with plain names, where it may be left out (validate()).
+    require("account" not in value or isinstance(value["account"], str) and re.fullmatch(ACCOUNT, value["account"]),
             f"Invalid SASL account for member {value['id']}: start with a letter and use at most "
             f"{standard_channels.MAX_ACCOUNT} letters, digits, hyphens or underscores, the IRC limit for "
             "accounts and nicks.")
@@ -432,7 +433,7 @@ def listener(value, label, default_port, allow_bind=False):
     return {"port": port(value.get("port", default_port)), "bind": ip(value.get("bind", LOOPBACK))}
 
 
-def irc_config(value, slug, check_files):
+def irc_config(value, slug, check_files, plain=False):
     value = fields(value, "irc", "mode host port tls caFile allowedAccounts commandChannel starbaseChannel advertise compose auth", ["mode", "allowedAccounts"])
     mode = pattern(value["mode"], r"local|remote", "IRC mode")
     tls = boolean(value.get("tls", mode == "remote"))
@@ -454,7 +455,7 @@ def irc_config(value, slug, check_files):
     irc["auth"] = auth
     for key, label in (("starbaseChannel", "irc.starbaseChannel"), ("commandChannel", "irc.commandChannel")):
         if key in value:
-            require(value[key] == irc[key], not_standard(slug, label, value[key], irc[key]))
+            require(value[key] == irc[key], not_standard(slug, label, value[key], irc[key], plain))
     if "caFile" in value:
         require(tls, "IRC caFile requires TLS.")
         irc["caFile"] = absolute_file(value["caFile"], check_files)
@@ -729,7 +730,18 @@ def crew_id(name):
     return re.sub(r"[^a-z0-9_-]+", "-", name.strip().lower()).strip("-")
 
 
-def crew_roster(captain, teams, names, slug):
+def crew_slot_label(worker):
+    """A crew member's model family and slot, such as 'Claude-family crew slot claude-1': shown beside its
+    name (in the Fleet API's role, the captain's roster and the dry run), never as the name."""
+    return f"{worker['family'].title()}-family crew slot {worker['slot']}"
+
+
+def crew_roster(captain, teams, names, slug, ids=None):
+    """A captain's crew: one member per slot (claude-1, codex-2, ...), named by crewNames. Stargate's crew
+    plugin derives a member's ID from its name, and keeps its state, worktrees and sessions under that ID, so
+    a slot without a name of its own is called after its slot ('Claude 1'), as in fleets installed before crew
+    names were asked for. ids (crewIds) keeps an installed member's ID when its name changes (rename-officers),
+    which needs a Stargate whose crew plugin lets a name differ from its ID (stargate_crew_names_free)."""
     roster = []
     for family, team in teams.items():
         for slot in range(1, team["count"] + 1):
@@ -738,9 +750,10 @@ def crew_roster(captain, teams, names, slug):
             require(re.fullmatch(r"[A-Za-z0-9 _-]+", name) and re.fullmatch(CREW_ID, crew_id(name)),
                     "Crew names use ASCII letters, digits, spaces, hyphens and underscores, and shorten to "
                     "an ID of at most 32 characters.")
-            member_id = crew_id(name)
+            member_id = (ids or {}).get(key) or crew_id(name)
             roster.append({
-                "id": member_id, "slot": key, "family": family, "name": name, "model": team["model"],
+                "id": member_id, "slot": key, "family": family, "name": name, "named": key in names,
+                "model": team["model"],
                 # Native OpenCode agent and initial worktree branch, both namespaced by fleet and captain.
                 "agent": f"{captain['id']}-crew-{member_id}", "branch": f"crew/{slug}-{captain['id']}-{member_id}",
             })
@@ -748,6 +761,86 @@ def crew_roster(captain, teams, names, slug):
     require(len(set(ids)) == len(ids) and not set(ids) & {captain["id"], "captain", "all"},
             "Crew names must give distinct IDs that differ from the captain's ID, captain and all.")
     return roster
+
+
+def names_plan(cfg):
+    """--dry-run: each officer's one name (IRC account, API name, Stargate ID) and its ship channel, and each
+    captain's crew by name, with the model family, slot and model beside each."""
+    plain = cfg["officerNames"] == "plain"
+    lines = ["Officer names (IRC account and nick, Subspace API agent name, Stargate ID): " + (
+        "plain, one name each." if plain else
+        "fleet-prefixed, as installed; 'subspace-setup rename-officers' gives each officer its plain name "
+        "(installer README, 'Officer names').")]
+    for person in cfg["members"]:
+        role = "Rear admiral" if person["role"] == "rear_admiral" else "Captain"
+        api = fleet_records.agent_name(cfg, person)
+        same = api == person["account"] == person["id"]
+        names = person["account"] if same else (f"IRC {person['account']}, API {api}, Stargate {person['id']}")
+        lines.append(f"  {role} {person['name']}: {names}, channel {person['channel']}")
+        if person["crew"]:
+            lines.append("    crew: " + "; ".join(
+                f"{worker['name']} ({worker['family'].title()} {worker['slot'].rpartition('-')[2]}, {worker['model']})"
+                + ("" if worker["named"] else " [slot name]") for worker in person["crew"]))
+    return lines
+
+
+def stargate_crew_names_free(cfg):
+    """Whether the installed Stargate's crew plugin takes a crew member's name that differs from its ID. Stargate
+    releases to date refuse it ('Agent IDs must match assigned names'); a checkout that is not installed yet is
+    taken as refusing."""
+    team = APP / "src" / f"stargate-{cfg['stargate']['ref']}" / "src/coordination/crew/team.ts"
+    try:
+        return "Agent IDs must match assigned names" not in team.read_text()
+    except OSError:
+        return False
+
+
+def check_crew_ids(cfg):
+    """Refuse a crew member whose name and ID differ (crewIds) unless the installed Stargate allows it."""
+    split = [f"{person['id']}'s {worker['name']} ({worker['id']})" for person in cfg["members"]
+             for worker in person["crew"] if crew_id(worker["name"]) != worker["id"]]
+    require(not split or stargate_crew_names_free(cfg),
+            f"Crew {', '.join(split)} keep installed IDs under new names, but Stargate {cfg['stargate']['ref'][:12]}'s "
+            "crew plugin requires a crew member's name to match its ID. Remove crewIds and crewNames for them, or "
+            "install a Stargate that drops that rule (installer README, 'Crew names').")
+
+
+def check_crew_names(agents):
+    """Crew names (crewNames) are unique in the fleet, compared without case (as their IDs), and none is an
+    officer's ID, account or name: a captain addresses crew by ID, people tell them apart by name, and the
+    tracker records a crew member's work by its name beside its captain (relayedCrew). A slot without a name
+    of its own keeps its slot name, 'Claude 1', on every ship, as fleets installed before crew names do."""
+    officers = {}
+    for person in agents:
+        for value in (person["id"], person["account"], person["name"]):
+            officers.setdefault(crew_id(value), person["id"])
+    seen = {}
+    for person in agents:
+        for worker in person["crew"]:
+            if not worker["named"]:
+                continue
+            owner = officers.get(worker["id"])
+            require(owner is None, f"Crew member {worker['name']} of captain {person['id']} has an officer's name "
+                    f"({owner}). Crew names are unique in the fleet and differ from the officers' names.")
+            other = seen.get(worker["id"])
+            require(other is None, f"Crew member {worker['name']} of captain {person['id']} has the same name as "
+                    f"{other}, ignoring case. Crew names are unique in the fleet: give each crew member its own.")
+            seen[worker["id"]] = f"captain {person['id']}'s {worker['name']}"
+
+
+def check_new_crew_named(cfg, installed):
+    """In a fleet with plain officer names, every crew member of a captain not installed yet has a name of its own
+    in crewNames, as subspace-setup asks: a slot name ('Claude 1') repeats on every ship. installed: the installed
+    fleet.json, {} on a new VM. A captain installed with repositories keeps its crew as they are, named or not."""
+    if cfg["officerNames"] != "plain":
+        return
+    known = {person.get("id") for person in installed.get("captains") or [] if isinstance(person, dict)} \
+        if installed.get("repositories") else set()
+    unnamed = [f"{person['id']} {worker['slot']}" for person in cfg["members"][1:] if person["id"] not in known
+               for worker in person["crew"] if not worker["named"]]
+    require(not unnamed, f"Crew {', '.join(unnamed)} have no name: in a fleet with plain officer names every crew "
+            "member of a new captain needs one, in its captain's crewNames by slot, unique in the fleet (installer "
+            "README, 'Crew names').")
 
 
 def repository_config(value):
@@ -907,25 +1000,47 @@ def history_password(irc, private):
     return None
 
 
+def officer_names(officers, naming):
+    """Give each officer its IRC account by the fleet's naming: in a fleet with plain names, every officer's
+    account is its ID, so its IRC account and nick, its Subspace API agent name and its Stargate registration
+    ID are one name; a fleet with fleet-prefixed names keeps the accounts its fleet.json gives."""
+    for person in officers:
+        if naming == "plain":
+            account = person.setdefault("account", person["id"])
+            require(account == person["id"],
+                    f"Officer {person['id']} has the IRC account {account}, but in a fleet with plain officer names "
+                    "(officerNames plain) an officer's IRC account is its ID, so its IRC account, API name and "
+                    "Stargate ID are one name. Leave account out, or set officerNames to prefixed for a fleet "
+                    "installed with fleet-prefixed accounts (installer README, 'Officer names').")
+        else:
+            require("account" in person, f"Officer {person['id']} needs an IRC account (account), or set "
+                    "officerNames to plain so that its account is its ID.")
+
+
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
+    # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
+    naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
+                     "officerNames (plain or prefixed)")
+    plain = naming == "plain"
     require(isinstance(cfg["captains"], list), "Captains must be an array.")
     officers = [member(person) for person in [cfg["rearAdmiral"], *cfg["captains"]]]
-    require(not {"crew", "crewNames"} & officers[0].keys(), "Only captains may declare crew.")
+    officer_names(officers, naming)
+    require(not {"crew", "crewNames", "crewIds"} & officers[0].keys(), "Only captains may declare crew.")
     require("sessionRoot" not in officers[0], "Only captains take sessionRoot: the rear admiral works in its "
             "reference checkout of the first repository.")
-    irc = irc_config(cfg["irc"], slug, check_files)
+    irc = irc_config(cfg["irc"], slug, check_files, plain)
     captain_ids = [person["id"] for person in officers[1:]]
-    trouble = standard_channels.problem(slug, captain_ids)
+    trouble = standard_channels.problem(slug, captain_ids, plain)
     require(trouble is None, trouble)
     # The rear admiral's room is Starbase; each captain's is its ship channel.
-    officer_rooms = [irc["starbaseChannel"], *(standard_channels.ship(slug, captain_id) for captain_id in captain_ids)]
+    officer_rooms = [irc["starbaseChannel"], *(standard_channels.ship(slug, captain_id, plain) for captain_id in captain_ids)]
     for index, (person, room) in enumerate(zip(officers, officer_rooms, strict=True)):
         if "channel" in person:
             label = "rearAdmiral.channel" if index == 0 else f"Captain {person['id']}'s channel"
-            require(person["channel"] == room, not_standard(slug, label, person["channel"], room))
-    channels = standard_channels.standard(slug, captain_ids)
+            require(person["channel"] == room, not_standard(slug, label, person["channel"], room, plain))
+    channels = standard_channels.standard(slug, captain_ids, plain)
     for name in channels:
         channel(name)
     # Stargate joins at most 20 channels per registration, and the rear admiral joins every standard one.
@@ -947,7 +1062,7 @@ def validate(config, credentials, check_files=True):
     agents = []
     for index, (person, room) in enumerate(zip(officers, officer_rooms, strict=True)):
         role = "captain" if index else "rear_admiral"
-        officer = {key: val for key, val in person.items() if key not in ("crew", "crewNames")}
+        officer = {key: val for key, val in person.items() if key not in ("crew", "crewNames", "crewIds")}
         agents.append({**officer, "role": role, "channel": room, "crew": [],
                        "harness": harness_config(person.get("harness", {}), hulls[role])})
         if role != "captain":
@@ -957,6 +1072,10 @@ def validate(config, credentials, check_files=True):
         teams = crew_config(person.get("crew", {}), crew)
         slots = {f"{family}-{slot}" for family, team in teams.items() for slot in range(1, team["count"] + 1)}
         require(crew_names.keys() <= slots, "crewNames may name only enabled crew slots.")
+        crew_ids = person.get("crewIds", {})
+        require(isinstance(crew_ids, dict) and crew_ids.keys() <= slots
+                and all(isinstance(value, str) and re.fullmatch(CREW_ID, value) for value in crew_ids.values()),
+                "crewIds may give only enabled crew slots their installed crew IDs.")
         if not slots:
             continue
         require(agents[-1]["harness"]["type"] == "opencode",
@@ -966,10 +1085,13 @@ def validate(config, credentials, check_files=True):
         if repositories:
             require(len(repositories) <= MAX_CREW_REPOSITORIES,
                     f"Captains with crew support at most {MAX_CREW_REPOSITORIES} repositories.")
-            roster = crew_roster(person, teams, crew_names, slug)
+            roster = crew_roster(person, teams, crew_names, slug, crew_ids)
             require(len(roster) * len(repositories) <= MAX_CREW_CONTEXTS,
                     f"Crew times repositories must not exceed {MAX_CREW_CONTEXTS} per captain (Stargate's crew limit).")
             agents[-1]["crew"] = roster
+    if plain:
+        # A fleet installed before plain names keeps the crew names it has, unique per captain as they were.
+        check_crew_names(agents)
     applications = [person["githubApp"] for person in agents if "githubApp" in person]
     for key in ("appId", "installationId", "botId"):
         require(len({app[key] for app in applications}) == len(applications), "Each fleet member needs a distinct GitHub App identity.")
@@ -1102,13 +1224,14 @@ def validate(config, credentials, check_files=True):
     if api:
         # fleetctl register records the officers, their ships and the standard channels in the API.
         try:
-            fleet_records.check(slug, fleet_records.roster({"members": agents, "irc": irc}))
+            fleet_records.check(slug, fleet_records.roster({"members": agents, "irc": irc, "officerNames": naming}))
         except fleet_records.Refused as error:
             raise Invalid(str(error)) from None
     integrations = integrations_config(cfg)
     check_officer_slack(agents, integrations["slack"])
     return {
-        "slug": slug, "name": string(cfg["name"], "fleet name"), "members": agents, "irc": irc, "medical": medical,
+        "slug": slug, "name": string(cfg["name"], "fleet name"), "officerNames": naming, "members": agents, "irc": irc,
+        "medical": medical,
         "repositories": repositories,
         "repositoryNotes": repository_notes(cfg.get("repositories", [])),
         "integrations": integrations, "operators": operators, "protectedBranches": protected,
@@ -1524,13 +1647,14 @@ def require_subspace_agents(cfg):
 
 def subspace_agents_settings(cfg, gateway_home):
     """Stargate's subspaceAgents section for the gateway that runs as the gateway user: one entry per officer,
-    named as the API registration names them (the rear admiral by its name; a captain by its account, with its
-    ship), and each officer's socket."""
+    named as the API registration names them (fleet_records.agent_name: its ID with plain names; the rear
+    admiral by its name and a captain by its account with fleet-prefixed ones), with its ship, and each
+    officer's socket."""
     officers = []
     for person in cfg["members"]:
         rear = person["role"] == "rear_admiral"
         officers.append({
-            "name": person["name"] if rear else person["account"], "rank": "rearAdmiral" if rear else "captain",
+            "name": fleet_records.agent_name(cfg, person), "rank": "rearAdmiral" if rear else "captain",
             **({} if rear else {"ship": person["name"]}), "model": person["harness"]["model"],
             "ircNick": person["account"], "socketPath": str(agent_socket(person["id"])),
         })
@@ -1615,7 +1739,8 @@ def crew_options(cfg, person, home, engine_port, session_id, captain_directory=N
             "crew": [{
                 "id": worker["id"], "name": worker["name"], "agent": worker["agent"],
                 "model": model_ref(worker["family"], worker["model"]),
-                "role": f"{worker['family'].title()}-family implementation and review",
+                # The role is not part of the crew's identity, so it carries the model family and slot.
+                "role": f"Implementation and review ({crew_slot_label(worker)})",
                 "permissionProfile": "coding",
             } for worker in person["crew"]],
         },
@@ -1908,7 +2033,7 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         for worker in person["crew"]:
             engine["agents"][worker["agent"]] = {
                 "model": model_ref(worker["family"], worker["model"]), "mode": "primary",
-                "description": f"{worker['name']}, {person['name']}'s {worker['family'].title()}-family crew member",
+                "description": f"{worker['name']}, {person['name']}'s crew member ({crew_slot_label(worker)})",
                 "system": documents["crew"][worker["id"]],
             }
         if session_id:
@@ -2661,6 +2786,7 @@ def agent_dispatch_settings(cfg):
 
 
 def render(cfg, extra, prune=False):
+    check_crew_ids(cfg)
     slug_path = STATE / "slug"
     if slug_path.exists():
         require(slug_path.read_text().strip() == cfg["slug"], "Fleet slug is immutable on this VM.")
@@ -3026,6 +3152,11 @@ def main(args):
             # Refuse a changed crew roster or first repository before anything is installed.
             captain_pins(cfg)
             rear_pin(cfg)
+        # A new captain's crew are named; the installed fleet says which captains are new. A dry run that cannot
+        # read it leaves the check to the real run.
+        installed = ETC / "fleet.json"
+        if not installed.exists() or os.access(installed, os.R_OK):
+            check_new_crew_named(cfg, read_json(installed, private=True) if installed.exists() else {})
         prune = tail[-1] == "true"
         if verb == "render":
             # Say once per install which captains keep a root other than the workspace, and why.
@@ -3086,6 +3217,9 @@ def main(args):
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
             print(officer_models_line(cfg))
+            for line in names_plan(cfg):
+                print(line)
+            check_crew_ids(cfg)
             print(f"Standard IRC channels: {' '.join(cfg['irc']['channels'])} (Starbase, fleet command, then one "
                   "ship channel per captain)." + ("" if cfg["irc"]["mode"] == "local" else
                                                    " On a remote server the officers create them by joining, so they "

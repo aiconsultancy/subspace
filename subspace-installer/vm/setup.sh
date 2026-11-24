@@ -13,6 +13,7 @@
 #   subspace-setup irc-bundle          print this fleet's accounts for a shared IRC server
 #   subspace-setup fleet-registration  print this fleet's details for another fleet's API
 #   subspace-setup register-fleet -    register a further fleet (from stdin) with this VM's API
+#   subspace-setup rename-officers     give an installed fleet's officers plain names (--help)
 #   subspace-setup demo                seed the fictional demo data again
 #
 # The host installer (install.sh or install.ps1 at the repository root) copies
@@ -64,6 +65,6 @@ case $command in
         systemctl --no-pager --plain list-units 'subspace-*' || true
         "$here/lockdown.sh" status || true
         ;;
-    -h|--help|help) sed -n '2,18p' "${BASH_SOURCE[0]}"; exec python3 -B "$here/fleet_setup.py" --help ;;
+    -h|--help|help) sed -n '2,19p' "${BASH_SOURCE[0]}"; exec python3 -B "$here/fleet_setup.py" --help ;;
     *) exec python3 -B "$here/fleet_setup.py" "$@" ;;
 esac
