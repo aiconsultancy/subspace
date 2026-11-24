@@ -884,8 +884,9 @@ class ExternalDatabaseTests(unittest.TestCase):
         # URL and the CA files to a scratch directory they remove afterwards, and stop before reading anything back.
         root = Path(fleet_setup.HERE).parents[1]
         for name, scratch, branch in (("install.sh", "inputs=/root/subspace-setup-dry-run",
-                                       'if "$dry_run"; then\n        say'),
-                                      ("install.ps1", "'/root/subspace-setup-dry-run'", "if ($dryRun) {\n        Say")):
+                                       'if "$dry_run"; then\n        # The dry run'),
+                                      ("install.ps1", "'/root/subspace-setup-dry-run'",
+                                       "if ($dryRun) {\n        # The dry run")):
             text = (root / name).read_text()
             with self.subTest(name):
                 self.assertIn(scratch, text)
@@ -898,6 +899,14 @@ class ExternalDatabaseTests(unittest.TestCase):
                 self.assertIn("-rf", dry)
                 self.assertNotIn("summary.env", dry)
                 self.assertLess(text.index(branch), text.index("summary.env", text.index(branch)))
+                # The installer copy that the dry run runs goes in the scratch directory too, never over
+                # /opt/subspace/bootstrap, which only the real run replaces, after the dry-run branch.
+                self.assertRegex(dry, r'(send_payload|Send-Payload) "\$inputs/bootstrap"')
+                self.assertIn("$inputs/bootstrap/subspace-installer/vm/setup.sh", dry)
+                self.assertRegex(text[text.index(branch) + len(dry):], r"\n    (send_payload|Send-Payload)\n")
+        # Run from that copy, setup keeps the subspace-setup command pointing at the installed one.
+        setup = (root / "subspace-installer/vm/setup.sh").read_text()
+        self.assertIn('if ! "$dry_run" && [[ $(readlink /usr/local/sbin/subspace-setup', setup)
 
     def test_a_run_the_installer_refuses_migrates_nothing(self):
         # A fleet configuration the installer refuses, such as a Slack bot without its tokens, is found before

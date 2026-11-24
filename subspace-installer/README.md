@@ -738,11 +738,14 @@ From your machine, `./install.sh --remote USER@HOST --database-url-file FILE`
 (or `install.ps1` with the same options) takes a local file that is private to
 you (`chmod 600`), copies it over SSH to `/root/fleet/database-url` as root's
 and passes it on. `--database-ca-file FILE` and `--migrate` work the same way.
-A `--dry-run` changes nothing on the VM: the host installers copy the files
-to a scratch directory they remove afterwards, and `subspace-setup
---dry-run` works on a private copy of `/root/fleet`, so the saved answers,
-the database URL file and every other input stay as the last real run left
-them.
+A `--dry-run` leaves the installed fleet as it is: the host installers copy
+the installer and these files to `/root/subspace-setup-dry-run`, run setup
+from there and remove it, and `subspace-setup --dry-run` works on a private
+copy of `/root/fleet`, so `/opt/subspace/bootstrap`, the `subspace-setup`
+command, the saved answers, the database URL file and every other input stay
+as the last real run left them. The one exception is a VM without
+`python3`, `git`, `curl` or `nftables`: setup installs those first, saying
+so, because it cannot run without them.
 
 - **No database on the VM.** The Compose project's `postgres` service moves
   to a profile nothing starts, so there is no PostgreSQL container, no

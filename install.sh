@@ -432,6 +432,8 @@ remote_connect() {
 # Payload --------------------------------------------------------------------
 
 send_payload() {
+    # send_payload [DIR]: the installer goes to /opt/subspace/bootstrap, or DIR for a dry run.
+    local payload_dir=${1:-$payload_dir}
     say "Copying the installer to $payload_dir on the VM."
     local -a tar_opts=()
     if tar --help 2>&1 | grep -q -- '--no-xattrs'; then tar_opts+=(--no-xattrs); fi
@@ -736,19 +738,22 @@ do_install() {
         passthrough+=(--database-ca-file "$inputs/database-ca.pem")
     fi
 
-    send_payload
     local -a setup_args=(setup)
     interactive || setup_args+=(--non-interactive)
     setup_args+=(${passthrough[@]+"${passthrough[@]}"})
     if "$dry_run"; then
-        say "Running subspace-setup --dry-run on the VM. It changes nothing there."
+        # The dry run's installer copy goes beside its files and is removed with them, so the installed
+        # /opt/subspace/bootstrap and the subspace-setup command stay as the last real run left them.
+        send_payload "$inputs/bootstrap"
+        say "Running subspace-setup --dry-run on the VM from $inputs, which is removed afterwards."
         local status=0
-        vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")" || status=$?
+        vm_tty sudo "$inputs/bootstrap/subspace-installer/vm/setup.sh" "$(quote_args "${setup_args[@]}")" || status=$?
         vm sudo -n rm -rf "$inputs" || note "Remove $inputs on the VM by hand."
         [ "$status" = 0 ] || die "The dry run failed; read subspace-setup's output above."
         say "Dry run complete. Run the same command without --dry-run to install."
         return
     fi
+    send_payload
     say "Running subspace-setup on the VM. This takes a while the first time."
     vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")"
 

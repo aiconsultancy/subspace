@@ -421,7 +421,8 @@ function Connect-Target {
 
 # Payload, desktop and tunnel ------------------------------------------------
 
-function Send-Payload {
+function Send-Payload([string]$PayloadDir = $script:PayloadDir) {
+    # The installer goes to /opt/subspace/bootstrap, or a dry run's own directory.
     Say "Copying the installer to $PayloadDir on the VM."
     $tarball = Join-Path ([IO.Path]::GetTempPath()) "subspace-payload-$PID.tgz"
     try {
@@ -665,19 +666,22 @@ function Invoke-Install {
         $Passthrough.AddRange([string[]]@('--database-ca-file', "$inputs/database-ca.pem"))
     }
 
-    Send-Payload
     $setupArgs = @('setup')
     if (-not (Test-Interactive)) { $setupArgs += '--non-interactive' }
     $setupArgs += $Passthrough
     $quoted = ($setupArgs | ForEach-Object { Quote-Posix $_ }) -join ' '
     if ($dryRun) {
-        Say 'Running subspace-setup --dry-run on the VM. It changes nothing there.'
-        $status = Invoke-Vm @('sudo', $SetupCmd, $quoted) -Tty
+        # The dry run's installer copy goes beside its files and is removed with them, so the installed
+        # /opt/subspace/bootstrap and the subspace-setup command stay as the last real run left them.
+        Send-Payload "$inputs/bootstrap"
+        Say "Running subspace-setup --dry-run on the VM from $inputs, which is removed afterwards."
+        $status = Invoke-Vm @('sudo', "$inputs/bootstrap/subspace-installer/vm/setup.sh", $quoted) -Tty
         if ((Invoke-Vm @('sudo', '-n', 'rm', '-rf', $inputs)) -ne 0) { Write-Host "    Remove $inputs on the VM by hand." }
         if ($status -ne 0) { Die "The dry run failed; read subspace-setup's output above." }
         Say 'Dry run complete. Run the same command without --dry-run to install.'
         return
     }
+    Send-Payload
     Say 'Running subspace-setup on the VM. This takes a while the first time.'
     if ((Invoke-Vm @('sudo', $SetupCmd, $quoted) -Tty) -ne 0) { Die 'subspace-setup failed on the VM; read its output above.' }
 
