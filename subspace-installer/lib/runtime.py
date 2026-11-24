@@ -2113,10 +2113,11 @@ def unreadable_repositories(cfg):
 
 def unreadable_message(names):
     return (f"Git cannot read {', '.join(names)} without credentials, so the installer cannot clone "
-            f"{'it' if len(names) == 1 else 'them'} as public repositories. If a repository is private, mark it "
-            '"private": true in fleet.json and give the rear admiral and every captain a GitHub App that can read '
-            "it (installer README, 'GitHub Apps per fleet member'); otherwise check its URL, or remove it from "
-            "repositories.")
+            f"{'it' if len(names) == 1 else 'them'} as public repositories. If they are private, install without "
+            "them now (leave them out of repositories: subspace-setup --repositories with the others, or '' for "
+            "none). Once the rear admiral and every captain have a GitHub App that can read them, add each "
+            "officer's githubApp and key, and the repositories marked \"private\": true, and run the installer "
+            "again (installer README, 'Add private repositories later'). Otherwise check the URLs.")
 
 
 def reconcile_workspaces(cfg, homes, refresh_only=False):
@@ -2732,13 +2733,9 @@ def main(args):
         bundles = irc_bundles(cfg, directory)
         for person in cfg["members"]:
             check_sign_in(irc_agent(cfg, person, {})[0], cfg["irc"])
+        # The real run would stop before it clones anything, so the dry run stops too, saying how to go on.
         unreadable = unreadable_repositories(cfg)
-        # The real run stops before it clones anything, and so does subspace-setup's check before it changes the
-        # API (SUBSPACE_FLEET_CHECK=strict); a dry run says what the real run would do.
-        strict = verb == "prepare" or os.environ.get("SUBSPACE_FLEET_CHECK") == "strict"
-        require(not strict or not unreadable, unreadable_message(unreadable))
-        if unreadable:
-            print(f"WARNING: {unreadable_message(unreadable)} The installation stops before cloning until then.")
+        require(not unreadable, unreadable_message(unreadable))
         if verb == "prepare":
             stage = Path(tail[2])
             (stage / "fleet.json").write_text(json_text(config))

@@ -229,9 +229,10 @@ answer it now.
    Ask whether those Apps exist and where their keys are. If not, install
    with the public repositories only, and tell the user how to add the private
    ones once the Apps exist. Setup cannot tell a private repository from its
-   URL: the dry run warns about every repository Git cannot read without
-   credentials, and the install stops before cloning until it is marked
-   `"private": true` with the Apps in place, or removed.
+   URL: the dry run and the install both stop on a repository Git cannot read
+   without credentials, before cloning anything, until it is marked
+   `"private": true` with the Apps in place, or left out for now (see
+   [Add private repositories later](subspace-installer/README.md#add-private-repositories-later)).
    **Default: no repositories, so no crew yet.**
 5. **Crew per captain** (**2 Claude, 2 Codex**; 0 to 10 each,
    `--crew-claude`, `--crew-codex`). Explain that crew run inside their

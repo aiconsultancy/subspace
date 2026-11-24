@@ -120,12 +120,11 @@ first repository. The rear admiral can inspect them from its own Linux
 account, including Git history. `subspace-setup --repositories` fills this
 list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
 A repository without `"private": true` is cloned without credentials, so the
-installer first checks that Git can read it that way: `--dry-run` warns about
-each one it cannot read, and an install or upgrade, and `subspace-setup`
-before it changes the API, stop before cloning anything. Mark a private
-repository `"private": true` and give the officers
-[GitHub Apps](#github-apps-per-fleet-member). An installed repository is not
-checked again.
+installer first checks that Git can read it that way. When it cannot, the dry
+run and the install both stop before cloning anything and say how to go on:
+install without those repositories now, and add them as private ones once the
+officers have GitHub Apps ([Add private repositories later](#add-private-repositories-later)).
+An installed repository is not checked again.
 
 A repository also takes an optional one-line `description` and `tracker`,
 free text that names where its work is tracked, for example
@@ -1214,6 +1213,34 @@ requests. GitHub signs bot commits made through its API when the request
 uses the app identity without custom author, committer or signature data.
 See [GitHub's bot signature verification rules](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification).
 Rotate or revoke a retired member's App key from the App settings.
+
+### Add private repositories later
+
+A fleet installed without its private repositories gets them once the rear
+admiral and every captain have a GitHub App that can read them (a distinct
+App each; the installer refuses private repositories otherwise). On a VM set
+up by `subspace-setup`, as root:
+
+1. Add each officer's `githubApp` block, as above, to its entry in
+   `/root/fleet/fleet.json` (`rearAdmiral` and each of `captains`).
+2. Put each officer's private key in
+   `/root/fleet/fleet.secrets/<member-id>/github-app.pem`, mode `0600`, in a
+   directory with mode `0700`.
+3. Add the repositories to `repositories` in `/root/fleet/fleet.json`, in the
+   order you want, each as `{"id": "...", "url": "https://github.com/...",
+   "private": true}`. The first is each captain's crew's default and is fixed
+   once a captain with crew starts.
+4. Check, then apply: `sudo subspace-setup --dry-run`, then
+   `sudo subspace-setup`; or, from your machine, `./install.sh --target NAME
+   --yes --dry-run` and then without `--dry-run`.
+
+A run without `--repositories` keeps the list in `fleet.json` exactly as it
+is, in its order, and keeps every field added to an officer's entry by hand,
+`githubApp` included; setup reads the keys from `/root/fleet/fleet.secrets/`
+itself. Passing `--repositories` instead replaces the list: a repository it
+names keeps its `private` flag, but a new one is public, so add private ones
+by editing `fleet.json` as above. Adding repositories also gives the captains
+their crew (`--crew-claude` and `--crew-codex`, two of each by default).
 
 ## Read-only cloud access
 

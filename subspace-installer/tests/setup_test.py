@@ -935,8 +935,8 @@ class ExternalDatabaseTests(unittest.TestCase):
                 "--database-url-file", self.url_file, "--migrate"]
         checks = []
 
-        def refuse(config_path, dry_run=False, secrets_dir=None, strict=False):
-            checks.append((dry_run, strict, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
+        def refuse(config_path, dry_run=False, secrets_dir=None):
+            checks.append((dry_run, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
             raise fleet_setup.SetupError("Supply slack-app-token in captain orion's secrets directory.")
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
                 patch.object(fleet_setup, "installer", side_effect=refuse), \
@@ -945,7 +945,7 @@ class ExternalDatabaseTests(unittest.TestCase):
                 patch.object(fleet_setup, "say"), \
                 self.assertRaisesRegex(fleet_setup.SetupError, "slack-app-token"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
-        self.assertEqual(checks, [(True, True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
+        self.assertEqual(checks, [(True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
         run.assert_not_called()
         api_up.assert_not_called()
         compose.assert_not_called()

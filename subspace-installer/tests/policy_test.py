@@ -1475,25 +1475,23 @@ class RepositoryAccessTests(unittest.TestCase):
             runtime.main([verb, str(self.work / "fleet.json"), str(self.work / "fleet.secrets.json"), *tail, "", "false"])
         return output.getvalue(), [call.args[0] for call in check.call_args_list]
 
-    def test_the_dry_run_warns_and_the_real_run_stops_before_cloning(self):
+    def test_the_dry_run_and_the_real_run_both_stop_before_cloning_and_say_how_to_go_on(self):
         private = lambda url: "library" not in url  # noqa: E731
-        text, checked = self.main("plan", private)
-        self.assertEqual(checked, ["https://github.com/example/project.git", "https://github.com/example/library.git"])
-        self.assertIn("WARNING: Git cannot read library without credentials", text)
-        self.assertIn('mark it "private": true in fleet.json and give the rear admiral and every captain a GitHub App',
-                      text)
-        with self.assertRaisesRegex(Invalid, "Git cannot read library without credentials"):
-            self.main("prepare", private)
+        for verb in ("plan", "prepare"):
+            with self.subTest(verb), self.assertRaisesRegex(Invalid, "Git cannot read library without credentials") \
+                    as refused:
+                self.main(verb, private)
+            message = str(refused.exception)
+            self.assertIn("install without them now", message)
+            self.assertIn("subspace-setup --repositories with the others, or '' for none", message)
+            self.assertIn("'Add private repositories later'", message)
         self.assertFalse((self.work / "stage/fleet.json").exists())
-        text, _ = self.main("plan", lambda url: True)
-        self.assertNotIn("WARNING", text)
+        text, checked = self.main("plan", lambda url: True)
+        self.assertEqual(checked, ["https://github.com/example/project.git", "https://github.com/example/library.git"])
+        self.assertNotIn("Git cannot read", text)
         # On a remote IRC server the officers create the standard channels by joining: nothing to register first.
         self.assertIn("the officers create them by joining, so they need no registration", text)
         self.assertNotIn("Register them on the IRC server", text)
-        # subspace-setup's check before it changes the API refuses as the real run would.
-        with patch.dict("os.environ", {"SUBSPACE_FLEET_CHECK": "strict"}), \
-                self.assertRaisesRegex(Invalid, "Git cannot read library"):
-            self.main("plan", private)
         # An installed repository is not checked again.
         (self.work / "etc").mkdir()
         (self.work / "etc/repository-sources.json").write_text(json.dumps(
