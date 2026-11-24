@@ -1498,6 +1498,19 @@ def stargate_has_subspace_agents(cfg):
     return (APP / "src" / f"stargate-{cfg['stargate']['ref']}" / SUBSPACE_AGENTS_FILE).is_file()
 
 
+def stargate_has_pull_request_repositories(cfg):
+    """Whether the installed Stargate checkout's Fleet API takes api.pullRequestRepositories. Releases from v0.42.0
+    do; v0.40 and v0.41 refuse the key in their config check, so their gateway would not start. The Fleet API's
+    configuration sits beside its server, which moved between releases (FLEET_API_SERVERS in subspace-setup)."""
+    for schema in (APP / "src" / f"stargate-{cfg['stargate']['ref']}").glob("src/**/api/v1/config.ts"):
+        try:
+            if "pullRequestRepositories" in schema.read_text():
+                return True
+        except (OSError, UnicodeDecodeError):
+            continue
+    return False
+
+
 def require_subspace_agents(cfg):
     require(stargate_has_subspace_agents(cfg),
             f"api.enrolment needs a Stargate with its subspaceAgents section ({SUBSPACE_AGENTS_FILE}), from commit "
@@ -2813,7 +2826,8 @@ def render(cfg, extra, prune=False):
                     "allowedNetworks": ["127.0.0.0/8", "::1/128"], "fleetName": cfg["name"],
                     "corsOrigins": cfg["stargate"]["api"]["corsOrigins"],
                 }
-                if repositories := pull_request_repositories(cfg, homes):
+                if stargate_has_pull_request_repositories(cfg) and (
+                        repositories := pull_request_repositories(cfg, homes)):
                     settings["api"]["pullRequestRepositories"] = repositories
         if options.get("bots"):
             # Officers' own Slack bots, before the rear admiral's stakeholder bot when it has one.

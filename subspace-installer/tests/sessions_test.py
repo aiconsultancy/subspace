@@ -509,6 +509,25 @@ class InstalledFleet(unittest.TestCase):
         config["repositories"] += [{"id": "tool", "url": "https://git.example.com/team/tool.git"},
                                    {"id": "library", "url": "https://github.com/example/library"}]
         config["stargate"] = {"api": {"port": 8484}}
+        # Only a Stargate whose Fleet API takes the key gets it: v0.40 and v0.41 refuse it in their config check.
+        app = Path(self.root.name) / "app"
+        self.start(patch.object(runtime, "APP", app))
+        checkout = app / "src" / f"stargate-{runtime.STARGATE_REF}"
+        schema = checkout / "src/api/v1/config.ts"
+        schema.parent.mkdir(parents=True)
+        schema.write_text("const ApiConfig = Schema.Struct({ listen: Schema.String })\n")
+        self.render(config, secrets)
+        self.assertNotIn("pullRequestRepositories", json.loads((self.etc / "stargate.json").read_text())["api"])
+        # v0.42 and v0.43 keep it in src/api/v1, v0.44 on in src/observability/dashboard/api/v1.
+        schema.write_text("  pullRequestRepositories: Schema.optional(pullRequestRepositories),\n")
+        cfg = runtime.validate(config, secrets)
+        self.assertTrue(runtime.stargate_has_pull_request_repositories(cfg))
+        schema.unlink()
+        self.assertFalse(runtime.stargate_has_pull_request_repositories(cfg))
+        schema = checkout / "src/observability/dashboard/api/v1/config.ts"
+        schema.parent.mkdir(parents=True)
+        schema.write_text("  pullRequestRepositories: Schema.optional(pullRequestRepositories),\n")
+        self.assertTrue(runtime.stargate_has_pull_request_repositories(cfg))
         self.render(config, secrets)
         api = json.loads((self.etc / "stargate.json").read_text())["api"]
         worktrees = {captain: self.state / "agents" / captain / "worktrees" for captain in ("orion", "vega")}
