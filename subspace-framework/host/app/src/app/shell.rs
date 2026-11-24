@@ -110,15 +110,19 @@ impl SubspaceApp {
             .is_open()
             .then(|| div().into_any_element());
         let toasts = self.render_toasts(tokens, cx).into_any_element();
+        let sign_in = super::sign_in_gate::render(tokens, window, cx);
         let quit = self.render_quit_dialog(tokens, cx);
         // Help is a workspace tool, not an overlay covering the board; a
         // maximized terminal does cover it.
         let terminal = self.terminal_maximized().then(|| div().into_any_element());
         let menu = self.cover.menu.is_some().then(|| div().into_any_element());
-        let overlays = [&jig, &shortcuts, &terminal, &palette, &quit, &menu];
+        let overlays = [
+            &jig, &shortcuts, &terminal, &palette, &sign_in, &quit, &menu,
+        ];
         self.sync_board_cover(overlays, window, cx);
         jig.into_iter()
             .chain(palette)
+            .chain(sign_in)
             .chain(quit)
             .chain([toasts])
             .collect()

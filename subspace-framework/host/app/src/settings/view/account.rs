@@ -1,7 +1,9 @@
 //! Immediate account actions, using the shell's existing settings treatment.
 
 use super::{Settings, labelled, note};
-use crate::account::{self as native, NativeAccount, Status};
+use crate::account::{
+    self as native, NativeAccount, Status, account_label, sign_in_label, status_text,
+};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, Context, Div, Entity, InteractiveElement as _, IntoElement as _,
@@ -62,35 +64,6 @@ fn render(tokens: &Tokens, cx: &mut Context<Settings>) -> Div {
     match &provider.detail {
         Some((name, value)) => page.child(labelled(name.clone(), note(tokens, value.clone()))),
         None => page,
-    }
-}
-
-fn account_label(organization: &str, provider: &str) -> String {
-    match (organization.is_empty(), provider.is_empty()) {
-        (false, _) => format!("{organization} account"),
-        (true, false) => format!("{provider} account"),
-        (true, true) => "Account".into(),
-    }
-}
-
-fn status_text(
-    status: Status,
-    signed_in: bool,
-    provider: &str,
-    code: Option<&str>,
-) -> Option<String> {
-    match status {
-        Status::Starting => Some(format!("Opening {provider} sign-in…")),
-        Status::Waiting if code.is_some() => code.map(|code| {
-            format!("Check that your browser shows the code {code}, then confirm it there.")
-        }),
-        Status::Waiting if signed_in => Some("Complete sign-in in your browser. Your current account stays connected until this finishes.".into()),
-        Status::Waiting => Some("Complete sign-in in your browser.".into()),
-        Status::Refreshing => Some(format!("Reconnecting to your {provider} account…")),
-        Status::Completing => Some(format!("Saving your {provider} sign-in securely…")),
-        Status::SigningOut => Some("Signing out…".into()),
-        Status::Failed(error) => Some(error.to_string()),
-        _ => None,
     }
 }
 
@@ -168,21 +141,6 @@ fn ready_actions(
         );
     }
     actions
-}
-
-fn sign_in_label(status: Status, signed_in: bool, provider: &str) -> String {
-    if matches!(
-        status,
-        Status::Failed(Error::SignInRequired | Error::InvalidReply)
-    ) {
-        "Sign in again".into()
-    } else if signed_in {
-        "Switch account".into()
-    } else if provider.is_empty() {
-        "Sign in".into()
-    } else {
-        format!("Sign in with {provider}")
-    }
 }
 
 #[cfg(test)]

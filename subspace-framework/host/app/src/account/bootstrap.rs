@@ -32,6 +32,7 @@ pub(crate) fn init(registration: Option<AccountRegistration>, cx: &mut App) {
         configure(AccountTokenSource::new(manager.clone(), gate.clone()));
     }
     let entity = cx.new(|_| NativeAccount {
+        required: registration.required,
         gate,
         status: Status::Idle,
         provider: manager.info(),

@@ -254,6 +254,16 @@ the current account with `shell::account_session(cx)` and ask it for
 resource tokens off the UI thread. Web pages and configuration never see a
 token.
 
+An app that cannot be used without its account sets
+`AccountRegistration::required`. While there is no session, at start-up and
+whenever a session ends for good, the shell then covers the main window with
+a sign-in dialog that cannot be dismissed into the app: the provider's
+sign-in, its progress, and Quit. It closes once signed in. A provider that
+signs in by itself (`ProviderInfo::browser` false) never shows it, and a
+saved session the shell cannot renew because the service, the network or the
+keychain is out of reach still opens the app. Without the flag, or without
+an account, nothing changes.
+
 The Framework ships two providers, both public clients with no secret,
 using the system browser, PKCE and a loopback redirect:
 `entra_auth::SessionManager` (Microsoft Entra; tenant, client, authority and

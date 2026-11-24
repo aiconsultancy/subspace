@@ -7,9 +7,12 @@ use subspace_account::{Account, Cancel, Error, Provider, ProviderInfo, Started};
 
 mod bootstrap;
 mod lease;
+mod rules;
 pub(crate) use bootstrap::init;
 use lease::LeaseGate;
 pub use lease::{AccountSession, AccountTokenSource};
+use rules::needs_session;
+pub(crate) use rules::{account_label, sign_in_label, status_text};
 
 /// How an app adds a native account: its identity provider and the trusted
 /// adapter it hands the token source to before Spaces start.
@@ -19,6 +22,12 @@ pub struct AccountRegistration {
     pub provider: fn(&str) -> Option<Arc<dyn Provider>>,
     /// Installs the app's trusted native token consumer, such as an API client.
     pub configure: Option<fn(AccountTokenSource)>,
+    /// Whether the app cannot be used without the account. The shell then
+    /// asks for sign-in over the main window whenever there is no session,
+    /// at start-up and when a session ends, if the provider needs a person
+    /// to sign in. A saved session it cannot renew because the service is
+    /// out of reach still lets the person in.
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +51,9 @@ enum Retry {
 }
 
 pub(crate) struct NativeAccount {
+    /// Whether the app asks for sign-in over the main window without a
+    /// session ([`AccountRegistration::required`]).
+    pub required: bool,
     manager: Option<Arc<dyn Provider>>,
     gate: Arc<LeaseGate>,
     pub provider: ProviderInfo,
@@ -84,6 +96,17 @@ pub fn account_session(cx: &App) -> Option<AccountSession> {
 }
 
 impl NativeAccount {
+    /// Whether the shell asks for sign-in over the main window now.
+    pub(crate) fn asks_for_sign_in(&self) -> bool {
+        self.required
+            && self.provider.browser
+            && needs_session(
+                (self.status, self.before_sign_in),
+                self.retry,
+                self.account.is_some(),
+            )
+    }
+
     pub fn busy(&self) -> bool {
         matches!(
             self.status,

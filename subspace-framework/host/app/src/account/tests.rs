@@ -1,4 +1,7 @@
-use super::{AccountTokenSource, LeaseGate, NativeAccount, Retry, Shared, Status, account_session};
+use super::{
+    AccountTokenSource, LeaseGate, NativeAccount, Retry, Shared, Status, account_session,
+    rules::needs_session,
+};
 use gpui_kit::{AppContext as _, Entity, TestAppContext};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -82,6 +85,7 @@ fn signed_in(
     let gate = Arc::new(LeaseGate::default());
     let source = AccountTokenSource::new(manager.clone(), gate.clone());
     let entity = cx.new(|_| NativeAccount {
+        required: false,
         manager: Some(manager),
         gate,
         provider: ProviderInfo::default(),
@@ -160,4 +164,76 @@ fn signing_out_refuses_leases_until_the_account_is_gone(cx: &mut TestAppContext)
     cx.run_until_parked();
     assert_ne!(source.generation(), lease);
     assert_eq!(leased(&source), Err(Error::SignInRequired));
+}
+
+#[test]
+fn sign_in_is_asked_for_only_without_a_usable_session() {
+    use Status::{Completing, Failed, Idle, Refreshing, Starting, Unavailable, Waiting};
+    let asks = |status, before, retry, signed_in| needs_session((status, before), retry, signed_in);
+    // Start-up: restoring decides first, then no saved session asks.
+    assert!(!asks(Refreshing, Idle, Retry::Restore, false));
+    assert!(asks(Idle, Idle, Retry::Restore, false));
+    assert!(!asks(Idle, Idle, Retry::Restore, true));
+    // A saved session the service, network or keychain cannot renew now
+    // lets the person in.
+    for error in [Error::Offline, Error::Service, Error::Keychain] {
+        assert!(
+            !asks(Failed(error), Idle, Retry::Restore, false),
+            "{error:?}"
+        );
+        assert!(
+            !asks(Failed(error), Idle, Retry::Reconnect, true),
+            "{error:?}"
+        );
+    }
+    // A session that ended asks again: signed out, or expired for good.
+    assert!(asks(
+        Failed(Error::SignInRequired),
+        Idle,
+        Retry::Reconnect,
+        true
+    ));
+    assert!(asks(
+        Failed(Error::InvalidReply),
+        Idle,
+        Retry::Restore,
+        false
+    ));
+    // The sign-in it asks for keeps asking until it succeeds, a failure
+    // included; a signed-in person switching account is never asked.
+    for status in [Starting, Waiting, Completing] {
+        assert!(asks(status, Idle, Retry::SignIn, false));
+        assert!(asks(
+            status,
+            Failed(Error::SignInRequired),
+            Retry::SignIn,
+            true
+        ));
+        assert!(!asks(status, Idle, Retry::SignIn, true));
+    }
+    assert!(asks(Failed(Error::Offline), Idle, Retry::SignIn, false));
+    assert!(asks(Failed(Error::TimedOut), Idle, Retry::SignIn, false));
+    assert!(!asks(Failed(Error::TimedOut), Idle, Retry::SignIn, true));
+    assert!(!asks(Unavailable, Idle, Retry::Restore, false));
+}
+
+#[gpui_kit::test]
+fn only_a_required_account_with_a_browser_sign_in_asks_and_it_asks_again_after_sign_out(
+    cx: &mut TestAppContext,
+) {
+    let (entity, _) = signed_in(None, cx);
+    let asks =
+        |cx: &mut TestAppContext| entity.read_with(cx, |account, _| account.asks_for_sign_in());
+    assert!(!asks(cx), "signed in");
+    entity.update(cx, |account, cx| account.sign_out(cx));
+    cx.run_until_parked();
+    assert!(!asks(cx), "an account the app does not require never asks");
+    entity.update(cx, |account, _| account.required = true);
+    assert!(!asks(cx), "a provider that signs in by itself never asks");
+    entity.update(cx, |account, _| account.provider.browser = true);
+    assert!(asks(cx), "signed out of a required account");
+    entity.update(cx, |account, cx| account.start(cx));
+    assert!(asks(cx), "still asks while signing in");
+    cx.run_until_parked();
+    assert!(!asks(cx), "signed in again");
 }

@@ -30,6 +30,7 @@ mod session;
 mod settings_dialog;
 mod shell;
 mod shortcuts;
+mod sign_in_gate;
 mod space_menu;
 #[cfg(test)]
 mod space_menu_tests;
