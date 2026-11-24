@@ -866,6 +866,26 @@ fleet. Without one, the API keeps the address it has. Setup gives the fleet's
 initiative no channels of its own: the standard channels belong to the fleet
 and its ships.
 
+**Who owns the fleet's work.** A tracker project belongs to its initiative's
+fleet, or to the fleet of that initiative's nearest ancestor with one, and the
+API refuses a fleet agent's assignment, or *Ready for agents* flag, in another
+fleet's project. So `subspace-setup`, in its dry run and at the end of a real
+run, reads the tracker as the rear admiral (through the agent listener, or a
+hosted API's signing-proxy socket once the officers have enrolled; read-only)
+and names, with a `WARNING`, each tracker project linked to one of the fleet's
+GitHub repositories that belongs to another fleet, with the initiative that
+makes it so, for example one the API's development sign-in created for its
+default `local` fleet. To make that initiative the fleet's own, pass
+`--initiative <its UUID>` (kept on later runs; `--initiative ''` goes back to
+finding one by the fleet's name). With an API on this VM that still offers
+development sign-in, setup then uses it as the fleet's initiative and the
+installer assigns it, and everything below it, to this fleet, moving it from
+the other fleet; the dry run says so first. A hosted API's administrators
+keep its records, as do those of an API without development sign-in, so
+setup prints the request for one of them to make instead
+(`PUT /api/v1/initiatives/<id>/fleet`). A project that lists none of the
+fleet's repositories is not checked.
+
 ## The API's agent listener
 
 The fleet's rear admiral and captains use the Subspace API as their own agent
@@ -1081,13 +1101,16 @@ As that administrator, setup then creates or updates, as
   deactivated. The rear admiral's name and every IRC nick must be unused in
   the organisation; registration stops otherwise, possibly after creating
   the fleet's record, and a run with a new name completes it;
-- **the fleet's initiative**, found by the ID setup saved or by the fleet's
-  name among initiatives that belong to no fleet or to this one, else created
-  with the admin as owner and member, and assigned to the fleet.
+- **the fleet's initiative**, the one `--initiative` names, else found by the
+  ID setup saved or by the fleet's name among initiatives that belong to no
+  fleet or to this one, else created with the admin as owner and member, and
+  assigned to the fleet (see "Who owns the fleet's work" under
+  [Subspace API registration](#subspace-api-registration)).
 
 It leaves everything else alone: it creates no organisation or person and
 changes no one's role, and it does not touch other fleets, ships, agents,
-initiatives, issues or any other record. With agent dispatch on, the rear
+initiatives, issues or any other record, but for an initiative `--initiative`
+adopts from another fleet. With agent dispatch on, the rear
 admiral's token is minted for its existing agent record. Only a `--migrate`
 run changes more: the schema, and the usernames of people who had none.
 

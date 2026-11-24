@@ -89,6 +89,7 @@ EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 ORG = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 SHA = re.compile(r"[0-9a-f]{40}")
 JWT = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 VAULT = re.compile(r"[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]")
 GATEWAY_USER = "ss-fleet-gateway"  # The fleet installer's shared Stargate gateway user (runtime.GATEWAY).
 LINUX_USER = re.compile(r"[a-z_][a-z0-9_.-]{0,31}")
@@ -274,6 +275,10 @@ def parse_args(argv):
     parser.add_argument("--inputs", default=str(INPUTS), help=argparse.SUPPRESS)
     parser.add_argument("--dry-run", action="store_true", help="validate the inputs only, changing nothing")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt; fail on missing answers")
+    parser.add_argument("--initiative", help="adopt an existing initiative, by its UUID, as the fleet's, instead of "
+                        "the one setup finds or creates by the fleet's name. With the API on this VM setup assigns it "
+                        "to this fleet, moving it from any other; a hosted API's administrator assigns it. '' goes "
+                        "back to finding one by name. Kept on later runs")
     parser.add_argument("--captain-tools", choices=["standard", "delegate"],
                         help="standard lets captains code; delegate reserves coding for crew and lets captains "
                         "inspect changes, create GitHub PRs and use the Subspace API. Kept on later runs")
@@ -344,6 +349,12 @@ def gather(args, saved):
                         "standard", interactive)
         require(policy in ("standard", "delegate"), "Choose standard or delegate for --captain-tools.")
         answers["captainTools"] = policy
+    if args.initiative == "":
+        answers.pop("initiativeId", None)
+    elif args.initiative is not None:
+        require(UUID.fullmatch(args.initiative), "--initiative must be an initiative's UUID, such as "
+                "00000000-0000-4000-8000-000000000001 (the desktop shows it, as does GET /api/v1/initiatives).")
+        answers["initiativeId"] = args.initiative.lower()
     models = answers.setdefault("crewModels", {})
     for family, flag in (("claude", args.crew_claude_model), ("codex", args.crew_codex_model)):
         if flag == "":
@@ -1645,7 +1656,8 @@ def fleet_initiative(token, name, slug, known=None, exclude=()):
     standard channels, which the fleet and its ships record (fleet_records) and the desktop joins.
     """
     mine = {row["id"]: row for row in api_call(token, "GET", "/me/initiatives").get("items", [])}
-    found = known if known in mine else None
+    # A saved ID stands while the initiative exists, also one adopted with --initiative that the admin is not in.
+    found = known if known in mine or (known and initiative_exists(token, known)) else None
     cursor = ""
     while not found:
         page = api_call(token, "GET", "/initiatives?limit=100" + (f"&cursor={quote(cursor)}" if cursor else ""))
@@ -1656,7 +1668,9 @@ def fleet_initiative(token, name, slug, known=None, exclude=()):
             break
     if found:
         if found not in mine:
-            say(f"found an initiative named {name} that you are not a member of; add yourself in the desktop")
+            say(f"the fleet's initiative {found} does not list you as a member; add yourself in the desktop"
+                if found == known else
+                f"found an initiative named {name} that you are not a member of; add yourself in the desktop")
         return found
     me = api_call(token, "GET", "/me")
     return api_call(token, "POST", "/initiatives", {
@@ -1664,6 +1678,157 @@ def fleet_initiative(token, name, slug, known=None, exclude=()):
         "description": f"Work for the {name} fleet. Talk to the rear admiral in {standard_channels.starbase(slug)}.",
         "channelConfiguration": {"memberUserIds": [me["userId"]]},
     })["id"]
+
+
+def initiative_exists(token, initiative):
+    try:
+        api_call(token, "GET", f"/initiatives/{initiative}")
+    except ApiError as error:
+        if error.status == 404:
+            return False
+        raise
+    return True
+
+
+def agent_reader(answers, members):
+    """A read-only GET of the fleet's Subspace API as its rear admiral's own agent record, with a hosted API
+    through its signing-proxy socket and with an API on this VM through the agent listener, so it sees what the
+    fleet's officers see; or None and the reason there is none yet."""
+    rear = members[0]
+    if answers.get("apiUrl"):
+        source, socket = installed_stargate_source(), runtime.agent_socket(rear["id"])
+        if not source or not socket.is_socket():
+            return None, "the officers have not enrolled with the hosted API yet"
+
+        def get(path):
+            try:
+                # Bun keeps no transpiler cache for this read, so a dry run writes nothing.
+                result = subprocess.run([FLEET_APP / "bin/bun", source / "src/main.ts", "subspace", "request", "--socket",
+                                         socket, f"/api/v1{path}"], capture_output=True, text=True, timeout=30,
+                                        check=False, stdin=subprocess.DEVNULL,
+                                        env={**os.environ, "BUN_RUNTIME_TRANSPILER_CACHE_PATH": "0"})
+            except (OSError, subprocess.TimeoutExpired):
+                raise ApiError(f"Could not ask the hosted Subspace API for GET {path}.", None) from None
+            if result.returncode:
+                raise ApiError(f"The hosted Subspace API refused GET {path}: {result.stderr.strip()[:200]}", None)
+            return json.loads(result.stdout or "{}")
+        return get, None
+    if not answers.get("api") or not (INPUTS / "api.env").is_file() or not agent_listener_enabled():
+        return None, "this VM's API has no agent listener"
+
+    def get(path):
+        request = Request(f"http://{LOOPBACK}:{AGENT_API_PORT}/api/v1{path}",
+                          headers={"X-Subspace-Agent": rear["account"], "Accept": "application/json"})
+        try:
+            with urlopen(request, timeout=15) as response:
+                return json.loads(response.read().decode() or "{}")
+        except HTTPError as error:
+            error.close()
+            raise ApiError(f"The Subspace API returned HTTP {error.code} for GET {path}.", error.code) from None
+        except (URLError, OSError, ValueError):
+            raise ApiError(f"Could not reach the Subspace API's agent listener for GET {path}.", None) from None
+    return get, None
+
+
+def ownership_lines(get, repositories, initiative=None, assigns=False):
+    """What the tracker says about this fleet's work, as its rear admiral reads it (get).
+
+    A project belongs to its initiative's fleet, or else to the fleet of the initiative's nearest ancestor with one,
+    and the API refuses a fleet agent's assignment, or Ready for agents flag, in another fleet's project
+    (subspace-api src/fleet-ownership.ts). So this names each tracker project linked to one of the fleet's GitHub
+    repositories that belongs to another fleet, with the initiative that makes it so, and the fleet's own
+    initiative (setup's answer, which --initiative sets) when it is not the fleet's yet. assigns says whether setup
+    assigns that initiative to the fleet (an API on this VM with development sign-in); otherwise only an
+    administrator of the API can.
+    """
+    me = get("/me")
+    fleet = me.get("fleetId")
+    if me.get("kind") != "agent" or not fleet:
+        return ["could not check which fleet owns this fleet's tracker projects: its rear admiral is not yet a "
+                "registered agent of a fleet"]
+    rows = {}
+
+    def initiative_row(initiative_id):
+        if initiative_id not in rows:
+            rows[initiative_id] = get(f"/initiatives/{quote(initiative_id, safe='')}")
+        return rows[initiative_id]
+
+    def owner(initiative_id):
+        """The initiative that gives a project its fleet, and the initiatives on the way to it."""
+        path = []
+        while initiative_id and initiative_id not in path:
+            path.append(initiative_id)
+            row = initiative_row(initiative_id)
+            if row.get("fleetId"):
+                return row, path
+            initiative_id = row.get("parentId")
+        return None, path
+
+    def label(row):
+        other = row.get("fleet") or {}
+        return f"fleet {other['name']} ({other['slug']})" if other.get("slug") else f"fleet {row['fleetId']}"
+
+    def remedy(initiative_id, record=True):
+        if assigns:
+            return f"run setup again with --initiative {initiative_id}, which assigns it, and all below it, to this fleet"
+        return (f"ask an administrator of the Subspace API to assign it to this fleet (PUT /api/v1/initiatives/"
+                f'{initiative_id}/fleet with {{"fleetId": "{fleet}"}})'
+                + (f", and pass --initiative {initiative_id} to record it as the fleet's" if record else ""))
+
+    lines, ours, seen = [], [], set()
+    for repository in repositories:
+        page = get(f"/repositories/projects?repository={quote(repository, safe='')}&limit=100")
+        for project in page.get("items", []):
+            if project["id"] in seen:
+                continue
+            seen.add(project["id"])
+            row, path = owner(project.get("initiativeId"))
+            if not row or row["fleetId"] == fleet:
+                ours.append(project["key"])
+                continue
+            where = (f"tracker project {project['key']} ({repository}) belongs to {label(row)} through initiative "
+                     f"{row.get('name')} ({row['id']})")
+            if initiative in path and assigns:
+                lines.append(f"{where}; setup assigns the fleet's initiative {initiative}, on that path, to this "
+                             "fleet, which makes it this fleet's.")
+            else:
+                lines.append(f"WARNING: {where}, so this fleet's officers are refused when they assign its issues or "
+                             f"mark them Ready for agents. To make it this fleet's, {remedy(row['id'])}.")
+    if initiative:
+        row = initiative_row(initiative)
+        if row.get("fleetId") != fleet:
+            name = f"the fleet's initiative {row.get('name')} ({initiative})"
+            if assigns:
+                moved = f", moving it from {label(row)}" if row.get("fleetId") else ""
+                lines.append(f"setup assigns {name} to this fleet{moved}.")
+            else:
+                other = f" but to {label(row)}" if row.get("fleetId") else ""
+                lines.append(f"WARNING: {name} is not assigned to it{other}: {remedy(initiative, record=False)}.")
+    if ours:
+        lines.append(f"tracker projects {', '.join(sorted(set(ours)))} belong to this fleet or to none, so its "
+                     "officers may assign their issues")
+    elif not lines:
+        lines.append("no tracker project lists this fleet's GitHub repositories, so setup cannot tell which fleet "
+                     "owns its work")
+    return lines
+
+
+def ownership_check(answers, members, config):
+    """Say what ownership_lines finds; a check that cannot run says why, and never stops setup."""
+    get, reason = agent_reader(answers, members)
+    repositories = [name for row in config.get("repositories", []) if isinstance(row, dict)
+                    if (name := runtime.github_repository(str(row.get("url", ""))))]
+    if not get:
+        say(f"not checking which fleet owns this fleet's tracker projects: {reason}")
+        return
+    assigns = bool(answers.get("api")) and not answers.get("apiUrl") and dev_auth_enabled()
+    try:
+        lines = ownership_lines(get, repositories, answers.get("initiativeId"), assigns=assigns)
+    except (ApiError, ValueError, KeyError, TypeError, AttributeError) as error:
+        say(f"could not check which fleet owns this fleet's tracker projects: {error}")
+        return
+    for line in lines:
+        say(line)
 
 
 def installed_records():
@@ -2027,6 +2192,7 @@ def configure(args):
         if answers["agentDispatch"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
+        ownership_check(answers, members, read_json(config_path, {}))
         say("dry run complete; nothing on this VM changed")
         return
 
@@ -2105,6 +2271,7 @@ def configure(args):
             installer(config_path)
     elif stargate_api:
         confirm_fleet_api(True, installed_stargate_source())
+    ownership_check(answers, members, read_json(config_path, {}))
 
     lockdown_id = ""
     if answers["lockdown"]:

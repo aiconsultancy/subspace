@@ -348,6 +348,16 @@ answer it now.
     switching needs `--switch-to-hosted-api` and leaves that tracker behind:
     ask first. See
     [A hosted Subspace API](subspace-installer/README.md#a-hosted-subspace-api).
+17. **An existing initiative for the fleet's work?** (**no**: setup finds
+    or creates one named after the fleet.) If the tracker already holds the
+    fleet's projects under an initiative, ask for its UUID and pass
+    `--initiative UUID`: the fleet's officers may assign issues only in
+    their own fleet's projects. The dry run warns about each project of the
+    fleet's repositories that belongs to another fleet, and names the
+    initiative to adopt. With the API on the VM, setup assigns it to the
+    fleet, moving it from any other; with a hosted API, its administrator
+    does. See "Who owns the fleet's work" in
+    [Subspace API registration](subspace-installer/README.md#subspace-api-registration).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
