@@ -668,13 +668,54 @@ DELEGATE_REFUSED = (
     ("sed -i 's/a/b/' src/main.ts", ["sed -i 's/a/b/' src/main.ts"]),
     ("find . -name '*.ts' | xargs sed -i 's/a/b/'", ["find . -name '*.ts'", "xargs sed -i 's/a/b/'"]),
     ("perl -pi -e 's/a/b/' src/main.ts", ["perl -pi -e 's/a/b/' src/main.ts"]),
+    ("/usr/bin/git push", ["/usr/bin/git push"]),
     # The README's known false refusal: a bare Git write word after a global option.
     ("git -C project log --grep stash", ["git -C project log --grep stash"]),
 )
+# The listing forms of Git's mixed subcommands, and their writes, each checked as typed, after a global option and
+# after an assignment (DELEGATE_PREFIXES).
+DELEGATE_GIT_LISTINGS = (
+    "config --get user.email", "config --get-all remote.origin.fetch", "config --get-regexp '^remote\\.'",
+    "config --list", "config -l", "config --list --show-origin", "config get user.email", "config list",
+    "config get --local user.email", "config --show-origin --list", "config --name-only --list",
+    *(f"config --{scope} {read}" for scope in ("local", "global", "system", "worktree")
+      for read in ("--list", "-l", "--get user.email", "--get-regexp alias", "--list --show-origin")),
+    "config -f .gitmodules --get-regexp path", "config --file .gitmodules --list",
+    "branch", "branch -a", "branch -r", "branch -v", "branch -vv", "branch --verbose", "branch --all",
+    "branch --remotes", "branch -av", "branch -avv", "branch -rv", "branch -rvv", "branch -a -vv", "branch -vv -a",
+    "branch -r --sort=-committerdate", "branch -a --format='%(refname:short) %(committerdate)'",
+    "branch -a --color=always", "branch --list", "branch --list 'crew/*'", "branch -l", "branch -a --list 'crew/*'",
+    "branch -vv --list", "branch --sort=-committerdate --list", "branch --show-current", "branch --contains HEAD",
+    "branch -r --contains HEAD", "branch --merged origin/main", "branch --no-merged origin/main",
+    "branch -a --merged", "branch --points-at HEAD",
+    "tag", "tag -l", "tag -ln", "tag --list", "tag -l 'v*'", "tag --list --sort=-v:refname",
+    "tag --sort=-v:refname --list", "tag --contains HEAD", "tag --points-at HEAD",
+    "remote", "remote -v", "remote --verbose", "remote show origin", "remote get-url origin",
+    "stash list", "stash show", "stash show -p 'stash@{0}'", "worktree list", "worktree list --porcelain",
+    "notes list", "notes show HEAD", "submodule", "submodule status", "submodule status --recursive",
+    "sparse-checkout list",
+)
+DELEGATE_GIT_LISTING_WRITES = (
+    # Deleting, renaming or copying through a listing option, alone or bundled, and a name after -v.
+    "branch -r -d origin/stale", "branch -rd origin/stale", "branch -dr origin/stale", "branch -r -D origin/stale",
+    "branch -r --delete origin/stale", "branch -r -vd origin/stale", "branch -a -d crew/example",
+    "branch -ad crew/example", "branch -a -D crew/example", "branch -a -m old new", "branch -a -M old new",
+    "branch -a -c old new", "branch --all --move old new", "branch -r -u origin/main",
+    "branch -a --set-upstream-to=origin/main", "branch -r --unset-upstream", "branch -a --edit-description",
+    "branch -m old -a", "branch -v crew/example", "branch -vv crew/example", "branch --verbose crew/example",
+    "branch crew/example", "branch -f crew/example origin/main", "branch -d crew/example", "branch -D crew/example",
+    "tag v1.0", "tag -a v1.0 -m release", "tag -d v1.0", "tag -f v1.0",
+    "remote -v add upstream https://example.com/x.git", "remote add upstream https://example.com/x.git",
+    "remote set-url origin https://example.com/x.git", "remote remove upstream",
+    "config user.email orion@example.com", "config --local user.email orion@example.com",
+    "config --global --unset user.name", "config --unset user.email", "config --local --add a.b c",
+    "stash", "stash push -m wip", "stash pop", "stash drop", "worktree add ../x", "worktree remove ../x",
+    "notes add -m x", "submodule update --init", "sparse-checkout set src",
+)
+DELEGATE_PREFIXES = ("git", "git -C project", "GIT_OPTIONAL_LOCKS=0 git")
 # What the rules cannot see, as the README says: they match command text, so these still run.
 DELEGATE_NOT_REFUSED = (
     ("bash -c 'git push'", ["bash -c 'git push'"]),
-    ("/usr/bin/git push", ["/usr/bin/git push"]),
     ("echo fix > src/main.ts", ["echo fix > src/main.ts"]),
     ("cp /tmp/main.ts src/main.ts", ["cp /tmp/main.ts src/main.ts"]),
     ("python3 -c 'import pathlib; pathlib.Path(\"x\").write_text(\"y\")'",
@@ -696,6 +737,11 @@ class CaptainPolicyTests(unittest.TestCase):
         for line, resources in DELEGATE_REFUSED:
             with self.subTest(line):
                 self.assertEqual(fixture.opencode_decision(rules, "shell", resources), "deny")
+        for prefix in DELEGATE_PREFIXES:
+            for command, effect in ([(listing, "allow") for listing in DELEGATE_GIT_LISTINGS]
+                                    + [(write, "deny") for write in DELEGATE_GIT_LISTING_WRITES]):
+                with self.subTest(f"{prefix} {command}"):
+                    self.assertEqual(fixture.opencode_decision(rules, "shell", [f"{prefix} {command}"]), effect)
         # No edit, write or patch tool (OpenCode's edit action); reads, but not of secrets, in any directory.
         self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "deny")
         self.assertEqual(fixture.opencode_decision(rules, "read", ["src/main.ts", "/tmp/notes.md"]), "allow")

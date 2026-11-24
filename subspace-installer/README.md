@@ -469,16 +469,27 @@ any command runs, chained, piped or in a subshell, except
   `update-index`, `read-tree`, `checkout-index`, `replace`,
   `filter-branch`, `filter-repo` and `fast-import`;
 - `branch`, `tag`, `stash`, `notes`, `worktree`, `submodule`,
-  `sparse-checkout`, `config` and `remote`, but for their listing forms,
-  such as `git branch -a`, `git branch --show-current`, `git tag --list`,
-  `git stash list`, `git worktree list`, `git config --get` and
-  `git remote -v` (`DELEGATE_GIT_READS` in [`lib/roles.py`](lib/roles.py));
+  `sparse-checkout`, `config` and `remote`, but for their listing forms
+  (`DELEGATE_GIT_READS` and `DELEGATE_GIT_LIST_MODES` in
+  [`lib/roles.py`](lib/roles.py)): `git branch` alone or with `-v`, `-vv`,
+  `-a` or `-r` (the last two with formatting options such as `--sort`), and
+  any branch or tag listing with `--list`, `-l`, `--contains`, `--merged`,
+  `--no-merged`, `--points-at` or `--show-current`; `git config` with
+  `--get`, `--get-all`, `--get-regexp`, `--list` or `-l` after options such
+  as `--local`, `--global` or `--file F`, and `git config get` or `list`;
+  `git remote`, `git remote -v`, `git remote show` and `get-url`;
+  `git stash list` and `show`, `git worktree list`, `git notes list` and
+  `show`, `git submodule` and `status`, and `git sparse-checkout list`. A
+  listing option that deletes, renames, copies or sets an upstream
+  (`git branch -r -d`, `-rd`, `-a -m`, `-u`) is refused again, and so is a
+  name after `git branch -v`, which creates that branch;
 - the in-place editors `sed -i` and `perl -i`.
 
-Each Git refusal covers `git` itself, Git's global options before the
+Each Git rule covers `git` itself, Git's global options before the
 subcommand (`git -C project push`) and anything before `git`
-(`GIT_TERMINAL_PROMPT=0 git push`, `env git push`, `xargs git rm`).
-`git fetch`, `git log`, `git diff`, builds, tests and everything else run.
+(`GIT_TERMINAL_PROMPT=0 git push`, `env git push`, `xargs git rm`,
+`/usr/bin/git push`). `git fetch`, `git log`, `git diff`, builds, tests and
+everything else run.
 
 **This is a working agreement, not a security boundary.** OpenCode 2.3.2
 checks each command of a command line separately, by the command's text, and
@@ -486,12 +497,14 @@ the last matching rule decides. Text cannot tell every write from a read:
 
 - Still allowed: a redirect (`echo … > file`), `tee`, `cp`, `mv`, `rm`, a
   script or build that writes, an interpreter (`python3 -c …`,
-  `bash -c 'git push'`), a path to Git (`/usr/bin/git push`) and a Git alias.
+  `bash -c 'git push'`) and a Git alias.
 - Refused although it only reads: a command in which one of those Git words
   follows `git` and its options as a bare word, such as
   `git -C project log --grep stash` (quote the word, or set the shell's
-  working directory instead of using `-C`), and an argument, such as a pull
-  request body, that contains ` git push ` or the like.
+  working directory instead of using `-C`), an argument, such as a pull
+  request body, that contains ` git push ` or the like, and a branch listing
+  with other options but none of the listing ones above, such as
+  `git branch --sort=-committerdate` (add `--list`).
 
 The captain's instructions state the agreement, and its crew can do all of
 it anyway (see below), so protect the branches that matter on the server. A

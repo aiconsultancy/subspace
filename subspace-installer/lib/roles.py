@@ -54,7 +54,8 @@ a working agreement, not a lock: never get round them with an interpreter, a
 script, a redirect or another spelling. Assign the change to a crew member
 instead. A read that names one of those Git words after a global option, such
 as `git -C project log --grep stash`, is refused too: quote the word or set
-the shell's working directory instead of `-C`.
+the shell's working directory instead of `-C`. To list branches or tags with
+options of your own, such as `--sort`, add `--list`.
 """
 
 
@@ -102,17 +103,45 @@ def api_skill():
 # it, which its crew do. OpenCode 2.3.2 checks each command of a chained, piped or substituted command line on its
 # own, by the command's text from its first word (assignments included), and the last matching rule wins;
 # `*` matches any text and a trailing " *" also matches nothing (core/src/permission.ts, util/wildcard.ts,
-# shell/scan.ts). So each Git refusal is written for `git` itself, for Git's global options before the
-# subcommand (`git -C dir`), and for anything before `git` (`VAR=1 git`, `env git`, `xargs git`).
+# shell/scan.ts). So each Git rule is written for `git` with anything before it (`VAR=1 git`, `env git`,
+# `xargs git`, `/usr/bin/git`), with and without Git's global options before the subcommand (`git -C dir`).
+def git_forms(text):
+    return (f"*git {text}", f"*git -* {text}")
+
+
+def options(subcommand, *tokens):
+    """Each token as a Git subcommand's first option and as a later one."""
+    return tuple(form for token in tokens for form in (f"{subcommand} {token}", f"{subcommand} * {token}"))
+
+
 # Git subcommands with read-only forms, refused but for those forms (DELEGATE_GIT_READS).
 DELEGATE_GIT_MIXED = ("branch", "tag", "stash", "notes", "worktree", "submodule", "sparse-checkout", "config", "remote")
+# Their listing forms. `branch -v` and the like with a name create that branch, so they are allowed only alone;
+# with -a or -r Git refuses a name, but they still delete, rename or copy, which DELEGATE_GIT_REREFUSED takes back.
+# A config read's options come before its key, as Git reads none after it.
 DELEGATE_GIT_READS = (
-    "branch", "branch -a*", "branch -r*", "branch -v*", "branch -l*", "branch --list*", "branch --all*",
-    "branch --remotes*", "branch --verbose*", "branch --show-current*", "branch --contains*", "branch --merged*",
-    "branch --no-merged*", "tag", "tag -l*", "tag --list*", "tag --contains*", "tag --points-at*", "stash list*",
-    "stash show*", "notes list*", "notes show*", "worktree list*", "submodule", "submodule status*",
-    "sparse-checkout list*", "config --get*", "config get *", "config -l*", "config --list*", "config list*",
-    "remote", "remote -v*", "remote --verbose*", "remote show *", "remote get-url *",
+    "branch", "branch -v", "branch -vv", "branch --verbose",
+    *options("branch", *(f"{flag} *" for flag in ("-a", "-r", "--all", "--remotes", "-av", "-avv", "-va", "-vva",
+                                                  "-rv", "-rvv", "-vr", "-vvr"))),
+    "tag", "stash list*", "stash show*", "notes list*", "notes show*", "worktree list*", "submodule",
+    "submodule status*", "sparse-checkout list*",
+    "config --get*", "config -* --get*", "config --list*", "config -* --list*", "config -l *", "config -* -l *",
+    "config get *", "config list*",
+    "remote", "remote -v", "remote --verbose", "remote show *", "remote get-url *",
+)
+# A branch listing's options that delete, rename, copy or set an upstream, alone or in a bundle (`-rd`): refused
+# again after the listing forms.
+DELEGATE_GIT_REREFUSED = options(
+    "branch", "-d*", "-?d*", "-??d *", "-D*", "-?D*", "-??D *", "-m*", "-?m *", "-M*", "-?M *", "-c*", "-?c *",
+    "-C*", "-?C *", "--move*", "--copy*", "-u*", "--set-upstream*", "--unset-upstream*", "--edit-description*",
+)
+# List modes, which Git refuses with any other mode, so a command that has one is read-only whatever else it says:
+# allowed again last.
+DELEGATE_GIT_LIST_MODES = (
+    *options("branch", "--list *", "-l *", "--show-current *", "--contains*", "--no-contains*", "--merged*",
+             "--no-merged*", "--points-at*"),
+    "tag -l*", *options("tag", "-l *", "--list *", "--contains*", "--no-contains*", "--points-at*", "--merged*",
+                        "--no-merged*"),
 )
 # Git subcommands that change files, the index, refs or history, or publish: refused in every form, after the
 # read-only forms above, so that no read form allows them again.
@@ -129,18 +158,18 @@ DELEGATE_IN_PLACE = ("sed -i*", "sed * -i*", "sed --in-place*", "sed * --in-plac
 def delegate_shell():
     """A delegate captain's shell rules: everything, then the Git and in-place edits its crew make instead."""
 
-    def rules(effect, resources):
-        return [{"action": "shell", "resource": resource, "effect": effect} for resource in resources]
-
-    def refused(subcommand):
-        return (f"git {subcommand} *", f"git -* {subcommand} *", f"* git {subcommand} *", f"* git -* {subcommand} *")
+    def rules(effect, texts):
+        return [{"action": "shell", "resource": form, "effect": effect} for text in texts for form in git_forms(text)]
 
     return [
         {"action": "shell", "resource": "*", "effect": "allow"},
-        *rules("deny", (form for subcommand in DELEGATE_GIT_MIXED for form in refused(subcommand))),
-        *rules("allow", (form for read in DELEGATE_GIT_READS for form in (f"git {read}", f"git -* {read}"))),
-        *rules("deny", (form for subcommand in DELEGATE_GIT_WRITES for form in refused(subcommand))),
-        *rules("deny", (form for editor in DELEGATE_IN_PLACE for form in (editor, f"* {editor}"))),
+        *rules("deny", (f"{subcommand} *" for subcommand in DELEGATE_GIT_MIXED)),
+        *rules("allow", DELEGATE_GIT_READS),
+        *rules("deny", DELEGATE_GIT_REREFUSED),
+        *rules("allow", DELEGATE_GIT_LIST_MODES),
+        *rules("deny", (f"{subcommand} *" for subcommand in DELEGATE_GIT_WRITES)),
+        *({"action": "shell", "resource": form, "effect": "deny"}
+          for editor in DELEGATE_IN_PLACE for form in (editor, f"* {editor}")),
     ]
 
 

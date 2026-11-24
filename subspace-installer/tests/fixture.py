@@ -570,7 +570,7 @@ def check_shape():
         delegate = role == "captain" and json.loads((etc / "fleet.json").read_text()).get("captainTools") == "delegate"
         assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role == "captain" and not delegate)
         assert ({"action": "shell", "resource": "*", "effect": "allow"} in permissions) == delegate
-        assert ({"action": "shell", "resource": "git push *", "effect": "deny"} in permissions) == delegate
+        assert ({"action": "shell", "resource": "*git push *", "effect": "deny"} in permissions) == delegate
     ref = Path("/var/lib/subspace-fleet/references/atlas/sample")
     assert subprocess.check_output(["runuser", "-u", "ss-atlas", "--", "git", "-C", ref, "show", "HEAD:README.md"], text=True).strip() == "sample"
     for user in ("ss-atlas", "ss-orion"):

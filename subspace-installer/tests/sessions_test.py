@@ -487,7 +487,7 @@ class InstalledFleet(unittest.TestCase):
         self.assertIn('  - shell "git commit *" allow', changes)
         self.assertIn('  + external_directory "*" allow', changes)
         self.assertIn('  + shell "*" allow', changes)
-        self.assertIn('  + shell "* git push *" deny', changes)
+        self.assertIn('  + shell "*git push *" deny', changes)
         self.assertEqual(changes[-1], '  + shell "kubectl get *" allow')
         added = sum(line.startswith("  +") for line in changes)
         self.assertEqual(lines[orion], f"Tool policy of orion changes: {added} rules added and {len(changes) - added} "
