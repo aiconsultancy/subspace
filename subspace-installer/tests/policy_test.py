@@ -219,7 +219,8 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(options["mesijCommand"], "/opt/subspace-fleet/bin/mesij")
         self.assertEqual(options["captainSessionID"], "ses_fixture")
         team = options["team"]
-        self.assertEqual(team["captain"], {"id": "orion", "agent": "build", "model": "openai-proxy/gpt-5.4"})
+        # The captain's default model with its reasoning effort, as OpenCode's model#variant.
+        self.assertEqual(team["captain"], {"id": "orion", "agent": "build", "model": "claude-proxy/claude-opus-5-5#xhigh"})
         self.assertEqual(team["modelProviders"], ["claude-proxy", "openai-proxy"])
         self.assertEqual(team["historyAPI"], {"url": "http://127.0.0.1:4097",
                                               "headersEnv": {"authorization": "OPENCODE_AUTHORIZATION"}})
@@ -331,10 +332,13 @@ class FleetPolicyTests(unittest.TestCase):
         config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
         cfg = validate(config, api_secrets())
         person = dict(cfg["members"][1], harness={
-            "type": "claude-sdk", "family": "claude", "model": "example-model", "permissions": None,
+            "type": "claude-sdk", "family": "claude", "model": "example-model", "effort": None, "permissions": None,
             "allowedTools": ["Read"]})
         documents = {"claudePrompt": "Example prompt"}
         backend = runtime.claude_backend(cfg, person, Path("/workspace"), documents)
+        self.assertNotIn("effort", backend)
+        self.assertEqual(runtime.claude_backend(cfg, {**person, "harness": {**person["harness"], "effort": "xhigh"}},
+                                                Path("/workspace"), documents)["effort"], "xhigh")
         self.assertEqual(backend["mcpServers"], {"subspace": {
             "type": "http", "url": "http://127.0.0.1:3001/mcp",
             "headersHelper": f"/opt/subspace-fleet/lib/runtime.py agent-header {person['account']}",
@@ -1278,7 +1282,7 @@ class FleetRecordsTests(unittest.TestCase):
     def setUp(self):
         self.config = example_config()
         self.config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
-                                        "harness": {"family": "claude"}})
+                                        "harness": {"family": "codex"}})
         self.config["api"] = {"url": "http://127.0.0.1:3000"}
         self.secrets = {**officer_secrets("example-lyra"), "apiToken": "header.payload.admin"}
         self.api = fixture.Subspace()
@@ -1306,7 +1310,7 @@ class FleetRecordsTests(unittest.TestCase):
         agents = {row["name"]: row for row in self.api.agents.values()}
         self.assertEqual(agents["Atlas"]["serviceTokenClientId"], "example-atlas@agents.example.com")
         self.assertEqual((agents["Atlas"]["defaultModel"], agents["example-lyra"]["defaultModel"]),
-                         ("gpt-5.4", runtime.FAMILIES["claude"]))
+                         ("claude-fable-5-2", runtime.FAMILIES["codex"]))
         self.assertEqual(self.register(), [], "a re-run changes nothing")
 
     def test_a_changed_roster_is_reconciled(self):
@@ -1475,22 +1479,23 @@ class RepositoryAccessTests(unittest.TestCase):
             runtime.main([verb, str(self.work / "fleet.json"), str(self.work / "fleet.secrets.json"), *tail, "", "false"])
         return output.getvalue(), [call.args[0] for call in check.call_args_list]
 
-    def test_the_dry_run_warns_and_the_real_run_stops_before_cloning(self):
+    def test_the_dry_run_and_the_real_run_both_stop_before_cloning_and_say_how_to_go_on(self):
         private = lambda url: "library" not in url  # noqa: E731
-        text, checked = self.main("plan", private)
-        self.assertEqual(checked, ["https://github.com/example/project.git", "https://github.com/example/library.git"])
-        self.assertIn("WARNING: Git cannot read library without credentials", text)
-        self.assertIn('mark it "private": true in fleet.json and give the rear admiral and every captain a GitHub App',
-                      text)
-        with self.assertRaisesRegex(Invalid, "Git cannot read library without credentials"):
-            self.main("prepare", private)
+        for verb in ("plan", "prepare"):
+            with self.subTest(verb), self.assertRaisesRegex(Invalid, "Git cannot read library without credentials") \
+                    as refused:
+                self.main(verb, private)
+            message = str(refused.exception)
+            self.assertIn("install without them now", message)
+            self.assertIn("subspace-setup --repositories with the others, or '' for none", message)
+            self.assertIn("'Add private repositories later'", message)
         self.assertFalse((self.work / "stage/fleet.json").exists())
-        text, _ = self.main("plan", lambda url: True)
-        self.assertNotIn("WARNING", text)
-        # subspace-setup's check before it changes the API refuses as the real run would.
-        with patch.dict("os.environ", {"SUBSPACE_FLEET_CHECK": "strict"}), \
-                self.assertRaisesRegex(Invalid, "Git cannot read library"):
-            self.main("plan", private)
+        text, checked = self.main("plan", lambda url: True)
+        self.assertEqual(checked, ["https://github.com/example/project.git", "https://github.com/example/library.git"])
+        self.assertNotIn("Git cannot read", text)
+        # On a remote IRC server the officers create the standard channels by joining: nothing to register first.
+        self.assertIn("the officers create them by joining, so they need no registration", text)
+        self.assertNotIn("Register them on the IRC server", text)
         # An installed repository is not checked again.
         (self.work / "etc").mkdir()
         (self.work / "etc/repository-sources.json").write_text(json.dumps(
@@ -1508,6 +1513,148 @@ class RepositoryAccessTests(unittest.TestCase):
         self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
         with patch.object(runtime.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 30)):
             self.assertFalse(readable_without_credentials("https://github.com/example/slow.git"))
+
+
+class OfficerModelTests(unittest.TestCase):
+    """Captains default to Claude Opus 5.5 at xhigh effort and the rear admiral to Claude Fable 5.2 at high."""
+
+    def config(self, harness=None):
+        config = example_config()
+        config["captains"].append({"id": "vega", "name": "Vega", "account": "example-vega"})
+        if harness is None:
+            del config["harness"]
+        else:
+            config["harness"] = harness
+        return config
+
+    def harnesses(self, config):
+        cfg = validate(config, officer_secrets("example-vega"))
+        return {person["id"]: (person["harness"]["family"], person["harness"]["model"], person["harness"]["effort"])
+                for person in cfg["members"]}
+
+    def test_each_role_has_its_default_and_the_example_names_it(self):
+        defaults = {"atlas": ("claude", "claude-fable-5-2", "high"), "orion": ("claude", "claude-opus-5-5", "xhigh"),
+                    "vega": ("claude", "claude-opus-5-5", "xhigh")}
+        self.assertEqual(self.harnesses(self.config()), defaults)
+        self.assertEqual(self.harnesses(example_config() | {"captains": self.config()["captains"]}), defaults)
+        cfg = validate(self.config(), officer_secrets("example-vega"))
+        self.assertEqual([runtime.harness_model(person["harness"]) for person in cfg["members"]],
+                         ["claude-proxy/claude-fable-5-2#high", "claude-proxy/claude-opus-5-5#xhigh",
+                          "claude-proxy/claude-opus-5-5#xhigh"])
+        self.assertEqual(runtime.session_model(cfg["members"][1]["harness"]),
+                         {"providerID": "claude-proxy", "id": "claude-opus-5-5", "variant": "xhigh"})
+        self.assertEqual(runtime.officer_models_line(cfg),
+                         "Officer models: atlas on claude-fable-5-2 at high effort; orion, vega on claude-opus-5-5 "
+                         "at xhigh effort. The model proxy needs a claude account for them.")
+
+    def test_the_fleet_then_the_role_then_the_officer_override_the_default(self):
+        # A fleet-wide model, as fleets wrote before the role defaults, applies to both roles at the provider's
+        # default effort: an effort belongs to the model it was set for.
+        old = {"type": "opencode", "family": "codex", "model": "gpt-5.4"}
+        self.assertEqual(set(self.harnesses(self.config(old)).values()), {("codex", "gpt-5.4", None)})
+        roles = {"type": "opencode", "captain": {"family": "codex", "model": "gpt-6.2-sol", "effort": "high"},
+                 "rearAdmiral": {"effort": "max"}}
+        config = self.config(roles)
+        config["captains"][1]["harness"] = {"model": "claude-sonnet-5-5", "family": "claude"}
+        self.assertEqual(self.harnesses(config), {
+            "atlas": ("claude", "claude-fable-5-2", "max"), "orion": ("codex", "gpt-6.2-sol", "high"),
+            "vega": ("claude", "claude-sonnet-5-5", None)})
+        # The same model keeps its role's effort; a Claude Agent SDK captain takes it too.
+        config["captains"][1].update(harness={"type": "claude-sdk", "model": "claude-opus-5-5"},
+                                     crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        config["harness"] = {"type": "opencode"}
+        self.assertEqual(self.harnesses(config)["vega"], ("claude", "claude-opus-5-5", "xhigh"))
+
+    def test_a_hand_written_model_goes_to_its_own_family_and_renders_as_before(self):
+        # Before the role defaults every officer was Codex, so a harness that named only a model, as the old
+        # default {"type":"opencode","model":"gpt-5.4"} did, ran it through openai-proxy. It still does, at the
+        # provider's default effort, fleet-wide or on one officer.
+        for harness in ({"type": "opencode", "model": "gpt-5.4"}, {"model": "gpt-6.2-sol"}):
+            with self.subTest(harness):
+                cfg = validate(self.config(harness), officer_secrets("example-vega"))
+                self.assertEqual({runtime.harness_model(person["harness"]) for person in cfg["members"]},
+                                 {f"openai-proxy/{harness['model']}"})
+                self.assertEqual({person["harness"]["effort"] for person in cfg["members"]}, {None})
+        config = self.config()
+        config["captains"][1]["harness"] = {"model": "gpt-6.2-sol"}
+        config["rearAdmiral"]["harness"] = {"model": "claude-sonnet-5-5"}
+        self.assertEqual(self.harnesses(config), {
+            "atlas": ("claude", "claude-sonnet-5-5", None), "orion": ("claude", "claude-opus-5-5", "xhigh"),
+            "vega": ("codex", "gpt-6.2-sol", None)})
+        # A harness that names only a family: codex runs its default as before; claude runs the role's Claude
+        # default, which is what the role defaults to anyway, rather than claude-sonnet-5-5.
+        self.assertEqual(set(self.harnesses(self.config({"family": "codex"})).values()), {("codex", "gpt-5.4", None)})
+        self.assertEqual(self.harnesses(self.config({"family": "claude"}))["orion"], ("claude", "claude-opus-5-5", "xhigh"))
+        # A model and a family that disagree are refused, whichever way round.
+        for harness, family in (({"family": "claude", "model": "gpt-5.4"}, "claude"),
+                                ({"family": "codex", "model": "claude-opus-5-5"}, "codex")):
+            with self.subTest(harness), self.assertRaisesRegex(Invalid, f"does not belong to the {family} family"):
+                self.harnesses(self.config(harness))
+
+    def test_an_effort_the_harness_cannot_give_is_refused(self):
+        cases = [
+            ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "xhigh"}},
+             "'xhigh' is not available for gpt-5.4 with the opencode harness, which offers low, medium, high"),
+            ({"captain": {"model": "claude-sonnet-4-6", "effort": "xhigh"}},
+             "offers low, medium, high, max"),
+            ({"captain": {"model": "claude-sonnet-4-5", "effort": "low"}}, "offers high, max"),
+            # Dated IDs: the date is not a version, and the version-first spelling is read as such.
+            ({"captain": {"model": "claude-3-7-sonnet-20250219", "effort": "xhigh"}}, "offers high, max"),
+            ({"captain": {"model": "claude-opus-4-20250514", "effort": "xhigh"}}, "offers high, max"),
+            ({"captain": {"model": "claude-sonnet-4-5-20250929", "effort": "medium"}}, "offers high, max"),
+            ({"captain": {"model": "claude-opus-5-5#xhigh"}}, "give the model ID alone"),
+            ({"captain": {"model": "claude-opus-5-5", "speed": "fast"}}, "harness.captain contains an unknown field"),
+        ]
+        for harness, message in cases:
+            with self.subTest(harness), self.assertRaisesRegex(Invalid, re.escape(message)):
+                self.harnesses(self.config({"type": "opencode", **harness}))
+        self.assertEqual(self.harnesses(self.config({"captain": {"model": "claude-opus-4-5", "effort": "xhigh"}}))
+                         ["orion"], ("claude", "claude-opus-4-5", "xhigh"))
+        for model, effort in (("claude-opus-4-5-20251101", "xhigh"), ("claude-sonnet-4-5-20250929", "high"),
+                              ("claude-opus-4-6", "max"), ("claude-opus-5-5", "max")):
+            with self.subTest(model):
+                self.assertEqual(self.harnesses(self.config({"captain": {"model": model, "effort": effort}}))["orion"],
+                                 ("claude", model, effort))
+
+    def test_officers_whose_model_no_signed_in_account_serves_stop_both_runs(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        work = Path(temporary.name)
+        (work / "fleet.json").write_text(json.dumps(self.config()))
+        (work / "fleet.secrets.json").write_text(json.dumps(officer_secrets("example-vega")))
+        (work / "fleet.secrets.json").chmod(0o600)
+        auth = work / "state/proxy/auth"
+
+        def main(verb):
+            output = io.StringIO()
+            (work / "stage").mkdir(exist_ok=True)
+            tail = [str(work / "stage")] if verb == "prepare" else []
+            with patch.object(runtime, "ETC", work / "etc"), patch.object(runtime, "STATE", work / "state"), \
+                    contextlib.redirect_stdout(output):
+                runtime.main([verb, str(work / "fleet.json"), str(work / "fleet.secrets.json"), *tail, "", "false"])
+            return output.getvalue()
+
+        # Before the first sign-in nothing is checked: the install comes first, then the sign-in.
+        self.assertIn("The model proxy needs a claude account for them.", main("plan"))
+        auth.mkdir(parents=True)
+        (auth / "codex-someone@example.com-plus.json").write_text(json.dumps({"type": "codex", "access_token": "x"}))
+        for verb in ("plan", "prepare"):
+            with self.subTest(verb), self.assertRaises(Invalid) as refused:
+                main(verb)
+            message = str(refused.exception)
+            self.assertIn("signed in to codex accounts only, which cannot serve claude-fable-5-2 (claude account), "
+                          "claude-opus-5-5 (claude account), the model of atlas, orion, vega", message)
+            self.assertIn("providers login claude", message)
+            self.assertIn("--captain-model and --rear-admiral-model", message)
+            self.assertNotIn("access_token", message)
+        (auth / "claude-someone@example.com.json").write_text(json.dumps({"type": "claude"}))
+        main("plan")
+        # A model of another provider is the operator's to check.
+        (auth / "claude-someone@example.com.json").unlink()
+        config = self.config({"type": "opencode", "captain": {"family": "codex", "model": "kimi-k3"},
+                              "rearAdmiral": {"family": "codex", "model": "gpt-5.4"}})
+        (work / "fleet.json").write_text(json.dumps(config))
+        self.assertIn("The model proxy needs a codex account for them.", main("plan"))
 
 
 class IrcCertificateTests(unittest.TestCase):

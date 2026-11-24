@@ -41,6 +41,8 @@ class FakeOpenCode:
         self.creates = []
         self.updates = []
         self.fail_create = None
+        self.fail_switch = False
+        self.switches = []
         self.lookups = 0
 
     def get(self, session_id):
@@ -57,6 +59,12 @@ class FakeOpenCode:
         if self.fail_create == "after":
             raise sessions.SessionError("The response was lost.")
         return self.get(body["id"])
+
+    def switch_model(self, session_id, model):
+        self.switches.append(model)
+        if self.fail_switch:
+            raise sessions.SessionError("OpenCode returned HTTP 400 when switching the captain session's model.")
+        self.sessions[session_id]["model"] = model
 
     def update_permissions(self, session_id, permissions):
         self.updates.append(permissions)
@@ -153,19 +161,37 @@ class CaptainSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(sessions.SessionError, "already exists in its original first repository"):
             self.ensure({**EXPECTED, "directory": DIRECTORY.replace("project", "library")})
 
-    def test_a_changed_captain_model_is_reported_not_silently_ignored(self):
+    def test_a_changed_captain_model_or_effort_switches_the_pinned_root(self):
         session_id, _ = self.ensure()
         notices = []
-        claude = {"providerID": "claude-proxy", "id": "claude-sonnet-5-5"}
+        claude = {"providerID": "claude-proxy", "id": "claude-opus-5-5", "variant": "xhigh"}
+        self.assertEqual(sessions.ensure(self.server, self.record, {**EXPECTED, "model": claude}, wait=ready,
+                                         notice=notices.append), (session_id, False))
+        self.assertEqual(notices, ["Switched the captain's pinned session from openai-proxy/gpt-5.4 to "
+                                   "claude-proxy/claude-opus-5-5#xhigh."])
+        self.assertEqual(self.server.sessions[session_id]["model"], claude)
+        # The effort alone is part of the model: a changed variant switches too, and an unchanged one does not.
+        notices.clear()
+        sessions.ensure(self.server, self.record, {**EXPECTED, "model": {**claude, "variant": "high"}}, wait=ready,
+                        notice=notices.append)
+        self.assertEqual(self.server.switches[-1], {**claude, "variant": "high"})
+        switched = len(self.server.switches)
+        notices.clear()
+        sessions.ensure(self.server, self.record, {**EXPECTED, "model": {**claude, "variant": "high"}}, wait=ready,
+                        notice=notices.append)
+        self.assertEqual((notices, len(self.server.switches)), ([], switched))
+
+    def test_a_failed_model_switch_is_reported_and_keeps_the_root(self):
+        session_id, _ = self.ensure()
+        self.server.fail_switch = True
+        notices = []
+        claude = {"providerID": "claude-proxy", "id": "claude-opus-5-5", "variant": "xhigh"}
         self.assertEqual(sessions.ensure(self.server, self.record, {**EXPECTED, "model": claude}, wait=ready,
                                          notice=notices.append), (session_id, False))
         [notice] = notices
         self.assertIn("keeps its model openai-proxy/gpt-5.4", notice)
-        self.assertIn("claude-proxy/claude-sonnet-5-5", notice)
+        self.assertIn("claude-proxy/claude-opus-5-5#xhigh failed", notice)
         self.assertEqual(self.server.sessions[session_id]["model"], EXPECTED["model"])
-        notices.clear()
-        sessions.ensure(self.server, self.record, EXPECTED, wait=ready, notice=notices.append)
-        self.assertEqual(notices, [])
 
     def test_records_reach_the_disk_before_and_after_the_rename(self):
         events = []
@@ -870,11 +896,11 @@ class InstalledFleet(unittest.TestCase):
             "enabled": True, "api": {"baseUrl": "https://subspace.example.com"},
             "enrolment": {"tokenFile": str(gateway_home / runtime.ENROLMENT_TOKEN)},
             "officers": [
-                {"name": "Atlas", "rank": "rearAdmiral", "model": "gpt-5.4", "ircNick": "example-atlas",
+                {"name": "Atlas", "rank": "rearAdmiral", "model": "claude-fable-5-2", "ircNick": "example-atlas",
                  "socketPath": str(sockets / "atlas/api.sock")},
-                {"name": "example-orion", "rank": "captain", "ship": "Orion", "model": "gpt-5.4",
+                {"name": "example-orion", "rank": "captain", "ship": "Orion", "model": "claude-opus-5-5",
                  "ircNick": "example-orion", "socketPath": str(sockets / "orion/api.sock")},
-                {"name": "example-vega", "rank": "captain", "ship": "Vega", "model": "claude-sonnet-5-5",
+                {"name": "example-vega", "rank": "captain", "ship": "Vega", "model": "claude-opus-5-5",
                  "ircNick": "example-vega", "socketPath": str(sockets / "vega/api.sock")},
             ]})
         # The token is the gateway user's alone; the sockets' directories admit each officer's engine group.

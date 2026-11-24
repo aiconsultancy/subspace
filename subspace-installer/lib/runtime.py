@@ -98,6 +98,22 @@ ACCOUNT = r"[a-zA-Z][a-zA-Z0-9_-]{0,31}"
 ERGO_ACCOUNT = r"[a-z][a-z0-9_-]{0,31}"
 UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 FAMILIES = {"claude": "claude-sonnet-5-5", "codex": "gpt-5.4"}
+# Each officer role's default harness model and reasoning effort; fleet.json's harness and its captain and
+# rearAdmiral blocks override them. Crew keep FAMILIES.
+OFFICER_DEFAULTS = {
+    "rear_admiral": {"family": "claude", "model": "claude-fable-5-2", "effort": "high"},
+    "captain": {"family": "claude", "model": "claude-opus-5-5", "effort": "xhigh"},
+}
+# The harness block for each role, under fleet.json's harness.
+ROLE_HARNESS = {"rear_admiral": "rearAdmiral", "captain": "captain"}
+# Reasoning efforts per harness and family. OpenCode spells each as a variant of the model, which it derives
+# from the provider package (Variant.resolve): anthropic-compatible gives Claude low to max, and
+# openai-compatible responses gives low, medium and high. Stargate's Claude Agent SDK backend takes effort.
+EFFORTS = {
+    ("opencode", "claude"): ("low", "medium", "high", "xhigh", "max"),
+    ("opencode", "codex"): ("low", "medium", "high"),
+    ("claude-sdk", "claude"): ("low", "medium", "high", "xhigh", "max"),
+}
 # OpenCode provider IDs per model family, as in Stargate's OpenCode template.
 PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
 MODEL = r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}"
@@ -605,12 +621,58 @@ def fleet_ipc_policy(rules, label):
                 "(an ask, or a pattern with other wildcards, cannot authorise a fleet tool).")
 
 
+def model_family(model):
+    """The family whose provider serves a model ID: claude-* through claude-proxy, any other through openai-proxy."""
+    return "claude" if model.startswith("claude-") else "codex"
+
+
+def claude_efforts(model):
+    """The efforts OpenCode 2.3.2 gives a Claude model through anthropic-compatible (Variant.resolve): Claude
+    4.6 has no xhigh, and Claude 3.7 and 4.0 to 4.5 (but Opus 4.5) think on a token budget, as high and max."""
+    # Versions are one or two digits, so a date such as claude-opus-4-20250514's is not read as a version, and
+    # the version-first spelling (claude-3-7-sonnet-20250219) is tried first.
+    found = re.search(r"claude-(\d{1,2})(?:[.-](\d{1,2}))?-(opus|sonnet|haiku|fable|mythos)(?![a-z])", model, re.I)
+    if found:
+        family, major, minor = found.group(3), found.group(1), found.group(2)
+    else:
+        found = re.search(r"(?:claude-)?(opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[.-](\d{1,2}))?(?!\d)", model, re.I)
+        if not found:
+            return EFFORTS["opencode", "claude"]
+        family, major, minor = found.group(1), found.group(2), found.group(3)
+    major, minor = int(major), int(minor or 0)
+    if (major, minor) == (3, 7) or major == 4 and minor < 6 and (family.lower(), minor) != ("opus", 5):
+        return ("high", "max")
+    if (major, minor) == (4, 6):
+        return ("low", "medium", "high", "max")
+    return EFFORTS["opencode", "claude"]
+
+
 def harness_config(value, inherited):
-    value = fields(value, "harness", "type model family permissions allowedTools")
+    value = fields(value, "harness", "type model family effort permissions allowedTools")
     backend = pattern(value.get("type", inherited["type"]), r"opencode|claude-sdk", "harness type (opencode or claude-sdk)")
+    if "model" in value and "family" not in value and isinstance(value["model"], str):
+        # A model named without its family goes where its ID says, as subspace-setup writes it: claude-* through
+        # the Claude family and any other through Codex, whatever the default family is.
+        value = {**value, "family": model_family(value["model"])}
     family = pattern(value.get("family", inherited["family"]), r"claude|codex", "model family")
     candidate = value.get("model", inherited["model"] if family == inherited["family"] else FAMILIES[family])
     model = pattern(candidate, MODEL if backend == "opencode" else r"[a-zA-Z0-9][a-zA-Z0-9._:\[\]-]{0,127}", "CLIProxyAPI model ID")
+    require(model_family(model) == family, f"Harness model {model} does not belong to the {family} family: Claude "
+            "models (claude-*) go through the claude family and any other through codex. Set harness family to "
+            f"{model_family(model)}, or leave it out.")
+    require("#" not in model, f"Harness model {model} names an OpenCode variant: give the model ID alone and the "
+            "reasoning effort as harness effort.")
+    # An effort belongs to its model: a harness that names another model has the provider's default effort
+    # unless it names one too.
+    same = (family, model) == (inherited["family"], inherited["model"])
+    effort = value.get("effort", inherited.get("effort") if same else None)
+    if effort is not None:
+        offered = EFFORTS.get((backend, family), ())
+        if backend == "opencode" and family == "claude":
+            offered = claude_efforts(model)
+        require(effort in offered, f"Reasoning effort {effort!r} is not available for {model} with the {backend} "
+                f"harness, which offers {', '.join(offered) or 'none'}." if offered else
+                f"The {backend} harness cannot set a reasoning effort for the {family} family. Remove harness effort.")
     tools = value.get("allowedTools", inherited.get("allowedTools", []))
     require(isinstance(tools, list), "Claude allowedTools must be an array.")
     for tool in tools:
@@ -627,7 +689,8 @@ def harness_config(value, inherited):
         pattern(permission["effect"], r"allow|deny|ask", "permission effect")
         string(permission["action"], "permission action")
         string(permission["resource"], "permission resource", 1024)
-    return {"type": backend, "family": family, "model": model, "permissions": permissions, "allowedTools": tools}
+    return {"type": backend, "family": family, "model": model, "effort": effort, "permissions": permissions,
+            "allowedTools": tools}
 
 
 def crew_config(value, inherited):
@@ -837,7 +900,15 @@ def validate(config, credentials, check_files=True):
     require(len(channels) <= 20, f"Use at most 18 captains: the rear admiral joins Starbase, {irc['commandChannel']} "
             "and every ship channel, and Stargate joins at most 20 channels.")
     irc.update(channels=channels)
-    hull = harness_config(cfg.get("harness", {}), {"type": "opencode", "family": "codex", "model": FAMILIES["codex"], "permissions": None})
+    # Each role's default model, then the fleet's harness, then its captain or rearAdmiral block, then the officer's.
+    fleet_harness = cfg.get("harness", {})
+    require(isinstance(fleet_harness, dict), "harness must be an object.")
+    roles = {key: fields(fleet_harness.get(key, {}), f"harness.{key}", "family model effort")
+             for key in ROLE_HARNESS.values()}
+    shared = {key: val for key, val in fleet_harness.items() if key not in roles}
+    hulls = {role: harness_config(roles[key], harness_config(shared, {"type": "opencode", **OFFICER_DEFAULTS[role],
+                                                                         "permissions": None}))
+             for role, key in ROLE_HARNESS.items()}
     crew = crew_config(cfg.get("crew", {}), {family: {"count": 2, "model": model} for family, model in FAMILIES.items()})
     repositories = repository_config(cfg.get("repositories", []))
     agents = []
@@ -845,7 +916,7 @@ def validate(config, credentials, check_files=True):
         role = "captain" if index else "rear_admiral"
         officer = {key: val for key, val in person.items() if key not in ("crew", "crewNames")}
         agents.append({**officer, "role": role, "channel": room, "crew": [],
-                       "harness": harness_config(person.get("harness", {}), hull)})
+                       "harness": harness_config(person.get("harness", {}), hulls[role])})
         if role != "captain":
             continue
         crew_names = person.get("crewNames", {})
@@ -1288,8 +1359,20 @@ def configure_git(person, user, prune, protected):
             run("git", "config", "--global", "--replace-all", "--", key, value, user=user)
 
 
-def model_ref(family, model):
-    return f"{PROVIDERS[family]}/{model}"
+def model_ref(family, model, effort=None):
+    """OpenCode's provider/model reference, with #effort for a reasoning-effort variant."""
+    return f"{PROVIDERS[family]}/{model}" + (f"#{effort}" if effort else "")
+
+
+def harness_model(harness):
+    """An officer's OpenCode model reference: its model and reasoning effort."""
+    return model_ref(harness["family"], harness["model"], harness["effort"])
+
+
+def session_model(harness):
+    """An officer's model as an OpenCode session records it."""
+    return {"providerID": PROVIDERS[harness["family"]], "id": harness["model"],
+            **({"variant": harness["effort"]} if harness["effort"] else {})}
 
 
 def model_provider(cfg, family, models):
@@ -1426,7 +1509,7 @@ def crew_options(cfg, person, home, engine_port, session_id, captain_directory=N
         "mesijCommand": str(MESIJ),
         "team": {
             "captain": {"id": person["id"], "agent": sessions.CAPTAIN_AGENT,
-                        "model": model_ref(harness["family"], harness["model"])},
+                        "model": harness_model(harness)},
             "historyScope": "team",
             "toolAccess": "curated",
             # The plugin reads crew history through this captain's own authenticated loopback engine.
@@ -1695,7 +1778,7 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
             models.append(worker["model"])
     permissions = harness_permissions(cfg, person)
     engine = {
-        "model": model_ref(harness["family"], harness["model"]), "permissions": permissions,
+        "model": harness_model(harness), "permissions": permissions,
         "providers": {PROVIDERS[family]: model_provider(cfg, family, models) for family, models in catalogue.items()},
     }
     if enrolled(cfg):
@@ -1767,6 +1850,7 @@ def claude_backend(cfg, person, workspace, documents):
     harness = person["harness"]
     backend = {
         "type": "claude", "directory": str(workspace), "model": harness["model"], "allowedTools": harness["allowedTools"],
+        **({"effort": harness["effort"]} if harness["effort"] else {}),
         "systemPrompt": documents["claudePrompt"],
         "provider": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1", "apiKeyEnv": "CLIPROXYAPI_API_KEY"},
     }
@@ -2113,10 +2197,75 @@ def unreadable_repositories(cfg):
 
 def unreadable_message(names):
     return (f"Git cannot read {', '.join(names)} without credentials, so the installer cannot clone "
-            f"{'it' if len(names) == 1 else 'them'} as public repositories. If a repository is private, mark it "
-            '"private": true in fleet.json and give the rear admiral and every captain a GitHub App that can read '
-            "it (installer README, 'GitHub Apps per fleet member'); otherwise check its URL, or remove it from "
-            "repositories.")
+            f"{'it' if len(names) == 1 else 'them'} as public repositories. If they are private, install without "
+            "them now (leave them out of repositories: subspace-setup --repositories with the others, or '' for "
+            "none). Once the rear admiral and every captain have a GitHub App that can read them, add each "
+            "officer's githubApp and key, and the repositories marked \"private\": true, and run the installer "
+            "again (installer README, 'Add private repositories later'). Otherwise check the URLs.")
+
+
+# The account type of CLIProxyAPI's that serves each family's models by their own IDs: Claude models through a
+# Claude account, GPT models through a Codex (ChatGPT) account.
+FAMILY_ACCOUNTS = {"claude": ("claude", "claude-"), "codex": ("codex", "gpt-")}
+ACCOUNT_LOGINS = {"claude": "claude", "codex": "codex-device"}
+
+
+def proxy_accounts():
+    """The types of CLIProxyAPI's signed-in accounts (each auth file's type, as providers.sh lists them), or none
+    before the first sign-in."""
+    types = set()
+    try:
+        paths = sorted((STATE / "proxy" / "auth").glob("*.json"))
+    except OSError:
+        return types
+    for path in paths:
+        try:
+            kind = json.loads(path.read_text()).get("type")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(kind, str):
+            types.add(kind)
+    return types
+
+
+def unserved_officers(cfg, accounts):
+    """Officers whose Claude or GPT model no signed-in account serves, as (officer, model, account type).
+    Nothing is checked before the first sign-in, nor a model of another provider."""
+    if not accounts:
+        return []
+    unserved = []
+    for person in cfg["members"]:
+        harness = person["harness"]
+        kind, prefix = FAMILY_ACCOUNTS[harness["family"]]
+        if harness["model"].startswith(prefix) and kind not in accounts:
+            unserved.append((person["id"], harness["model"], kind))
+    return unserved
+
+
+def officer_models_line(cfg):
+    """The officers' models and efforts, and the account type CLIProxyAPI needs for them."""
+    groups = {}
+    for person in cfg["members"]:
+        harness = person["harness"]
+        groups.setdefault((harness["model"], harness["effort"]), []).append(person["id"])
+    kinds = sorted({kind for person in cfg["members"]
+                    for kind, prefix in [FAMILY_ACCOUNTS[person["harness"]["family"]]]
+                    if person["harness"]["model"].startswith(prefix)})
+    parts = [f"{', '.join(ids)} on {model}" + (f" at {effort} effort" if effort else " at the provider's default effort")
+             for (model, effort), ids in groups.items()]
+    need = f" The model proxy needs a {' and a '.join(kinds)} account for them." if kinds else ""
+    return f"Officer models: {'; '.join(parts)}.{need}"
+
+
+def unserved_message(unserved, accounts):
+    models = ", ".join(sorted({f"{model} ({kind} account)" for _, model, kind in unserved}))
+    officers = ", ".join(officer for officer, _, _ in unserved)
+    logins = " and ".join(sorted({ACCOUNT_LOGINS[kind] for _, _, kind in unserved}))
+    return (f"The model proxy is signed in to {', '.join(sorted(accounts))} accounts only, which cannot serve "
+            f"{models}, the model of {officers}. Sign it in to such an account (./install.sh providers login "
+            f"{logins} from your computer, or sudo subspace-setup providers login {logins} on the VM) and run "
+            "this again, or give those officers a model the signed-in accounts serve (subspace-setup "
+            "--captain-model and --rear-admiral-model, or harness in fleet.json; installer README, 'Officer models').")
 
 
 def reconcile_workspaces(cfg, homes, refresh_only=False):
@@ -2573,7 +2722,7 @@ def commission(prune, existing=False):
             expected = {
                 "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
                 "crew": [worker["id"] for worker in person["crew"]],
-                "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
+                "model": session_model(harness),
                 "permissions": harness_permissions(cfg, person) if rear else captain_permissions(cfg, person),
             }
             if person["crew"]:
@@ -2732,13 +2881,13 @@ def main(args):
         bundles = irc_bundles(cfg, directory)
         for person in cfg["members"]:
             check_sign_in(irc_agent(cfg, person, {})[0], cfg["irc"])
+        # The real run would stop before it clones anything, so the dry run stops too, saying how to go on.
         unreadable = unreadable_repositories(cfg)
-        # The real run stops before it clones anything, and so does subspace-setup's check before it changes the
-        # API (SUBSPACE_FLEET_CHECK=strict); a dry run says what the real run would do.
-        strict = verb == "prepare" or os.environ.get("SUBSPACE_FLEET_CHECK") == "strict"
-        require(not strict or not unreadable, unreadable_message(unreadable))
-        if unreadable:
-            print(f"WARNING: {unreadable_message(unreadable)} The installation stops before cloning until then.")
+        require(not unreadable, unreadable_message(unreadable))
+        # Officers whose model no signed-in account serves would stay silent, so both runs stop.
+        accounts = proxy_accounts()
+        unserved = unserved_officers(cfg, accounts)
+        require(not unserved, unserved_message(unserved, accounts))
         if verb == "prepare":
             stage = Path(tail[2])
             (stage / "fleet.json").write_text(json_text(config))
@@ -2764,9 +2913,14 @@ def main(args):
             count = sum(len(person["crew"]) for person in cfg["members"])
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
+            print(officer_models_line(cfg))
             print(f"Standard IRC channels: {' '.join(cfg['irc']['channels'])} (Starbase, fleet command, then one "
                   "ship channel per captain)." + ("" if cfg["irc"]["mode"] == "local" else
-                                                   " Register them on the IRC server before installing."))
+                                                   " On a remote server the officers create them by joining, so they "
+                                                   "need no registration; registering them with ChanServ is optional "
+                                                   "and keeps their topic and modes when they empty. Only a server "
+                                                   "that lets operators alone create channels needs them created "
+                                                   "first."))
             if dispatch := cfg["agentDispatch"]:
                 print(f"Agent dispatch is on: the rear admiral checks {cfg['api']['url']} every "
                       f"{dispatch['pollIntervalSeconds']} seconds as its own API agent and offers issues in "

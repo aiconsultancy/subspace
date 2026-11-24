@@ -5,7 +5,11 @@
   "captains": [
     { "id": "orion", "name": "Orion", "account": "example-orion" }
   ],
-  "harness": { "type": "opencode", "family": "codex", "model": "gpt-5.4" },
+  "harness": {
+    "type": "opencode",
+    "rearAdmiral": { "family": "claude", "model": "claude-fable-5-2", "effort": "high" },
+    "captain": { "family": "claude", "model": "claude-opus-5-5", "effort": "xhigh" }
+  },
   "crew": {
     "claude": { "count": 2, "model": "claude-sonnet-5-5" },
     "codex": { "count": 2, "model": "gpt-5.4" }

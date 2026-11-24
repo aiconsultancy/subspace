@@ -726,6 +726,9 @@ do_install() {
         reuse) ;;
     esac
     vm true || die "Cannot reach the VM over SSH."
+    # The fleet's record in the Subspace API names the VM by the host this computer reaches it at (target.env's HOST).
+    # shellcheck disable=SC2153
+    if [ "$KIND" = ssh ]; then passthrough+=(--vm-host "${HOST#*@}"); fi
 
     # A Subspace API on another host (--api-url, passed to setup) replaces another fleet's API, so a saved
     # --api-target from an earlier run is set aside, and forgotten once a real run succeeds.

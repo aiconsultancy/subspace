@@ -103,6 +103,11 @@ REPO_ID = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 MAX_REPOSITORIES = 9
 # A crew member's model ID, as the fleet installer accepts it (runtime.MODEL).
 CREW_MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}")
+# An officer's model ID and reasoning effort (runtime.harness_config checks the effort against the model).
+OFFICER_MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:-]{0,127}")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# The officers' model before each role had its own default. A fleet set up then keeps it until it chooses.
+LEGACY_OFFICER_MODEL = "gpt-5.4"
 # The API on this VM against an existing PostgreSQL (--database-url-file). The URL file is root's alone; the URL
 # is written only to the root-only api.env, single-quoted so Compose takes it literally, hence no quote in it.
 DATABASE_URL_TEXT = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+")
@@ -162,10 +167,13 @@ def write_json(path, data):
     write_private(path, json.dumps(data, indent=2, sort_keys=False) + "\n")
 
 
-def run(*args, check=True, capture=False, env=None, input_text=None, timeout=None):
+def run(*args, check=True, capture=False, env=None, input_text=None, timeout=None, keep_stdin=True):
+    """keep_stdin=False gives the command no standard input (unless input_text is its input), so it cannot read
+    on from setup's own: a script piped to 'subspace-setup token' over SSH, say."""
+    stdin = subprocess.DEVNULL if input_text is None and not keep_stdin else None
     try:
         result = subprocess.run([str(arg) for arg in args], check=False, text=True, env=env, input=input_text,
-                                stdout=subprocess.PIPE if capture else None, timeout=timeout)
+                                stdin=stdin, stdout=subprocess.PIPE if capture else None, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise SetupError(f"{Path(str(args[0])).name} {args[1] if len(args) > 1 else ''} did not finish within "
                          f"{timeout} seconds.") from None
@@ -194,6 +202,15 @@ def parse_args(argv):
                         "(default claude-sonnet-5-5; kept on later runs; '' returns to the default)")
     parser.add_argument("--crew-codex-model", help="model of each Codex-family crew member, such as gpt-6.2-sol "
                         "(default gpt-5.4; kept on later runs; '' returns to the default)")
+    for role, flag, default in (("captain", "captain", runtime.OFFICER_DEFAULTS["captain"]),
+                                ("rear_admiral", "rear-admiral", runtime.OFFICER_DEFAULTS["rear_admiral"])):
+        who = "each captain" if role == "captain" else "the rear admiral"
+        parser.add_argument(f"--{flag}-model", help=f"model of {who}, such as gpt-5.4 (default {default['model']}; "
+                            "a claude-* model goes through the Claude family, any other through Codex; kept on later "
+                            "runs; '' returns to the default)")
+        parser.add_argument(f"--{flag}-effort", help=f"reasoning effort of {who}: {', '.join(EFFORTS)} (default "
+                            f"{default['effort']} on {default['model']}, else the provider's; kept on later runs; '' "
+                            "returns to the default)")
     parser.add_argument("--demo", dest="demo", action="store_true", default=None, help="seed fictional demo data")
     parser.add_argument("--no-demo", dest="demo", action="store_false")
     parser.add_argument("--irc", choices=["local", "remote"],
@@ -221,6 +238,9 @@ def parse_args(argv):
                         "the fleet's enrolment token (senr1.…) from that API's administrator. Never printed")
     parser.add_argument("--switch-to-hosted-api", action="store_true",
                         help="with --api-url on a VM whose API runs here: switch anyway, leaving that tracker behind")
+    parser.add_argument("--vm-host", help="the name or address operators reach this VM by, recorded as the fleet's "
+                        "vmHost in the Subspace API (the host installers pass the --remote host). Kept on later runs; "
+                        "'' removes it")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
     parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
@@ -322,6 +342,32 @@ def gather(args, saved):
             require(CREW_MODEL.fullmatch(flag), f"--crew-{family}-model must be a model ID, such as "
                     f"{'claude-opus-5-5' if family == 'claude' else 'gpt-6.2-sol'}.")
             models[family] = flag
+    officers = answers.get("officerModels")
+    if officers is None:
+        officers = {}
+        harness = read_json(INPUTS / "fleet.json", {}).get("harness")
+        chosen = isinstance(harness, dict) and harness.keys() & {"family", "model", "captain", "rearAdmiral"}
+        if saved.get("slug") and not chosen:
+            # Set up when every officer ran gpt-5.4: it keeps that model until the operator chooses.
+            officers = {role: {"model": LEGACY_OFFICER_MODEL, "effort": ""} for role in ("captain", "rearAdmiral")}
+            if args.captain_model is None or args.rear_admiral_model is None:
+                say(f"this fleet was set up when officers defaulted to {LEGACY_OFFICER_MODEL}, so they keep it. To "
+                    "move them to the default models (Claude, which needs a claude account in the model proxy): "
+                    "subspace-setup --captain-model '' --rear-admiral-model '' (installer README, 'Officer models').")
+    for role, model, effort in (("captain", args.captain_model, args.captain_effort),
+                                ("rearAdmiral", args.rear_admiral_model, args.rear_admiral_effort)):
+        flag = "captain" if role == "captain" else "rear-admiral"
+        # '' is the fleet installer's default, even over one set in fleet.json by hand.
+        choice = officers.setdefault(role, {})
+        if model is not None:
+            require(model == "" or OFFICER_MODEL.fullmatch(model), f"--{flag}-model must be a model ID, such as "
+                    f"claude-opus-5-5. Give the reasoning effort with --{flag}-effort.")
+            # An effort belongs to its model: a new model has its default effort unless this run names one.
+            choice.update(model=model, effort="")
+        if effort is not None:
+            require(effort == "" or effort in EFFORTS, f"--{flag}-effort must be one of {', '.join(EFFORTS)}.")
+            choice["effort"] = effort
+    answers["officerModels"] = officers
     answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
         pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
@@ -351,6 +397,13 @@ def gather(args, saved):
     require(not args.irc_operator_account or args.irc_operator,
             "--irc-operator-account is the account the operator's connection signs in to: pass --irc-operator too.")
     hosted_api(args, answers, saved)
+    if args.vm_host == "":
+        answers.pop("vmHost", None)
+    elif args.vm_host is not None:
+        try:
+            answers["vmHost"] = runtime.host(args.vm_host.strip().lower())
+        except runtime.Invalid:
+            raise SetupError("--vm-host must be a DNS name or an IP address, such as fleet.example.com.") from None
     if answers.get("apiUrl"):
         answers["api"] = False  # The hosted API replaces one on this VM.
     elif args.api is not None:
@@ -785,6 +838,45 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 "githubPolicy", "dashboard", "proxy", "agentsview"):
         if key in previous:
             config[key] = previous[key]
+    # Each role's model and effort: this or an earlier run's answer, over one set in fleet.json by hand.
+    harness = dict(config.get("harness") or {})
+    officers = answers.get("officerModels", {})
+    resets = [role for role in OFFICER_ROLES if any(key in officers.get(role, {}) and not officers[role][key]
+                                                    for key in ("model", "effort"))]
+    shared = {key: harness[key] for key in ("family", "model", "effort") if key in harness}
+    if resets and shared:
+        # '' returns a role to its default, so a fleet-wide model set by hand no longer applies to it. Each role
+        # takes what it ran as its own block first, so the other role keeps it; the reset below then clears it.
+        resolved = {role: resolved_officer(harness, role) for role in OFFICER_ROLES}
+        for key in shared:
+            harness.pop(key)
+        for role in OFFICER_ROLES:
+            block = {key: val for key, val in (harness.get(role) or {}).items() if key not in ("family", "model", "effort")}
+            harness[role] = {**block, **resolved[role]}
+        kept = [role for role in OFFICER_ROLES if role not in resets]
+        say(f"fleet.json's fleet-wide harness {', '.join(f'{key} {val}' for key, val in shared.items())} no longer "
+            f"applies to {' or '.join(OFFICER_ROLES[role] for role in resets)}"
+            + (f"; {' and '.join(OFFICER_ROLES[role] for role in kept)} keeps it, now as "
+               f"{' and '.join(f'harness.{role}' for role in kept)}." if kept else "."))
+    for role, choice in officers.items():
+        block = dict(harness.get(role) or {})
+        if choice.get("model"):
+            block.update(model=choice["model"], family=runtime.model_family(choice["model"]))
+        elif "model" in choice:
+            block.pop("model", None)
+            block.pop("family", None)
+        if choice.get("effort"):
+            block["effort"] = choice["effort"]
+        elif "effort" in choice:
+            block.pop("effort", None)
+        if block:
+            harness[role] = block
+        else:
+            harness.pop(role, None)
+    if harness:
+        config["harness"] = harness
+    else:
+        config.pop("harness", None)
     repositories = previous.get("repositories", [])
     if "repositories" in answers:
         # This run's answer replaces the list; a repository that stays keeps its visibility, and its ID
@@ -821,6 +913,23 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     if dispatch or answers.get("agentDispatch"):
         config["agentDispatch"] = {**dispatch, "enabled": bool(answers.get("agentDispatch") and api_block)}
     return config
+
+
+# fleet.json's harness block for each officer role, and who it is.
+OFFICER_ROLES = {"captain": "the captains", "rearAdmiral": "the rear admiral"}
+
+
+def resolved_officer(harness, role):
+    """The family, model and effort a role runs with fleet.json's harness, as the fleet installer resolves it."""
+    key = "captain" if role == "captain" else "rear_admiral"
+    try:
+        hull = runtime.harness_config({k: v for k, v in harness.items() if k not in OFFICER_ROLES},
+                                      {"type": "opencode", **runtime.OFFICER_DEFAULTS[key], "permissions": None})
+        result = runtime.harness_config(harness.get(role) or {}, hull)
+    except runtime.Invalid as error:
+        raise SetupError(f"fleet.json's harness: {error}") from None
+    return {"family": result["family"], "model": result["model"],
+            **({"effort": result["effort"]} if result["effort"] else {})}
 
 
 def fleet_secrets(secret_store, members, admin, token="", local_irc=True, dispatch_token="", certificates=False):
@@ -873,15 +982,14 @@ def irc_source():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def installer(config_path, dry_run=False, secrets_dir=None, strict=False):
+def installer(config_path, dry_run=False, secrets_dir=None):
     args = [INSTALLER / "install.sh", "--config", config_path]
     if secrets_dir:
         args += ["--secrets-dir", secrets_dir]
     if dry_run:
         args.append("--dry-run")
     say("running the fleet installer" + (" (dry run)" if dry_run else ""))
-    # strict: a dry run that also refuses what the real run would refuse later, such as an unreadable repository.
-    run(*args, env={**os.environ, "SUBSPACE_FLEET_CHECK": "strict"} if strict else None)
+    run(*args)
 
 
 def preflight(config, private):
@@ -894,7 +1002,7 @@ def preflight(config, private):
         write_json(config_path, config)
         write_json(Path(scratch) / "fleet.secrets.json", private)
         say("checking the fleet's configuration before the API changes")
-        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None, strict=True)
+        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None)
 
 
 def installed_stargate_source():
@@ -903,12 +1011,48 @@ def installed_stargate_source():
     return Path(entry).parents[1] if entry else None
 
 
+# Stargate's Fleet API server moved between the releases the installer supports: src/api/v1 in v0.40 to v0.43,
+# src/observability/dashboard/api/v1 from v0.44 (and commit 5630a5c). Any other src/**/api/v1/server.ts is
+# taken for a later move.
+FLEET_API_SERVERS = ("src/api/v1/server.ts", "src/observability/dashboard/api/v1/server.ts")
+
+
+def fleet_api_server(source):
+    """Where an installed Stargate checkout keeps its Fleet API server, relative to it, or None."""
+    if not source:
+        return None
+    for relative in FLEET_API_SERVERS:
+        if (source / relative).is_file():
+            return relative
+    found = sorted(path.relative_to(source) for path in source.glob("src/**/api/v1/server.ts"))
+    return str(found[0]) if found else None
+
+
+def confirm_fleet_api(requested, source):
+    """Whether the installed Stargate gets its Fleet API, once it is installed: requested is True (--stargate-api
+    on) or None (auto, for a pinned commit). Asked for but missing stops setup; auto but missing says so."""
+    found = fleet_api_server(source)
+    looked = " or ".join(FLEET_API_SERVERS) + ", or any src/**/api/v1/server.ts"
+    if found:
+        say(f"Stargate's Fleet API is in {found}; it is on")
+        return True
+    where = f"in {source}" if source else "(no installed Stargate checkout was found)"
+    require(not requested, f"--stargate-api on, but the installed Stargate has no Fleet API {where}: looked for "
+            f"{looked}. Pass --stargate-api off, or a --stargate-ref that has the Fleet API (v0.40.0 or later).")
+    say(f"NOTE: the installed Stargate has no Fleet API {where} (looked for {looked}), so it stays off: the Subspace "
+        "API records no Fleet API address for this fleet and Fleet Console has nothing to reach. Pass a "
+        "--stargate-ref that has it, or --stargate-api off to say so.")
+    return False
+
+
 # Subspace API ----------------------------------------------------------------
 
 def compose(*args, capture=False, check=True, env=None, input_text=None):
+    # Docker Compose passes its standard input to 'exec' and 'run' commands, which would otherwise read on from
+    # setup's own, so it gets none unless it has input of its own.
     return run("docker", "compose", "--project-name", API_PROJECT, "--project-directory", API_DIR,
                "--env-file", INPUTS / "api.env", "-f", API_DIR / "compose.yaml", "-f", INPUTS / "api.override.yaml",
-               *args, capture=capture, check=check, env=env, input_text=input_text)
+               *args, capture=capture, check=check, env=env, input_text=input_text, keep_stdin=False)
 
 
 def hosted_api(args, answers, saved):
@@ -1851,7 +1995,7 @@ def configure(args):
         write_json(config_path, config)
         write_json(secrets_path, private)
 
-    certificates = None
+    certificates = operator = None
     if answers.get("ircAuth") == "certificate":
         operator = irc_operator(args)
         certificates = officer_certificates(members, generate=not args.dry_run)
@@ -1913,6 +2057,8 @@ def configure(args):
             answers.update(initiativeId=initiative)
             save_answers(answers)
             api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
+            if answers.get("vmHost"):
+                api_block["vmHost"] = answers["vmHost"]  # The fleet's record in the API names the VM.
             if agent_listener_enabled():
                 # Officers get the API's MCP server at the agent listener, as their own agent records.
                 api_block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"
@@ -1940,15 +2086,13 @@ def configure(args):
         # reach the API's port, and the officers, and only they, reach the agent listener.
         run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
     if stargate_api is None:
-        source = installed_stargate_source()
-        stargate_api = bool(source and (source / "src/api/v1/server.ts").is_file())
+        stargate_api = confirm_fleet_api(None, installed_stargate_source())
         if stargate_api:
+            # Again with the Fleet API: its listener, firewall rule and token, and its address in the fleet's record.
             write_inputs(irc_ref, api_block, True, token, history)
             installer(config_path)
-        else:
-            say("the pinned Stargate has no Fleet API; leaving it off")
-    elif stargate_api and not ((source := installed_stargate_source()) and (source / "src/api/v1/server.ts").is_file()):
-        raise SetupError("The installed Stargate has no Fleet API. Pass --stargate-api off or a newer --stargate-ref.")
+    elif stargate_api:
+        confirm_fleet_api(True, installed_stargate_source())
 
     lockdown_id = ""
     if answers["lockdown"]:
@@ -1986,12 +2130,25 @@ def configure(args):
     else:
         say("agent dispatch is off; 'subspace-setup --agent-dispatch' switches it on.")
     if not local_irc:
-        say(f"add this fleet to the shared IRC server: copy {INPUTS / 'irc-bundle.json'} there and run "
-            "'sudo subspace-setup irc-server add <file>' (the host installer does this with --irc-server).")
+        say(remote_irc_next_step(answers, operator))
     say(f"forward these loopback ports to reach it: {values['SUBSPACE_PORTS']}")
     if run(HERE / "providers.sh", "status", check=False):
         say("next: bring the agents online by signing CLIProxyAPI in to a provider account "
             "(INSTALL.md, 'Bring the agents online').")
+
+
+def remote_irc_next_step(answers, operator):
+    """What is left to do on a remote IRC server once setup is done."""
+    if answers.get("ircAuth") == "certificate":
+        # No password bundle exists in this mode: the officers' accounts are bound to their certificates.
+        if operator:
+            return (f"officers sign in to {answers['ircHost']} with certificates, which setup registered and checked "
+                    "above with --irc-operator.")
+        return (f"officers sign in to {answers['ircHost']} with certificates: each can sign in once the IRC server's "
+                "operator has run the /NS lines printed above for it (or run setup again with --irc-operator). "
+                "'sudo /opt/subspace-fleet/lib/runtime.py irc-fingerprints' prints the fingerprints again.")
+    return (f"add this fleet to the shared IRC server: copy {INPUTS / 'irc-bundle.json'} there and run "
+            "'sudo subspace-setup irc-server add <file>' (the host installer does this with --irc-server).")
 
 
 def isolation_args(answers):

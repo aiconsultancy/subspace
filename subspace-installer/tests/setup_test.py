@@ -5,7 +5,9 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 
 import argparse
 import base64
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -175,6 +177,124 @@ class SetupInputsTests(unittest.TestCase):
         with self.assertRaisesRegex(fleet_setup.SetupError, "--crew-codex-model must be a model ID"):
             answers_for([*base, "--crew-codex-model", "gpt 6"])
 
+    def officers(self, config, secrets):
+        cfg = validate(config, secrets, check_files=False)
+        return [(person["harness"]["family"], person["harness"]["model"], person["harness"]["effort"])
+                for person in cfg["members"]]
+
+    def rerun(self, answers, config, *argv):
+        fleet_setup.save_answers(answers)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", *argv])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            return fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+
+    def test_a_new_fleet_runs_its_officers_on_the_default_models(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
+        answers, _, config, secrets, _ = self.generate(argv)
+        self.assertNotIn("harness", config)
+        self.assertEqual(answers["officerModels"], {"captain": {}, "rearAdmiral": {}})
+        self.assertEqual(self.officers(config, secrets), [("claude", "claude-fable-5-2", "high"),
+                                                          ("claude", "claude-opus-5-5", "xhigh"),
+                                                          ("claude", "claude-opus-5-5", "xhigh")])
+
+    def test_officer_models_are_set_by_option_and_kept_on_a_rerun(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        answers, members, config, secrets, _ = self.generate(
+            [*base, "--captain-model", "gpt-6.2-sol", "--captain-effort", "high", "--rear-admiral-effort", "max"])
+        self.assertEqual(config["harness"], {"captain": {"model": "gpt-6.2-sol", "family": "codex", "effort": "high"},
+                                             "rearAdmiral": {"effort": "max"}})
+        self.assertEqual(self.officers(config, secrets), [("claude", "claude-fable-5-2", "max"),
+                                                          ("codex", "gpt-6.2-sol", "high")])
+        # A rerun without the options keeps them, with what else fleet.json's harness holds.
+        config["harness"]["type"] = "opencode"
+        again = self.rerun(answers, config)
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"], config["harness"])
+        # A new model starts at its provider's default effort unless the run names one.
+        again = self.rerun(again, rebuilt, "--captain-model", "claude-sonnet-5-5")
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"]["captain"], {"model": "claude-sonnet-5-5", "family": "claude"})
+        self.assertEqual(self.officers(rebuilt, secrets)[1], ("claude", "claude-sonnet-5-5", None))
+        # '' returns to the default, even over a model set in fleet.json by hand.
+        rebuilt["harness"]["rearAdmiral"]["model"] = "claude-opus-5-5"
+        again = self.rerun(again, rebuilt, "--captain-model", "", "--rear-admiral-model", "")
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"], {"type": "opencode"})
+        self.assertEqual(self.officers(rebuilt, secrets), [("claude", "claude-fable-5-2", "high"),
+                                                           ("claude", "claude-opus-5-5", "xhigh")])
+        for option, value, message in (("--captain-effort", "extreme", "--captain-effort must be one of low, medium"),
+                                       ("--rear-admiral-model", "claude-opus-5-5#xhigh", "--rear-admiral-model must be "
+                                        "a model ID")):
+            with self.subTest(option), self.assertRaisesRegex(fleet_setup.SetupError, re.escape(message)):
+                answers_for([*base, option, value])
+        # The fleet installer checks the effort against the model.
+        answers, _, config, secrets, _ = self.generate([*base, "--captain-model", "gpt-5.4", "--captain-effort", "max"])
+        with self.assertRaisesRegex(runtime.Invalid, "'max' is not available for gpt-5.4"):
+            self.officers(config, secrets)
+
+    def test_an_empty_model_returns_one_role_to_its_default_over_a_fleet_wide_one(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--crew-codex-model", "gpt-6.2-sol"]
+        answers, members, config, secrets, _ = self.generate(base)
+        config["harness"] = {"type": "opencode", "family": "codex", "model": "gpt-6.2-sol"}
+        self.assertEqual(self.officers(config, secrets), [("codex", "gpt-6.2-sol", None)] * 2)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            again = self.rerun(answers, config, "--captain-model", "")
+            rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        # The captains return to their default; the rear admiral and the crew keep what they ran.
+        self.assertEqual(self.officers(rebuilt, secrets), [("codex", "gpt-6.2-sol", None),
+                                                           ("claude", "claude-opus-5-5", "xhigh")])
+        self.assertEqual(rebuilt["harness"], {"type": "opencode",
+                                              "rearAdmiral": {"family": "codex", "model": "gpt-6.2-sol"}})
+        self.assertEqual(rebuilt["crew"], config["crew"])
+        self.assertIn("fleet-wide harness family codex, model gpt-6.2-sol no longer applies to the captains; the "
+                      "rear admiral keeps it, now as harness.rearAdmiral.", output.getvalue())
+        # Nothing moves again on a later run.
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            fleet_setup.fleet_config(self.rerun(again, rebuilt), members, "a" * 40)
+        self.assertNotIn("fleet-wide", output.getvalue())
+        # An effort alone: the rear admiral keeps the model at its default effort, and the captains keep both.
+        config["harness"] = {"model": "claude-fable-5-2", "effort": "max"}
+        again = self.rerun(answers, config, "--rear-admiral-effort", "")
+        with contextlib.redirect_stdout(io.StringIO()):
+            rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(self.officers(rebuilt, secrets), [("claude", "claude-fable-5-2", "high"),
+                                                           ("claude", "claude-fable-5-2", "max")])
+
+    def test_a_fleet_set_up_before_the_role_defaults_keeps_its_model_until_it_chooses(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        answers, members, config, secrets, _ = self.generate(base)
+        del answers["officerModels"]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            again = self.rerun(answers, config)
+        self.assertIn("officers defaulted to gpt-5.4, so they keep it", output.getvalue())
+        self.assertIn("subspace-setup --captain-model '' --rear-admiral-model ''", output.getvalue())
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(self.officers(rebuilt, secrets), [("codex", "gpt-5.4", None), ("codex", "gpt-5.4", None)])
+        # Its later runs keep it quietly, and the documented command moves it to the defaults.
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            kept = self.rerun(again, rebuilt)
+        self.assertEqual((output.getvalue(), kept["officerModels"]), ("", again["officerModels"]))
+        moved = self.rerun(kept, rebuilt, "--captain-model", "", "--rear-admiral-model", "")
+        # Naming both models on the first run moves it without the note.
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            direct = self.rerun(answers, config, "--captain-model", "", "--rear-admiral-model", "")
+        self.assertEqual((output.getvalue(), direct["officerModels"]), ("", moved["officerModels"]))
+        self.assertEqual(self.officers(fleet_setup.fleet_config(moved, members, "a" * 40), secrets),
+                         [("claude", "claude-fable-5-2", "high"), ("claude", "claude-opus-5-5", "xhigh")])
+        # A fleet whose fleet.json already names the officers' model keeps that instead.
+        config["harness"] = {"type": "opencode", "family": "codex", "model": "gpt-6.2-sol"}
+        again = self.rerun(answers, config)
+        self.assertEqual(again["officerModels"], {"captain": {}, "rearAdmiral": {}})
+        self.assertEqual(self.officers(fleet_setup.fleet_config(again, members, "a" * 40), secrets),
+                         [("codex", "gpt-6.2-sol", None), ("codex", "gpt-6.2-sol", None)])
+
     def test_repositories_answer_fills_the_fleet_list_and_gives_captains_crew(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
                 "--repositories", "https://github.com/example/project.git, library=https://github.com/example/lib.git"]
@@ -203,6 +323,35 @@ class SetupInputsTests(unittest.TestCase):
         renamed = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
         self.assertEqual(renamed["repositories"], [{"id": "shared", "url": "https://github.com/example/lib.git",
                                                     "private": True}])
+
+    def test_private_repositories_and_github_apps_added_by_hand_survive_a_rerun(self):
+        # The documented way to add private repositories after the first install: edit fleet.json, then re-run
+        # setup without --repositories. Nothing is dropped or reordered.
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
+        answers, members, config, _, _ = self.generate(argv)
+        apps = {member["id"]: {"appId": index + 1, "installationId": index + 10, "clientId": f"client-{index}",
+                               "botLogin": f"example-{member['id']}[bot]", "botId": index + 100}
+                for index, member in enumerate(members)}
+        for person in [config["rearAdmiral"], *config["captains"]]:
+            person["githubApp"] = apps[person["id"]]
+        config["repositories"] = [
+            {"id": "service", "url": "https://github.com/example/service.git", "private": True},
+            {"id": "library", "url": "https://github.com/example/library.git", "private": True},
+            {"id": "docs", "url": "https://github.com/example/docs.git"},
+        ]
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        fleet_setup.save_answers(answers)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            again = fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+        rerun = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rerun["repositories"], config["repositories"])
+        self.assertEqual([person.get("githubApp") for person in [rerun["rearAdmiral"], *rerun["captains"]]],
+                         [apps["atlas"], apps["orion"], apps["vega"]])
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, again["slug"], None), members,
+                                            again["admin"])
+        cfg = validate(rerun, secrets, check_files=False)
+        self.assertEqual([name for name, repo in cfg["repositories"].items() if repo["private"]], ["service", "library"])
 
     def test_a_rejected_repository_url_is_not_echoed(self):
         fixture = "fixture-not-a-secret"
@@ -337,10 +486,12 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual((registration["starbaseChannel"], registration["commandChannel"]),
                          ("#fleet-two-starbase", f"#fleet-two-{COMMAND_SUFFIX}"))
         self.assertEqual(registration["rearAdmiral"], {
-            "name": "Nova", "ircNick": "fleet-two-nova", "defaultModel": "gpt-5.4",
+            "name": "Nova", "ircNick": "fleet-two-nova", "defaultModel": "claude-fable-5-2",
             "serviceTokenClientId": "fleet-two-nova@agents.example.com"})
-        self.assertEqual([(row["ship"], row["channel"], row["ircNick"]) for row in registration["captains"]],
-                         [("Lyra", "#fleet-two-lyra", "fleet-two-lyra"), ("Vega", "#fleet-two-vega", "fleet-two-vega")])
+        self.assertEqual([(row["ship"], row["channel"], row["ircNick"], row["defaultModel"])
+                          for row in registration["captains"]],
+                         [("Lyra", "#fleet-two-lyra", "fleet-two-lyra", "claude-opus-5-5"),
+                          ("Vega", "#fleet-two-vega", "fleet-two-vega", "claude-opus-5-5")])
         self.assertNotIn("Password", fleet_setup.json.dumps(registration))
         # Its Fleet API is off, so the bundle says it has no address.
         self.assertIsNone(registration["fleetApiUrl"])
@@ -935,8 +1086,8 @@ class ExternalDatabaseTests(unittest.TestCase):
                 "--database-url-file", self.url_file, "--migrate"]
         checks = []
 
-        def refuse(config_path, dry_run=False, secrets_dir=None, strict=False):
-            checks.append((dry_run, strict, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
+        def refuse(config_path, dry_run=False, secrets_dir=None):
+            checks.append((dry_run, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
             raise fleet_setup.SetupError("Supply slack-app-token in captain orion's secrets directory.")
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
                 patch.object(fleet_setup, "installer", side_effect=refuse), \
@@ -945,7 +1096,7 @@ class ExternalDatabaseTests(unittest.TestCase):
                 patch.object(fleet_setup, "say"), \
                 self.assertRaisesRegex(fleet_setup.SetupError, "slack-app-token"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
-        self.assertEqual(checks, [(True, True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
+        self.assertEqual(checks, [(True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
         run.assert_not_called()
         api_up.assert_not_called()
         compose.assert_not_called()
@@ -1737,6 +1888,112 @@ class HostedApiSetupTests(unittest.TestCase):
         self.assertIn(runtime.ENROLMENT_TOKEN, secrets)
         # The dry run left nothing on the VM: the token went only to its private copy.
         self.assertFalse((fleet_setup.INPUTS / "fleet.secrets").exists())
+
+
+class FirstFleetTests(unittest.TestCase):
+    """What the first real fleet install found: the Fleet API, the fleet's record, IRC wording and stdin."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        fleet_setup.INPUTS = self.root / "inputs"
+        fleet_setup.INPUTS.mkdir(mode=0o700)
+
+    def checkout(self, relative):
+        source = self.root / "stargate"
+        (source / relative).parent.mkdir(parents=True, exist_ok=True)
+        (source / relative).write_text("export {};\n")
+        return source
+
+    def test_the_fleet_api_is_found_where_each_supported_stargate_keeps_it(self):
+        # v0.40 to v0.43 keep it in src/api/v1; v0.44, v0.45 and commit 5630a5c in src/observability/dashboard/api/v1.
+        for relative in ("src/api/v1/server.ts", "src/observability/dashboard/api/v1/server.ts",
+                         "src/somewhere/else/api/v1/server.ts"):
+            with self.subTest(relative):
+                source = self.checkout(relative)
+                self.assertEqual(fleet_setup.fleet_api_server(source), relative)
+                output = []
+                with patch.object(fleet_setup, "say", side_effect=output.append):
+                    self.assertTrue(fleet_setup.confirm_fleet_api(None, source))
+                    self.assertTrue(fleet_setup.confirm_fleet_api(True, source))
+                self.assertIn(f"Stargate's Fleet API is in {relative}; it is on", output)
+                shutil.rmtree(source)
+        source = self.checkout("src/main.ts")
+        self.assertIsNone(fleet_setup.fleet_api_server(source))
+        self.assertIsNone(fleet_setup.fleet_api_server(None))
+        # Asked for but missing stops setup, naming what it looked for; auto but missing says so.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "--stargate-api on, but the installed Stargate has no "
+                                    "Fleet API in .*src/observability/dashboard/api/v1/server.ts"):
+            fleet_setup.confirm_fleet_api(True, source)
+        output = []
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            self.assertFalse(fleet_setup.confirm_fleet_api(None, source))
+        self.assertTrue(output[0].startswith("NOTE: the installed Stargate has no Fleet API"))
+        self.assertIn("records no Fleet API address", output[0])
+
+    def test_the_fleet_record_names_the_vm_and_its_fleet_api(self):
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Orion", "--vm-host", "10.0.0.5"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            answers = fleet_setup.gather(args, {})
+        self.assertEqual(answers["vmHost"], "10.0.0.5")
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            kept = fleet_setup.gather(fleet_setup.parse_args(["--non-interactive", "--operator", "operator"]), answers)
+            self.assertEqual(kept["vmHost"], "10.0.0.5")
+            cleared = fleet_setup.gather(fleet_setup.parse_args(["--non-interactive", "--operator", "operator",
+                                                                 "--vm-host", ""]), answers)
+            self.assertNotIn("vmHost", cleared)
+            with self.assertRaisesRegex(fleet_setup.SetupError, "--vm-host must be a DNS name"):
+                fleet_setup.gather(fleet_setup.parse_args(["--non-interactive", "--operator", "operator",
+                                                           "--vm-host", "user@host"]), answers)
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        api_block = {"url": "http://127.0.0.1:3000", "initiatives": [], "vmHost": answers["vmHost"]}
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, api_block, stargate_api=True)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"], "header.payload.signature")
+        fields = runtime.fleet_records.fleet_fields(validate(config, secrets, check_files=False))
+        self.assertEqual((fields["vmHost"], fields["fleetApiUrl"]), ("10.0.0.5", "http://127.0.0.1:8484"))
+        # The host installers pass the --remote host to setup.
+        root = Path(fleet_setup.HERE).parents[1]
+        self.assertIn('if [ "$KIND" = ssh ]; then passthrough+=(--vm-host "${HOST#*@}"); fi',
+                      (root / "install.sh").read_text())
+        self.assertIn("$Passthrough.AddRange([string[]]@('--vm-host', ($targetEnv.HOST -split '@', 2)[-1]))",
+                      (root / "install.ps1").read_text())
+
+    def test_a_certificate_fleet_is_not_told_to_copy_a_password_bundle(self):
+        answers = {"ircAuth": "certificate", "ircHost": "irc.example.com"}
+        line = fleet_setup.remote_irc_next_step(answers, None)
+        self.assertNotIn("irc-bundle.json", line)
+        self.assertIn("/NS lines printed above", line)
+        self.assertIn("registered and checked", fleet_setup.remote_irc_next_step(answers, ("ircop", "x", None)))
+        self.assertIn("irc-bundle.json", fleet_setup.remote_irc_next_step({"ircAuth": "password"}, None))
+
+    def test_docker_compose_never_reads_setups_standard_input(self):
+        with patch.object(fleet_setup.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "x.y.z")) \
+                as ran:
+            fleet_setup.compose("exec", "-T", "api", "bun", "run", "auth:dev", capture=True)
+            self.assertIs(ran.call_args.kwargs["stdin"], subprocess.DEVNULL)
+            fleet_setup.compose("exec", "-T", "api", "psql", input_text="SELECT 1;")
+            self.assertIsNone(ran.call_args.kwargs["stdin"])
+            self.assertEqual(ran.call_args.kwargs["input"], "SELECT 1;")
+            fleet_setup.run("true")
+            self.assertIsNone(ran.call_args.kwargs["stdin"])
+        # As 'subspace-setup token' runs it: a script piped after it over SSH stays unread.
+        script = self.root / "rest.sh"
+        script.write_text("echo rest\n")
+        fake = self.root / "docker"
+        fake.write_text("#!/bin/sh\ncat > /dev/null; echo header.payload.signature\n")
+        fake.chmod(0o755)
+        with open(script) as stdin, patch.dict(os.environ, {"PATH": f"{self.root}:{os.environ['PATH']}"}):
+            saved = os.dup(0)
+            os.dup2(stdin.fileno(), 0)
+            try:
+                fleet_setup.compose("exec", "-T", "api", "bun", "run", "auth:dev", capture=True)
+                self.assertEqual(sys.stdin.read(), "echo rest\n")
+            finally:
+                os.dup2(saved, 0)
+                os.close(saved)
 
 
 class OutboundTests(unittest.TestCase):
