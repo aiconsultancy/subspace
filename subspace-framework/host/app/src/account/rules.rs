@@ -1,38 +1,54 @@
 //! What the account says and when the app asks for sign-in, from its
-//! status alone, so both are tested without a provider.
+//! status and session alone, so both are tested without a provider.
 
 use subspace_account::Error;
 
 use super::{Retry, Status};
 
-/// Whether the person has no usable session: `status` now and the status
-/// before the sign-in in progress, if one is, how the last failure would be
-/// retried, and whether an account is known. A saved session that cannot
-/// be renewed because the service, the network or the keychain is out of
-/// reach still counts as one, so the app opens with what it has.
-pub(super) fn needs_session(
-    (status, before): (Status, Status),
-    retry: Retry,
-    signed_in: bool,
-) -> bool {
-    match status {
-        Status::Starting | Status::Waiting | Status::Completing => settled_need(before, signed_in),
-        Status::Failed(_) if matches!(retry, Retry::SignIn) => {
-            settled_need(before, signed_in) || settled_need(status, signed_in)
+/// What the app knows of the person's session, apart from the outcome of
+/// the last sign-in attempt, which never changes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Session {
+    /// Still restoring the saved session at start-up.
+    Unknown,
+    /// Signed in, restored or renewed.
+    Usable,
+    /// A saved session that could not be checked because the service, the
+    /// network or the keychain was out of reach: it still lets the person in.
+    Unchecked,
+    /// None: none was saved, the person signed out, or it can no longer be
+    /// renewed.
+    None,
+}
+
+/// The session after `result` of the work `retry` names. Only restoring or
+/// renewing a saved session, signing in and signing out change it; a
+/// failed, timed-out or cancelled sign-in attempt leaves it as it was.
+pub(super) fn after(session: Session, retry: Retry, result: Result<bool, Error>) -> Session {
+    match (retry, result) {
+        (_, Ok(true)) => Session::Usable,
+        (_, Ok(false)) => Session::None,
+        (
+            Retry::Restore | Retry::Reconnect,
+            Err(Error::Offline | Error::Keychain | Error::Service),
+        ) if session != Session::None => Session::Unchecked,
+        (Retry::Restore | Retry::Reconnect, Err(Error::SignInRequired | Error::InvalidReply)) => {
+            Session::None
         }
-        _ => settled_need(status, signed_in),
+        (Retry::Restore, Err(_)) if session == Session::Unknown => Session::None,
+        _ => session,
     }
 }
 
-/// [`needs_session`] for a status that is not a sign-in in progress.
-fn settled_need(status: Status, signed_in: bool) -> bool {
-    match status {
-        Status::Idle => !signed_in,
-        Status::Failed(Error::SignInRequired | Error::InvalidReply) => true,
-        Status::Failed(Error::Offline | Error::Keychain | Error::Service) => false,
-        Status::Failed(_) => !signed_in,
-        _ => false,
-    }
+/// Whether the app asks for sign-in: no session, and sign-in available.
+pub(super) fn asks(session: Session, status: Status) -> bool {
+    session == Session::None && status != Status::Unavailable
+}
+
+/// Whether routes from outside the window wait: while it asks for sign-in,
+/// or may yet once the saved session is restored.
+pub(super) fn holds(session: Session, status: Status) -> bool {
+    matches!(session, Session::Unknown | Session::None) && status != Status::Unavailable
 }
 
 /// The account's heading: the organisation's account, else the provider's.

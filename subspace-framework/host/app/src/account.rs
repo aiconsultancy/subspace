@@ -11,8 +11,9 @@ mod rules;
 pub(crate) use bootstrap::init;
 use lease::LeaseGate;
 pub use lease::{AccountSession, AccountTokenSource};
-use rules::needs_session;
+pub(crate) use rules::Session;
 pub(crate) use rules::{account_label, sign_in_label, status_text};
+use rules::{after, asks, holds};
 
 /// How an app adds a native account: its identity provider and the trusted
 /// adapter it hands the token source to before Spaces start.
@@ -61,6 +62,8 @@ pub(crate) struct NativeAccount {
     pub status: Status,
     before_sign_in: Status,
     retry: Retry,
+    /// The person's session, apart from the last sign-in attempt's outcome.
+    pub session: Session,
     cancel: Option<Cancel>,
     url: Option<String>,
     /// The user code to confirm in the browser, during device authorisation.
@@ -98,13 +101,13 @@ pub fn account_session(cx: &App) -> Option<AccountSession> {
 impl NativeAccount {
     /// Whether the shell asks for sign-in over the main window now.
     pub(crate) fn asks_for_sign_in(&self) -> bool {
-        self.required
-            && self.provider.browser
-            && needs_session(
-                (self.status, self.before_sign_in),
-                self.retry,
-                self.account.is_some(),
-            )
+        self.required && self.provider.browser && asks(self.session, self.status)
+    }
+
+    /// Whether a notification or another route from outside the window
+    /// waits until sign-in: while the shell asks for it, or may yet.
+    pub(crate) fn holds_routes(&self) -> bool {
+        self.required && self.provider.browser && holds(self.session, self.status)
     }
 
     pub fn busy(&self) -> bool {
@@ -283,6 +286,11 @@ impl NativeAccount {
         self.url = None;
         self.code = None;
         self.reopen_leases(result.is_ok());
+        self.session = after(
+            self.session,
+            self.retry,
+            result.as_ref().map(Option::is_some).map_err(|error| *error),
+        );
         match result {
             Ok(account) => {
                 self.account = account;

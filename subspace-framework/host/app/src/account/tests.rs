@@ -1,6 +1,6 @@
 use super::{
     AccountTokenSource, LeaseGate, NativeAccount, Retry, Shared, Status, account_session,
-    rules::needs_session,
+    rules::{after, asks},
 };
 use gpui_kit::{AppContext as _, Entity, TestAppContext};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -93,6 +93,7 @@ fn signed_in(
         status: Status::Idle,
         before_sign_in: Status::Idle,
         retry: Retry::Restore,
+        session: super::Session::Usable,
         cancel: None,
         url: None,
         code: None,
@@ -167,54 +168,88 @@ fn signing_out_refuses_leases_until_the_account_is_gone(cx: &mut TestAppContext)
 }
 
 #[test]
-fn sign_in_is_asked_for_only_without_a_usable_session() {
-    use Status::{Completing, Failed, Idle, Refreshing, Starting, Unavailable, Waiting};
-    let asks = |status, before, retry, signed_in| needs_session((status, before), retry, signed_in);
-    // Start-up: restoring decides first, then no saved session asks.
-    assert!(!asks(Refreshing, Idle, Retry::Restore, false));
-    assert!(asks(Idle, Idle, Retry::Restore, false));
-    assert!(!asks(Idle, Idle, Retry::Restore, true));
-    // A saved session the service, network or keychain cannot renew now
-    // lets the person in.
+fn only_restoring_renewing_signing_in_and_out_change_the_session() {
+    use super::Session::{None, Unchecked, Unknown, Usable};
+    // Start-up: a restored session, none saved, or one that cannot be
+    // checked because the service, network or keychain is out of reach.
+    assert_eq!(after(Unknown, Retry::Restore, Ok(true)), Usable);
+    assert_eq!(after(Unknown, Retry::Restore, Ok(false)), None);
     for error in [Error::Offline, Error::Service, Error::Keychain] {
-        assert!(
-            !asks(Failed(error), Idle, Retry::Restore, false),
+        assert_eq!(
+            after(Unknown, Retry::Restore, Err(error)),
+            Unchecked,
             "{error:?}"
         );
-        assert!(
-            !asks(Failed(error), Idle, Retry::Reconnect, true),
+        assert_eq!(
+            after(Usable, Retry::Reconnect, Err(error)),
+            Unchecked,
+            "{error:?}"
+        );
+        // Nothing saved stays nothing saved.
+        assert_eq!(after(None, Retry::Restore, Err(error)), None, "{error:?}");
+    }
+    // A session that can no longer be renewed, or a sign-out, ends it.
+    assert_eq!(
+        after(Usable, Retry::Reconnect, Err(Error::SignInRequired)),
+        None
+    );
+    assert_eq!(
+        after(Unchecked, Retry::Restore, Err(Error::InvalidReply)),
+        None
+    );
+    assert_eq!(after(Usable, Retry::SignOut, Ok(false)), None);
+    // A sign-in attempt that fails, times out or is cancelled changes
+    // nothing: it never lets anyone in.
+    for error in [
+        Error::Offline,
+        Error::TimedOut,
+        Error::Cancelled,
+        Error::Service,
+    ] {
+        assert_eq!(after(None, Retry::SignIn, Err(error)), None, "{error:?}");
+        assert_eq!(
+            after(Usable, Retry::SignIn, Err(error)),
+            Usable,
             "{error:?}"
         );
     }
-    // A session that ended asks again: signed out, or expired for good.
-    assert!(asks(
-        Failed(Error::SignInRequired),
-        Idle,
-        Retry::Reconnect,
-        true
-    ));
-    assert!(asks(
-        Failed(Error::InvalidReply),
-        Idle,
-        Retry::Restore,
-        false
-    ));
-    // The sign-in it asks for keeps asking until it succeeds, a failure
-    // included; a signed-in person switching account is never asked.
-    for status in [Starting, Waiting, Completing] {
-        assert!(asks(status, Idle, Retry::SignIn, false));
-        assert!(asks(
-            status,
-            Failed(Error::SignInRequired),
-            Retry::SignIn,
-            true
-        ));
-        assert!(!asks(status, Idle, Retry::SignIn, true));
+    assert_eq!(after(None, Retry::SignIn, Ok(true)), Usable);
+    // Only no session asks, and only while sign-in is available.
+    assert!(asks(None, Status::Idle));
+    assert!(asks(None, Status::Waiting));
+    assert!(!asks(None, Status::Unavailable));
+    for session in [Unknown, Usable, Unchecked] {
+        assert!(!asks(session, Status::Idle), "{session:?}");
     }
-    assert!(asks(Failed(Error::Offline), Idle, Retry::SignIn, false));
-    assert!(asks(Failed(Error::TimedOut), Idle, Retry::SignIn, false));
-    assert!(!asks(Failed(Error::TimedOut), Idle, Retry::SignIn, true));
-    assert!(!asks(Unavailable, Idle, Retry::Restore, false));
+}
+
+/// No session, a sign-in that cannot reach the service, Retry, then
+/// Cancel: the app asks throughout.
+#[gpui_kit::test]
+fn a_failed_sign_in_retried_and_cancelled_never_lets_anyone_in(cx: &mut TestAppContext) {
+    let (entity, _) = signed_in(Some(Error::Offline), cx);
+    entity.update(cx, |account, cx| {
+        account.account = Option::None;
+        account.session = super::Session::None;
+        account.required = true;
+        account.provider.browser = true;
+        account.start(cx);
+    });
+    let asks =
+        |cx: &mut TestAppContext| entity.read_with(cx, |account, _| account.asks_for_sign_in());
+    assert!(asks(cx), "signing in");
+    cx.run_until_parked();
+    assert_eq!(
+        entity.read_with(cx, |account, _| account.status),
+        Status::Failed(Error::Offline)
+    );
+    assert!(asks(cx), "the attempt failed");
+    entity.update(cx, |account, cx| account.retry(cx));
+    assert!(asks(cx), "retrying");
+    entity.update(cx, |account, cx| account.cancel(cx));
+    assert!(asks(cx), "cancelled");
+    cx.run_until_parked();
+    assert!(asks(cx), "still no session");
 }
 
 #[gpui_kit::test]
