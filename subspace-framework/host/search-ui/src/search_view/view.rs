@@ -41,6 +41,7 @@ pub(super) fn bind_keys(cx: &mut App) {
 
 impl Render for SearchView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.drop_hidden();
         let t = Tokens::current(cx);
         v_flex()
             .id("full-text-search")

@@ -71,6 +71,16 @@ impl Catalog {
         self.known == Some(self.scope)
     }
 
+    /// The account scope and verified user the memberships were read for,
+    /// while the latest read succeeded for the current scope; so a reader
+    /// can tell they belong to the account it serves.
+    pub fn verified_for(&self) -> Option<(Option<u64>, &str)> {
+        if !self.memberships_known() {
+            return None;
+        }
+        Some((self.scope, self.actor.as_deref()?))
+    }
+
     /// The caller's initiatives, in the API's order.
     // qual:api
     pub fn memberships(&self) -> &[MemberInitiative] {
@@ -391,6 +401,20 @@ mod tests {
         catalog.replace(Some("first".into()), Ok(resolved));
         assert_eq!(catalog.next_fleet_retry(), None);
         assert_eq!(catalog.fleet_failures, 0, "the next failure starts again");
+    }
+
+    #[test]
+    fn the_memberships_name_the_account_they_were_read_for() {
+        let mut catalog = Catalog::default();
+        assert_eq!(catalog.verified_for(), None);
+        catalog.fence_scope(Some(7));
+        let entries = serde_json::from_str(r##"[{"id":"a","name":"A","channels":"#a"}]"##).unwrap();
+        catalog.replace(Some("user-ada".into()), Ok(entries));
+        assert_eq!(catalog.verified_for(), Some((Some(7), "user-ada")));
+        catalog.fence_scope(Some(8));
+        assert_eq!(catalog.verified_for(), None, "another account's scope");
+        catalog.replace(Some("user-ada".into()), Err(Error::Network));
+        assert_eq!(catalog.verified_for(), None, "a failed read is not known");
     }
 
     #[test]

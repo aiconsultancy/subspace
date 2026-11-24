@@ -18,7 +18,7 @@ pub(super) fn sql(
         crate::now().into(),
     ];
     push_facets(&mut sql, &mut values, filters);
-    sql.push_str(" ORDER BY bm25(text_index,5.0,1.0,2.0),d.id LIMIT 101");
+    sql.push_str(" ORDER BY bm25(text_index,5.0,1.0,2.0),d.id");
     (sql, values)
 }
 

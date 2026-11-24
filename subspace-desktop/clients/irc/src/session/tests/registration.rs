@@ -17,13 +17,15 @@ fn nickname_fallback_allows_an_alternative_and_three_underscores() {
     for next in ["subspace2", "subspace2_", "subspace2__", "subspace2___"] {
         let retry = session.receive(rejected.clone(), now());
         assert_eq!(sent(&retry), [format!("NICK {next}")]);
-        assert!(retry.fatal.is_none());
+        assert!(retry.ending.is_none());
     }
     let exhausted = session.receive(rejected, now());
     assert!(exhausted.send.is_empty());
     assert_eq!(
-        exhausted.fatal.as_deref(),
-        Some("No IRC nickname was accepted. Nickname in use")
+        exhausted.ending,
+        Some(crate::session::Ending::Fatal(
+            "No IRC nickname was accepted. Nickname in use".into()
+        ))
     );
     assert!(!session.registered());
 }
@@ -154,6 +156,7 @@ fn chunks_long_sasl_payloads() {
         password: "p".repeat(98),
         password_file: None,
         external: false,
+        credential: None,
     });
     let mut session = Session::new(config, Carry::default());
     session.start(now());
@@ -176,6 +179,7 @@ fn sasl_external_and_failure_still_end_negotiation() {
         password: String::new(),
         password_file: None,
         external: true,
+        credential: None,
     });
     let mut session = Session::new(config, Carry::default());
     session.start(now());

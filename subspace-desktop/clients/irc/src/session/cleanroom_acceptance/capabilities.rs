@@ -13,6 +13,7 @@ fn with_sasl(username: &str, password: &str, external: bool) -> NetworkConfig {
             password: password.into(),
             password_file: None,
             external,
+            credential: None,
         }),
         ..base()
     }

@@ -93,6 +93,19 @@ impl SearchView {
         .detach();
     }
 
+    /// Drops results their board hides now, such as another account's,
+    /// including results that arrived before the account changed.
+    pub(super) fn drop_hidden(&mut self) {
+        let Some(response) = self.response.as_mut() else {
+            return;
+        };
+        let before = response.hits.len();
+        response.hits.retain(|hit| self.service.shows(hit));
+        if response.hits.len() != before {
+            self.selected = None;
+        }
+    }
+
     pub(super) fn open_result(
         &mut self,
         index: usize,

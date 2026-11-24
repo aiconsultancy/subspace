@@ -17,6 +17,12 @@ pub struct Sasl {
     pub password_file: Option<std::path::PathBuf>,
     #[serde(default)]
     pub external: bool,
+    /// Where to fetch the PLAIN login at each connect when there is neither
+    /// a password nor a password file, such as a short-lived one another
+    /// service issues. Set by the owner, never read from or written to the
+    /// settings file.
+    #[serde(skip)]
+    pub credential: Option<super::CredentialSource>,
 }
 
 /// One network from `networks` in the Channels Space's settings file.

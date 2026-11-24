@@ -9910,6 +9910,7 @@ dependencies = [
  "subspace-framework",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

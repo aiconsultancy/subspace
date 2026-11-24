@@ -25,9 +25,11 @@ fleet's server is unknown, for example because its fleet could not be read,
 the initiative's autojoin stays off rather than using that default: the
 header says so and the Hub reads the memberships again, waiting 5 seconds at
 first and doubling the wait after each failure, up to 5 minutes. A TLS connection must
-verify certificates unless its host is loopback. When no connection matches,
-the header names the server to add in **Settings > Channels**; the desktop
-does not create connections, because IRC needs that server's SASL account.
+verify certificates unless its host is loopback. When the API vouches for
+a fleet's server, the signed-in account brings the connection to it itself
+(see [Networks from your account](#networks-from-your-account)).
+When no connection matches, as with an API that does not, the header names
+the server to add in **Settings > Channels**.
 Other IRC connections never receive initiative channel names. Capture can
 use a numeric loopback IRC address when the debug API is also a validated
 loopback fixture. The network task retains the selected list while it
@@ -35,6 +37,165 @@ reconnects. The board closes tabs retired by a switch and preserves cached
 message history and manually joined channels.
 
 See the [change record](changes/subspace-api-accounts/README.md).
+
+## Networks from your account
+
+With a person signed in, under any identity provider the build selects
+(`dev`, `workos` or `entra`), Channels keeps one network for each IRC
+server among their fleets that the Subspace API vouches for
+(`managed.rs`, `managed/`), so nobody types IRC settings. Only the
+Subspace API calls below are involved, so the provider makes no
+difference.
+
+### Which servers receive a login, and why
+
+The API is the only identity authority, and a login it issues is a
+password: whoever receives it can sign in as the person on the server it
+was issued for until it expires. So:
+
+- **One server per login.** `POST /api/v1/me/irc-credential` takes the
+  server's `host` and `port`, and the API issues a login valid on that host
+  alone, or 404 for a server it does not vouch for. Channels asks for each
+  server's login with that server's host and port, keeps it with that
+  server, and offers it only to the connection to that server. Nothing
+  obtained for one server is sent to another, so a server someone else
+  controls cannot replay what it receives against the real one.
+- **Only servers the API vouches for.** The servers come from the fleets
+  of the caller's initiatives (`GET /api/v1/me/initiatives`), each once by
+  host, port and TLS. Before a login can go to one, its host must be a DNS
+  name or an IP literal (no whitespace, control characters, `/`, `@` or
+  port) and its port 1 to 65535; a server that is not still serves
+  initiatives on a saved network as before, but gets no account network.
+  Each server is then asked for its login once (its probe): 404 gives that
+  server no network and leaves the others alone; a refusal or failure is
+  asked again with backoff.
+- **One form for every host comparison.** Hosts are compared in one form
+  on both sides: ASCII lower case, without a final dot or IPv6 brackets,
+  and an IP literal as Rust writes it. Everything that matched ignoring
+  ASCII case before still matches, such as a saved network named
+  `irc.example.com.` for a fleet on `irc.example.com`.
+- **Only the signed-in account's fleets.** The memberships must have been
+  read for the same account generation and verified user as the client
+  that asks (`Catalog::verified_for`); until they are, nothing is planned,
+  so after a switch the new account's login never reaches the previous
+  account's fleet servers. Memberships that could not be read are read
+  again at once and then with backoff.
+- **Never in clear to another computer.** A server counts over TLS, or
+  without TLS only when named as this computer, and the IRC client checks
+  the address it actually reached: without TLS a login is fetched only when
+  the connected peer is a loopback address, whatever the name resolved to.
+  A certificate the client cannot verify ends the connect before any login
+  is fetched or sent.
+
+### Signing in
+
+- **Who.** Once per sign-in, and again whenever the account changes, the
+  hub reads `GET /api/v1/me`
+  for the verified user ID and the `username`. Only a missing `username` or
+  a 404 settles that the account brings no networks; a refused (401, 403)
+  or failed read is tried again after 5 seconds, doubling up to 30 minutes
+  for a refusal and 5 minutes otherwise. An answer that arrives after the
+  account changed is dropped.
+- **The login.** Each network's SASL PLAIN login comes from its own
+  credential source (`subspace_client_irc::CredentialSource`, beside
+  `password` and `passwordFile`). The IRC runtime asks it at every connect
+  and reconnect, where it reads a password file, on a blocking thread,
+  while still answering **Disconnect**. The source offers that server's
+  login, kept in memory until a minute before it lapses, refuses one that
+  arrives already expired, and asks the API no sooner than 10 seconds after
+  its last request, or after a wait from 5 seconds doubling to 5 minutes
+  after a failure, so a server that keeps dropping the link does not cause
+  a request per reconnect. A login lasts from when its request was sent, on
+  the monotonic clock, for `expiresAt` less the API's own time in its
+  `Date` header and never more than the ten minutes the API gives every
+  login, so neither a local clock that runs fast or slow nor a `Date` that
+  runs behind lets it be used past its expiry. Without a usable `Date` it
+  lasts two minutes. A renewal that fails
+  keeps offering the held login while it has not lapsed. The lock that
+  guards a login is not held while the API answers. Once its account is
+  signed out or switched, a source refuses.
+- **On the wire.** The nick is the account the login names, and the SASL
+  username `account@device` in both PLAIN identities, as Ergo compares them
+  before it takes the device off. The password is an `IssuedPassword`,
+  never formatted, serialised or put in the network's configuration: the
+  session holds it for its one SASL exchange and drops it once sent,
+  checking at that moment that it has not lapsed and its account is still
+  signed in. SASL outcomes for such a login are told in fixed words, so a
+  server that echoes the login cannot put it in the transcript. It never
+  reaches `irc/config.json`, the keychain, the state file, a log or the UI.
+- **SASL must succeed.** A server that refuses the SASL exchange (902,
+  904 to 906) is left at once, and one that reaches registration (001)
+  without accepting it is sent `QUIT` before anything is joined; either way
+  the connection retries with its backoff, and the source drops the login
+  it offered. A password that expires during a session changes nothing; the
+  next reconnect asks again. When no login can be had, the connection shows
+  **Reconnecting in N s** with the reason, such as `Subspace API could not
+  be reached for an IRC sign-in`; nothing asks for a password.
+- **Device.** A random 16-digit hexadecimal device ID, made once and kept
+  in the state file under `irc.device`, so Ergo can replay to each device
+  what it missed. Nothing about the computer goes into it.
+
+### The networks
+
+- **Derived, never saved.** The hub derives the networks again when the
+  account, the memberships or the saved networks change, and runs them
+  after the saved ones; an unchanged network keeps its connection. They are
+  never written to `irc/config.json`, and sign-out removes them. They join
+  no channels of their own: choosing an initiative sets the autojoin of the
+  network on its fleet's server, as for any network.
+- **Ids no saved network can take.** An account network's id is
+  `@account.<person>.<server>`, 16 hexadecimal digits each of digests of
+  the API's stable user ID and the canonical endpoint, so it is the same on
+  every run and differs for every other person and server. Only a saved id
+  that starts with `@account.` is refused, when the settings load and in
+  Settings, and only an id of exactly that form counts as an account's;
+  other ids, `@work` among them, load and save as before.
+- **The account change fences its networks.** Before the hub serves a
+  queued tool call or takes the runtime's events, it compares the account
+  generation and, when it changed, forgets the account and stops its
+  networks at once. It never sends a command for an account network, or
+  takes an event from one, unless that network is derived for the account
+  still signed in, so nothing goes out as the previous account and a late
+  message cannot bring its conversation back or notify.
+- **History follows the account, and is never deleted for it.** Every
+  account network's lines stay in the store under its id. While its person
+  is not signed in, the network does not run, so none of its buffers is in
+  the list, and search leaves its lines out (`Service::set_hidden`, asked
+  while each search selects candidates, by related items and by reading a
+  result by its citation, and again before the Search view shows a result,
+  so results that arrived before the account changed are dropped too). A
+  line's account is read from its stored network ID alone, parsed exactly,
+  never from its channel's name. An account network that starts after the
+  restore at launch, as at every launch and after signing back in or
+  switching back, is held back from the runtime until its stored buffers
+  are read again and restored; it is then configured with its catch-up
+  anchors sent at once, before it can connect, so it catches up from where
+  each conversation left off.
+- **A saved network on the same server.** When a saved network connects to
+  the same host and port, whatever its TLS settings, it is kept and no
+  second connection is made. **Settings > Channels** offers **Use account
+  sign-in…** among its actions, which asks **Switch "name" to your
+  account?**; Switch checks again that it still connects to the account's
+  server and, on Save, the network and its saved passwords are removed, so
+  the account's network connects instead. A change of account or server
+  withdraws the question, and Save checks again, against the account the
+  hub has at that moment and the memberships read for that person, that the
+  account network for that server still exists: if they signed out,
+  another account signed in or the memberships cannot be confirmed, Save
+  stops and says why, and the saved network stays, even when the page has
+  not caught up with the change yet. Once a Save has applied the switch, it
+  no longer holds back a later Save. Keeping it is the simplest correct
+  choice: replacing it silently could drop a hand-made account the person
+  still uses, and two connections would put one person on one server twice.
+- **Settings.** **Settings > Channels** lists the account's networks under
+  **From your account**, read-only, and the others under **Saved
+  networks**: each server's fleets, `host:port · TLS · account` with the
+  account name the API issued, that they come from the signed-in account
+  and go on sign-out, and for a server that a saved network serves, which
+  one.
+- **NETT** issues no IRC credentials yet, so a NETT build brings none.
+
+See the [change record](changes/channels-managed-networks/README.md).
 
 ## Fleet roles
 
@@ -290,7 +451,9 @@ The `captainNotifications` switch is on by default. See
 [Notify ship captains](../spaces/irc/help.md#notify-ship-captains).
 
 Networks live in the board's own settings file, `irc/config.json` in the
-folder of Subspace's `config.json`. With the config file at
+folder of Subspace's `config.json`. The networks the signed-in account
+brings are not among them (see
+[Networks from your account](#networks-from-your-account)). With the config file at
 `~/.config/subspace/config.json`, it is `~/.config/subspace/irc/config.json`.
 The file's top-level object holds the IRC settings. Whether the board shows
 (`boards.irc`) stays in the main `config.json`. There are three ways to

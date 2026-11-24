@@ -81,7 +81,9 @@ board settings have their own files: web Spaces (`webBoards`), board choices
 and service settings stay in the config file. **Settings > Channels** is one: it
 edits IRC networks and highlight words, offers **Copy agent prompt** and
 **Show in Finder** for the IRC file, and applies saved networks without a
-restart. **Notify ship captains** is on by default and applies on Save. It
+restart. It lists the networks the signed-in account brings read-only, and
+never saves them ([Networks from your account](irc.md#networks-from-your-account)).
+**Notify ship captains** is on by default and applies on Save. It
 posts PR merge and deployment updates to matching initiative channels on
 the initiative's IRC connection while automatic board refresh is enabled. See [Channels](../spaces/irc/help.md#notify-ship-captains).
 

@@ -178,6 +178,13 @@ fn account_changed() {
     crate::nett::scope::forget_account();
 }
 
+/// The signed-in account's current generation, which changes with every
+/// sign-in, sign-out and account switch (and for NETT, organisation), as a
+/// client's lease records it. `None` without a native account.
+pub fn signed_in_generation() -> Option<u64> {
+    generation()
+}
+
 /// What a client's lease is bound to: the account, and for NETT also the
 /// selected organisation, so choosing another one retires every client.
 pub(crate) fn generation() -> Option<u64> {

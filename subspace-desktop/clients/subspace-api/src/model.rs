@@ -264,6 +264,10 @@ pub struct Me {
     pub user_id: String,
     pub kind: String,
     pub display_name: String,
+    /// The person's username, which is also their IRC account name. `None`
+    /// from an API that does not allocate usernames.
+    #[serde(default)]
+    pub username: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

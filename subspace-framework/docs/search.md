@@ -42,6 +42,18 @@ Each board has exactly one active scope (verified account or subscription).
 Selecting another scope hides the previous scope's retained records. All-board
 search combines those active scopes; it does not search every saved account.
 
+Within its scope, a board can also hide some records for a while without
+deleting them: `Service::set_hidden(board, rule)` takes a rule over a
+`Document`. Every search asks it while candidates are selected, so hidden
+records never take a visible one's place; `related_items` leaves them out
+before its limit; `read` and `read_fenced` answer nothing for them, so a
+citation cannot reach one; and `Service::shows(&hit)` asks it again for a
+result kept from an earlier search. The Search view drops results the rule
+hides before it shows them, so results that arrived before a change are hidden
+too. Only the board's own `records` and `groups` still return hidden records.
+Channels uses it to show the lines of networks that come from a signed-in
+account only while that account is signed in.
+
 Search covers only fetched, retained content. A miss does not prove that an item
 is absent from the service. Attachment contents and unfetched history are not
 indexed. Remote edits and access changes cannot be detected while offline.

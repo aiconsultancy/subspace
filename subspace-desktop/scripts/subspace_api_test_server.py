@@ -9,6 +9,7 @@ import hmac
 import json
 import queue
 import re
+import secrets
 import threading
 import uuid
 import struct
@@ -39,6 +40,8 @@ def person(name):
 
 
 ADA = person('Ada Fixture')
+# Ada's username, which is also her IRC account name.
+IRC_ACCOUNT = 'ada'
 GRACE = person('Grace Fixture')
 AGENT = dict(person('Orbit Fixture'), kind='agent')
 
@@ -1305,7 +1308,7 @@ class FixtureServer(ThreadingHTTPServer):
     request_queue_size = 128
 
     def __init__(self, port, access_jwt, fail_chat_uploads=None, updates_stream=True, change_after=None,
-                 decision_scenario='normal', fleet=False, fleet_api_url=None):
+                 decision_scenario='normal', fleet=False, fleet_api_url=None, irc_credential=False):
         if not access_jwt:
             raise ValueError('A non-empty fixture Access JWT is required.')
         self.access_jwt = access_jwt
@@ -1317,6 +1320,7 @@ class FixtureServer(ThreadingHTTPServer):
         self.change_after = change_after
         self.decision_scenario = decision_scenario
         self.fleet_api_url = fleet_api_url
+        self.irc_credential = irc_credential
         super().__init__(('127.0.0.1', port), Handler)
 
     def change_later(self, seconds, identifier='SUB-1'):
@@ -1409,6 +1413,30 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(f'event: {name}\ndata: {payload}\n\n'.encode())
         self.wfile.flush()
 
+    def irc_credential(self):
+        """A fictional short-lived IRC sign-in for one server, as an API with the feature issues one.
+
+        The body names the server, `{"host": ..., "port": ...}`. Only a server one of the person's
+        fleets uses is vouched for; any other, and every server without --irc-credential, is 404.
+        """
+        if not self.server.irc_credential:
+            raise Problem(404, 'Route not found.')
+        payload = self.read_json()
+        payload = payload if isinstance(payload, dict) else {}
+        host, port = payload.get('host'), payload.get('port')
+        if not isinstance(host, str) or not host or type(port) is not int or not 0 < port < 65536:
+            raise Problem(400, 'Name the IRC server with a host and a port.')
+        if (host.lower(), port) not in self.fleet_servers():
+            raise Problem(404, 'No IRC sign-in for that server.')
+        expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+        return 200, dict(account=IRC_ACCOUNT, password='sirc1.' + secrets.token_urlsafe(24),
+                         expiresAt=expires.isoformat(timespec='seconds').replace('+00:00', 'Z'))
+
+    def fleet_servers(self):
+        """The IRC servers the fixture person's fleets use, as (host, port)."""
+        initiatives = [fleet_initiative(self.server.fleet_api_url)] if self.server.fixture.fleet else []
+        return {(item['fleet']['ircHost'].lower(), item['fleet']['ircPort']) for item in initiatives}
+
     def route(self, method):
         url = urlsplit(self.path)
         path = unquote(url.path)
@@ -1424,7 +1452,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.decision_route(path, query)
         if method == 'GET' and path == '/api/v1/me':
             return 200, dict(userId=ADA['userId'], kind='human', displayName=ADA['displayName'],
-                             email='ada@example.test', agentName=None, agentRank=None, fleet=None, ship=None)
+                             username=IRC_ACCOUNT, email='ada@example.test', agentName=None, agentRank=None,
+                             fleet=None, ship=None)
+        if method == 'POST' and path == '/api/v1/me/irc-credential':
+            return self.irc_credential()
         if method == 'GET' and path == '/api/v1/me/initiatives':
             return 200, dict(items=[
                 dict(id='ca2aabe7-68bd-4e82-9b76-d577ddf987ac', name='Design Studio', channels='#design, #releases'),
@@ -1684,11 +1715,13 @@ def main():
                         help='Add the fictional FLT, NAV, MAP, WARP and RELAY projects and their issues, for web Space evidence.')
     parser.add_argument('--fleet-api-url', metavar='URL',
                         help="With --fleet, the aurora fleet's Fleet API address (default http://127.0.0.1:18484).")
+    parser.add_argument('--irc-credential', action='store_true',
+                        help='Issue fictional IRC sign-ins at POST /api/v1/me/irc-credential (404 without it).')
     args = parser.parse_args()
     with FixtureServer(args.port, args.access_jwt, fail_chat_uploads=args.fail_chat_uploads,
                        updates_stream=not args.no_updates_stream, change_after=args.change_after,
                        decision_scenario=args.decision_scenario, fleet=args.fleet,
-                       fleet_api_url=args.fleet_api_url) as server:
+                       fleet_api_url=args.fleet_api_url, irc_credential=args.irc_credential) as server:
         print(f'Subspace API fixture on {server.origin}', flush=True)
         print(f'SUBSPACE_API_URL={server.origin}/api', flush=True)
         server.serve_forever()

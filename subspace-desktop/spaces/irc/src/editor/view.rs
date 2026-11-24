@@ -12,9 +12,9 @@ use subspace_framework::dashboard::toggle::{switch, toggle_row};
 use subspace_framework::dashboard::{Tokens, reveal};
 use subspace_framework::lucide::IconName;
 
-use super::IrcSettings;
 use super::form::NetworkForm;
 use super::validate::parse_port;
+use super::{IrcSettings, account_view};
 
 pub(super) const AGENT_NOTE: &str = "A coding agent can add networks to the IRC settings file, irc/config.json, for you. The prompt names the file on this computer, its format, and how to keep passwords private.";
 const HIGHLIGHTS_NOTE: &str = "Words that mark a message as mentioning you on every network, besides your nick. Separate them with commas.";
@@ -39,7 +39,10 @@ fn list_page(editor: &IrcSettings, tokens: &Tokens, cx: &mut Context<IrcSettings
         .child(
             v_flex()
                 .gap_3()
-                .child(fields::heading("Networks", cx))
+                .child(fields::heading(
+                    account_view::saved_words(editor.account.shown()).0,
+                    cx,
+                ))
                 .child(network_list(editor, tokens, cx))
                 .child(
                     h_flex().child(
@@ -57,6 +60,7 @@ fn list_page(editor: &IrcSettings, tokens: &Tokens, cx: &mut Context<IrcSettings
                 )
                 .child(fields::note(tokens, APPLY_NOTE)),
         )
+        .children(account_view::section(editor, tokens, cx))
         .child(
             fields::form_field(
                 "Highlight words",
@@ -108,7 +112,8 @@ fn captain_notifications(
 
 fn network_list(editor: &IrcSettings, tokens: &Tokens, cx: &mut Context<IrcSettings>) -> Div {
     if editor.networks.is_empty() {
-        return fields::note(tokens, "No networks yet.");
+        let empty = account_view::saved_words(editor.account.shown()).1;
+        return fields::note(tokens, empty);
     }
     v_flex().gap_3().children(
         editor
@@ -128,6 +133,11 @@ fn network_row(
     let title = network.title(cx);
     let problem = editor.problems(key, cx).into_iter().next();
     let removing = editor.removing == Some(key);
+    let switching = editor.account.switching == Some(key);
+    let offer = (!removing && !switching)
+        .then(|| account_view::offer(editor, network, tokens, cx))
+        .flatten();
+    let switchable = offer.is_some();
     v_flex()
         .id(("irc-network", key))
         .test_support()
@@ -141,10 +151,15 @@ fn network_row(
         .children(problem.map(|problem| {
             fields::field_error(tokens, ("irc-network-problem", key), &problem.message)
         }))
+        .children(offer)
         .child(if removing {
             removal(&title, key, cx).into_any_element()
+        } else if switching {
+            account_view::confirmation((&title, key), editor.enabled, tokens, cx)
         } else {
-            row_actions(key, editor.enabled, cx).into_any_element()
+            row_actions(key, editor.enabled, cx)
+                .children(switchable.then(|| account_view::switch_button(key, editor.enabled, cx)))
+                .into_any_element()
         })
         .into_any_element()
 }

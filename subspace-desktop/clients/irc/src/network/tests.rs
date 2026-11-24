@@ -8,8 +8,9 @@ use super::{EventSink, NetCommand, backoff, run_with};
 use crate::connection::Timeouts;
 use crate::model::{Command, ConnectionStatus, Event, NetworkConfig, NetworkId};
 
-const WAIT: Duration = Duration::from_secs(5);
+pub(super) const WAIT: Duration = Duration::from_secs(5);
 
+mod credential;
 mod metadata;
 mod send_all;
 
@@ -61,7 +62,7 @@ fn backoff_doubles_up_to_a_minute() {
 
 /// A TLS network on a local listener that accepts and never answers, so
 /// the handshake hangs.
-async fn silent_server() -> (TcpListener, NetworkConfig) {
+pub(super) async fn silent_server() -> (TcpListener, NetworkConfig) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let config = serde_json::from_value(serde_json::json!({
@@ -73,7 +74,7 @@ async fn silent_server() -> (TcpListener, NetworkConfig) {
 }
 
 /// The first status reported after `seen` events that matches.
-async fn status(
+pub(super) async fn status(
     events: &EventSink,
     seen: &mut usize,
     matches: impl Fn(&ConnectionStatus) -> bool,

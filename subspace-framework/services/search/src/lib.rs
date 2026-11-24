@@ -5,6 +5,7 @@ mod database;
 mod deadline;
 mod fenced_read;
 mod files;
+mod hidden;
 mod limits;
 mod links;
 mod maintenance;

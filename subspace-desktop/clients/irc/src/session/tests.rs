@@ -18,6 +18,7 @@ mod metadata;
 mod reactions;
 mod registration;
 mod replies;
+mod sign_in;
 mod spelling;
 
 /// Everything Ergo 2.19 offers, as two `CAP LS 302` lines.
@@ -46,6 +47,7 @@ pub(super) fn config() -> NetworkConfig {
             password: "secret".into(),
             password_file: None,
             external: false,
+            credential: None,
         }),
         channels: vec!["#subspace".into()],
         auto_connect: true,
@@ -71,6 +73,7 @@ pub(super) fn feed(session: &mut Session, lines: &[&str]) -> Output {
         all.events.extend(out.events);
         all.updates.now.extend(out.updates.now);
         all.quit |= out.quit;
+        all.ending = all.ending.or(out.ending);
     }
     all
 }

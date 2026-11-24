@@ -25,6 +25,8 @@
 #   CAPTURE_NO_GH=1            no gh accounts, as for a user without the GitHub CLI
 #   CAPTURE_NO_UPDATES_STREAM=1   the Subspace API fixture has no live updates stream
 #   CAPTURE_DECISION_SCENARIO=<normal|missing|forbidden|unavailable>  Decisions fixture
+#   CAPTURE_IRC_CREDENTIAL=1   the Subspace API fixture issues fictional IRC sign-ins, so Channels
+#                              keeps a network for each server the fixture's fleets use
 #   CAPTURE_CHANGE_AFTER=<s>   the fixture retitles SUB-1 after <s> seconds, as a change elsewhere
 #   CAPTURE_FLEET=1            the fixture adds the neutral FLT project and the demo world's NAV, MAP,
 #                              WARP and RELAY issues for web Space evidence
@@ -142,6 +144,7 @@ api_args=(--port 0 --access-jwt fixture-access)
 if [ -n "${CAPTURE_NO_UPDATES_STREAM:-}" ]; then api_args+=(--no-updates-stream); fi
 if [ -n "${CAPTURE_CHANGE_AFTER:-}" ]; then api_args+=(--change-after "$CAPTURE_CHANGE_AFTER"); fi
 if [ -n "${CAPTURE_DECISION_SCENARIO:-}" ]; then api_args+=(--decision-scenario "$CAPTURE_DECISION_SCENARIO"); fi
+if [ -n "${CAPTURE_IRC_CREDENTIAL:-}" ]; then api_args+=(--irc-credential); fi
 if [ -n "${CAPTURE_FLEET:-}" ]; then api_args+=(--fleet); fi
 fleet_api=""
 if [ -n "${CAPTURE_FLEET_API:-}" ]; then

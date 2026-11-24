@@ -14,6 +14,7 @@ mod decision_writes;
 pub(crate) mod decisions;
 mod hub;
 mod initiatives;
+mod irc_credential;
 mod issue_moves;
 mod issue_writes;
 mod live;

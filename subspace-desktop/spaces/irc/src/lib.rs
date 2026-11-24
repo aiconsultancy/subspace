@@ -22,6 +22,7 @@ mod join;
 mod lines;
 mod listing;
 mod live;
+mod managed;
 mod markup;
 mod members;
 mod notice;

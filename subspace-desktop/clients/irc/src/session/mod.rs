@@ -34,7 +34,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 
-use crate::model::{Anchor, BufferKey, Command, Event, NetworkConfig, NetworkId, Target, Update};
+use crate::model::{
+    Anchor, BufferKey, Command, Event, IssuedPassword, NetworkConfig, NetworkId, Target, Update,
+};
 use crate::proto::Message;
 
 pub use input::{
@@ -113,7 +115,18 @@ pub struct Output {
     pub written: Vec<Event>,
     pub unwritten: Vec<Event>,
     pub quit: bool,
-    pub(crate) fatal: Option<String>,
+    /// Why the link must end now, if it must.
+    pub(crate) ending: Option<Ending>,
+}
+
+/// Why the session ends its link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Ending {
+    /// Retrying would not help, such as no nickname being accepted.
+    Fatal(String),
+    /// The server registered the connection without accepting a login it
+    /// had to accept: retry later.
+    Refused(String),
 }
 
 /// Updates for owners, reported after the events: `now` at once, and
@@ -330,4 +343,12 @@ fn canonical_names<'a>(
             *name = spellings.canonical(isupport.fold(name), name);
         }
     }
+}
+
+/// `session` signing in with `password`, issued for this connection: sent
+/// in its one SASL PLAIN exchange, which the server must accept before the
+/// connection counts as registered.
+pub(crate) fn sign_in_with(mut session: Session, password: IssuedPassword) -> Session {
+    session.caps.issued.issue(password);
+    session
 }

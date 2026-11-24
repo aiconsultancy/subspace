@@ -32,7 +32,10 @@ pub(crate) fn search_filtered(
     let (candidates, generations) = candidates(service, query, filters, &expression)?;
     let (ranked, ranking, warning) = crate::ranking::rank(reranker, query, &candidates);
     let sources = service.sources()?;
-    let hits = revalidate(service, &ranked, &generations)?;
+    let hits: Vec<Hit> = revalidate(service, &ranked, &generations)?
+        .into_iter()
+        .filter(|hit| service.shows(hit))
+        .collect();
     let source_bytes = serde_json::to_vec(&sources).map_err(storage_error)?.len();
     let budget = RESPONSE_BYTES
         .saturating_sub(source_bytes)
@@ -53,6 +56,7 @@ fn candidates(
     filters: &crate::Filters,
     expression: &str,
 ) -> Result<(Vec<Hit>, BTreeMap<String, i64>), String> {
+    let rules = service.rules()?;
     let mut stores = service.stores()?;
     for board in &query.boards {
         store(&stores, board)?;
@@ -71,7 +75,8 @@ fn candidates(
             .unchecked_transaction()
             .map_err(storage_error)?;
         generations.insert(board.clone(), database::selected(&snapshot)?.1);
-        hits.extend(find(&snapshot, expression, filters)?);
+        let hidden = rules.get(board.as_str());
+        hits.extend(find(&snapshot, expression, filters, hidden)?);
         hits.sort_by(|left, right| left.score.total_cmp(&right.score));
         hits.truncate(CANDIDATES);
     }
@@ -138,10 +143,14 @@ fn literal(query: &Query) -> Result<String, String> {
     Ok(terms.join(" AND "))
 }
 
+/// A board's best candidates for `expression`, at most [`CANDIDATES`]. The
+/// documents its rule `hidden` hides are left out as they are read, so they
+/// never take a candidate's place.
 fn find(
     connection: &rusqlite::Connection,
     expression: &str,
     filters: &crate::Filters,
+    hidden: Option<&crate::service::Hidden>,
 ) -> Result<Vec<Hit>, String> {
     if expression.is_empty() {
         return Ok(Vec::new());
@@ -152,7 +161,10 @@ fn find(
         return Ok(Vec::new());
     };
     let scope: Scope = serde_json::from_str(&active).map_err(storage_error)?;
-    let (sql, values) = filters::sql(expression, &active, &policy, filters);
+    let (mut sql, values) = filters::sql(expression, &active, &policy, filters);
+    if hidden.is_none() {
+        sql.push_str(&format!(" LIMIT {CANDIDATES}"));
+    }
     let mut statement = connection.prepare(&sql).map_err(storage_error)?;
     let rows = statement
         .query_map(rusqlite::params_from_iter(values), |row| {
@@ -164,6 +176,12 @@ fn find(
         })
         .map_err(storage_error)?;
     rows.map(|row| decode(row.map_err(storage_error)?, &scope))
+        .filter(|hit| {
+            hit.as_ref().map_or(true, |hit| {
+                !hidden.is_some_and(|hidden| hidden(&hit.document))
+            })
+        })
+        .take(CANDIDATES)
         .collect()
 }
 
