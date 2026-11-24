@@ -231,7 +231,8 @@ Use `drop:<x>,<y>,<fixture-path>` in `STEPS` to dispatch a native file-enter/sub
 
 The debug capture step `account:<state>` seeds a fictional account UI.
 States are `unavailable`, `signed-out`, `waiting`, `switching`, `completing`,
-`signed-in`, `reconnecting`, `offline`, `expired`, `keychain` and `denied`;
+`signed-in`, `reconnecting`, `offline`, `expired`, `keychain`, `denied` and
+`failed` (a sign-in that could not reach the service, with no session);
 `required-<state>`, such as `required-signed-out`, seeds the state for an app
 that cannot be used without its account, which shows the sign-in dialog over
 the window while there is no session. It performs no sign-in or keychain
