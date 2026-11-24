@@ -202,7 +202,9 @@ issue **SUB-4**. Open **SUB-2** for an issue with no decisions.
 Set `CAPTURE_DECISION_SCENARIO=missing` to leave the superseded decision
 listed while its detail returns 404. Use `forbidden` for 403 or
 `unavailable` for 503 on decision reads. The default is `normal`. These
-modes use the same local fixture and leave other issue reads available.
+modes use the same local fixture and leave other issue reads available. Use
+`conflict` to simulate another editor changing the decision at the first write,
+so the desktop can show its stale-version recovery with the draft preserved.
 
 ## Move fixture
 

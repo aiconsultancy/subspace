@@ -1,7 +1,7 @@
 //! Bounded JSON transport. Never follows redirects or retains provider error text.
 mod post;
-pub(super) use post::post_json;
 pub(crate) use post::post_json_bytes;
+pub(super) use post::{post_json, put_json};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
 use subspace_framework::core::Secret;

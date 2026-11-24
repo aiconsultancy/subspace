@@ -90,6 +90,8 @@ impl Decisions {
         self._page_read = None;
         self._search_task = None;
         self.session = Session::default();
+        self.author = None;
+        self.history = Default::default();
         self.listing = Listing::default();
         self.page = None;
         self.showing_page = false;

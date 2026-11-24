@@ -344,7 +344,7 @@ spaces/space-lab            subspace-space-lab-board       alpha native dashboar
 spaces/space-lab/crates/mxc-worker subspace-mxc-worker     MXC Seatbelt worker adapter; unsupported platforms fail closed
 spaces/irc                  subspace-irc-board             IRC networks, channels and private messages ([docs](docs/irc.md))
 spaces/issues               subspace-issues-board          Subspace issues, activity, comments and attachments
-spaces/decisions            subspace-decisions-board       Subspace decisions, read only
+spaces/decisions            subspace-decisions-board       Subspace decisions and revision history
 spaces/web                  subspace-web-board             web pages and installed web Spaces in a native web view
 clients/irc                 subspace-client-irc            IRC and IRCv3 protocol, connections and runtime
 clients/subspace-api        subspace-api-client            Subspace API reads, writes, live updates and development sign-in

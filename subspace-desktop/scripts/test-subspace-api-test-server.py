@@ -621,6 +621,48 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(conflict[0], 409)
         self.assertEqual(conflict[1]['currentVersion'], 2)
 
+    def test_desktop_decision_lifecycle_keeps_each_revision(self):
+        project = self.get('/projects/SUB')
+        issue = self.get('/issues/SUB-2')
+        previous = next(row for row in self.get('/decisions?project=SUB')['items'] if row['status'] == 'accepted')
+        create = dict(projectId=project['id'], title='Use one relay console', decidedOn='2026-11-24',
+                      decision='Route the review through one console.', why='Keep the review visible.',
+                      tags=['review'], issueIds=[issue['id']], supersedesId=previous['id'])
+        status, proposed, _ = self.request('/decisions', create, method='POST')
+        self.assertEqual(status, 201)
+        self.assertEqual(proposed['status'], 'proposed')
+        path = '/decisions/' + proposed['id']
+        self.server.decision_scenario = 'conflict'
+        status, problem, _ = self.request(path, dict(version=1, title='Use the relay console'), method='PUT')
+        self.assertEqual((status, problem['currentVersion']), (409, 2))
+        self.assertEqual(self.get(path)['title'], create['title'])
+        self.server.decision_scenario = 'normal'
+        status, saved, _ = self.request(path, dict(version=2, title='Use the relay console'), method='PUT')
+        self.assertEqual((status, saved['version']), (200, 3))
+        status, accepted, _ = self.request(path + '/status', dict(version=3, status='accepted'), method='PUT')
+        self.assertEqual((status, accepted['status']), (200, 'accepted'))
+        self.assertEqual(self.get('/decisions/' + previous['id'])['status'], 'superseded')
+        self.assertEqual(self.request(path, dict(version=4, title='Edit after accept'), method='PUT')[0], 409)
+        revisions = self.get(path + '/revisions')['items']
+        self.assertEqual([row['number'] for row in revisions], [4, 3, 2, 1])
+        original = self.get(path + '/revisions/' + revisions[-1]['id'])['snapshot']
+        self.assertEqual((original['title'], original['status']), (create['title'], 'proposed'))
+
+    def test_desktop_can_attribute_and_reject_a_proposal(self):
+        project = self.get('/projects/SUB')
+        attributed = dict(projectId=project['id'], title='Review the route overlay',
+                          decidedOn='2026-11-24', decision='Put the route overlay in the main view.',
+                          madeByType='human', madeByUserId=FIXTURE.GRACE['userId'])
+        self.assertEqual(self.request('/decisions', attributed, method='POST')[0], 400)
+        attributed.update(evidenceKind='meeting', evidenceReference='Route review, 24 November')
+        status, proposed, _ = self.request('/decisions', attributed, method='POST')
+        self.assertEqual((status, proposed['madeByUserId']), (201, FIXTURE.GRACE['userId']))
+        self.assertEqual(proposed['recordedByUserId'], self.get('/me')['userId'])
+        path = '/decisions/' + proposed['id']
+        status, rejected, _ = self.request(path + '/status', dict(version=1, status='rejected'), method='PUT')
+        self.assertEqual((status, rejected['status']), (200, 'rejected'))
+        self.assertEqual(self.request(path + '/status', dict(version=2, status='accepted'), method='PUT')[0], 409)
+
     def test_channels_tracker_writes_ready_for_agents_fleet_assignees_and_decisions(self):
         fleet = FIXTURE.FixtureServer(0, 'fixture-access', fleet=True)
         worker = threading.Thread(target=fleet.serve_forever, daemon=True)

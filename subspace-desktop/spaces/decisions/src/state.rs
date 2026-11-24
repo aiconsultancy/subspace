@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-use subspace_api_client::model::{DecisionListItem, Project};
+use subspace_api_client::model::{DecisionListItem, Me, Project};
 use subspace_framework::dashboard::list::LoadStatus;
 
 use crate::load::Failure;
@@ -15,12 +15,19 @@ use crate::words::{self, People};
 #[derive(Default)]
 pub(crate) struct Session {
     /// The signed-in person's name, once the API answered.
-    pub(crate) account: Option<String>,
+    pub(crate) account: Option<Me>,
     /// Every project the account can see, archived ones included.
     pub(crate) projects: Vec<Project>,
     pub(crate) people: People,
+    pub(crate) human_makers: Vec<(String, String)>,
     /// Every tag the reads have shown, for the Tag menu.
     pub(crate) tags: BTreeSet<String>,
+}
+
+impl Session {
+    pub(crate) fn account_name(&self) -> Option<&str> {
+        self.account.as_ref().map(|me| me.display_name.as_str())
+    }
 }
 
 /// How the last read went.

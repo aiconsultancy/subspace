@@ -218,6 +218,8 @@ record. [Change records](changes/README.md) explains the convention.
   the plus after the last Space tab and its menu of the Spaces that are off.
 - [Decisions Space](changes/decisions-space/intent.md): a read-only Space
   listing every decision, built on the workspace shell.
+- [Decision authoring](changes/decision-authoring/README.md): create and review
+  proposals, handle version conflicts and read immutable revisions.
 - [Fleet roles in Channels](changes/channels-fleet-roles/README.md): rank
   marks for captains and the rear admiral, a ship channel's live status,
   connection commands in **More**, state dots on references and a counted

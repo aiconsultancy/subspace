@@ -66,6 +66,7 @@ pub(crate) struct Directory {
     pub(crate) me: Me,
     pub(crate) projects: Vec<Project>,
     pub(crate) people: People,
+    pub(crate) human_makers: Vec<(String, String)>,
 }
 
 /// The decisions a list read found, newest decided first, and whether more
@@ -103,7 +104,7 @@ impl<T> Leased<T> {
 
 pub(crate) type ListRead = Arc<dyn Fn(&Plan) -> Leased<Answer> + Send + Sync>;
 pub(crate) type DetailRead =
-    Arc<dyn Fn(&str) -> Leased<Result<DecisionDetail, Error>> + Send + Sync>;
+    Arc<dyn Fn(&str, Option<&Lease>) -> Leased<Result<DecisionDetail, Error>> + Send + Sync>;
 
 /// The Space's two reads, a list and one decision, each returning a lease
 /// on the account of the client that made it.
@@ -127,7 +128,7 @@ impl Reader {
 /// which `changed` says has since changed. The lease is as old as the
 /// client, so an account change at any point after the client was made,
 /// during the read included, ends it. Without a client nothing is read.
-fn leased<C, T>(
+pub(crate) fn leased<C, T>(
     client: Result<C, Error>,
     changed: fn(&C) -> bool,
     read: impl FnOnce(&C) -> T,
@@ -229,23 +230,38 @@ fn refused(plan: &Plan, error: Error) -> Answer {
 /// read that fails leaves those parts empty.
 fn read_directory(client: &Client) -> Result<Directory, Error> {
     let me = client.me()?;
+    let choices = client
+        .issue_choices(&ChoiceSource::Assignees)
+        .unwrap_or_default();
+    let human_makers = choices
+        .iter()
+        .filter_map(|choice| Some((choice.human_id()?.to_owned(), choice.name().to_owned())))
+        .collect();
     Ok(Directory {
         me,
         projects: client.all_projects().unwrap_or_default(),
-        people: client
-            .issue_choices(&ChoiceSource::Assignees)
-            .map(|choices| {
-                choices
-                    .into_iter()
-                    .map(|choice| (choice.id().to_owned(), choice.name().to_owned()))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        people: choices
+            .into_iter()
+            .map(|choice| (choice.id().to_owned(), choice.name().to_owned()))
+            .collect(),
+        human_makers,
     })
 }
 
-fn read_detail(id: &str) -> Leased<Result<DecisionDetail, Error>> {
-    leased(Client::new(), Client::account_changed, |client| {
+pub(crate) fn bound_client(lease: Option<&Lease>) -> Result<Client, Error> {
+    let moved = || lease.is_some_and(Lease::moved);
+    if moved() {
+        return Err(Error::SignInNeeded);
+    }
+    let client = Client::new()?;
+    if moved() {
+        return Err(Error::SignInNeeded);
+    }
+    Ok(client)
+}
+
+fn read_detail(id: &str, lease: Option<&Lease>) -> Leased<Result<DecisionDetail, Error>> {
+    leased(bound_client(lease), Client::account_changed, |client| {
         client.decision(id)
     })
 }

@@ -9,6 +9,7 @@ use gpui_kit::{
     ClickEvent, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
     div, px,
 };
+use subspace_framework::dashboard::action::main_action;
 use subspace_framework::dashboard::fields;
 use subspace_framework::dashboard::tabs::{self, TabBar, TabSpec};
 use subspace_framework::dashboard::toolbar_label::{self, ToolbarLabel};
@@ -48,6 +49,12 @@ pub(crate) fn render(this: &Decisions, cx: &mut Context<Decisions>) -> workspace
     toolbar = toolbar.leading(search_field(this, cx));
     if let Some(tag) = menus::tag_button(this, cx) {
         toolbar = toolbar.leading(tag);
+    }
+    if this.can_author() {
+        toolbar = toolbar.trailing(
+            main_action("decisions-new", IconName::Plus, "New decision")
+                .on_click(cx.listener(|this, _, window, cx| this.new_decision(false, window, cx))),
+        );
     }
     match state::count_line(&this.listing) {
         Some(count) => toolbar.trailing(toolbar_label::label(

@@ -150,6 +150,25 @@ impl Client {
         self.get(&["decisions", id], &[])
     }
 
+    pub fn decision_revisions(
+        &self,
+        id: &str,
+        page: &PageRequest,
+    ) -> Result<Page<model::DecisionRevision>, Error> {
+        self.get(
+            &["decisions", id, "revisions"],
+            &page.parameters(query::MAX_DECISION_PAGE_SIZE)?,
+        )
+    }
+
+    pub fn decision_revision(
+        &self,
+        id: &str,
+        revision: &str,
+    ) -> Result<model::DecisionRevisionDetail, Error> {
+        self.get(&["decisions", id, "revisions", revision], &[])
+    }
+
     pub fn comments(&self, reference: &str, page: &PageRequest) -> Result<Page<Comment>, Error> {
         self.get(
             &["issues", reference, "comments"],

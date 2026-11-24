@@ -200,3 +200,26 @@ pub struct DecisionMember {
     /// User kind, as in `Person` and `Me`; preserve unknown kinds.
     pub kind: String,
 }
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct DecisionRevision {
+    pub id: String,
+    pub number: u32,
+    pub saved_at: String,
+    pub saved_by: DecisionMember,
+    pub changed_fields: Vec<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct DecisionRevisionDetail {
+    pub revision: DecisionRevision,
+    pub snapshot: DecisionDetail,
+    pub current_version: u32,
+    pub current_revision_number: u32,
+    pub previous_revision_id: Option<String>,
+    pub next_revision_id: Option<String>,
+}

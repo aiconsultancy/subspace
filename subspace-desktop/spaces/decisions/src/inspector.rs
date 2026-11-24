@@ -87,6 +87,7 @@ fn page_body(
             "Nothing to show yet.",
         )];
     };
+    let detail = this.history.snapshot().unwrap_or(detail);
     let facts = peek::facts(detail, &this.session.people, &this.session.projects);
     let relations = peek::relations(detail);
     let mut parts = vec![fact_section("Properties", &facts, "page", cx)];

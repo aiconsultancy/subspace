@@ -1,10 +1,11 @@
 //! The Decisions Space: Subspace API decisions in one searchable list,
-//! grouped by status, with who made each one and what superseded it. It
-//! reads only; decisions are logged and changed elsewhere.
+//! grouped by status, with authoring, review and immutable revisions.
 
 mod account;
+mod author;
 mod board;
 mod docks;
+mod history;
 mod inspector;
 mod keys;
 mod lanes;
@@ -65,6 +66,10 @@ pub struct Decisions {
     listing: state::Listing,
     /// The decision opened as a page, which keeps its tab until closed.
     page: Option<page::Page>,
+    author: Option<author::Editor>,
+    history: history::History,
+    #[cfg(test)]
+    test_writer: Option<author::TestWriter>,
     /// Whether the pane shows the page rather than the list.
     showing_page: bool,
     reader: load::Reader,
@@ -115,8 +120,7 @@ impl Dashboard for Decisions {
     fn settings() -> BoardSettings {
         BoardSettings {
             icon: Some(IconName::Scale),
-            description: "Search and read Subspace API decisions: what was decided, who made \
-                          it and whether a later decision superseded it.",
+            description: "Record, review and browse decisions, with their evidence and revision history.",
             notifications: false,
             background_updates: false,
             ..Default::default()
@@ -133,6 +137,7 @@ impl Dashboard for Decisions {
 
     fn bind_keys(cx: &mut App) {
         keys::bind(cx);
+        author::bind_keys(cx);
     }
 
     /// Reads start here: the list is read again when it is over a minute
@@ -186,10 +191,17 @@ impl Dashboard for Decisions {
     }
 
     fn modal(&self, _cx: &App) -> Option<Modal> {
+        if self.author.is_some() {
+            return Some(Modal::Dialog);
+        }
         self.menu.is_some().then_some(Modal::Menu)
     }
 
     fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.author.is_some() {
+            self.close_author(window, cx);
+            return;
+        }
         self.menu_anchors.dismiss(window, cx);
         self.menu = None;
     }

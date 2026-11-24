@@ -11,8 +11,8 @@ mod media;
 mod person;
 pub use decision::{
     AgentRank, DecisionDetail, DecisionEvidenceKind, DecisionIssue, DecisionIssues,
-    DecisionListItem, DecisionMakerType, DecisionMember, DecisionProvenance, DecisionScope,
-    DecisionStatus, DecisionSummary,
+    DecisionListItem, DecisionMakerType, DecisionMember, DecisionProvenance, DecisionRevision,
+    DecisionRevisionDetail, DecisionScope, DecisionStatus, DecisionSummary,
 };
 pub use initiative::{Fleet, FleetAgent, FleetShip, MemberInitiative};
 pub use media::IssueMedia;

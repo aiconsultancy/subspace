@@ -91,7 +91,7 @@ pub(crate) fn item_value(
         "issues": {"items": [], "count": 0},
         "tags": [project.to_lowercase()],
         "madeByType": "human", "madeByUserId": OPERATOR,
-        "recordedByUserId": OPERATOR, "revisionNumber": 1,
+        "recordedByUserId": OPERATOR, "revisionNumber": 1, "version": 1,
         "createdAt": "2026-11-18T10:00:00Z", "updatedAt": "2026-11-18T10:00:00Z",
     })
 }
@@ -264,6 +264,7 @@ fn directory() -> Directory {
         me: me(OPERATOR, OPERATOR_NAME),
         projects: projects(),
         people: people(),
+        human_makers: Vec::new(),
     }
 }
 
@@ -305,7 +306,7 @@ fn steady() -> Lease {
 pub(crate) fn reader() -> Reader {
     Reader {
         list: Arc::new(|plan: &Plan| Leased::Read(steady(), answer(plan))),
-        detail: Arc::new(|id: &str| Leased::Read(steady(), detail(id).ok_or(Error::NotFound))),
+        detail: Arc::new(|id, _| Leased::Read(steady(), detail(id).ok_or(Error::NotFound))),
     }
 }
 
@@ -313,7 +314,7 @@ pub(crate) fn reader() -> Reader {
 pub(crate) fn failing(error: Error) -> Reader {
     Reader {
         list: Arc::new(move |plan: &Plan| Leased::Read(steady(), refused(plan, error))),
-        detail: Arc::new(move |_: &str| Leased::Read(steady(), Err(error))),
+        detail: Arc::new(move |_, _| Leased::Read(steady(), Err(error))),
     }
 }
 

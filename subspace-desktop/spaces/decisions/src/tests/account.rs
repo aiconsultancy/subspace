@@ -44,7 +44,7 @@ fn tags(board: &Entity<Decisions>, cx: &mut VisualTestContext) -> BTreeSet<Strin
 }
 
 fn account(board: &Entity<Decisions>, cx: &mut VisualTestContext) -> Option<String> {
-    cx.update(|_, cx| board.read(cx).session.account.clone())
+    cx.update(|_, cx| board.read(cx).session.account_name().map(str::to_owned))
 }
 
 /// The list as the other account sees it, and nothing of the operator's.

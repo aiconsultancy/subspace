@@ -45,6 +45,7 @@ impl Render for Decisions {
         .text_color(tokens.fg)
         .child(div().flex_1().min_h_0().child(shell))
         .children(self.menu_anchors.view())
+        .children(crate::author::view::render(self, cx))
     }
 }
 
@@ -71,7 +72,7 @@ fn shell(
 fn content(this: &Decisions, window: &mut Window, cx: &mut Context<Decisions>) -> AnyElement {
     let tokens = Tokens::current(cx);
     if let Some(open) = this.shown_page() {
-        return page::view::render(open, &tokens, cx);
+        return page::view::render(this, open, &tokens, cx);
     }
     if let Some(failure) = this.listing.blocked() {
         return blocked(failure, &tokens, cx);
