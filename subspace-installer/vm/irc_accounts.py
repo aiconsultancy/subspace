@@ -5,6 +5,7 @@ fingerprint (Ergo's SAREGISTER and CERT ADD), then check that the certificate si
 The operator's password goes only to the server, over TLS, and appears in no message or file.
 """
 
+import base64
 import secrets
 import socket
 import ssl
@@ -82,19 +83,50 @@ def nick():
     return f"ss-setup-{secrets.token_hex(3)}"
 
 
-def register(host, port, ca_file, operator, password, fingerprints):
+ACCOUNT_REQUIRED = ("The IRC server {host} lets only signed-in accounts connect, so the operator's connection must "
+                    "sign in to an IRC account first: pass --irc-operator-account and "
+                    "--irc-operator-account-password-file.")
+
+
+def sign_in(connection, host, account, password):
+    """Sign the connection in to an IRC account with SASL PLAIN, before registration completes."""
+    connection.send("AUTHENTICATE PLAIN")
+    _, command, _ = connection.until("AUTHENTICATE", "904", "908")
+    if command != "AUTHENTICATE":
+        raise IrcError(f"The IRC server {host} does not accept SASL PLAIN for the account {account}.")
+    connection.send("AUTHENTICATE " + base64.b64encode(f"\0{account}\0{password}".encode()).decode())
+    _, command, _ = connection.until("903", "902", "904", "905", "906")
+    if command != "903":
+        raise IrcError(f"The IRC server {host} refused the sign-in of the account {account}.")
+
+
+def register(host, port, ca_file, operator, password, fingerprints, account=None):
     """As the IRC operator, register each account with no password and bind its certificate fingerprint.
 
-    fingerprints: {account: SHA-256 hex}. Returns NickServ's replies by account, for the operator to read; an
-    account or fingerprint that already exists only gets a reply saying so. check_login says whether it worked.
+    fingerprints: {account: SHA-256 hex}. account: an IRC account and its password to sign in to first, for a
+    server that admits only signed-in connections (Ergo's require-sasl). Returns NickServ's replies by account,
+    for the operator to read; an account or fingerprint that already exists only gets a reply saying so.
+    check_login says whether it worked.
     """
     connection = Connection(host, port, ca_file)
     replies = {}
     try:
         name = nick()
+        if account:
+            connection.send("CAP REQ :sasl")
         connection.send(f"NICK {name}")
         connection.send(f"USER {name} 0 * :subspace-setup")
-        connection.until("001")
+        if account:
+            _, _, params = connection.until("CAP")
+            if len(params) < 2 or params[1].upper() != "ACK":
+                raise IrcError(f"The IRC server {host} does not offer SASL.")
+            sign_in(connection, host, *account)
+            connection.send("CAP END")
+        _, command, params = connection.until("001", "FAIL")
+        if command == "FAIL":
+            if "ACCOUNT_REQUIRED" in params:
+                raise IrcError(ACCOUNT_REQUIRED.format(host=host))
+            raise IrcError(f"The IRC server {host} refused the connection: {params[-1] if params else ''}")
         connection.send(f"OPER {operator} {password}")
         _, command, _ = connection.until("381", "464", "491")
         if command != "381":

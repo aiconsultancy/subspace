@@ -54,6 +54,9 @@
 #                        (chmod 600) file holding a remote IRC server's operator
 #                        password, so setup registers the officers' certificate
 #                        accounts itself; removed from the VM after the run
+#   --irc-operator-account-password-file FILE  with --irc-operator-account
+#                        NAME: the same for the IRC account the operator's
+#                        connection signs in to first (servers with require-sasl)
 #   --fleet-console ID   (desktop) the Board ID of the Fleet Console web Space
 #                        (default fleet-console, the one built into Subspace)
 #   --yes                never prompt; fail when an answer is missing
@@ -95,6 +98,7 @@ api_target=
 database_url_file=
 database_ca_file=
 irc_operator_password_file=
+irc_operator_account_password_file=
 fleet_console=fleet-console
 assume_yes=false
 background=false
@@ -141,6 +145,7 @@ while [ $# -gt 0 ]; do
         --database-url-file) database_url_file=${2:?}; shift 2 ;;
         --database-ca-file) database_ca_file=${2:?}; shift 2 ;;
         --irc-operator-password-file) irc_operator_password_file=${2:?}; shift 2 ;;
+        --irc-operator-account-password-file) irc_operator_account_password_file=${2:?}; shift 2 ;;
         --fleet-console) fleet_console=${2:?}; shift 2 ;;
         --yes|-y) assume_yes=true; shift ;;
         --background) background=true; shift ;;
@@ -747,16 +752,18 @@ do_install() {
     # The IRC operator's password is for this run only: it never joins the fleet's inputs and is removed after.
     local operator_dir=/root/subspace-setup-operator
     "$dry_run" && operator_dir=$inputs
-    if [ -n "$irc_operator_password_file" ]; then
-        [ -f "$irc_operator_password_file" ] && [ -r "$irc_operator_password_file" ] ||
-            die "Cannot read --irc-operator-password-file $irc_operator_password_file."
-        local operator_perms
-        if [ "$os" = Darwin ]; then operator_perms=$(stat -f %Lp "$irc_operator_password_file"); else operator_perms=$(stat -c %a "$irc_operator_password_file"); fi
-        case $operator_perms in [0-7]00) ;; *) die "--irc-operator-password-file $irc_operator_password_file must be private to you: chmod 600 it." ;; esac
-        vm sudo -n sh -c "'umask 077; mkdir -p $operator_dir; cat > $operator_dir/irc-operator-password'" < "$irc_operator_password_file" ||
-            die "Could not copy the IRC operator password to the VM."
-        passthrough+=(--irc-operator-password-file "$operator_dir/irc-operator-password")
-    fi
+    local option file name operator_perms
+    for option in irc-operator-password irc-operator-account-password; do
+        if [ "$option" = irc-operator-password ]; then file=$irc_operator_password_file; else file=$irc_operator_account_password_file; fi
+        [ -n "$file" ] || continue
+        [ -f "$file" ] && [ -r "$file" ] || die "Cannot read --$option-file $file."
+        if [ "$os" = Darwin ]; then operator_perms=$(stat -f %Lp "$file"); else operator_perms=$(stat -c %a "$file"); fi
+        case $operator_perms in [0-7]00) ;; *) die "--$option-file $file must be private to you: chmod 600 it." ;; esac
+        name=$operator_dir/$option
+        vm sudo -n sh -c "'umask 077; mkdir -p $operator_dir; cat > $name'" < "$file" ||
+            die "Could not copy the --$option-file to the VM."
+        passthrough+=("--$option-file" "$name")
+    done
 
     local -a setup_args=(setup)
     interactive || setup_args+=(--non-interactive)
@@ -777,7 +784,7 @@ do_install() {
     say "Running subspace-setup on the VM. This takes a while the first time."
     local setup_status=0
     vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")" || setup_status=$?
-    if [ -n "$irc_operator_password_file" ]; then
+    if [ -n "$irc_operator_password_file$irc_operator_account_password_file" ]; then
         vm sudo -n rm -rf "$operator_dir" || note "Remove $operator_dir on the VM by hand: it holds the IRC operator's password."
     fi
     [ "$setup_status" = 0 ] || die "subspace-setup failed on the VM; read its output above."

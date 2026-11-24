@@ -4,6 +4,7 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -1110,6 +1111,8 @@ class FakeIrcServer:
 
     def __init__(self, work, client_bundles, operator=("ircop", "fixture-operator-password")):
         self.accounts, self.operator, self.requests = {}, operator, []
+        # Ergo's require-sasl: only connections signed in to an account (passwords here) get past registration.
+        self.require_sasl, self.passwords = False, {}
         subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
                         "-nodes", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
                         "-keyout", str(work / "server.key"), "-out", str(work / "server.pem")],
@@ -1142,16 +1145,41 @@ class FakeIrcServer:
         peer = connection.getpeercert(binary_form=True)
         fingerprint = hashlib.sha256(peer).hexdigest() if peer else None
         stream, oper = connection.makefile("rwb"), False
+        state = {"capabilities": False, "user": False, "account": None, "mechanism": None}
 
         def send(line):
             stream.write(line.encode() + b"\r\n")
             stream.flush()
+
+        def welcome():
+            if self.require_sasl and not state["account"]:
+                send("FAIL * ACCOUNT_REQUIRED :You must log in with SASL to join this server")
+                return False
+            send(":irc.example.test 001 you :Welcome")
+            return True
         for raw_line in stream:
             line = raw_line.decode().rstrip("\r\n")
             words = line.split(" ")
             command = words[0].upper()
             if command == "USER":
-                send(":irc.example.test 001 you :Welcome")
+                state["user"] = True
+                if not state["capabilities"] and not welcome():
+                    break
+            elif line == "CAP END":
+                state["capabilities"] = False
+                if state["user"] and not welcome():
+                    break
+            elif line == "AUTHENTICATE PLAIN":
+                state["mechanism"] = "PLAIN"
+                send("AUTHENTICATE +")
+            elif command == "AUTHENTICATE" and state["mechanism"] == "PLAIN":
+                _, name, secret = base64.b64decode(words[1]).decode().split("\0")
+                if self.passwords.get(name) == secret:
+                    state["account"] = name
+                    send(f":irc.example.test 900 you you!u@h {name} :You are now logged in")
+                    send(":irc.example.test 903 you :SASL authentication successful")
+                else:
+                    send(":irc.example.test 904 you :SASL authentication failed")
             elif command == "OPER":
                 oper = tuple(words[1:3]) == self.operator
                 send(":irc.example.test 381 you :You are now an operator" if oper else
@@ -1170,6 +1198,7 @@ class FakeIrcServer:
                 else:
                     send(":NickServ!NickServ@services NOTICE you :No such account")
             elif line == "CAP REQ :sasl":
+                state["capabilities"] = True
                 send(":irc.example.test CAP * ACK :sasl")
             elif line == "AUTHENTICATE EXTERNAL":
                 send("AUTHENTICATE +")
@@ -1261,7 +1290,23 @@ class IrcCertificateSetupTests(unittest.TestCase):
         path.write_text(secret + "\n")
         path.chmod(0o600)
         _, args = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", str(path))
-        self.assertEqual(fleet_setup.irc_operator(args), ("ircop", secret))
+        self.assertEqual(fleet_setup.irc_operator(args), ("ircop", secret, None))
+        account = fleet_setup.INPUTS / "account"
+        account.write_text("account-secret-value\n")
+        account.chmod(0o600)
+        _, args = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", str(path),
+                               "--irc-operator-account", "opsuser", "--irc-operator-account-password-file", str(account))
+        self.assertEqual(fleet_setup.irc_operator(args), ("ircop", secret, ("opsuser", "account-secret-value")))
+        account.chmod(0o640)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "IRC account password file .* mode 0600") as refused:
+            fleet_setup.irc_operator(args)
+        self.assertNotIn("account-secret-value", str(refused.exception))
+        account.chmod(0o600)
+        for extra, message in ((["--irc-operator-account", "opsuser"], "together"),
+                               (["--irc-operator-account", "opsuser", "--irc-operator-account-password-file",
+                                 str(account)], "pass --irc-operator too")):
+            with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                self.answers(*extra)
         path.chmod(0o644)
         with self.assertRaisesRegex(fleet_setup.SetupError, "mode 0600") as refused:
             fleet_setup.irc_operator(args)
@@ -1283,7 +1328,7 @@ class IrcCertificateSetupTests(unittest.TestCase):
         self.addCleanup(server.listener.close)
         answers.update(ircHost="localhost", ircPort=server.port, ircCa=server.ca)
         output = []
-        operator = ("ircop", "fixture-operator-password")
+        operator = ("ircop", "fixture-operator-password", None)
         with patch.object(fleet_setup, "say", side_effect=output.append):
             # A dry run only checks the operator and reports that no certificate signs in yet.
             fleet_setup.check_certificates(answers, members, certificates, operator, register=False)
@@ -1300,8 +1345,22 @@ class IrcCertificateSetupTests(unittest.TestCase):
                                                   str(certificates[accounts[1]][0])), accounts[1])
         # A wrong operator password is refused without repeating it.
         with self.assertRaisesRegex(fleet_setup.SetupError, "refused the operator credential for ircop") as refused:
-            fleet_setup.check_certificates(answers, members, certificates, ("ircop", "wrong-password"), register=True)
+            fleet_setup.check_certificates(answers, members, certificates, ("ircop", "wrong-password", None),
+                                           register=True)
         self.assertNotIn("wrong-password", str(refused.exception))
+        # A server that admits only signed-in connections: without an account the run stops, naming the options,
+        # and with one the operator's connection signs in first, then opers up.
+        server.require_sasl, server.passwords, server.accounts = True, {"opsuser": "fixture-account-password"}, {}
+        with self.assertRaisesRegex(fleet_setup.SetupError, "--irc-operator-account and "
+                                    "--irc-operator-account-password-file"):
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "refused the sign-in of the account opsuser"):
+            fleet_setup.check_certificates(answers, members, certificates,
+                                           (*operator[:2], ("opsuser", "wrong")), register=True)
+        with patch.object(fleet_setup, "say"):
+            fleet_setup.check_certificates(answers, members, certificates,
+                                           (*operator[:2], ("opsuser", "fixture-account-password")), register=True)
+        self.assertEqual(server.accounts, {account: {certificates[account][1]} for account in accounts})
         # A certificate the server does not accept after registration stops the run.
         server.operator = ("ircop", "other")
         with patch.object(fleet_setup, "say"), \

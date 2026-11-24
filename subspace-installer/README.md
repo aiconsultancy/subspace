@@ -583,11 +583,16 @@ real run has made. When you hold an operator credential whose class has
 NickServ's `accreg` capability, pass `--irc-operator NAME` and
 `--irc-operator-password-file FILE` (a root-only file with mode `0600`; from
 your machine, the host installers copy it for that run and remove it
-afterwards). Setup then opers up (`OPER`), sends both lines for every
+afterwards). On a server that admits only signed-in connections (Ergo's
+`require-sasl`), whose operators are not accounts, also pass
+`--irc-operator-account NAME` and `--irc-operator-account-password-file FILE`
+(the same rules) for an IRC account the connection signs in to first by SASL
+PLAIN; without them setup stops when the server answers `ACCOUNT_REQUIRED`,
+naming these options. Setup then opers up (`OPER`), sends both lines for every
 officer before any officer starts, and checks that each certificate signs in
 by SASL EXTERNAL as its account, stopping if one does not. A dry run with
 the credential only checks it and reports which certificates already sign
-in. The password is sent only to the server, over TLS, and never printed or
+in. The passwords are sent only to the server, over TLS, and never printed or
 saved.
 
 **The Ergo the installer manages keeps passwords for now**, in local mode

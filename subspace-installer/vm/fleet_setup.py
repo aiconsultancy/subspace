@@ -207,6 +207,10 @@ def parse_args(argv):
                         "server ./install.sh irc-server runs). Kept on later runs")
     parser.add_argument("--irc-operator", help="an IRC operator's name (OPER) with NickServ's accreg capability: setup "
                         "then registers each officer's account and binds its certificate itself (certificate sign-in)")
+    parser.add_argument("--irc-operator-account", help="an IRC account the operator's connection signs in to first "
+                        "(SASL PLAIN), for a server that admits only signed-in connections (Ergo's require-sasl)")
+    parser.add_argument("--irc-operator-account-password-file", help="absolute path to a root-only file (mode 0600) "
+                        "holding that account's password. Read for this run only; never printed or saved")
     parser.add_argument("--irc-operator-password-file", help="absolute path to a root-only file (mode 0600) holding "
                         "that operator's password. Read for this run only; never printed or saved")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
@@ -331,6 +335,10 @@ def gather(args, saved):
             "--irc-operator is for certificate sign-in on a remote IRC server (--irc remote --irc-auth certificate).")
     require(bool(args.irc_operator) == bool(args.irc_operator_password_file),
             "Pass --irc-operator and --irc-operator-password-file together.")
+    require(bool(args.irc_operator_account) == bool(args.irc_operator_account_password_file),
+            "Pass --irc-operator-account and --irc-operator-account-password-file together.")
+    require(not args.irc_operator_account or args.irc_operator,
+            "--irc-operator-account is the account the operator's connection signs in to: pass --irc-operator too.")
     if args.api is not None:
         answers["api"] = args.api
     elif args.database_url_file and answers.get("api") is False:
@@ -1441,40 +1449,51 @@ def certificate_lines(answers, certificates):
     return lines
 
 
-def irc_operator(args):
-    """The IRC operator's name and password for this run, or None. The password is read from a root-only file
-    and is never printed or saved."""
-    if not args.irc_operator:
-        return None
-    require(re.fullmatch(r"[A-Za-z0-9_.\[\]{}|^`-]{1,64}", args.irc_operator), "Invalid --irc-operator name.")
-    path = args.irc_operator_password_file
-    require(Path(path).is_absolute(), "--irc-operator-password-file needs an absolute path to a file on this VM.")
+def password_file(path, option, label):
+    """A password from a root-only file, for this run only. Messages name the file, never what it holds."""
+    require(Path(path).is_absolute(), f"{option} needs an absolute path to a file on this VM.")
     try:
         info = os.lstat(path)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == SECRET_OWNER and not info.st_mode & 0o077,
-                f"The IRC operator password file {path} must be a regular file owned by root with mode 0600: "
-                f"chmod 600 {path}.")
+                f"The {label} file {path} must be a regular file owned by root with mode 0600: chmod 600 {path}.")
         password = Path(path).read_text().strip()
     except (OSError, UnicodeDecodeError):
-        raise SetupError(f"Cannot read the IRC operator password file {path}.") from None
+        raise SetupError(f"Cannot read the {label} file {path}.") from None
     require(password and len(password) <= 512 and not re.search(r"[\s\x00]", password),
-            f"The IRC operator password file {path} must hold one password on one line.")
-    return args.irc_operator, password
+            f"The {label} file {path} must hold one password on one line.")
+    return password
+
+
+def irc_operator(args):
+    """The IRC operator's name and password for this run, and the account its connection signs in to first, or
+    None. Passwords are read from root-only files and are never printed or saved."""
+    if not args.irc_operator:
+        return None
+    require(re.fullmatch(r"[A-Za-z0-9_.\[\]{}|^`-]{1,64}", args.irc_operator), "Invalid --irc-operator name.")
+    password = password_file(args.irc_operator_password_file, "--irc-operator-password-file", "IRC operator password")
+    account = None
+    if args.irc_operator_account:
+        require(re.fullmatch(r"[A-Za-z0-9_.\[\]{}|^`-]{1,64}", args.irc_operator_account),
+                "Invalid --irc-operator-account name.")
+        account = (args.irc_operator_account, password_file(
+            args.irc_operator_account_password_file, "--irc-operator-account-password-file", "IRC account password"))
+    return args.irc_operator, password, account
 
 
 def check_certificates(answers, members, certificates, operator, register):
     """With the operator's credential: check it, register the officers' accounts and bind their certificates
     (register), and check that each certificate signs in as its account. A dry run only checks."""
     host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
-    name, password = operator
+    name, password, signed_in_as = operator
     try:
         if register:
             replies = irc_accounts.register(host, port, ca, name, password,
-                                            {account: fingerprint for account, (_, fingerprint) in certificates.items()})
+                                            {account: fingerprint for account, (_, fingerprint) in certificates.items()},
+                                            signed_in_as)
             for account, lines in replies.items():
                 say(f"NickServ for {account}: " + " / ".join(lines))
         else:
-            irc_accounts.register(host, port, ca, name, password, {})
+            irc_accounts.register(host, port, ca, name, password, {}, signed_in_as)
             say(f"the IRC operator {name} is accepted on {host}")
         failed = []
         for account, (path, fingerprint) in certificates.items():

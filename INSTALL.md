@@ -190,7 +190,10 @@ answer it now.
      capability, pass `--irc-operator NAME --irc-operator-password-file FILE`
      (a `chmod 600` file on this computer, removed from the VM after the run)
      and setup registers the accounts and checks each sign-in itself; it
-     never prints or keeps the password. Use `--irc-auth password` only for a
+     never prints or keeps the password. If the server lets only signed-in
+     accounts connect (Ergo's `require-sasl`), also pass
+     `--irc-operator-account NAME --irc-operator-account-password-file FILE`
+     for the account the operator signs in to first. Use `--irc-auth password` only for a
      server that cannot take certificates, and then its operator sets each
      officer's password. See
      [IRC sign-in](subspace-installer/README.md#irc-sign-in).
@@ -1126,7 +1129,7 @@ permissions, Slack and Teams.
 | Installed copies the services read | `/etc/subspace-fleet/` (root-only), and each agent's files in its own home with mode 0600 |
 | An existing PostgreSQL's URL and CA | `/root/fleet/database-url` and `database-ca.pem` (root-only), copied from your files on each run that passes them |
 | Officers' IRC certificates (remote IRC) | `/root/fleet/fleet.secrets/<officer-id>/irc-client.pem` (root-only), generated on the VM; only fingerprints are printed |
-| An IRC operator's password | Your file only: copied to the VM for the run that passes it, then removed; never printed or saved |
+| An IRC operator's password, and its sign-in account's | Your files only: copied to the VM for the run that passes them, then removed; never printed or saved |
 | Model provider logins | `/var/lib/subspace-fleet/proxy/auth` on the VM, owned by the proxy user |
 | Your IRC password and Stargate API token | `~/.subspace/targets/<target>/` on your computer, owner-only |
 | A shared IRC server's secrets, in a container | Owner-only files on your computer and the platform's secret store ([Run the shared IRC server in a container](#run-the-shared-irc-server-in-a-container)) |
