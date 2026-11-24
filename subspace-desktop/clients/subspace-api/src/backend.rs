@@ -354,6 +354,36 @@ impl Capabilities {
     }
 }
 
+/// Whether the build's API may serve initiative channels: Subspace API
+/// always; NETT unless the selected organisation's capability list, once
+/// read, leaves them out. Before that list is read it may, so a reader
+/// waiting on the first answer does not decide too early.
+pub fn may_serve_initiative_channels() -> bool {
+    let backend = has_backend().then(backend);
+    may_serve(backend, selected_nett_known(Feature::InitiativeChannels))
+}
+
+/// [`may_serve_initiative_channels`] for `backend` (`None`: no backend),
+/// with what NETT's list says when it was read.
+fn may_serve(backend: Option<Backend>, nett_known: Option<bool>) -> bool {
+    match backend {
+        None => false,
+        Some(Backend::Subspace) => true,
+        Some(Backend::Nett) => nett_known.unwrap_or(true),
+    }
+}
+
+/// Whether the selected organisation's capability list names `feature`,
+/// or `None` before it was read.
+fn selected_nett_known(feature: Feature) -> Option<bool> {
+    let origin = crate::native::origin()?;
+    let account = crate::native::account_generation();
+    let org = crate::nett::scope::selected(account)?;
+    served_table()
+        .get(&scope(origin.as_str(), &org, account.unwrap_or_default()))
+        .map(|served| served.bits & feature.bit() != 0)
+}
+
 /// What the configured backend offers: nothing in a build without one.
 pub fn capabilities() -> Capabilities {
     if has_backend() {
@@ -489,5 +519,15 @@ mod tests {
         assert!(!super::served_known(origin, "org-a", 2));
         assert!(!nett_serves(origin, Some("org-a"), 2, Feature::Attachments));
         assert!(!nett_serves(origin, Some("org-a"), 2, Feature::Updates));
+    }
+
+    #[test]
+    fn initiative_channels_may_be_served_until_a_read_says_otherwise() {
+        use super::{Backend, may_serve};
+        assert!(!may_serve(None, None), "no backend");
+        assert!(may_serve(Some(Backend::Subspace), None));
+        assert!(may_serve(Some(Backend::Nett), None), "not read yet");
+        assert!(may_serve(Some(Backend::Nett), Some(true)));
+        assert!(!may_serve(Some(Backend::Nett), Some(false)));
     }
 }
