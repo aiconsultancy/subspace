@@ -45,15 +45,15 @@ const SETTINGS_EXTENSIONS: &[subspace_framework::shell::SettingsExtension] = &[
 fn main() -> ExitCode {
     let mut descriptor = subspace_descriptor::subspace_descriptor();
     identity::adjust_descriptor(&mut descriptor);
-    let desktop = std::env::args_os().len() == 1;
-    let located = connection::locate(&descriptor, env!("CARGO_PKG_VERSION"));
-    let configured = located
-        .map_or(Ok(None), |path| {
-            connection::read(&path).map_err(|message| launch::Failure::File(path, message))
-        })
-        .and_then(|file| identity::configure_backend(file.as_ref(), identity::variables()));
-    if let Err(failure) = configured {
-        return connection::report(&descriptor.display_name, &failure, desktop);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let desktop = args.is_empty();
+    // About, --version and upgrade read no settings, so a broken connection
+    // file or variable never stands between someone and an upgrade.
+    if subspace_framework::shell::reads_configuration(&descriptor, &args)
+        && let Err(failure) = configure(&descriptor)
+    {
+        let window = desktop && !capturing();
+        return connection::report(&descriptor.display_name, &failure, window);
     }
     // Only the desktop shows Spaces and themes; commands leave the config
     // and state files alone. A new install is told by having neither file,
@@ -92,6 +92,24 @@ fn main() -> ExitCode {
         assets(),
         subspace_framework::board_command::run,
     )
+}
+
+/// Reads the connection file, when the app's config folder has one, and
+/// installs the backend the build, the file and the run's variables select.
+fn configure(
+    descriptor: &subspace_framework::product::ProductDescriptor,
+) -> Result<(), launch::Failure> {
+    let located = connection::locate(descriptor, env!("CARGO_PKG_VERSION"));
+    let file = located.map_or(Ok(None), |path| {
+        connection::read(&path).map_err(|message| launch::Failure::File(path, message))
+    })?;
+    identity::configure_backend(file.as_ref(), identity::variables())
+}
+
+/// Whether this is a capture run, which must fail on standard error with a
+/// non-zero exit rather than wait in a window no one will close.
+fn capturing() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("SUBSPACE_CAPTURE_DIR").is_some()
 }
 
 /// The Settings extensions this build's backend offers.
