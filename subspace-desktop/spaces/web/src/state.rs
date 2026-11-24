@@ -39,6 +39,8 @@ impl PageState {
             }
             PageEvent::Download => self.notice = Some(NO_DOWNLOADS.into()),
             PageEvent::Message { .. } => {}
+            #[cfg(target_os = "macos")]
+            PageEvent::SessionRequired => {}
         }
         None
     }

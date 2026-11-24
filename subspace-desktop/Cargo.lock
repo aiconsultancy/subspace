@@ -10160,6 +10160,7 @@ dependencies = [
  "subspace-client-fleet",
  "subspace-framework",
  "tempfile",
+ "tokio",
  "url",
  "zip",
 ]
