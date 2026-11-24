@@ -79,13 +79,26 @@ pub fn unreachable_message() -> String {
 
 /// [`unreachable_message`] for the API at `origin`, named `service`.
 fn unreachable_at(origin: Option<&url::Url>, service: &str) -> String {
-    match origin {
-        Some(url) => format!(
-            "No API reachable at {}. Start it, or set the app's API address in connection.json, then try again.",
-            url.origin().ascii_serialization()
-        ),
-        None => format!("Couldn't reach {service}. Try again."),
-    }
+    let Some(url) = origin else {
+        return format!("Couldn't reach {service}. Try again.");
+    };
+    let local = match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => std::net::IpAddr::V6(ip).to_canonical().is_loopback(),
+        Some(url::Host::Domain(host)) => {
+            host.trim_end_matches('.').eq_ignore_ascii_case("localhost")
+        }
+        None => false,
+    };
+    let advice = if local {
+        "Check that the API and any local VM or tunnel it uses are running, then retry."
+    } else {
+        "Check your network connection and connect to your organisation's private network if required. If you use Cloudflare One (WARP), refresh your Access session and complete any private-app sign-in, then retry."
+    };
+    format!(
+        "No API reachable at {}. {advice}",
+        url.origin().ascii_serialization()
+    )
 }
 
 static SIGN_IN_UNAVAILABLE: OnceLock<String> = OnceLock::new();
@@ -440,8 +453,13 @@ mod tests {
         let local = url::Url::parse("http://127.0.0.1:3000/api").unwrap();
         assert_eq!(
             super::unreachable_at(Some(&local), "Subspace API"),
-            "No API reachable at http://127.0.0.1:3000. Start it, or set the app's API address in connection.json, then try again."
+            "No API reachable at http://127.0.0.1:3000. Check that the API and any local VM or tunnel it uses are running, then retry."
         );
+        let remote = url::Url::parse("https://api.example.com/api").unwrap();
+        let help = super::unreachable_at(Some(&remote), "Subspace API");
+        assert!(help.starts_with("No API reachable at https://api.example.com."));
+        assert!(help.contains("refresh your Access session"));
+        assert!(help.contains("private-app sign-in"));
         assert_eq!(
             super::sign_in_state_for(None).0,
             "Sign-in required",

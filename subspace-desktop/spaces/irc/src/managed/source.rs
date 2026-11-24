@@ -74,9 +74,7 @@ fn issue(binding: &Arc<Binding>, login: &ServerLogin, device: &str) -> Result<Is
 pub(crate) fn reason(unavailable: Unavailable) -> String {
     let service = subspace_api_client::service_name();
     match unavailable {
-        Unavailable::Api(Error::Network) => {
-            format!("{service} could not be reached for an IRC sign-in")
-        }
+        Unavailable::Api(Error::Network) => subspace_api_client::unreachable_message(),
         Unavailable::Api(Error::SignInNeeded | Error::Forbidden) => {
             "Sign in under Settings › Account to connect".into()
         }
@@ -99,7 +97,7 @@ mod tests {
     fn a_refusal_reads_as_what_to_do_and_names_no_secret() {
         assert_eq!(
             reason(Unavailable::Api(Error::Network)),
-            "Subspace API could not be reached for an IRC sign-in"
+            subspace_api_client::unreachable_message()
         );
         assert_eq!(
             reason(Unavailable::Api(Error::SignInNeeded)),
