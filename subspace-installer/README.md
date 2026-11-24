@@ -227,11 +227,11 @@ installer names the captain, still restarts the services for the captains it
 did pin, and exits with an error. The gateway keeps running without the
 captain that failed.
 
-OpenCode's session update cannot change a session's model, so a pinned root
-keeps the model it was created with. If you change a captain's
-`harness.model` or `harness.family`, each installer run reports that the
-root keeps its original model. To run the captain on the new model, give its
-crew to a new captain, or restore the original model.
+A changed officer model or effort reaches a pinned root, too. The installer
+switches the root's model, as Stargate's captain model tool does, and the
+root's next turn uses the new model with its history intact. If OpenCode
+refuses the switch, the installer says so and the root keeps its model. The
+next run tries again.
 
 If commissioning fails before a session is confirmed, fix the cause, such as
 the engine or the model proxy, and run the installer again. It retries the

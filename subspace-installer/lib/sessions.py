@@ -80,6 +80,13 @@ class OpenCode:
             error.close()
             raise SessionError(f"OpenCode returned HTTP {error.code} when creating the captain session.") from None
 
+    def switch_model(self, session_id, model):
+        try:
+            self.request("POST", f"/api/session/{quote(session_id, safe='')}/model", {"model": model}, empty=True)
+        except HTTPError as error:
+            error.close()
+            raise SessionError(f"OpenCode returned HTTP {error.code} when switching the captain session's model.") from None
+
     def update_permissions(self, session_id, permissions):
         try:
             self.request("PATCH", f"/api/session/{quote(session_id, safe='')}", {"permissions": permissions}, empty=True)
@@ -192,9 +199,14 @@ def verify(session, record, expected):
     )
 
 
+def model_name(model):
+    """provider/model, with #variant for a reasoning effort."""
+    return f"{model.get('providerID')}/{model.get('id')}" + (f"#{model['variant']}" if model.get("variant") else "")
+
+
 def model_differs(session, model):
     stored = session.get("model")
-    return isinstance(stored, dict) and (stored.get("providerID"), stored.get("id")) != (model["providerID"], model["id"])
+    return isinstance(stored, dict) and model_name(stored) != model_name(model)
 
 
 def ensure(client, store, expected, wait=wait_until_ready, notice=None):
@@ -251,11 +263,19 @@ def ensure(client, store, expected, wait=wait_until_ready, notice=None):
                 raise
     verify(session, record, expected)
     if model_differs(session, expected["model"]):
-        # OpenCode's session update takes no model, so the pinned root keeps the one it was created with.
-        stored = session["model"]
-        notice(f"The captain's pinned session keeps its model {stored.get('providerID')}/{stored.get('id')}; "
-               f"OpenCode cannot change it to the configured {expected['model']['providerID']}/{expected['model']['id']}. "
-               "See Captain sessions in the installer README.")
+        # A changed harness model or effort: OpenCode switches the pinned root's model (as Stargate's captain
+        # model tool does), and the root's next turn uses it. Its history stays.
+        stored = model_name(session["model"])
+        try:
+            client.switch_model(record["sessionID"], expected["model"])
+            session = client.get(record["sessionID"])
+            require(session is not None and not model_differs(session, expected["model"]),
+                    "The captain session's model did not read back after the switch.")
+            notice(f"Switched the captain's pinned session from {stored} to {model_name(expected['model'])}.")
+        except SessionError as error:
+            notice(f"The captain's pinned session keeps its model {stored}: switching it to "
+                   f"{model_name(expected['model'])} failed ({error}). The next installer run tries again.")
+            session = client.get(record["sessionID"]) or session
     if session.get("permissions") != expected["permissions"]:
         client.update_permissions(record["sessionID"], expected["permissions"])
         session = client.get(record["sessionID"])
