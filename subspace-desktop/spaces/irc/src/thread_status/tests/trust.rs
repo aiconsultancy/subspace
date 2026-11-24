@@ -96,6 +96,12 @@ fn inline_mentions_fold_only_for_one_distinct_addressed_account() {
         ("Thanks, @astra. Could you check this?", true),
         ("@astra. Please ask @nova to confirm.", true),
         ("astra: Please ask @nova to confirm.", true),
+        ("astra, please ask @nova to confirm.", true),
+        (
+            "Could you check https://social.example.com/@nova, @astra?",
+            true,
+        ),
+        ("See https://social.example.com/@astra.", false),
         ("Ask (@astra) or wait for @ASTRA.", true),
         ("Compare @astra and @nova.", false),
         ("Contact pilot@astra.example.", false),

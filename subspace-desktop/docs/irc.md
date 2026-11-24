@@ -1156,10 +1156,10 @@ are in the [change record](changes/irc-thread-status/spec.md).
 - **Trust.** A notice folds only when it replies to a message or action
   this buffer holds (in a private conversation, our own), and its
   server-set `account` tag equals the nick that request asks, ignoring
-  ASCII case. A channel request can start with `@nick` or `nick:`.
-  Otherwise, one distinct `@nick` elsewhere takes precedence over a leading
-  `nick,`. In a
-  private conversation, the request asks its partner. A
+  ASCII case. A channel request can start with `@nick`, `nick:` or `nick,`.
+  A mention immediately after an introductory comma also addresses a request,
+  as in "Thanks, @pilot". Other requests can contain one distinct `@nick`
+  outside a URL. In a private conversation, the request asks its partner. A
   request whose sender's nick, or sender's `account` tag, is the addressed
   nick asks no one. Member lists play no part, so whoever holds the nick
   later, only the account named after it folds. This is the owner's rule

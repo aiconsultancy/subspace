@@ -107,27 +107,35 @@ fn addressee(request: &Line) -> Option<String> {
     }
 }
 
-/// A leading @mention or nick followed by a colon addresses the request
-/// directly. Otherwise an explicit @mention takes precedence over a comma,
-/// as in "Thanks, @pilot".
+/// A leading address wins. An explicit mention immediately after an
+/// introductory comma, as in "Thanks, @pilot", addresses the request too.
 fn channel_addressee(text: &str) -> Option<&str> {
+    let text = text.trim_start();
     let first = text.split_whitespace().next()?;
-    first
+    let leading = first
         .strip_prefix('@')
         .and_then(|rest| {
             rest.split(|character| character != '@' && !is_nick_char(character))
                 .next()
         })
         .filter(|nick| is_nick(nick))
-        .or_else(|| first.strip_suffix(':').filter(|nick| is_nick(nick)))
-        .or_else(|| inline_addressee(text))
-        .or_else(|| first.strip_suffix(',').filter(|nick| is_nick(nick)))
+        .or_else(|| first.strip_suffix(':').filter(|nick| is_nick(nick)));
+    leading.or_else(|| {
+        let comma = first.strip_suffix(',').filter(|nick| is_nick(nick));
+        if text[first.len()..].trim_start().starts_with('@') {
+            inline_addressee(text).or(comma)
+        } else {
+            comma.or_else(|| inline_addressee(text))
+        }
+    })
 }
 
 /// One request timeline cannot describe two different agents' turns.
 fn inline_addressee(text: &str) -> Option<&str> {
     let mut mentions = text
-        .split(|character| character != '@' && !is_nick_char(character))
+        .split_whitespace()
+        .filter(|word| !word.contains("://"))
+        .flat_map(|word| word.split(|character| character != '@' && !is_nick_char(character)))
         .filter_map(|word| word.strip_prefix('@').filter(|nick| is_nick(nick)));
     let first = mentions.next()?;
     mentions
