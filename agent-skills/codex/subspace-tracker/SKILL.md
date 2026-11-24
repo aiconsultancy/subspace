@@ -15,26 +15,24 @@ input schema; this skill names them without the harness's prefix.
 
 ## Connecting
 
-There are two ways in, and they never mix:
+**A person's local agent** uses the person's Subspace account. For a hosted
+WorkOS API, ask the person to run
+`python3 ~/.subspace/bin/subspace_token.py --login` and complete browser
+sign-in. The helper shares and refreshes that session across agents. For
+development sign-in, use the fleet's tunnel. Get the person's name with
+`python3 ~/.subspace/bin/subspace_token.py --me`, or ask them.
 
-- **A person's local agent** signs in with that person's login through the
-  fleet's tunnel. The token comes from the API's development sign-in and lasts
-  about eight hours; a WorkOS or Entra deployment needs a token from that
-  provider instead. Get the person's name from
-  `python3 ~/.subspace/bin/subspace_token.py --me`, or ask them.
-
-The installer registered `subspace` in `~/.codex/config.toml` as a streamable
-HTTP MCP server at `http://127.0.0.1:3000/mcp` that reads its bearer token
-from `SUBSPACE_API_TOKEN` (`codex mcp get subspace` shows it). Start Codex
-with the token set:
+The installer registers `subspace` in Codex (`codex mcp get subspace`).
+For WorkOS, it runs the helper to forward MCP requests to the hosted
+`/mcp` URL with a current access token. With development sign-in it uses
+`http://127.0.0.1:3000/mcp` and reads the bearer token from the environment.
 
 ```sh
 export SUBSPACE_API_TOKEN="$(python3 ~/.subspace/bin/subspace_token.py)"
 codex
 ```
 
-A fleet's own agents connect differently, through the API's agent listener
-and their own agent records; this skill's rules below cover both.
+A fleet's own agents use the API's agent listener and their agent records.
 
 <!-- shared:start -->
 ## Who you are in the tracker
@@ -281,10 +279,11 @@ person. A 403 means the same: report it, never work around it.
 
 ## Troubleshooting
 
-- **Cannot connect**: the fleet's tunnel is not running. Ask the person to run
+- **Development connection failed**. Ask the person to run
   `./install.sh tunnel --background` (Windows: `.\install.ps1 tunnel
   --background`) in the Subspace repository.
-- **HTTP 401**: the token expired. Ask the person to export a fresh
+- **HTTP 401**. For WorkOS, ask the person to check `--me` and run
+  `--login` if prompted. For development sign-in, export a fresh
   `SUBSPACE_API_TOKEN` as above and restart Codex.
 - **HTTP 403**: the person's account may not do that; tell them rather than
   working around it.

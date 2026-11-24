@@ -944,9 +944,14 @@ do_providers() {
 
 do_skills() {
     # Local agents (Claude Code, Codex, OpenCode) on this computer: skills, helpers and MCP.
-    load_target
-    [ -f "$state/summary.env" ] || die "Install the fleet first."
-    local agents='' person='' agent bin=$home/bin mcp=http://127.0.0.1:3000/mcp i=0
+    local agents='' person='' agent bin=$home/bin mcp hosted i=0
+    command -v python3 >/dev/null 2>&1 || die "The skills' helpers need Python 3."
+    hosted=$(python3 "$root/agent-skills/bin/subspace_token.py" --workos-mcp-url) || return 1
+    mcp=${hosted:-http://127.0.0.1:3000/mcp}
+    if [ -z "$hosted" ]; then
+        load_target
+        [ -f "$state/summary.env" ] || die "Install the fleet first."
+    fi
     while [ $i -lt ${#passthrough[@]} ]; do
         case ${passthrough[$i]} in
             --agents) i=$((i + 1)); agents=${passthrough[$i]:-} ;;
@@ -961,16 +966,27 @@ do_skills() {
         done
         [ -n "$agents" ] || die "No Claude Code, Codex or OpenCode found. Pass --agents to choose."
     fi
-    command -v python3 >/dev/null 2>&1 || die "The skills' helpers need Python 3."
-    mkdir -p "$bin"
-    install -m 0755 "$root/agent-skills/bin/subspace_token.py" "$root/agent-skills/bin/subspace_irc.py" "$bin/"
     if [ -z "$person" ] && [ -f "$home/agents.env" ]; then
         person=$(sed -n 's/^SUBSPACE_HUMAN_NAME=//p' "$home/agents.env")
     fi
-    [ -n "$person" ] || person=$(sed -n 's/^SUBSPACE_ADMIN_ACCOUNT=//p' "$state/summary.env")
+    if [ -z "$person" ] && [ -f "$state/summary.env" ]; then
+        person=$(sed -n 's/^SUBSPACE_ADMIN_ACCOUNT=//p' "$state/summary.env")
+    fi
+    [ -z "$hosted" ] || [ -n "$person" ] || die "Pass --name for the person these agents act for."
+    mkdir -p "$bin"
+    install -m 0755 "$root/agent-skills/bin/subspace_token.py" "$root/agent-skills/bin/subspace_irc.py" "$bin/"
     printf 'SUBSPACE_TARGET=%s\nSUBSPACE_HUMAN_NAME=%s\n' "$target" "$person" > "$home/agents.env"
     say "Local agents will sign in as you and mark their messages 'on behalf of $person (<model>)'."
-    local IFS_save=$IFS dest
+    local IFS_save=$IFS dest claude_config
+    # A hosted registration pins its URL, so the helper refuses to send a token after agent.json moves to
+    # another API. The development registration stays as it was.
+    claude_config=$(python3 -B - "$bin/subspace_token.py" "$mcp" "$hosted" <<'PY'
+import json, shlex, sys
+script, url, hosted = sys.argv[1:]
+helper = ["python3", script, "--header"] + (["--mcp-endpoint", url] if hosted else [])
+print(json.dumps({"type": "http", "url": url, "headersHelper": shlex.join(helper)}))
+PY
+    )
     IFS=,
     for agent in $agents; do
         IFS=$IFS_save
@@ -987,25 +1003,30 @@ do_skills() {
             claude)
                 if command -v claude >/dev/null 2>&1; then
                     claude mcp remove --scope user subspace >/dev/null 2>&1 || true
-                    claude mcp add-json --scope user subspace \
-                        "{\"type\":\"http\",\"url\":\"$mcp\",\"headersHelper\":\"python3 $bin/subspace_token.py --header\"}" >/dev/null
+                    claude mcp add-json --scope user subspace "$claude_config" >/dev/null
                 fi ;;
             codex)
                 if command -v codex >/dev/null 2>&1; then
                     codex mcp remove subspace >/dev/null 2>&1 || true
-                    codex mcp add subspace --url "$mcp" --bearer-token-env-var SUBSPACE_API_TOKEN >/dev/null
+                    if [ -n "$hosted" ]; then
+                        codex mcp add subspace -- python3 "$bin/subspace_token.py" --mcp-stdio --mcp-endpoint "$mcp" >/dev/null
+                    else
+                        codex mcp add subspace --url "$mcp" --bearer-token-env-var SUBSPACE_API_TOKEN >/dev/null
+                    fi
                 fi ;;
             opencode)
-                python3 -B - "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" "$mcp" <<'PY' ||
+                python3 -B - "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" "$mcp" "$hosted" "$bin/subspace_token.py" <<'PY' ||
 import json, os, sys
-path, url = sys.argv[1], sys.argv[2]
+path, url, hosted, script = sys.argv[1:]
 config = {"$schema": "https://opencode.ai/config.json"}
 if os.path.exists(path):
     config = json.load(open(path))
-config.setdefault("mcp", {})["subspace"] = {
-    "type": "remote", "url": url, "enabled": True,
-    "headers": {"Authorization": "Bearer {env:SUBSPACE_API_TOKEN}"},
-}
+config.setdefault("mcp", {})["subspace"] = (
+    {"type": "local", "command": ["python3", script, "--mcp-stdio", "--mcp-endpoint", url], "enabled": True}
+    if hosted else
+    {"type": "remote", "url": url, "enabled": True,
+     "headers": {"Authorization": "Bearer {env:SUBSPACE_API_TOKEN}"}}
+)
 os.makedirs(os.path.dirname(path), exist_ok=True)
 tmp = path + ".new"
 with open(tmp, "w") as handle:
@@ -1019,6 +1040,10 @@ PY
         IFS=,
     done
     IFS=$IFS_save
+    if [ -n "$hosted" ]; then
+        note "Sign in once: python3 \"$bin/subspace_token.py\" --login"
+        return
+    fi
     note "Claude Code refreshes its API token by itself. For Codex and OpenCode, start them with:"
     note "  export SUBSPACE_API_TOKEN=\"\$(python3 $bin/subspace_token.py)\""
     note "Keep the tunnel running: ./install.sh tunnel --target $target --background"

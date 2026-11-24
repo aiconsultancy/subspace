@@ -15,22 +15,20 @@ input schema; this skill names them without the harness's prefix.
 
 ## Connecting
 
-There are two ways in, and they never mix:
+**A person's local agent** uses the person's Subspace account. For a hosted
+WorkOS API, ask the person to run
+`python3 ~/.subspace/bin/subspace_token.py --login` and complete browser
+sign-in. The helper shares and refreshes that session across agents. For
+development sign-in, use the fleet's tunnel. Get the person's name with
+`python3 ~/.subspace/bin/subspace_token.py --me`, or ask them.
 
-- **A person's local agent** signs in with that person's login through the
-  fleet's tunnel. The token comes from the API's development sign-in and lasts
-  about eight hours; a WorkOS or Entra deployment needs a token from that
-  provider instead. Get the person's name from
-  `python3 ~/.subspace/bin/subspace_token.py --me`, or ask them.
+The installer registers `subspace` as a user-scope MCP server in Claude
+Code. It uses the hosted API's `/mcp` URL or the development URL
+`http://127.0.0.1:3000/mcp`. Its `headersHelper` runs
+`python3 ~/.subspace/bin/subspace_token.py --header`. Check it with
+`claude mcp get subspace`. Tools appear as `mcp__subspace__subspace_<name>`.
 
-The installer registered `subspace` as a user-scope MCP server for Claude
-Code: `http://127.0.0.1:3000/mcp`, with a `headersHelper` that runs
-`python3 ~/.subspace/bin/subspace_token.py --header` and refreshes the token
-by itself. Check it with `claude mcp get subspace`. Its tools appear as
-`mcp__subspace__subspace_<name>`.
-
-A fleet's own agents connect differently, through the API's agent listener
-and their own agent records; this skill's rules below cover both.
+A fleet's own agents use the API's agent listener and their agent records.
 
 <!-- shared:start -->
 ## Who you are in the tracker
@@ -277,10 +275,11 @@ person. A 403 means the same: report it, never work around it.
 
 ## Troubleshooting
 
-- **Cannot connect**: the fleet's tunnel is not running. Ask the person to run
+- **Development connection failed**. Ask the person to run
   `./install.sh tunnel --background` (Windows: `.\install.ps1 tunnel
   --background`) in the Subspace repository.
-- **HTTP 401**: the helper mints a new token on the next call; if it keeps
-  failing, check `python3 ~/.subspace/bin/subspace_token.py --me`.
+- **HTTP 401**. Ask the person to check
+  `python3 ~/.subspace/bin/subspace_token.py --me`. For WorkOS, run
+  `python3 ~/.subspace/bin/subspace_token.py --login` when prompted.
 - **HTTP 403**: the person's account may not do that; tell them rather than
   working around it.

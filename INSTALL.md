@@ -1087,14 +1087,24 @@ Your own coding agents can work with the fleet too: read and update issues,
 log decisions, write documents, and talk to the rear admiral and captains on
 IRC. The [Subspace skills](agent-skills/README.md) add this to Claude Code,
 Codex and OpenCode, each in its own form, and register the Subspace API's MCP
-server with them:
+server with them. For a hosted WorkOS API, first create
+`~/.subspace/agent.json` with the API URL and AuthKit client ID. See the
+[hosted API setup](agent-skills/README.md#hosted-api-with-workos) for the
+settings and WorkOS callback registration.
 
 ```sh
 ./install.sh skills --agents claude,codex,opencode --name "Your Name"
 ```
 
-On Windows, use `.\install.ps1 skills ...`. This changes your agents' user
-profiles, so agents run it only when the user agreed to it in the plan. Local agents sign in with
+For WorkOS, run `python3 ~/.subspace/bin/subspace_token.py --login` once and
+complete sign-in in the browser. The agents then share the session and
+refresh it as needed. For development sign-in, keep the fleet's tunnel
+running with `./install.sh tunnel --background`.
+
+On Windows, use `.\install.ps1 skills ...` and
+`py "$HOME/.subspace/bin/subspace_token.py" --login` for WorkOS.
+The installer changes your agents' user profiles, so agents run it only
+when the user agreed to it in the plan. Local agents sign in with
 **your** login. They must always say they are an agent acting for you, with
 their model and version, for example
 `[on behalf of George (Claude Opus 5.5)]` on IRC, or
