@@ -30,6 +30,7 @@ mod session;
 mod settings_dialog;
 mod shell;
 mod shortcuts;
+mod sign_in_gate;
 mod space_menu;
 #[cfg(test)]
 mod space_menu_tests;
@@ -474,14 +475,23 @@ impl SubspaceApp {
         ]
     }
 
+    /// Takes a route that opens nothing now: the test notification, or one
+    /// held until sign-in.
+    fn intercepted(&mut self, route: crate::notifications::Route, cx: &mut Context<Self>) -> bool {
+        if route == crate::notifications::Route::Test {
+            self.push_toast(Toast::info("Test notification activated."), cx);
+            return true;
+        }
+        sign_in_gate::hold(route, cx)
+    }
+
     pub(crate) fn open_notification(
         &mut self,
         route: crate::notifications::Route,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if route == crate::notifications::Route::Test {
-            self.push_toast(Toast::info("Test notification activated."), cx);
+        if self.intercepted(route, cx) {
             return;
         }
         self.dismiss_shortcuts(window, cx);
@@ -588,6 +598,9 @@ impl SubspaceApp {
     }
 
     fn switch_to(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if sign_in_gate::shown(cx) {
+            return;
+        }
         self.dismiss_shortcuts(window, cx);
         self.note_arrival(index, cx);
         let board_showing = self.leave_main();

@@ -3,7 +3,9 @@
 //! defaults; the same-named `SUBSPACE_*` environment variables override them
 //! at run time. A NETT build (`api_backend: "nett"`) signs in with WorkOS
 //! device authorisation, talks only to its NETT API and refuses every
-//! Subspace API setting. Nothing here names a real tenant, client or API.
+//! Subspace API setting. A build with no API backend (`api_backend:
+//! "none"`) has no provider, so it registers no account and never asks
+//! anyone to sign in. Nothing here names a real tenant, client or API.
 
 use crate::launch::{self, Launch, Stamped};
 use crate::settings::ApiBackend;
@@ -41,9 +43,9 @@ const STAMPED: Stamped = Stamped {
 /// sees the same values.
 static LAUNCH: OnceLock<Launch> = OnceLock::new();
 
-/// Whether this is a NETT build.
-pub(crate) fn nett() -> bool {
-    ApiBackend::parse(STAMPED.backend) == Some(ApiBackend::Nett)
+/// The build's backend. The build script refused any other value.
+pub(crate) fn backend() -> ApiBackend {
+    ApiBackend::parse(STAMPED.backend).unwrap_or(ApiBackend::Subspace)
 }
 
 /// The run's `SUBSPACE_*` variables. A value that is not Unicode counts as
@@ -68,21 +70,36 @@ pub(crate) fn configure_backend(
 
 /// The native account the shell offers, when the config names a provider.
 pub(crate) fn registration() -> Option<AccountRegistration> {
-    let launch = LAUNCH.get()?;
+    registration_for(LAUNCH.get()?)
+}
+
+/// The account `launch` offers: none without a provider, as in every build
+/// with no API backend, so the shell shows no Account page and no sign-in.
+/// With one, the app needs it: the shell asks for sign-in over the window
+/// while there is no session, unless the provider signs in by itself, as
+/// `dev` does.
+fn registration_for(launch: &Launch) -> Option<AccountRegistration> {
     if launch.provider.is_empty() {
         return None;
     }
     Some(if launch.backend == ApiBackend::Nett {
-        AccountRegistration {
-            provider: nett_provider,
-            configure: Some(configure_nett_api),
-        }
+        required_account(nett_provider, configure_nett_api)
     } else {
-        AccountRegistration {
-            provider,
-            configure: Some(configure_subspace_api),
-        }
+        required_account(provider, configure_subspace_api)
     })
+}
+
+/// An account the app cannot be used without, from `provider`, whose tokens
+/// `configure` hands to the API client.
+fn required_account(
+    provider: fn(&str) -> Option<Arc<dyn Provider>>,
+    configure: fn(AccountTokenSource),
+) -> AccountRegistration {
+    AccountRegistration {
+        provider,
+        configure: Some(configure),
+        required: true,
+    }
 }
 
 /// WorkOS device authorisation with the environment's one accepted client.
@@ -243,10 +260,13 @@ fn fingerprint(token: &str) -> u64 {
     hasher.finish()
 }
 
-/// Adjusts the app's descriptor for a NETT build; see [`adjust_for_nett`].
+/// Adjusts the app's descriptor for a NETT build (see [`adjust_for_nett`])
+/// or a build with no API backend (see `surfaces::adjust_descriptor`).
 pub(crate) fn adjust_descriptor(descriptor: &mut subspace_framework::product::ProductDescriptor) {
-    if nett() {
-        adjust_for_nett(descriptor);
+    match backend() {
+        ApiBackend::Nett => adjust_for_nett(descriptor),
+        ApiBackend::None => crate::surfaces::adjust_descriptor(descriptor),
+        ApiBackend::Subspace => {}
     }
 }
 
@@ -272,9 +292,10 @@ fn api_error(error: Error) -> subspace_api_client::Error {
 mod tests {
     use super::{
         FORCE_RENEWAL, LAUNCH, STAMPED, adjust_descriptor, adjust_for_nett, api_error,
-        configure_backend, nett_credentials, renewed,
+        configure_backend, nett_credentials, registration_for, renewed,
     };
-    use crate::launch::{API_URL, NETT_API_URL, resolve};
+    use crate::launch::{API_URL, NETT_API_URL, Stamped, resolve};
+    use crate::settings::ApiBackend;
     use std::cell::Cell;
     use subspace_framework::account::Error;
 
@@ -283,10 +304,42 @@ mod tests {
         // Whatever config this binary was stamped with, it must resolve on
         // its own: the build script already refused an invalid one.
         let launch = resolve(&STAMPED, Vec::new()).unwrap();
-        assert_eq!(
-            launch.backend == crate::settings::ApiBackend::Nett,
-            super::nett()
+        assert_eq!(launch.backend, super::backend());
+    }
+
+    #[test]
+    fn only_a_launch_with_a_provider_offers_an_account() {
+        let none = Stamped {
+            backend: "none",
+            ..Stamped::default()
+        };
+        let launch = resolve(&none, Vec::new()).unwrap();
+        assert_eq!(launch.backend, ApiBackend::None);
+        assert!(
+            registration_for(&launch).is_none(),
+            "a build with no API backend asks no one to sign in"
         );
+        let dev = Stamped {
+            provider: "dev",
+            api_url: "http://127.0.0.1:3000",
+            ..Stamped::default()
+        };
+        let account = registration_for(&resolve(&dev, Vec::new()).unwrap());
+        assert!(
+            account.is_some_and(|account| account.required),
+            "an API-backed build cannot be used without its account"
+        );
+        let nett = Stamped {
+            backend: "nett",
+            provider: "workos",
+            nett_api_url: "https://api.nett.example",
+            workos_client_id: "client_00000000000000000000000000",
+            ..Stamped::default()
+        };
+        let account = registration_for(&resolve(&nett, Vec::new()).unwrap());
+        assert!(account.is_some_and(|account| account.required));
+        let off = vec![("SUBSPACE_IDENTITY_PROVIDER".to_owned(), String::new())];
+        assert!(registration_for(&resolve(&dev, off).unwrap()).is_none());
     }
 
     /// Set for the child process that installs the stamped launch.
@@ -295,7 +348,7 @@ mod tests {
     #[test]
     fn the_stamped_build_installs_its_one_backend_and_a_refused_setting_nothing() {
         // A setting the build refuses installs nothing.
-        let (name, value) = if super::nett() {
+        let (name, value) = if super::backend() == ApiBackend::Nett {
             (API_URL, "http://127.0.0.1:3000")
         } else {
             (NETT_API_URL, "https://api.nett.example")
@@ -365,7 +418,11 @@ mod tests {
         assert_eq!(LAUNCH.get(), Some(&resolve(&STAMPED, Vec::new()).unwrap()));
         assert_eq!(
             subspace_api_client::backend() == subspace_api_client::Backend::Nett,
-            super::nett()
+            super::backend() == ApiBackend::Nett
+        );
+        assert_eq!(
+            subspace_api_client::has_backend(),
+            super::backend() != ApiBackend::None
         );
     }
 
@@ -385,10 +442,18 @@ mod tests {
         for (after, before) in nett.boards.iter().zip(&subspace.boards) {
             assert!(after.id == "issues" || after == before);
         }
-        // The stamped build is adjusted exactly when it is a NETT build.
+        // The stamped build is adjusted for its backend, and only a NETT
+        // build in this way.
         let mut stamped = subspace.clone();
         adjust_descriptor(&mut stamped);
-        assert_eq!(stamped, if super::nett() { nett } else { subspace });
+        let mut none = subspace.clone();
+        crate::surfaces::adjust_descriptor(&mut none);
+        let expected = match super::backend() {
+            ApiBackend::Nett => nett,
+            ApiBackend::None => none,
+            ApiBackend::Subspace => subspace,
+        };
+        assert_eq!(stamped, expected);
     }
 
     #[test]

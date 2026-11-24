@@ -1,7 +1,8 @@
 //! Initialise the native account and schedule silent renewal.
 
 use super::{
-    AccountRegistration, AccountTokenSource, LeaseGate, NativeAccount, Retry, Shared, Status,
+    AccountRegistration, AccountTokenSource, LeaseGate, NativeAccount, Retry, Session, Shared,
+    Status,
 };
 use gpui_kit::{App, AppContext as _};
 use std::sync::Arc;
@@ -32,6 +33,7 @@ pub(crate) fn init(registration: Option<AccountRegistration>, cx: &mut App) {
         configure(AccountTokenSource::new(manager.clone(), gate.clone()));
     }
     let entity = cx.new(|_| NativeAccount {
+        required: registration.required,
         gate,
         status: Status::Idle,
         provider: manager.info(),
@@ -39,6 +41,7 @@ pub(crate) fn init(registration: Option<AccountRegistration>, cx: &mut App) {
         account: None,
         before_sign_in: Status::Idle,
         retry: Retry::Restore,
+        session: Session::Unknown,
         cancel: None,
         url: None,
         code: None,

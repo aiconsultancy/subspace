@@ -149,6 +149,7 @@ mod tests {
             app_bundle: "App".into(),
             token_variable: "APP_GITHUB_TOKEN".into(),
             channel: subspace_product::Channel::Stable,
+            exclusive: false,
         }
     }
 

@@ -42,7 +42,10 @@ impl SubspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if window.has_active_dialog(cx) || !self.ready_for_about(cx) {
+        if super::sign_in_gate::shown(cx)
+            || window.has_active_dialog(cx)
+            || !self.ready_for_about(cx)
+        {
             return;
         }
         let context = cx.global::<CurrentProduct>().0.clone();

@@ -203,6 +203,14 @@ forwards the app's targets here.
   development stack (`dev` sign-in against `http://127.0.0.1:3000`). Never
   commit a real tenant, client ID or private API URL; see
   [Identity providers and the API URL](README.md#identity-providers-and-the-api-url).
+- **Code that needs the Subspace API** follows the repository's
+  [working rule](../AGENTS.md#working-rules): it lives in the product crate
+  or a Space, the build options select it (`api_backend`,
+  `identity_provider`, the product's GitHub OAuth App), it turns itself off
+  against an API that lacks its endpoint, and a build without the API shows
+  no trace of it. A build with `api_backend: "none"` is the check:
+  `products/subspace/src/surfaces.rs` decides what it leaves out, and
+  `subspace_api_client::has_backend()` tells a Space at run time.
 - **A Framework change and a Space change together.** Both projects live in
   this repository, and the desktop builds the Framework from
   `../subspace-framework` by path, so an edit there is in the next desktop

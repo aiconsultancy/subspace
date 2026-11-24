@@ -80,7 +80,10 @@ impl SubspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.settings_shown(window, cx) || !self.ready_for_settings(window, cx) {
+        if super::sign_in_gate::shown(cx)
+            || self.settings_shown(window, cx)
+            || !self.ready_for_settings(window, cx)
+        {
             return;
         }
         if !self.jig.read(cx).can_close() {

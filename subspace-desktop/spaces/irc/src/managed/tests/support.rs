@@ -82,6 +82,8 @@ fn respond(request: &Request, me: &Mutex<(u16, Value)>, vouched: &[&str]) -> (u1
 pub(crate) struct TestEnv {
     url: String,
     pub generation: Mutex<Option<u64>>,
+    /// False for a build with no API backend.
+    pub available: bool,
 }
 
 impl Env for TestEnv {
@@ -92,13 +94,28 @@ impl Env for TestEnv {
     fn generation(&self) -> Option<u64> {
         *self.generation.lock().unwrap()
     }
+
+    fn available(&self) -> bool {
+        self.available
+    }
 }
 
 /// The hub's account side talking to `api`, signed in at generation 1.
 pub(crate) fn connect(hub: &Entity<Hub>, api: &Api, cx: &mut VisualTestContext) -> Arc<TestEnv> {
+    connect_to(hub, api, true, cx)
+}
+
+/// [`connect`], in a build with an API backend when `available`.
+pub(crate) fn connect_to(
+    hub: &Entity<Hub>,
+    api: &Api,
+    available: bool,
+    cx: &mut VisualTestContext,
+) -> Arc<TestEnv> {
     let env = Arc::new(TestEnv {
         url: format!("{}/api", api.mock.base_url()),
         generation: Mutex::new(Some(1)),
+        available,
     });
     let used: Arc<dyn Env> = env.clone();
     hub.update(cx, |hub, _| hub.managed.use_env_for_test(used));

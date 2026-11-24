@@ -24,6 +24,8 @@ aarch64-apple-darwin) ;;
 esac
 
 root="${SUBSPACE_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=product.sh
+source "$root/scripts/product.sh"
 cd "$root"
 # Secrets missing from the environment are read from the Azure Key Vault
 # named by SUBSPACE_SIGNING_KEY_VAULT. There is no default vault. Key Vault
@@ -152,7 +154,7 @@ unset certificate_base64 certificate_password api_key_base64 api_key_id api_issu
 rm "$stage/certificate.p12" "$stage/AuthKey.p8"
 
 SUBSPACE_MACOS_KEYCHAIN="$keychain" bash scripts/package-macos.sh "$identity" subspace-ci "$target"
-app_name="$(cargo run --quiet --locked -p subspace-descriptor --bin subspace-product-metadata -- subspace "$version" | jq -er '.asset_stem')"
+app_name="$(no_api_suffix "$(cargo run --quiet --locked -p subspace-descriptor --bin subspace-product-metadata -- subspace "$version" | jq -er '.asset_stem')" -NoAPI)"
 archive="$root/dist/${app_name}_${version}_darwin_arm64.zip"
 test -s "$archive"
 (

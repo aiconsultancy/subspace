@@ -126,6 +126,9 @@ impl SubspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if super::sign_in_gate::shown(cx) {
+            return;
+        }
         let open = self.change_chat_visibility();
         prefs::set(cx, CHAT_OPEN_KEY, chat_open_preference(open));
         let _ = (!open).then(|| {

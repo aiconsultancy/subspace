@@ -6,6 +6,7 @@ import { normalizeEndpoint } from "../src/api.js";
 import { addBlocker, sampleNote, describeTestError, describeTestSuccess, fleetForm, fleetSection, landscapePanel, validateFleetForm } from "../src/fleet-panel.js";
 import { createFleetManager, createSampleFleetManager, nextPollAt, POLL_MS } from "../src/fleet-manager.js";
 import { initialFleetState } from "../src/reducer.js";
+import { describeConnection } from "../src/connection.js";
 import { chain, createNavigator, fleetTier, LANDSCAPE, parentOf, planSteps, sameSelection } from "../src/camera.js";
 import { focusFor, landscapeLayout } from "../src/layout.js";
 import { composeFrame } from "../src/scene/index.js";
@@ -137,6 +138,16 @@ test("merging keeps Settings first, then the API, then the page, one entry per a
   const merged = mergeFleets({ settings, api, local });
   assert.deepEqual(merged.map((fleet) => [fleet.id, fleet.origin]), [[DEFAULT_FLEET_ID, "settings"], ["api_i1", "api"], ["floc000002", "local"]]);
   assert.deepEqual(mergeFleets({}), []);
+});
+
+test("without the Subspace API, an unset Fleet Console asks for its own fleet and names no API or sign-in", () => {
+  // A build with no API backend gives no API fleets: the page's own
+  // settings and Add fleet are how a fleet gets there.
+  const unset = resolveFleets({ present: true, allowed: allowedAll, capabilities: caps, settings: {}, secrets: {}, list: [], api: [], normalizeEndpoint });
+  assert.deepEqual([unset.mode, unset.reason, unset.canStore], ["sample", "no-endpoint", true]);
+  const { banner } = describeConnection({ status: "sample", reason: unset.reason });
+  assert.match(banner.body, /Settings > Spaces > Fleet Console/);
+  assert.doesNotMatch(`${banner.title} ${banner.body}`, /Subspace API|Settings › Fleets|sign in|initiative/i);
 });
 
 test("resolving: sample without a usable fleet, live with any fleet that has a token", () => {

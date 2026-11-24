@@ -33,6 +33,11 @@ pub struct UpdateSource {
     /// The channel this build updates within. Stable selects only stable
     /// releases; a type selects only published pre-releases of that type.
     pub channel: Channel,
+    /// Whether this build installs only its own archive, as a variant built
+    /// with its own asset names does: a newer release that does not publish
+    /// that archive is no update for it, rather than one whose install
+    /// fails. False keeps the ordinary behaviour.
+    pub exclusive: bool,
 }
 
 /// Returns the source unchanged when every field is safe to put in a URL,
@@ -120,6 +125,7 @@ mod tests {
             app_bundle: "Subspace".into(),
             token_variable: "SUBSPACE_GITHUB_TOKEN".into(),
             channel: crate::Channel::Stable,
+            exclusive: false,
         }
     }
 

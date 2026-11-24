@@ -115,6 +115,15 @@ starts, which is handy against a local stack.
   port). Register a public client on the Mobile and desktop platform, with
   no secret, and grant it the API scope.
 
+With `workos` or `entra` the app cannot be used without the account: while
+there is no session, at start-up and when a session ends for good, a
+sign-in dialog covers the main window, naming the organisation from the
+build's branding, with the provider's sign-in and Quit. It closes once you
+are signed in, and Channels then connects to your account's networks. A saved
+session the app cannot renew because the network or the API is out of reach
+still opens the app, which shows that it is retrying. `dev` signs in by
+itself and never shows the dialog, nor does a build with no API backend.
+
 Example build config for a hosted API with WorkOS:
 
 ```json
@@ -161,6 +170,43 @@ channels go to the connection on its fleet's IRC server; initiatives without a
 fleet use `SUBSPACE_IRC_ENDPOINT` (`irc://host:port` or `ircs://host:port`),
 by default the local server, `irc://127.0.0.1:6667`. IRC sign-in is the
 connection's SASL account, not the API account.
+
+### A build with no API backend
+
+Set `api_backend` to `none` to build the app without Subspace API or NETT,
+for people who want Channels, the GitHub Spaces, web Spaces and the terminal
+with nothing to sign in to:
+
+```json
+{
+  "api_backend": "none"
+}
+```
+
+The build has no API origin and no account. It leaves out what needs the
+API: **Settings > Account** and any sign-in, the Issues and Decisions Spaces,
+**Settings > Fleets**, and, in Channels, the account networks, the
+initiative picker, fleet context, captain notices (and their switch in
+**Settings > Channels**), chat uploads and the tracker commands, so
+`/assign` is ordinary IRC input.
+Channels connects to the networks you add in **Settings > Channels**. Fleet
+Console shows the fleets you give it: the Stargate API address and token in
+**Settings > Spaces > Fleet Console** (which the installer can fill in), and
+any you add inside it. Updates come from GitHub releases and never need the
+API, but only from the build's own archives
+(`Subspace-NoAPI_<version>_darwin_arm64.zip`,
+`subspace-no-api-<version>-<target>.tar.gz`), which the packaging scripts
+name so; a release without them is no update, so the standard build never
+replaces it. See [Installation](docs/installation.md).
+
+The build refuses `identity_provider`, `api_url`, `nett_api_url` and every
+`workos_`, `entra_` and `dev_` setting, and will not start while
+`SUBSPACE_API_URL`, `SUBSPACE_API_ACCESS_JWT_FILE`, `SUBSPACE_NETT_API_URL`,
+`SUBSPACE_IDENTITY_PROVIDER`, `SUBSPACE_WORKOS_*`, `SUBSPACE_DEV_*` or
+`SUBSPACE_ENTRA_*` is set to anything but an empty value. Branding
+(`organization_name`, `title_prefix`, `about_logo`) still applies. See the
+[change record](docs/changes/desktop-no-backend/README.md) for where each
+part is decided.
 
 ## Report a problem
 

@@ -85,14 +85,16 @@ pub(crate) enum Origin {
 }
 
 /// Runs `text` when it is a tracker command and returns true; a command
-/// that cannot run keeps the draft and says why. False for anything else.
+/// that cannot run keeps the draft and says why. False for anything else,
+/// and for everything in a build with no tracker, where `/assign` is
+/// ordinary IRC input.
 pub(crate) fn submit(
     conversation: &mut Conversation,
     text: &str,
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) -> bool {
-    let Some(typed) = typed(text) else {
+    let Some(typed) = typed(text).filter(|_| subspace_api_client::has_backend()) else {
         return false;
     };
     // One form for every way a draft arrives: Return trims, a run row

@@ -87,6 +87,7 @@ pub fn descriptor_for(channel: Channel) -> ProductDescriptor {
             app_bundle: asset_stem(&channel.display_name("Subspace")),
             token_variable: "SUBSPACE_GITHUB_TOKEN".into(),
             channel,
+            exclusive: false,
         }),
     }
 }

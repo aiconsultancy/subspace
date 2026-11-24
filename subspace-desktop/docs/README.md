@@ -186,6 +186,10 @@ shared quick-start fragments live in `subspace/includes/`.
   build with NETT as its tracker, device-flow sign-in, its own organisation
   scope, NETT's update stream and features gated on what NETT serves.
   NETT-side prerequisites are tracked in the Indra repository.
+- [A build with no API backend](changes/desktop-no-backend/README.md):
+  `api_backend: "none"`, what it leaves out and where each part is decided.
+- [Sign-in at start-up](changes/desktop-sign-in-gate/README.md): the sign-in
+  dialog over the main window in a build with an API backend and no session.
 If you want to know why something was built the way it was, read its change
 record. [Change records](changes/README.md) explains the convention.
 

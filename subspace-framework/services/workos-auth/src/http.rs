@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use subspace_account::Error;
 use subspace_core::Secret;
-use subspace_core::http::status::{BAD_REQUEST, FORBIDDEN, UNAUTHORIZED, is_success};
+use subspace_core::http::status::{BAD_REQUEST, FORBIDDEN, UNAUTHORIZED, is_success, is_transient};
 use ureq::tls::{RootCerts, TlsConfig};
 
 /// The longest a token request may take.
@@ -192,6 +192,8 @@ fn agent() -> ureq::Agent {
 
 pub(crate) fn failure_error(status: u16, code: Option<&str>) -> Error {
     match (status, code) {
+        // A service briefly unavailable says nothing about the grant.
+        (status, _) if is_transient(status) => Error::Service,
         (_, Some("invalid_grant" | "mfa_enrollment" | "sso_required")) => Error::SignInRequired,
         (_, Some("access_denied")) => Error::NotPermitted,
         (_, Some("invalid_client" | "unauthorized_client")) => Error::NotPermitted,
@@ -236,5 +238,27 @@ mod tests {
         );
         assert_eq!(failure_error(403, None), Error::NotPermitted);
         assert_eq!(failure_error(500, None), Error::Service);
+    }
+
+    /// An outage, whatever its body says, never ends a saved session; a
+    /// grant the service refuses still does.
+    #[test]
+    fn a_briefly_unavailable_service_is_not_a_refused_grant() {
+        for status in [502, 503, 504, 429] {
+            assert_eq!(
+                failure_error(status, Some("invalid_grant")),
+                Error::Service,
+                "{status}"
+            );
+            assert_eq!(
+                super::parse::<super::Reply>(status, b"<html>Bad gateway</html>").err(),
+                Some(Error::Service),
+                "{status}"
+            );
+        }
+        assert_eq!(
+            super::parse::<super::Reply>(400, br#"{"error":"invalid_grant"}"#).err(),
+            Some(Error::SignInRequired)
+        );
     }
 }

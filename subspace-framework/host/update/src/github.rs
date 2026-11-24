@@ -304,12 +304,14 @@ mod tests {
             app_bundle: "App".into(),
             token_variable: "APP_GITHUB_TOKEN".into(),
             channel: Channel::Stable,
+            exclusive: false,
         }
     }
 
     fn nightly_source() -> UpdateSource {
         UpdateSource {
             channel: Channel::Nightly,
+            exclusive: false,
             ..source()
         }
     }

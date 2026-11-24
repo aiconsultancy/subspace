@@ -263,11 +263,13 @@ pub(crate) fn fence(hub: &mut Hub, cx: &mut Context<Hub>) {
 }
 
 /// On the hub's timer: forget the account once another signs in or out,
-/// check it when due, and ask about each server when its probe is due.
+/// check it when due, and ask about each server when its probe is due. In a
+/// build with no API backend the account is never checked, so it brings no
+/// network and Settings shows none of it.
 pub(crate) fn tick(hub: &mut Hub, cx: &mut Context<Hub>) {
     let now = Instant::now();
     fence(hub, cx);
-    if hub.managed.schedule.due(now) {
+    if hub.managed.schedule.due(now) && hub.managed.env.available() {
         begin(hub, cx);
     }
     reread(hub, now, cx);

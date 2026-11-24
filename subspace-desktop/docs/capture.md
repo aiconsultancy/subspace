@@ -81,6 +81,13 @@ built in this way still starts off, so turn it on with `CAPTURE_CONFIG`, for
 example `CAPTURE_FEATURES=space-lab
 CAPTURE_CONFIG='{"boards":{"space-lab":true}}'` on macOS ARM64.
 
+The build runs in your environment, so `SUBSPACE_BUILD_CONFIG` selects its
+build configuration. A build with no API backend (`{"api_backend":
+"none"}`) refuses to start with the Subspace API fixture's variables, so
+capture it with `CAPTURE_NO_API=1`, which leaves them out of the app's
+environment. Add `CAPTURE_FLEET_API=1` to show Fleet Console, which such a
+build shows only once its own address and token are saved.
+
 The step syntax is listed in [AGENTS.md](../AGENTS.md#ui-change-evidence).
 Capture uses the same steps and fixture data on both platforms. Window
 decorations and text rasterisation can differ between operating systems.
@@ -224,7 +231,11 @@ Use `drop:<x>,<y>,<fixture-path>` in `STEPS` to dispatch a native file-enter/sub
 
 The debug capture step `account:<state>` seeds a fictional account UI.
 States are `unavailable`, `signed-out`, `waiting`, `switching`, `completing`,
-`signed-in`, `reconnecting`, `offline`, `expired`, `keychain` and `denied`. It performs no sign-in or keychain
+`signed-in`, `reconnecting`, `offline`, `expired`, `keychain`, `denied` and
+`failed` (a sign-in that could not reach the service, with no session);
+`required-<state>`, such as `required-signed-out`, seeds the state for an app
+that cannot be used without its account, which shows the sign-in dialog over
+the window while there is no session. It performs no sign-in or keychain
 lookup. All capture builds disable real account restoration, whatever identity
 provider the build config selects. The one exception is the local development
 provider (`dev`), which holds no real account: it signs in to a loopback API

@@ -7,9 +7,13 @@ use subspace_account::{Account, Cancel, Error, Provider, ProviderInfo, Started};
 
 mod bootstrap;
 mod lease;
+mod rules;
 pub(crate) use bootstrap::init;
 use lease::LeaseGate;
 pub use lease::{AccountSession, AccountTokenSource};
+pub(crate) use rules::Session;
+pub(crate) use rules::{account_label, sign_in_label, status_text};
+use rules::{after, asks, holds};
 
 /// How an app adds a native account: its identity provider and the trusted
 /// adapter it hands the token source to before Spaces start.
@@ -19,6 +23,12 @@ pub struct AccountRegistration {
     pub provider: fn(&str) -> Option<Arc<dyn Provider>>,
     /// Installs the app's trusted native token consumer, such as an API client.
     pub configure: Option<fn(AccountTokenSource)>,
+    /// Whether the app cannot be used without the account. The shell then
+    /// asks for sign-in over the main window whenever there is no session,
+    /// at start-up and when a session ends, if the provider needs a person
+    /// to sign in. A saved session it cannot renew because the service is
+    /// out of reach still lets the person in.
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +52,9 @@ enum Retry {
 }
 
 pub(crate) struct NativeAccount {
+    /// Whether the app asks for sign-in over the main window without a
+    /// session ([`AccountRegistration::required`]).
+    pub required: bool,
     manager: Option<Arc<dyn Provider>>,
     gate: Arc<LeaseGate>,
     pub provider: ProviderInfo,
@@ -49,6 +62,8 @@ pub(crate) struct NativeAccount {
     pub status: Status,
     before_sign_in: Status,
     retry: Retry,
+    /// The person's session, apart from the last sign-in attempt's outcome.
+    pub session: Session,
     cancel: Option<Cancel>,
     url: Option<String>,
     /// The user code to confirm in the browser, during device authorisation.
@@ -84,6 +99,17 @@ pub fn account_session(cx: &App) -> Option<AccountSession> {
 }
 
 impl NativeAccount {
+    /// Whether the shell asks for sign-in over the main window now.
+    pub(crate) fn asks_for_sign_in(&self) -> bool {
+        self.required && self.provider.browser && asks(self.session, self.status)
+    }
+
+    /// Whether a notification or another route from outside the window
+    /// waits until sign-in: while the shell asks for it, or may yet.
+    pub(crate) fn holds_routes(&self) -> bool {
+        self.required && self.provider.browser && holds(self.session, self.status)
+    }
+
     pub fn busy(&self) -> bool {
         matches!(
             self.status,
@@ -260,6 +286,11 @@ impl NativeAccount {
         self.url = None;
         self.code = None;
         self.reopen_leases(result.is_ok());
+        self.session = after(
+            self.session,
+            self.retry,
+            result.as_ref().map(Option::is_some).map_err(|error| *error),
+        );
         match result {
             Ok(account) => {
                 self.account = account;

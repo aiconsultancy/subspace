@@ -40,6 +40,17 @@ pub mod status {
     pub fn is_success(status: u16) -> bool {
         StatusCode::from_u16(status).is_ok_and(|code| code.is_success())
     }
+
+    /// True for a status that says the service is briefly unavailable, not
+    /// that the request was wrong: a 5xx, 408 or 429. Its body, often a
+    /// gateway's HTML page, says nothing about the request.
+    pub fn is_transient(status: u16) -> bool {
+        StatusCode::from_u16(status).is_ok_and(|code| {
+            code.is_server_error()
+                || code == StatusCode::REQUEST_TIMEOUT
+                || code == StatusCode::TOO_MANY_REQUESTS
+        })
+    }
 }
 
 /// One agent for every client: the platform certificate store (so a proxy
@@ -121,6 +132,16 @@ mod tests {
     use super::{Error, send_with_retry};
     use crate::config::Config;
     use crate::credentials::{Credential, CredentialError, Credentials, Environment, Runner};
+
+    #[test]
+    fn transient_statuses_are_server_errors_timeouts_and_rate_limits() {
+        for status in [500, 502, 503, 504, 408, 429] {
+            assert!(super::status::is_transient(status), "{status}");
+        }
+        for status in [200, 400, 401, 403, 404] {
+            assert!(!super::status::is_transient(status), "{status}");
+        }
+    }
 
     #[test]
     fn is_success_covers_the_2xx_range_only() {

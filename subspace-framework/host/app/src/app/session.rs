@@ -53,7 +53,7 @@ impl SubspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.settings.is_some() {
+        if self.settings.is_some() || super::sign_in_gate::shown(cx) {
             return;
         }
         self.dismiss_shortcuts(window, cx);

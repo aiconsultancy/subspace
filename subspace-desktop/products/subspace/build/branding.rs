@@ -1,8 +1,8 @@
-//! Non-secret build settings: the tracker backend (Subspace API or NETT),
-//! the identity provider, the API URL and optional organisation branding. A
-//! build embeds the selected config and logo; `src/identity.rs` lets the
-//! same-named environment variables override the provider settings at run
-//! time. `build/settings.rs` holds the rules both share.
+//! Non-secret build settings: the tracker backend (Subspace API, NETT or
+//! none), the identity provider, the API URL and optional organisation
+//! branding. A build embeds the selected config and logo; `src/identity.rs`
+//! lets the same-named environment variables override the provider settings
+//! at run time. `build/settings.rs` holds the rules both share.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -116,8 +116,9 @@ fn validate(values: &[(&str, String)]) -> Result<(), &'static str> {
         );
     }
     match ApiBackend::parse(value(values, "API_BACKEND")) {
-        None => Err("api_backend must be subspace, nett or empty"),
+        None => Err("api_backend must be subspace, nett, none or empty"),
         Some(ApiBackend::Nett) => validate_nett(values),
+        Some(ApiBackend::None) => validate_without_backend(values),
         Some(ApiBackend::Subspace) if !value(values, "NETT_API_URL").is_empty() => {
             Err("nett_api_url is only for a build with api_backend nett")
         }
@@ -154,6 +155,37 @@ fn validate_nett(values: &[(&str, String)]) -> Result<(), &'static str> {
     {
         return Err(
             "A NETT build cannot set api_url, workos_redirect_port, or entra_ or dev_ settings",
+        );
+    }
+    Ok(())
+}
+
+/// A build with no API backend has no API to point at and nothing to sign
+/// in to: every API and identity setting is refused, so none is silently
+/// ignored. Branding (`organization_name`, `title_prefix`, `about_logo`)
+/// still applies.
+fn validate_without_backend(values: &[(&str, String)]) -> Result<(), &'static str> {
+    let api_settings = [
+        "NETT_API_URL",
+        "IDENTITY_PROVIDER",
+        "API_URL",
+        "WORKOS_CLIENT_ID",
+        "WORKOS_API_URL",
+        "WORKOS_REDIRECT_PORT",
+        "ENTRA_TENANT_ID",
+        "ENTRA_CLIENT_ID",
+        "ENTRA_AUTHORITY",
+        "ENTRA_API_SCOPE",
+        "DEV_EMAIL",
+        "DEV_NAME",
+        "DEV_ORGANISATION",
+    ];
+    if api_settings
+        .iter()
+        .any(|name| !value(values, name).is_empty())
+    {
+        return Err(
+            "A build with api_backend none has no API or sign-in: remove identity_provider, api_url, nett_api_url and every workos_, entra_ and dev_ setting",
         );
     }
     Ok(())
@@ -272,6 +304,39 @@ mod tests {
         assert!(
             branding(r#"{"identity_provider":"workos","workos_client_id":"client id"}"#).is_err()
         );
+    }
+
+    #[test]
+    fn a_build_without_a_backend_refuses_every_api_and_sign_in_setting() {
+        let values = branding(r#"{"api_backend":"none"}"#).unwrap();
+        assert!(values.contains(&("API_BACKEND", "none".into())));
+        assert!(values.contains(&("IDENTITY_PROVIDER", String::new())));
+        assert!(values.contains(&("API_URL", String::new())));
+        // Branding still applies.
+        assert!(
+            branding(
+                r#"{"api_backend":"none","organization_name":"Example Works","title_prefix":"Example"}"#
+            )
+            .is_ok()
+        );
+        for extra in [
+            r#""identity_provider":"dev""#,
+            r#""identity_provider":"workos","workos_client_id":"client_x""#,
+            r#""api_url":"http://127.0.0.1:3000""#,
+            r#""nett_api_url":"https://api.nett.example""#,
+            r#""workos_client_id":"client_00000000000000000000000000""#,
+            r#""workos_api_url":"https://auth.example.com""#,
+            r#""workos_redirect_port":8787"#,
+            r#""entra_tenant_id":"00000000-0000-0000-0000-000000000001""#,
+            r#""entra_authority":"https://login.example.com""#,
+            r#""dev_email":"developer@example.com""#,
+            r#""dev_organisation":"local""#,
+        ] {
+            let error = branding(&format!(r#"{{"api_backend":"none",{extra}}}"#)).unwrap_err();
+            assert!(error.contains("api_backend none"), "{extra}: {error}");
+        }
+        // Whitespace alone is not a setting.
+        assert!(branding(r#"{"api_backend":"none","api_url":"  "}"#).is_ok());
     }
 
     #[test]

@@ -24,7 +24,7 @@ impl SubspaceApp {
     /// starts or stops covering the board area.
     pub(super) fn sync_board_cover(
         &mut self,
-        overlays: [&Option<AnyElement>; 6],
+        overlays: [&Option<AnyElement>; 7],
         window: &mut Window,
         cx: &mut App,
     ) {

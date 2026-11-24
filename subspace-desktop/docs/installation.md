@@ -255,6 +255,14 @@ acceptance before writing:
 - `dist/Subspace.app`
 - `dist/Subspace_<version>_darwin_arm64.zip`, containing the stapled app
 
+A build with no API backend (`SUBSPACE_BUILD_CONFIG` naming a config with
+`"api_backend": "none"`) names its archives apart, so a release can carry
+both: `Subspace-NoAPI_<version>_darwin_arm64.zip` and
+`subspace-no-api-<version>-<target>.tar.gz` (or `.zip` on Windows). Such a
+build updates only from those archives; a release without them is no
+update for it, and it never installs the standard build. The standard
+build's names and updates are unchanged.
+
 Run `bash scripts/test-package-products.sh` to check packaging in isolated
 fixtures without real signing or notarization.
 

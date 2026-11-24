@@ -147,8 +147,12 @@ if TMPDIR="$fixture/tmp" CAPTURE_FLEET_TOKEN=other bash "$fixture/scripts/captur
     fail "an unknown fleet token scenario was accepted"
 fi
 rm -rf "$fixture/open"
-TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 CAPTURE_FEATURES=space-lab,component-gallery \
+TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 CAPTURE_NO_API=1 CAPTURE_FEATURES=space-lab,component-gallery \
     bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+if grep -Eq '^SUBSPACE_API_(URL|ACCESS_JWT_FILE)=' "$fixture/open/args.txt"; then
+    fail "CAPTURE_NO_API gave the app Subspace API variables"
+fi
+grep -Fxq SUBSPACE_IDENTITY_PROVIDER= "$fixture/open/args.txt" || fail "CAPTURE_NO_API turned sign-in back on"
 grep -Eq -e '--features capture( --features terminal)? --features space-lab,component-gallery$' "$fixture/cargo.log" ||
     fail "CAPTURE_FEATURES did not reach the build"
 if grep -Fxq hosts.yml "$fixture/open/gh.txt"; then fail "CAPTURE_NO_GH left gh accounts"; fi
