@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import runtime  # noqa: E402
 import sessions  # noqa: E402
 
+GOLDEN = Path(__file__).resolve().parent / "golden" / "default-render.json"
+
 # Tests never reach the network (policy_test.py checks the anonymous repository check itself).
 runtime.readable_without_credentials = lambda url: True
 
@@ -796,6 +798,65 @@ class InstalledFleet(unittest.TestCase):
         config["repositories"].insert(0, {"id": "library", "url": "https://github.com/example/library.git"})
         with self.assertRaisesRegex(runtime.Invalid, "^Rear admiral atlas: its first repository is fixed"):
             runtime.rear_pin(runtime.validate(config, secrets))
+
+    def snapshot(self):
+        root = Path(self.root.name)
+        files = {}
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and not path.name.endswith((".pending.json", ".ready")):
+                files[str(path.relative_to(root))] = path.read_text().replace(str(root), "<root>")
+        return files
+
+    def fleets(self):
+        """A fleet with the API on this VM and its agent listener, as subspace-setup writes it (with its own
+        PostgreSQL or an existing one), with an OpenCode captain with crew and a Claude Agent SDK captain; and the
+        same fleet with no API."""
+        config, secrets = crew_fleet("orion", "vega")
+        config["captains"][1].update(harness={"type": "claude-sdk", "family": "claude"},
+                                     crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        api = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"],
+               "agentUrl": "http://127.0.0.1:3001"}
+        return {"local-api": ({**config, "api": api}, {**secrets, "apiToken": "aaa.bbb.admin"}),
+                "no-api": (config, secrets)}
+
+    def render_mode(self, config, secrets):
+        servers = {4096 + index: FakeOpenCode() for index in range(3)}
+        with patch.object(runtime.sessions, "OpenCode",
+                          side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]), \
+                patch.object(runtime.sessions, "new_session_id", side_effect=(f"ses_fixture{n}" for n in range(9))):
+            for name, value in (("fleet.json", config), ("secrets.json", secrets),
+                                ("extra-secrets.json", {"tokens": {}, "cloud": {}})):
+                (self.etc / name).write_text(json.dumps(value))
+                (self.etc / name).chmod(0o600)
+            runtime.render(runtime.validate(config, secrets), {"tokens": {}, "cloud": {}})
+            runtime.commission(False)
+        calls = [[call.args[0], call.kwargs.get("input")] for call in runtime.subprocess.run.call_args_list]
+        return {**self.snapshot(), "subprocess calls": json.dumps(calls, indent=1).replace(self.root.name, "<root>")}
+
+    def test_the_default_modes_render_byte_for_byte_as_before(self):
+        """The modes that existed before the hosted API render exactly what they rendered then.
+
+        tests/golden/default-render.json holds those files as main rendered them before the hosted-API mode.
+        Write it again only for an intended change to these modes:
+        SUBSPACE_UPDATE_GOLDEN=1 python3 -B subspace-installer/tests/sessions_test.py
+        """
+        # Every render here is the same: the engine seed is fixed, and nothing else in these modes is random.
+        (self.state / "engine.seed").write_text("00" * 32 + "\n")
+        rendered = {}
+        for mode, (config, secrets) in self.fleets().items():
+            for path in sorted(Path(self.root.name).rglob("*"), reverse=True):
+                if path.is_file() and path.name != "engine.seed":
+                    path.unlink()
+            runtime.subprocess.run.reset_mock()
+            rendered[mode] = self.render_mode(config, secrets)
+        if os.environ.get("SUBSPACE_UPDATE_GOLDEN") == "1":
+            GOLDEN.parent.mkdir(exist_ok=True)
+            GOLDEN.write_text(json.dumps(rendered, indent=1, sort_keys=True) + "\n")
+        golden = json.loads(GOLDEN.read_text())
+        for mode in golden:
+            self.assertEqual(sorted(rendered[mode]), sorted(golden[mode]), mode)
+            for name, text in golden[mode].items():
+                self.assertEqual(rendered[mode][name], text, f"{mode}: {name}")
 
     def combined(self, config):
         """The four installer features together: IRC certificates (the remote default), Slack bots for the rear
