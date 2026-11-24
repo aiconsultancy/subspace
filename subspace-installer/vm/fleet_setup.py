@@ -99,6 +99,8 @@ DISPATCH_SUMMARY = ("issues flagged Ready for agents are offered to the captains
 # The fleet installer's repository IDs (also Stargate crew project keys) and its crew limit of nine repositories.
 REPO_ID = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 MAX_REPOSITORIES = 9
+# A crew member's model ID, as the fleet installer accepts it (runtime.MODEL).
+CREW_MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}")
 # The API on this VM against an existing PostgreSQL (--database-url-file). The URL file is root's alone; the URL
 # is written only to the root-only api.env, single-quoted so Compose takes it literally, hence no quote in it.
 DATABASE_URL_TEXT = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+")
@@ -186,6 +188,10 @@ def parse_args(argv):
                         "'' clears it. Private GitHub repositories need GitHub Apps first (installer README)")
     parser.add_argument("--crew-claude", type=int, help="Claude-family crew per captain (default 2; crew need a repository)")
     parser.add_argument("--crew-codex", type=int, help="Codex-family crew per captain (default 2; crew need a repository)")
+    parser.add_argument("--crew-claude-model", help="model of each Claude-family crew member, such as claude-opus-5-5 "
+                        "(default claude-sonnet-5-5; kept on later runs; '' returns to the default)")
+    parser.add_argument("--crew-codex-model", help="model of each Codex-family crew member, such as gpt-6.2-sol "
+                        "(default gpt-5.4; kept on later runs; '' returns to the default)")
     parser.add_argument("--demo", dest="demo", action="store_true", default=None, help="seed fictional demo data")
     parser.add_argument("--no-demo", dest="demo", action="store_false")
     parser.add_argument("--irc", choices=["local", "remote"],
@@ -286,6 +292,14 @@ def gather(args, saved):
             crew[family] = flag
         elif family not in crew:
             crew[family] = int(prompt(f"{family.title()}-family crew per captain", "2", interactive) or 2)
+    models = answers.setdefault("crewModels", {})
+    for family, flag in (("claude", args.crew_claude_model), ("codex", args.crew_codex_model)):
+        if flag == "":
+            models[family] = ""  # The fleet installer's default, even if fleet.json names a model.
+        elif flag is not None:
+            require(CREW_MODEL.fullmatch(flag), f"--crew-{family}-model must be a model ID, such as "
+                    f"{'claude-opus-5-5' if family == 'claude' else 'gpt-6.2-sol'}.")
+            models[family] = flag
     answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
         pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
@@ -675,6 +689,12 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
     previous = read_json(INPUTS / "fleet.json", {})
+    # Each crew family's model: this or an earlier run's answer, else one set in fleet.json by hand.
+    for family, crew in config["crew"].items():
+        chosen = answers.get("crewModels", {})
+        model = chosen[family] if family in chosen else (previous.get("crew", {}).get(family) or {}).get("model")
+        if model:
+            crew["model"] = model
     # Keep anything the operator added by hand, such as private repositories, GitHub Apps or stakeholders.
     for key in ("harness", "stakeholders", "usage", "medical", "toolchains", "maintenance",
                 "githubPolicy", "dashboard", "proxy", "agentsview"):

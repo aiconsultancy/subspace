@@ -221,7 +221,10 @@ answer it now.
    captain's files, credentials and GitHub App, commit as the captain, and
    have no IRC accounts. The user talks to the captain, who delegates to its
    crew. A captain's crew roster is fixed once the fleet first starts, so
-   settle the counts now.
+   settle the counts now. Ask which model each kind of crew member uses
+   (**`claude-sonnet-5-5` and `gpt-5.4`**), for example
+   `--crew-claude-model claude-opus-5-5 --crew-codex-model gpt-6.2-sol`; the
+   models, unlike the counts, can change later.
 6. **Their IRC account name** (**admiral**), used as their nickname. The
    agents only take orders from this account.
 7. **Demo data?** (**yes**) Fictional fleets, initiatives and issues so they can
@@ -449,7 +452,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-d
 ```
 
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
-optionally `ID=URL`) and their crew counts as `--crew-claude N --crew-codex N`,
+optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`
+and the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`,
 on this command and on the cloud VM one above. Leave out `--install-deps`
 to stop and ask instead of installing Lima, QEMU or Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first
 run downloads an Ubuntu image, the agents' tools and the container images, so
@@ -924,8 +928,11 @@ the agents come online. CLIProxyAPI also supports `antigravity`, `kimi`,
 
 The default models are `gpt-5.4` for Codex-family agents and
 `claude-sonnet-5-5` for Claude-family crew. Use model IDs your accounts can
-reach: change them under `harness` and `crew` (`crew.claude.model`,
-`crew.codex.model`) in `/root/fleet/fleet.json` and run `sudo subspace-setup`.
+reach. Set the crew's with `sudo subspace-setup --crew-claude-model MODEL
+--crew-codex-model MODEL` (or the same options on `./install.sh`); setup
+keeps them on later runs, and `''` returns to the default. Change the rear
+admiral's and captains' model under `harness` in `/root/fleet/fleet.json`
+and run `sudo subspace-setup`, which keeps it.
 The [fleet installer's guide](subspace-installer/README.md#model-provider-sign-in)
 covers models and harnesses. On the VM, `sudo subspace-setup providers`
 does the same as `./install.sh providers`.

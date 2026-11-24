@@ -128,7 +128,9 @@ recorded. Unlike the URL and visibility, both may change at any time.
 
 Set fleet-wide `crew.claude` and `crew.codex` defaults, or override either
 under a captain's `crew`. Each family takes a `count` from 0 to 10 and a
-`model`. Crew run inside their captain's OpenCode server, as the captain's
+`model`. `subspace-setup` writes the fleet-wide ones from `--crew-claude`,
+`--crew-codex`, `--crew-claude-model` and `--crew-codex-model`, and keeps a
+model set in `fleet.json` by hand when no option names one. Crew run inside their captain's OpenCode server, as the captain's
 Linux user, through Stargate's crew plugin:
 
 - Each crew member has one permanent worktree per repository, under

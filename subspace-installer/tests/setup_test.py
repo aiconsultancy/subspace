@@ -140,6 +140,30 @@ class SetupInputsTests(unittest.TestCase):
         secrets.pop("ircHistoryPassword")
         self.assertIsNone(validate(config, secrets, check_files=False)["historyPassword"])
 
+    def test_crew_models_are_set_by_option_and_kept_on_a_rerun(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--repositories", "https://github.com/example/project.git"]
+        answers, members, config, secrets, _ = self.generate(
+            [*base, "--crew-claude-model", "claude-opus-5-5", "--crew-codex-model", "gpt-6.2-sol"])
+        self.assertEqual(config["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"},
+                                          "codex": {"count": 2, "model": "gpt-6.2-sol"}})
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual(sorted({worker["model"] for worker in cfg["members"][1]["crew"]}),
+                         ["claude-opus-5-5", "gpt-6.2-sol"])
+        # A rerun without the options keeps them, as saved answers.
+        fleet_setup.save_answers(answers)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            again = fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+        self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["crew"], config["crew"])
+        # A model set in fleet.json by hand, with no answer for it, is kept too; '' returns to the default.
+        answers, rear, captains = answers_for([*base, "--crew-codex-model", ""])
+        rebuilt = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
+        self.assertEqual(rebuilt["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"}, "codex": {"count": 2}})
+        with self.assertRaisesRegex(fleet_setup.SetupError, "--crew-codex-model must be a model ID"):
+            answers_for([*base, "--crew-codex-model", "gpt 6"])
+
     def test_repositories_answer_fills_the_fleet_list_and_gives_captains_crew(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
                 "--repositories", "https://github.com/example/project.git, library=https://github.com/example/lib.git"]
