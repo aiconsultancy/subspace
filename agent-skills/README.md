@@ -27,7 +27,8 @@ your own computer only.
 The API's MCP server also states the essential rules for filing work in its
 server instructions and in the issue tools' descriptions, so an agent that has
 not loaded the skill still sees them: search first, one working session per
-issue, related issues grouped under a tracker, and the on-behalf marker.
+issue, a one-line summary on every issue, related issues grouped under a
+tracker, and the on-behalf marker.
 
 The API's own tests check that every tool these skills name is in the MCP
 tool catalogue, that the three tracker skills share the same rules, and that

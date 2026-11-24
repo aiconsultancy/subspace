@@ -553,8 +553,9 @@ OpenCode's remote MCP connection or the equivalent connection for your harness
 using the same URL and header. Keep the bearer in the harness's credential store
 and refresh it before expiry. `tools/list` gives the current input schemas.
 `initialize` returns short server instructions on filing work: search before
-creating, size an issue to one working session, group related issues under a
-tracker, and start a person's local agent's text with the on-behalf marker.
+creating, size an issue to one working session, give it a one-line summary,
+group related issues under a tracker, and start a person's local agent's text
+with the on-behalf marker.
 The issue and comment tools' descriptions repeat them where they apply, and
 the [tracker skills](../agent-skills/README.md) hold the full rules.
 Issue, comment, checklist, planning, decision, review and document mutations

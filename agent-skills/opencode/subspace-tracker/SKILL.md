@@ -91,6 +91,12 @@ rules in brief.
 - **Size an issue to one working session.** Do not file one issue per small
   finding, review note or follow-up. Add it as a comment or a to-do on the
   issue it belongs to, or batch small related items into one issue per area.
+- **Give every issue and tracker a one-line summary** that says in plain
+  words what it is for, so a list of issues can be read without opening
+  them; a tracker's summary says what it groups. `summary` is required on
+  create, one line of at most 300 characters. Keep it current with
+  `subspace_update_issue` when the scope changes, especially after folding or
+  regrouping issues.
 - **Group related issues under a tracker.** Reuse a tracker that fits before
   creating one, keep trees shallow, and do not park unrelated issues under a
   tracker: its state follows its direct children.

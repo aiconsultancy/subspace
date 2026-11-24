@@ -64,9 +64,10 @@ test("the MCP server's instructions and tool descriptions fit whole and name onl
 test("the MCP server states the tracker skill's rules for filing work at the point of use", () => {
   const skill = readFileSync(join(root, "claude/subspace-tracker/SKILL.md"), "utf8");
   const shared = /<!-- shared:start -->[\s\S]*<!-- shared:end -->/u.exec(skill)![0];
-  // The skill and the server agree on the marker and on the size of an issue.
+  // The skill and the server agree on the marker, the size of an issue and its summary.
   expect(shared).toContain(onBehalfMarker);
   expect(shared).toContain("one working session");
+  expect(shared).toContain("one-line summary");
   const filing = {
     instructions: mcpInstructions,
     subspace_create_issue: mcpTools.subspace_create_issue.description,
@@ -79,6 +80,10 @@ test("the MCP server states the tracker skill's rules for filing work at the poi
       "one working session",
       "small finding, review note or follow-up",
       "one issue per area",
+      "one-line summary",
+      "at most 300 characters",
+      "what it groups",
+      "when the scope changes",
       'type "tracker"',
       "parentId",
       "keep trees shallow",
