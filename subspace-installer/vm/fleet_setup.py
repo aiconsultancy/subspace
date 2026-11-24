@@ -29,6 +29,7 @@ after a failure or to change a setting.
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -44,7 +45,7 @@ import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 HERE = Path(__file__).resolve().parent
 PAYLOAD = HERE.parents[1]
@@ -52,6 +53,8 @@ INSTALLER = PAYLOAD / "subspace-installer"
 # The standard fleet channels are defined once, beside the fleet installer that enforces them.
 sys.path.insert(0, str(HERE.parent / "lib"))
 import fleet_records  # noqa: E402
+import irc_accounts  # noqa: E402
+import postgres_check  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
 INPUTS = Path("/root/fleet")
@@ -67,6 +70,10 @@ AGENT_API_PORT = 3001
 AGENT_OFFERED = "# subspace-setup has offered the agent listener (AGENT_PORT=3001); AGENT_PORT= keeps it off."
 STARGATE_API_PORT = 8484
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
+OUTBOUND_TIMEOUT = 8
+OUTBOUND_HELP = ("Open outbound HTTPS (TCP 443) from the VM to github.com and *.githubusercontent.com, "
+                 "download.docker.com and the package mirror in /etc/apt (HTTP, TCP 80, unless it uses HTTPS), in "
+                 "the VM's network security group, firewall or proxy settings, then run setup again.")
 LOOPBACK = "127.0.0.1"
 IRC_PLAIN = 6667
 IRC_TLS = 6697
@@ -94,6 +101,8 @@ DISPATCH_SUMMARY = ("issues flagged Ready for agents are offered to the captains
 # The fleet installer's repository IDs (also Stargate crew project keys) and its crew limit of nine repositories.
 REPO_ID = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 MAX_REPOSITORIES = 9
+# A crew member's model ID, as the fleet installer accepts it (runtime.MODEL).
+CREW_MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}")
 # The API on this VM against an existing PostgreSQL (--database-url-file). The URL file is root's alone; the URL
 # is written only to the root-only api.env, single-quoted so Compose takes it literally, hence no quote in it.
 DATABASE_URL_TEXT = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+")
@@ -153,9 +162,13 @@ def write_json(path, data):
     write_private(path, json.dumps(data, indent=2, sort_keys=False) + "\n")
 
 
-def run(*args, check=True, capture=False, env=None, input_text=None):
-    result = subprocess.run([str(arg) for arg in args], check=False, text=True, env=env, input=input_text,
-                            stdout=subprocess.PIPE if capture else None)
+def run(*args, check=True, capture=False, env=None, input_text=None, timeout=None):
+    try:
+        result = subprocess.run([str(arg) for arg in args], check=False, text=True, env=env, input=input_text,
+                                stdout=subprocess.PIPE if capture else None, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise SetupError(f"{Path(str(args[0])).name} {args[1] if len(args) > 1 else ''} did not finish within "
+                         f"{timeout} seconds.") from None
     if check and result.returncode:
         raise SetupError(f"{Path(str(args[0])).name} {args[1] if len(args) > 1 else ''} failed with exit code {result.returncode}.")
     return result.stdout.strip() if capture else result.returncode
@@ -177,6 +190,10 @@ def parse_args(argv):
                         "'' clears it. Private GitHub repositories need GitHub Apps first (installer README)")
     parser.add_argument("--crew-claude", type=int, help="Claude-family crew per captain (default 2; crew need a repository)")
     parser.add_argument("--crew-codex", type=int, help="Codex-family crew per captain (default 2; crew need a repository)")
+    parser.add_argument("--crew-claude-model", help="model of each Claude-family crew member, such as claude-opus-5-5 "
+                        "(default claude-sonnet-5-5; kept on later runs; '' returns to the default)")
+    parser.add_argument("--crew-codex-model", help="model of each Codex-family crew member, such as gpt-6.2-sol "
+                        "(default gpt-5.4; kept on later runs; '' returns to the default)")
     parser.add_argument("--demo", dest="demo", action="store_true", default=None, help="seed fictional demo data")
     parser.add_argument("--no-demo", dest="demo", action="store_false")
     parser.add_argument("--irc", choices=["local", "remote"],
@@ -184,6 +201,18 @@ def parse_args(argv):
     parser.add_argument("--irc-host", help="shared IRC server's DNS name (remote mode; must match its TLS certificate)")
     parser.add_argument("--irc-port", type=int, help="shared IRC server's TLS port (default 6697)")
     parser.add_argument("--irc-ca", help="absolute path on this VM to the shared server's CA certificate (PEM)")
+    parser.add_argument("--irc-auth", choices=["certificate", "password"],
+                        help="how officers sign in to a remote IRC server: certificate (SASL EXTERNAL, the default; "
+                        "setup prints the NickServ lines that bind each one) or password (SASL PLAIN, for the shared "
+                        "server ./install.sh irc-server runs). Kept on later runs")
+    parser.add_argument("--irc-operator", help="an IRC operator's name (OPER) with NickServ's accreg capability: setup "
+                        "then registers each officer's account and binds its certificate itself (certificate sign-in)")
+    parser.add_argument("--irc-operator-account", help="an IRC account the operator's connection signs in to first "
+                        "(SASL PLAIN), for a server that admits only signed-in connections (Ergo's require-sasl)")
+    parser.add_argument("--irc-operator-account-password-file", help="absolute path to a root-only file (mode 0600) "
+                        "holding that account's password. Read for this run only; never printed or saved")
+    parser.add_argument("--irc-operator-password-file", help="absolute path to a root-only file (mode 0600) holding "
+                        "that operator's password. Read for this run only; never printed or saved")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
     parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
@@ -277,6 +306,14 @@ def gather(args, saved):
             crew[family] = flag
         elif family not in crew:
             crew[family] = int(prompt(f"{family.title()}-family crew per captain", "2", interactive) or 2)
+    models = answers.setdefault("crewModels", {})
+    for family, flag in (("claude", args.crew_claude_model), ("codex", args.crew_codex_model)):
+        if flag == "":
+            models[family] = ""  # The fleet installer's default, even if fleet.json names a model.
+        elif flag is not None:
+            require(CREW_MODEL.fullmatch(flag), f"--crew-{family}-model must be a model ID, such as "
+                    f"{'claude-opus-5-5' if family == 'claude' else 'gpt-6.2-sol'}.")
+            models[family] = flag
     answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
         pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
@@ -285,6 +322,26 @@ def gather(args, saved):
         answers.setdefault("ircPort", IRC_TLS)
         if args.irc_ca is not None:
             answers["ircCa"] = args.irc_ca
+        if args.irc_auth:
+            answers["ircAuth"] = args.irc_auth
+        elif installed_irc_auth():
+            # Keep how the installed fleet signs in, which the fleet installer alone may have changed since.
+            answers["ircAuth"] = installed_irc_auth()
+        elif "ircAuth" not in answers:
+            # A remote fleet set up before certificates were the default signs in with passwords; keep it so.
+            answers["ircAuth"] = "password" if saved.get("irc") == "remote" else "certificate"
+    else:
+        require(args.irc_auth in (None, "password"), "--irc-auth certificate needs a remote IRC server (--irc remote): "
+                "officers reach the Ergo on this VM without TLS, which certificates need.")
+        answers.pop("ircAuth", None)
+    require(not (args.irc_operator or args.irc_operator_password_file) or answers.get("ircAuth") == "certificate",
+            "--irc-operator is for certificate sign-in on a remote IRC server (--irc remote --irc-auth certificate).")
+    require(bool(args.irc_operator) == bool(args.irc_operator_password_file),
+            "Pass --irc-operator and --irc-operator-password-file together.")
+    require(bool(args.irc_operator_account) == bool(args.irc_operator_account_password_file),
+            "Pass --irc-operator-account and --irc-operator-account-password-file together.")
+    require(not args.irc_operator_account or args.irc_operator,
+            "--irc-operator-account is the account the operator's connection signs in to: pass --irc-operator too.")
     if args.api is not None:
         answers["api"] = args.api
     elif args.database_url_file and answers.get("api") is False:
@@ -562,10 +619,100 @@ def demo_channels():
     return [row["name"] for row in channels if isinstance(row, dict) and "name" in row]
 
 
+def apt_mirrors(sources=Path("/etc/apt")):
+    """The package mirrors this VM's enabled apt sources name (one-line and deb822 formats), as base URLs."""
+    found = []
+    files = [sources / "sources.list", *sorted((sources / "sources.list.d").glob("*.list")),
+             *sorted((sources / "sources.list.d").glob("*.sources"))]
+    for path in files:
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        if path.suffix == ".sources":
+            # deb822: one stanza per paragraph; "Enabled: no" switches a stanza off.
+            for stanza in re.split(r"\n\s*\n", text):
+                fields = {}
+                for line in stanza.splitlines():
+                    key, _, value = line.split("#", 1)[0].partition(":")
+                    if value:
+                        fields[key.strip().lower()] = value.split()
+                if fields.get("enabled", ["yes"])[0].lower() != "no":
+                    found += fields.get("uris", [])
+            continue
+        for line in text.splitlines():
+            words = line.split("#", 1)[0].split()
+            if words[:1] in (["deb"], ["deb-src"]):
+                found += [word for word in words[1:] if not word.startswith("[")][:1]
+    return list(dict.fromkeys(url for url in found if url.startswith(("http://", "https://"))))
+
+
+def apt_proxies():
+    """apt's own proxies by scheme (Acquire::http::Proxy, Acquire::https::Proxy), which its downloads use."""
+    try:
+        dump = subprocess.run(["apt-config", "dump"], capture_output=True, text=True, timeout=10, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    proxies = {}
+    for line in (dump or "").splitlines():
+        match = re.fullmatch(r'Acquire::(https?)::Proxy "([^"]*)";', line.strip())
+        if match and match.group(2).lower() not in ("", "direct", "false"):
+            proxies[match.group(1)] = match.group(2)
+    return proxies
+
+
+def docker_ready():
+    """Whether Docker with its Compose plugin is already installed, so Docker's repository is not needed."""
+    if not shutil.which("docker"):
+        return False
+    try:
+        return subprocess.run(["docker", "compose", "version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=20, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def outbound_targets(answers):
+    """What the install downloads from, as (label, URL, proxy): GitHub (Stargate and the pinned releases),
+    Docker's repository when the VM runs containers and has no Docker yet, and the package mirrors, probed
+    through apt's own proxy as apt reaches them."""
+    targets = [("GitHub", "https://github.com", None)]
+    if (answers.get("api") or answers.get("irc") == "local") and not docker_ready():
+        targets.append(("Docker's package repository", "https://download.docker.com", None))
+    proxies = apt_proxies()
+    targets += [("the package mirror", url, proxies.get(urlsplit(url).scheme)) for url in apt_mirrors()]
+    return targets
+
+
+def reachable(url, proxy=None):
+    """Whether a URL answers at all. proxy: one to use instead of the environment's, such as apt's."""
+    opener = build_opener(ProxyHandler({"http": proxy, "https": proxy})) if proxy else None
+    request = Request(url, method="HEAD", headers={"User-Agent": "subspace-setup"})
+    try:
+        with (opener.open if opener else urlopen)(request, timeout=OUTBOUND_TIMEOUT):
+            return True
+    except HTTPError:
+        return True  # It answered.
+    except (URLError, OSError, ValueError):
+        return False
+
+
+def check_outbound(answers):
+    """Stop at once, saying what to open, when the VM cannot reach what the install downloads; without this a
+    run with no outbound access waits minutes on its first download and fails without saying why."""
+    targets = outbound_targets(answers)
+    with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+        results = list(pool.map(lambda target: reachable(target[1], target[2]), targets))
+    missing = [f"{label} ({urlsplit(url).hostname}{' through apt' + chr(39) + 's proxy' if proxy else ''})"
+               for (label, url, proxy), ok in zip(targets, results) if not ok]
+    require(not missing, "This VM has no outbound access to " + ", ".join(missing) + ", which the install "
+            "downloads from. " + OUTBOUND_HELP)
+
+
 def latest_stargate():
     """Stargate's newest release (highest vX.Y.Z tag) as (tag, commit), so every run installs the latest."""
     try:
-        output = run("git", "ls-remote", "--tags", STARGATE_REPO, "refs/tags/v*", capture=True)
+        output = run("git", "ls-remote", "--tags", STARGATE_REPO, "refs/tags/v*", capture=True, timeout=60)
     except SetupError:
         output = ""
     releases = {}
@@ -578,8 +725,8 @@ def latest_stargate():
             # An annotated tag's peeled line (^{}) names the commit; prefer it.
             if peeled or tag not in releases:
                 releases[tag] = (version, sha)
-    require(releases, "Could not look up Stargate's latest release on GitHub. "
-            "Check the VM's internet access, or pin one with --stargate-ref <full SHA>.")
+    require(releases, f"Could not look up Stargate's latest release at {STARGATE_REPO}: the VM has no outbound "
+            "access to GitHub, or it is too slow. " + OUTBOUND_HELP + " Or pin a release with --stargate-ref <full SHA>.")
     tag = max(releases, key=lambda name: releases[name][0])
     return tag, releases[tag][1]
 
@@ -609,13 +756,19 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         config["irc"] = {
             "mode": "remote", "host": answers["ircHost"], "port": answers["ircPort"], "tls": True,
             "allowedAccounts": [answers["admin"]],
-            # The shared server (irc_server.py) seeds each officer's account with the password in this fleet's
-            # bundle, so these fleets keep signing in with passwords (installer README, "IRC sign-in").
-            "auth": "password",
+            # Certificates by default. The shared server ./install.sh irc-server runs (irc_server.py) seeds each
+            # officer's account with the password in this fleet's bundle, so those fleets use passwords.
+            "auth": answers.get("ircAuth", "password"),
         }
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
     previous = read_json(INPUTS / "fleet.json", {})
+    # Each crew family's model: this or an earlier run's answer, else one set in fleet.json by hand.
+    for family, crew in config["crew"].items():
+        chosen = answers.get("crewModels", {})
+        model = chosen[family] if family in chosen else (previous.get("crew", {}).get(family) or {}).get("model")
+        if model:
+            crew["model"] = model
     # Keep anything the operator added by hand, such as private repositories, GitHub Apps or stakeholders.
     for key in ("harness", "stakeholders", "usage", "medical", "toolchains", "maintenance",
                 "githubPolicy", "dashboard", "proxy", "agentsview"):
@@ -656,11 +809,12 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     return config
 
 
-def fleet_secrets(secret_store, members, admin, token="", local_irc=True, dispatch_token=""):
-    # A shared IRC server owns the human accounts; a local one is seeded with the admin's.
+def fleet_secrets(secret_store, members, admin, token="", local_irc=True, dispatch_token="", certificates=False):
+    # A shared IRC server owns the human accounts; a local one is seeded with the admin's. Officers who sign in
+    # with certificates have no IRC password at all.
     humans = [admin] if local_irc else []
-    passwords = {account: secret_store.password(f"irc-{account}")
-                 for account in [person["account"] for person in members] + humans}
+    officers = [] if certificates else [person["account"] for person in members]
+    passwords = {account: secret_store.password(f"irc-{account}") for account in officers + humans}
     result = {
         "proxyKey": secret_store.get("proxy-key", lambda: secrets.token_urlsafe(32)),
         "ircPasswords": passwords,
@@ -705,14 +859,15 @@ def irc_source():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def installer(config_path, dry_run=False, secrets_dir=None):
+def installer(config_path, dry_run=False, secrets_dir=None, strict=False):
     args = [INSTALLER / "install.sh", "--config", config_path]
     if secrets_dir:
         args += ["--secrets-dir", secrets_dir]
     if dry_run:
         args.append("--dry-run")
     say("running the fleet installer" + (" (dry run)" if dry_run else ""))
-    run(*args)
+    # strict: a dry run that also refuses what the real run would refuse later, such as an unreadable repository.
+    run(*args, env={**os.environ, "SUBSPACE_FLEET_CHECK": "strict"} if strict else None)
 
 
 def preflight(config, private):
@@ -725,7 +880,7 @@ def preflight(config, private):
         write_json(config_path, config)
         write_json(Path(scratch) / "fleet.secrets.json", private)
         say("checking the fleet's configuration before the API changes")
-        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None)
+        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None, strict=True)
 
 
 def installed_stargate_source():
@@ -811,6 +966,59 @@ def database_ca(path):
         raise SetupError(f"Cannot read the database CA file {path}.") from None
     require("-----BEGIN CERTIFICATE-----" in text and "PRIVATE KEY" not in text,
             f"The database CA file {path} must hold the server's CA certificate (PEM) and no private key.")
+
+
+def database_checks(answers, migrate):
+    """The dry run's read-only checks of an existing PostgreSQL: that the API's URL connects, which of this API's
+    migrations it lacks, and whether the admin setup acts as is already an administrator there. Stops, after
+    saying everything it found, when the real run would stop."""
+    path = answers["databaseUrlFile"]
+    url = database_url(path)
+    folder = PAYLOAD / "subspace-api" / "drizzle"
+    local = sorted(entry.name for entry in folder.iterdir() if (entry / "migration.sql").is_file()) \
+        if folder.is_dir() else []
+    lines, problems = [], []
+    try:
+        connection = postgres_check.Connection(url, answers.get("databaseCaFile"))
+        try:
+            lines.append(f"database check: connected read-only to the existing PostgreSQL named in {path}, "
+                         + ("over TLS" if connection.tls else "unencrypted"))
+            applied = postgres_check.applied_migrations(connection)
+            standing = postgres_check.administrator(connection, answers["organisation"], answers["adminEmail"]) \
+                if applied else "empty"
+        finally:
+            connection.close()
+    except postgres_check.DatabaseError as error:
+        raise SetupError(f"The dry run could not check the existing PostgreSQL named in {path}: {error}. The real run "
+                         "would stop there too: check the URL, the server's firewall and the role's privileges.") \
+            from None
+    pending = [name for name in local if name not in applied]
+    unknown = applied - set(local)
+    if not pending:
+        lines.append(f"database check: it has all {len(local)} of this API's migrations")
+    elif migrate:
+        lines.append(f"database check: it lacks {len(pending)} of this API's {len(local)} migrations, which the real "
+                     "run applies (--migrate)")
+    else:
+        problems.append(f"the database lacks {len(pending)} of this API's {len(local)} migrations: back it up and "
+                        "add --migrate")
+    if unknown:
+        lines.append(f"database check: it has {len(unknown)} migrations this API does not know; it may be newer")
+    who = f"{answers['adminEmail']} in the development organisation {answers['organisation']}"
+    if standing == "empty":
+        lines.append("database check: it has no organisation yet, so the first sign-in creates one with "
+                     f"{answers['adminEmail']} as its administrator")
+    elif standing == "admin":
+        lines.append(f"database check: {who} is an administrator")
+    elif standing == "missing":
+        problems.append(f"{who} is not in the database, and setup adds no organisation or person to an existing "
+                        "one; pass the --organisation and --admin-email of an administrator who is there")
+    else:
+        problems.append(f"{who} is not an administrator, and only one may register fleets; pass an administrator's "
+                        "--admin-email")
+    for line in lines:
+        say(line)
+    require(not problems, "The real run would stop: " + "; ".join(problems) + ".")
 
 
 def external_plan(answers, migrate):
@@ -1253,6 +1461,122 @@ def fleet_channels(answers, members):
     return standard_channels.standard(answers["slug"], [person["id"] for person in members[1:]])
 
 
+def installed_irc_auth():
+    """How the installed fleet's officers sign in to a remote IRC server, from its own fleet.json, or None."""
+    try:
+        irc = read_json(FLEET_ETC / "fleet.json", {}).get("irc") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    auth = irc.get("auth") if irc.get("mode") == "remote" else None
+    return auth if auth in ("certificate", "password") else None
+
+
+def installed_bundle(agent_id):
+    """The certificate bundle the installed fleet signs an officer in with, or None."""
+    try:
+        text = (FLEET_ETC / "irc-certs" / f"{agent_id}.pem").read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text
+
+
+def officer_certificates(members, generate):
+    """Each officer's IRC certificate bundle in the fleet's secrets directory, where the fleet installer takes it
+    from, as {account: (path, SHA-256 fingerprint)}. A missing one is the installed fleet's, so a fingerprint
+    already bound stays valid, else a new one, made once. A dry run writes nothing: it reads the installed
+    bundle, or reports None for one the real run will make."""
+    result = {}
+    for person in members:
+        path = INPUTS / "fleet.secrets" / person["id"] / runtime.IRC_CLIENT_PEM
+        installed = None if path.exists() else installed_bundle(person["id"])
+        if not path.exists() and generate:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(path.parent.parent, 0o700)
+            write_private(path, installed or runtime.new_irc_bundle(person["account"]))
+        text = path.read_text() if path.exists() else installed
+        fingerprint = runtime.irc_fingerprint(text, str(path)) if text else None
+        result[person["account"]] = (path, fingerprint)
+    return result
+
+
+def certificate_lines(answers, certificates):
+    """What the IRC server's operator runs for each officer: register its account with no password, then bind its
+    certificate. Fingerprints only, never key material."""
+    lines = [f"officers sign in to {answers['ircHost']} with certificates (SASL EXTERNAL); an IRC operator with "
+             "NickServ's accreg capability registers each account and binds its certificate (or pass "
+             "--irc-operator and --irc-operator-password-file and setup does it):"]
+    for account, (_, fingerprint) in certificates.items():
+        if fingerprint:
+            lines += [f"  {account}: SHA-256 {fingerprint}", f"    /NS SAREGISTER {account}",
+                      f"    /NS CERT ADD {account} {fingerprint}"]
+        else:
+            lines.append(f"  {account}: the real run generates its certificate and prints these lines for it")
+    return lines
+
+
+def password_file(path, option, label):
+    """A password from a root-only file, for this run only. Messages name the file, never what it holds."""
+    require(Path(path).is_absolute(), f"{option} needs an absolute path to a file on this VM.")
+    try:
+        info = os.lstat(path)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == SECRET_OWNER and not info.st_mode & 0o077,
+                f"The {label} file {path} must be a regular file owned by root with mode 0600: chmod 600 {path}.")
+        password = Path(path).read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        raise SetupError(f"Cannot read the {label} file {path}.") from None
+    require(password and len(password) <= 512 and not re.search(r"[\s\x00]", password),
+            f"The {label} file {path} must hold one password on one line.")
+    return password
+
+
+def irc_operator(args):
+    """The IRC operator's name and password for this run, and the account its connection signs in to first, or
+    None. Passwords are read from root-only files and are never printed or saved."""
+    if not args.irc_operator:
+        return None
+    require(re.fullmatch(r"[A-Za-z0-9_.\[\]{}|^`-]{1,64}", args.irc_operator), "Invalid --irc-operator name.")
+    password = password_file(args.irc_operator_password_file, "--irc-operator-password-file", "IRC operator password")
+    account = None
+    if args.irc_operator_account:
+        require(re.fullmatch(r"[A-Za-z0-9_.\[\]{}|^`-]{1,64}", args.irc_operator_account),
+                "Invalid --irc-operator-account name.")
+        account = (args.irc_operator_account, password_file(
+            args.irc_operator_account_password_file, "--irc-operator-account-password-file", "IRC account password"))
+    return args.irc_operator, password, account
+
+
+def check_certificates(answers, members, certificates, operator, register):
+    """With the operator's credential: check it, register the officers' accounts and bind their certificates
+    (register), and check that each certificate signs in as its account. A dry run only checks."""
+    host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+    name, password, signed_in_as = operator
+
+    def unbound():
+        """The officers whose certificate does not sign in to their account yet."""
+        missing = {}
+        for account, (path, fingerprint) in certificates.items():
+            if fingerprint:
+                signed_in = irc_accounts.check_login(host, port, ca, str(path))
+                say(f"{account}: its certificate {'signs in' if signed_in == account else 'does not sign in yet'}")
+                if signed_in != account:
+                    missing[account] = fingerprint
+        return missing
+    try:
+        missing = unbound()
+        # Only accounts whose certificate does not sign in yet are registered; a rerun registers nothing.
+        replies = irc_accounts.register(host, port, ca, name, password, missing if register else {}, signed_in_as)
+        if not register:
+            say(f"the IRC operator {name} is accepted on {host}")
+        for account, lines in replies.items():
+            say(f"NickServ for {account}: " + " / ".join(lines))
+        failed = list(unbound()) if register and missing else []
+    except irc_accounts.IrcError as error:
+        raise SetupError(str(error)) from None
+    require(not register or not failed, f"{', '.join(failed)} cannot sign in to {host} with {'its' if len(failed) == 1 else 'their'} "
+            "certificate after registration (see NickServ's replies above). Check that the operator's class has "
+            "NickServ's accreg capability, or bind the fingerprints by hand, then run setup again.")
+
+
 def irc_bundle(answers, members, secret_store):
     """What a shared IRC server needs for this fleet: its SASL accounts and channels."""
     channels = fleet_channels(answers, members)
@@ -1330,6 +1654,7 @@ def configure(args):
     os.chmod(INPUTS, 0o700)
     saved = read_json(INPUTS / "answers.json", {})
     answers = gather(args, saved)
+    check_outbound(answers)
     rear, captains = check_answers(answers)
     if saved.get("slug") and saved["slug"] != answers["slug"]:
         raise SetupError("The fleet ID cannot change on an installed VM. Reinstall on a fresh VM to rename it.")
@@ -1358,7 +1683,8 @@ def configure(args):
     def inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None):
         config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
         private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc,
-                                dispatch_token if api_block else "")
+                                certificates=answers.get("ircAuth") == "certificate",
+                                dispatch_token=dispatch_token if api_block else "")
         if history:
             private["ircHistoryPassword"] = secret_store.password("ergo-history")
         return config, private
@@ -1368,12 +1694,22 @@ def configure(args):
         write_json(config_path, config)
         write_json(secrets_path, private)
 
-    if not local_irc:
+    certificates = None
+    if answers.get("ircAuth") == "certificate":
+        operator = irc_operator(args)
+        certificates = officer_certificates(members, generate=not args.dry_run)
+        for line in certificate_lines(answers, certificates):
+            say(line)
+        if operator and args.dry_run:
+            check_certificates(answers, members, certificates, operator, register=False)
+    elif not local_irc:
         irc_bundle(answers, members, secret_store)
     if external_database(answers):
         for line in external_plan(answers, args.migrate):
             say(line)
     if args.dry_run:
+        if external_database(answers):
+            database_checks(answers, args.migrate)
         write_inputs(hashlib.sha1(b"dry-run").hexdigest())
         if answers["agentDispatch"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
@@ -1385,6 +1721,10 @@ def configure(args):
         # The API comes first (its token and registration go into the fleet's inputs), so check now that the
         # installer will accept those inputs: with --migrate, a refused run must not have migrated the database.
         preflight(*inputs(hashlib.sha1(b"dry-run").hexdigest()))
+
+    if certificates and operator:
+        # Before any officer starts: register the accounts, bind the certificates and check each sign-in.
+        check_certificates(answers, members, certificates, operator, register=True)
 
     irc_ref = irc_source() if local_irc else None
     # Releases from v0.40.0 have the Fleet API; a pinned commit is checked after it is installed.
@@ -1592,6 +1932,8 @@ def main(argv):
         print_token(argv[1:])
     elif argv and argv[0] == "irc-bundle":
         bundle = INPUTS / "irc-bundle.json"
+        require(read_json(INPUTS / "answers.json", {}).get("ircAuth") != "certificate",
+                "This fleet's officers sign in with certificates, so it has no password bundle for a shared server.")
         require(bundle.is_file(), "This fleet uses local IRC, so it has no bundle for a shared server.")
         sys.stdout.write(bundle.read_text())
     elif argv and argv[0] == "fleet-registration":

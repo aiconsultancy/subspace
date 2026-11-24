@@ -4,23 +4,37 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 """
 
 import argparse
+import base64
+import hashlib
 import json
+import os
 import re
+import shutil
+import socket
+import ssl
 import subprocess
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 import fleet_setup  # noqa: E402
+import irc_accounts  # noqa: E402
 import runtime  # noqa: E402
 from runtime import irc_officer, validate  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
+
+
+# Tests never reach the network: setup's outbound check is replaced here, and OutboundTests checks the real one.
+check_outbound = fleet_setup.check_outbound
+fleet_setup.check_outbound = lambda answers: None
 
 
 def fake_api(api):
@@ -51,7 +65,8 @@ class SetupInputsTests(unittest.TestCase):
         local = answers["irc"] == "local"
         config = fleet_setup.fleet_config(answers, members, "a" * 40, api_block, stargate_api, "b" * 40)
         token = "header.payload.signature" if api_block else ""
-        secrets = fleet_setup.fleet_secrets(store, members, answers["admin"], token, local)
+        secrets = fleet_setup.fleet_secrets(store, members, answers["admin"], token, local,
+                                            certificates=answers.get("ircAuth") == "certificate")
         return answers, members, config, secrets, store
 
     def test_local_fleet_validates_with_api_and_demo_channels(self):
@@ -86,7 +101,8 @@ class SetupInputsTests(unittest.TestCase):
     def test_shared_irc_fleet_validates_without_human_passwords(self):
         answers, _, config, secrets, store = self.generate(
             ["--name", "Fleet One", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "admiral",
-             "--no-demo", "--irc", "remote", "--irc-host", "irc.example.ts.net", "--crew-claude", "1", "--crew-codex", "0"])
+             "--no-demo", "--irc", "remote", "--irc-host", "irc.example.ts.net", "--irc-auth", "password",
+             "--crew-claude", "1", "--crew-codex", "0"])
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(cfg["irc"]["mode"], "remote")
         self.assertEqual((cfg["irc"]["host"], cfg["irc"]["port"], cfg["irc"]["tls"]), ("irc.example.ts.net", 6697, True))
@@ -132,6 +148,30 @@ class SetupInputsTests(unittest.TestCase):
             validate(config, secrets, check_files=False)
         secrets.pop("ircHistoryPassword")
         self.assertIsNone(validate(config, secrets, check_files=False)["historyPassword"])
+
+    def test_crew_models_are_set_by_option_and_kept_on_a_rerun(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--repositories", "https://github.com/example/project.git"]
+        answers, members, config, secrets, _ = self.generate(
+            [*base, "--crew-claude-model", "claude-opus-5-5", "--crew-codex-model", "gpt-6.2-sol"])
+        self.assertEqual(config["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"},
+                                          "codex": {"count": 2, "model": "gpt-6.2-sol"}})
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual(sorted({worker["model"] for worker in cfg["members"][1]["crew"]}),
+                         ["claude-opus-5-5", "gpt-6.2-sol"])
+        # A rerun without the options keeps them, as saved answers.
+        fleet_setup.save_answers(answers)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            again = fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+        self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["crew"], config["crew"])
+        # A model set in fleet.json by hand, with no answer for it, is kept too; '' returns to the default.
+        answers, rear, captains = answers_for([*base, "--crew-codex-model", ""])
+        rebuilt = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
+        self.assertEqual(rebuilt["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"}, "codex": {"count": 2}})
+        with self.assertRaisesRegex(fleet_setup.SetupError, "--crew-codex-model must be a model ID"):
+            answers_for([*base, "--crew-codex-model", "gpt 6"])
 
     def test_repositories_answer_fills_the_fleet_list_and_gives_captains_crew(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
@@ -814,9 +854,11 @@ class ExternalDatabaseTests(unittest.TestCase):
                            if path.is_file() and path.name != "database-url")
         before = sorted(path.name for path in fleet_setup.INPUTS.iterdir())
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer", side_effect=dry_installer), \
+                patch.object(fleet_setup, "database_checks") as checks, \
                 patch.object(fleet_setup, "say", side_effect=output.append):
             fleet_setup.setup(fleet_setup.parse_args(argv))
         self.assertTrue(written)
+        checks.assert_called_once()
         self.assertTrue(any("this VM runs no PostgreSQL container" in line for line in output))
         self.assertNotIn(self.PASSWORD, "\n".join(output) + "".join(written))
         self.assertEqual(sorted(path.name for path in fleet_setup.INPUTS.iterdir()), before)
@@ -841,6 +883,7 @@ class ExternalDatabaseTests(unittest.TestCase):
                 "--stargate-ref", "c" * 40, "--database-url-file", other, "--dry-run"]
         output = []
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer"), \
+                patch.object(fleet_setup, "database_checks"), \
                 patch.object(fleet_setup, "say", side_effect=output.append):
             fleet_setup.setup(fleet_setup.parse_args(argv))
         self.assertTrue(any(other in line for line in output))
@@ -852,9 +895,11 @@ class ExternalDatabaseTests(unittest.TestCase):
         # Without a test harness for SSH, check the text: in a dry run the host installers send the database
         # URL and the CA files to a scratch directory they remove afterwards, and stop before reading anything back.
         root = Path(fleet_setup.HERE).parents[1]
-        for name, scratch, branch in (("install.sh", "inputs=/root/subspace-setup-dry-run",
-                                       'if "$dry_run"; then\n        say'),
-                                      ("install.ps1", "'/root/subspace-setup-dry-run'", "if ($dryRun) {\n        Say")):
+        cases = (("install.sh", "inputs=/root/subspace-setup-dry-run", 'say "Running subspace-setup --dry-run',
+                  ['transient+=("$inputs")', "trap remove_transient EXIT"], 'name=$operator_dir/$option'),
+                 ("install.ps1", "'/root/subspace-setup-dry-run'", 'Say "Running subspace-setup --dry-run',
+                  ["$transient.Add($inputs)", "} finally {", "'rm', '-rf'"], "$operatorDir/$option"))
+        for name, scratch, branch, cleanup, operator_copy in cases:
             text = (root / name).read_text()
             with self.subTest(name):
                 self.assertIn(scratch, text)
@@ -863,10 +908,21 @@ class ExternalDatabaseTests(unittest.TestCase):
                     self.assertRegex(text, rf"\$inputs/{re.escape(file)}")
                 dry = text[text.index(branch):]
                 dry = dry[:dry.index("return") + len("return")]
-                self.assertIn("rm", dry)
-                self.assertIn("-rf", dry)
                 self.assertNotIn("summary.env", dry)
                 self.assertLess(text.index(branch), text.index("summary.env", text.index(branch)))
+                # The dry run's installer copy goes in the scratch directory too, never over
+                # /opt/subspace/bootstrap, which only the real run replaces.
+                self.assertRegex(text, r'(send_payload|Send-Payload) "\$inputs/bootstrap" *;? *\}? *else *\{? *'
+                                       r'(send_payload|Send-Payload)')
+                self.assertIn("$inputs/bootstrap/subspace-installer/vm/setup.sh", dry)
+                # The scratch directory and the operator's password files are removed however the run ends, and
+                # the passwords reach the VM only after the installer.
+                for part in cleanup:
+                    self.assertIn(part, text)
+                self.assertLess(text.index('"$inputs/bootstrap"'), text.index(operator_copy))
+        # Run from that copy, setup keeps the subspace-setup command pointing at the installed one.
+        setup = (root / "subspace-installer/vm/setup.sh").read_text()
+        self.assertIn('if ! "$dry_run" && [[ $(readlink /usr/local/sbin/subspace-setup', setup)
 
     def test_a_run_the_installer_refuses_migrates_nothing(self):
         # A fleet configuration the installer refuses, such as a Slack bot without its tokens, is found before
@@ -877,8 +933,8 @@ class ExternalDatabaseTests(unittest.TestCase):
                 "--database-url-file", self.url_file, "--migrate"]
         checks = []
 
-        def refuse(config_path, dry_run=False, secrets_dir=None):
-            checks.append((dry_run, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
+        def refuse(config_path, dry_run=False, secrets_dir=None, strict=False):
+            checks.append((dry_run, strict, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
             raise fleet_setup.SetupError("Supply slack-app-token in captain orion's secrets directory.")
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
                 patch.object(fleet_setup, "installer", side_effect=refuse), \
@@ -887,7 +943,7 @@ class ExternalDatabaseTests(unittest.TestCase):
                 patch.object(fleet_setup, "say"), \
                 self.assertRaisesRegex(fleet_setup.SetupError, "slack-app-token"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
-        self.assertEqual(checks, [(True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
+        self.assertEqual(checks, [(True, True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
         run.assert_not_called()
         api_up.assert_not_called()
         compose.assert_not_called()
@@ -904,6 +960,70 @@ class ExternalDatabaseTests(unittest.TestCase):
                 self.assertRaisesRegex(fleet_setup.SetupError, "stop here"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
         self.assertEqual(order[:4], ["check", "lockdown.sh", "docker.sh", ("api", True)])
+
+    def test_the_dry_run_checks_the_database_read_only_and_says_what_it_found(self):
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        payload = self.root / "payload"
+        for name in ("20260101000000_first", "20260102000000_second"):
+            (payload / "subspace-api/drizzle" / name).mkdir(parents=True)
+            (payload / "subspace-api/drizzle" / name / "migration.sql").write_text("SELECT 1;\n")
+
+        class Fake:
+            def __init__(self, url, ca_file=None, applied=(), standing="admin"):
+                self.tls, self.closed, self.applied, self.standing = True, False, set(applied), standing
+
+            def close(self):
+                self.closed = True
+
+        def check(migrate=False, **fake):
+            output, made = [], []
+
+            def connect(url, ca_file=None):
+                made.append(Fake(url, ca_file, **fake))
+                return made[-1]
+            with patch.object(fleet_setup, "PAYLOAD", payload), \
+                    patch.object(fleet_setup.postgres_check, "Connection", side_effect=connect), \
+                    patch.object(fleet_setup.postgres_check, "applied_migrations", side_effect=lambda c: c.applied), \
+                    patch.object(fleet_setup.postgres_check, "administrator", side_effect=lambda c, o, e: c.standing), \
+                    patch.object(fleet_setup, "say", side_effect=output.append):
+                try:
+                    fleet_setup.database_checks(answers, migrate)
+                finally:
+                    self.assertTrue(made[0].closed)
+            return "\n".join(output)
+        both = ("20260101000000_first", "20260102000000_second")
+        text = check(applied=both)
+        self.assertIn("connected read-only to the existing PostgreSQL named in", text)
+        self.assertIn("over TLS", text)
+        self.assertIn("it has all 2 of this API's migrations", text)
+        self.assertIn("developer@example.com in the development organisation local is an administrator", text)
+        self.assertIn("lacks 1 of this API's 2 migrations, which the real run applies",
+                      check(migrate=True, applied=both[:1]))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "lacks 2 of this API's 2 migrations.*add --migrate"):
+            check(applied=())
+        self.assertIn("no organisation yet", check(migrate=True, applied=()))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "is not in the database"):
+            check(applied=both, standing="missing")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "is not an administrator"):
+            check(applied=both, standing="member")
+        with patch.object(fleet_setup.postgres_check, "Connection",
+                          side_effect=fleet_setup.postgres_check.DatabaseError("cannot reach the server (timeout)")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "could not check the existing PostgreSQL") as refused:
+            fleet_setup.database_checks(answers, False)
+        self.assertNotIn(self.PASSWORD, str(refused.exception))
+        self.assertNotIn("tracker-db.example.org", str(refused.exception))
+
+    def test_the_database_check_speaks_scram_as_rfc_7677_does(self):
+        final, server = fleet_setup.postgres_check.scram_proof(
+            "pencil", "rOprNGfwEbeRWgbNEkqO",
+            "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096",
+            "n=user,r=rOprNGfwEbeRWgbNEkqO")
+        self.assertEqual(final, "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,"
+                                "p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=")
+        self.assertEqual(server, "6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=")
+        self.assertEqual(fleet_setup.postgres_check.parameters(self.URL), {
+            "host": "tracker-db.example.org", "port": 5432, "database": "tracker", "user": "tracker",
+            "password": "s3cret$word#x", "sslmode": "verify-full"})
 
     def test_the_other_new_settings_survive_a_run_against_an_existing_postgresql(self):
         # Slack bots, a captain's sessionRoot and repository notes are added to fleet.json by hand; setup keeps them
@@ -989,6 +1109,448 @@ class ExternalDatabaseTests(unittest.TestCase):
         installer = (Path(fleet_setup.HERE).parent / "install.sh").read_text()
         uninstall = re.search(r"^uninstall\(\) \{.*?^\}$", installer, re.M | re.S).group(0)
         self.assertNotRegex(uninstall, r"(?i)docker|compose|psql|postgres|database|/root/fleet")
+
+
+class FakeIrcServer:
+    """A TLS IRC server with an operator, NickServ's SAREGISTER and CERT ADD, and SASL EXTERNAL by certificate."""
+
+    def __init__(self, work, client_bundles, operator=("ircop", "fixture-operator-password")):
+        self.accounts, self.operator, self.requests = {}, operator, []
+        # Ergo's require-sasl: only connections signed in to an account (passwords here) get past registration.
+        self.require_sasl, self.passwords = False, {}
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                        "-nodes", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+                        "-keyout", str(work / "server.key"), "-out", str(work / "server.pem")],
+                       check=True, capture_output=True)
+        self.ca = str(work / "server.pem")
+        clients = work / "clients.pem"
+        clients.write_text("".join(bundle[:bundle.index("-----END CERTIFICATE-----") + 26] for bundle in client_bundles))
+        self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.context.load_cert_chain(work / "server.pem", work / "server.key")
+        self.context.verify_mode = ssl.CERT_OPTIONAL
+        self.context.load_verify_locations(clients)
+        self.listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self.listener.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                raw, _ = self.listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=self.session, args=(raw,), daemon=True).start()
+
+    def session(self, raw):
+        try:
+            connection = self.context.wrap_socket(raw, server_side=True)
+        except (ssl.SSLError, OSError):
+            raw.close()
+            return
+        peer = connection.getpeercert(binary_form=True)
+        fingerprint = hashlib.sha256(peer).hexdigest() if peer else None
+        stream, oper = connection.makefile("rwb"), False
+        state = {"capabilities": False, "user": False, "account": None, "mechanism": None}
+
+        def send(line):
+            stream.write(line.encode() + b"\r\n")
+            stream.flush()
+
+        def welcome():
+            if self.require_sasl and not state["account"]:
+                send("FAIL * ACCOUNT_REQUIRED :You must log in with SASL to join this server")
+                return False
+            send(":irc.example.test 001 you :Welcome")
+            return True
+        for raw_line in stream:
+            line = raw_line.decode().rstrip("\r\n")
+            words = line.split(" ")
+            command = words[0].upper()
+            if command == "USER":
+                state["user"] = True
+                if not state["capabilities"] and not welcome():
+                    break
+            elif line == "CAP END":
+                state["capabilities"] = False
+                if state["user"] and not welcome():
+                    break
+            elif line == "AUTHENTICATE PLAIN":
+                state["mechanism"] = "PLAIN"
+                send("AUTHENTICATE +")
+            elif command == "AUTHENTICATE" and state["mechanism"] == "PLAIN":
+                _, name, secret = base64.b64decode(words[1]).decode().split("\0")
+                if self.passwords.get(name) == secret:
+                    state["account"] = name
+                    send(f":irc.example.test 900 you you!u@h {name} :You are now logged in")
+                    send(":irc.example.test 903 you :SASL authentication successful")
+                else:
+                    send(":irc.example.test 904 you :SASL authentication failed")
+            elif command == "OPER":
+                oper = tuple(words[1:3]) == self.operator
+                send(":irc.example.test 381 you :You are now an operator" if oper else
+                     ":irc.example.test 464 you :Password incorrect")
+            elif command == "PRIVMSG" and words[1] == "NickServ":
+                request = line.split(" :", 1)[1].split()
+                self.requests.append(request)
+                if not oper:
+                    send(":NickServ!NickServ@services NOTICE you :Insufficient privileges")
+                elif request[0] == "SAREGISTER" and request[1] in self.accounts:
+                    send(":NickServ!NickServ@services NOTICE you :Name reserved due to a prior registration")
+                elif request[0] == "SAREGISTER":
+                    send(f":NickServ!NickServ@services NOTICE you :Successfully registered account {request[1]}")
+                    self.accounts[request[1]] = set()
+                elif request[:2] == ["CERT", "ADD"] and request[2] in self.accounts:
+                    self.accounts[request[2]].add(request[3])
+                    send(":NickServ!NickServ@services NOTICE you :Certificate fingerprint successfully added")
+                else:
+                    send(":NickServ!NickServ@services NOTICE you :No such account")
+            elif line == "CAP REQ :sasl":
+                state["capabilities"] = True
+                send(":irc.example.test CAP * ACK :sasl")
+            elif line == "AUTHENTICATE EXTERNAL":
+                send("AUTHENTICATE +")
+            elif line == "AUTHENTICATE +":
+                account = next((name for name, prints in self.accounts.items() if fingerprint in prints), None)
+                send(f":irc.example.test 900 you you!u@h {account} :You are now logged in" if account else
+                     ":irc.example.test 904 you :SASL authentication failed")
+            elif command == "QUIT":
+                break
+        connection.close()
+
+
+class IrcCertificateSetupTests(unittest.TestCase):
+    """A remote IRC server: officers sign in by certificate unless told otherwise, and setup can bind them."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        fleet_setup.INPUTS = self.root / "inputs"
+        fleet_setup.INPUTS.mkdir(mode=0o700)
+        owner = patch.object(fleet_setup, "SECRET_OWNER", os.getuid())
+        owner.start()
+        self.addCleanup(owner.stop)
+        # No installed fleet unless a test writes one.
+        installed = patch.object(fleet_setup, "FLEET_ETC", self.root / "etc")
+        installed.start()
+        self.addCleanup(installed.stop)
+
+    def answers(self, *extra, saved=None):
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "remote",
+                                       "--irc-host", "irc.example.com", *extra])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            answers = fleet_setup.gather(args, saved or {})
+            fleet_setup.check_answers(answers)
+        return answers, args
+
+    def test_a_remote_server_signs_officers_in_by_certificate_unless_told_otherwise(self):
+        answers, _ = self.answers()
+        self.assertEqual(answers["ircAuth"], "certificate")
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        config = fleet_setup.fleet_config(answers, members, "a" * 40)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"], local_irc=False, certificates=True)
+        self.assertEqual(config["irc"]["auth"], "certificate")
+        self.assertEqual(secrets["ircPasswords"], {})
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual((cfg["irc"]["auth"], cfg["passwords"]), ("certificate", {}))
+        # Passwords stay an explicit choice and are kept; a remote fleet set up before stays on passwords.
+        self.assertEqual(self.answers("--irc-auth", "password")[0]["ircAuth"], "password")
+        self.assertEqual(self.answers(saved={"irc": "remote", "slug": "example-fleet"})[0]["ircAuth"], "password")
+        self.assertEqual(self.answers(saved={**answers})[0]["ircAuth"], "certificate")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "needs a remote IRC server"):
+            args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                           "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "local",
+                                           "--irc-auth", "certificate"])
+            fleet_setup.gather(args, {})
+        for extra, message in ((["--irc-operator", "ircop"], "together"),
+                               (["--irc-auth", "password", "--irc-operator", "ircop",
+                                 "--irc-operator-password-file", "/x"], "for certificate sign-in")):
+            with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                self.answers(*extra)
+
+    def test_the_installed_fleets_sign_in_and_certificates_are_kept(self):
+        # A remote fleet that setup set up with passwords, moved to certificates with the fleet installer alone.
+        etc = self.root / "etc"
+        (etc / "irc-certs").mkdir(parents=True)
+        (etc / "fleet.json").write_text(json.dumps({"irc": {"mode": "remote", "auth": "certificate"}}))
+        bundle = runtime.new_irc_bundle("example-fleet-orion")
+        (etc / "irc-certs/orion.pem").write_text(bundle)
+        saved = {"irc": "remote", "slug": "example-fleet", "ircAuth": "password"}
+        answers, _ = self.answers(saved=saved)
+        self.assertEqual(answers["ircAuth"], "certificate")
+        self.assertEqual(self.answers("--irc-auth", "password", saved=saved)[0]["ircAuth"], "password")
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        fingerprint = runtime.irc_fingerprint(bundle, "orion")
+        # The dry run reads the installed certificate; the real run keeps it, so its bound fingerprint holds.
+        planned = fleet_setup.officer_certificates(members, generate=False)
+        self.assertEqual(planned["example-fleet-orion"][1], fingerprint)
+        self.assertIsNone(planned["example-fleet-atlas"][1])
+        made = fleet_setup.officer_certificates(members, generate=True)
+        self.assertEqual(made["example-fleet-orion"][0].read_text(), bundle)
+        self.assertNotEqual(made["example-fleet-atlas"][1], None)
+        # Without an installed method, an older remote fleet keeps passwords and a new one gets certificates.
+        (etc / "fleet.json").unlink()
+        self.assertEqual(self.answers(saved=saved)[0]["ircAuth"], "password")
+        self.assertEqual(self.answers()[0]["ircAuth"], "certificate")
+
+    def test_certificates_live_in_the_secrets_directory_and_the_lines_bind_them(self):
+        answers, _ = self.answers()
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        # A dry run generates nothing and says the real run will.
+        planned = fleet_setup.officer_certificates(members, generate=False)
+        self.assertEqual({fingerprint for _, fingerprint in planned.values()}, {None})
+        self.assertFalse((fleet_setup.INPUTS / "fleet.secrets").exists())
+        self.assertIn("the real run generates its certificate", "\n".join(fleet_setup.certificate_lines(answers, planned)))
+        made = fleet_setup.officer_certificates(members, generate=True)
+        self.assertEqual(fleet_setup.officer_certificates(members, generate=True), made)
+        lines = "\n".join(fleet_setup.certificate_lines(answers, made))
+        for person in members:
+            path, fingerprint = made[person["account"]]
+            self.assertEqual(path, fleet_setup.INPUTS / "fleet.secrets" / person["id"] / "irc-client.pem")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+            self.assertIn(f"  {person['account']}: SHA-256 {fingerprint}", lines)
+            self.assertIn(f"/NS SAREGISTER {person['account']}\n", lines)
+            self.assertIn(f"/NS CERT ADD {person['account']} {fingerprint}", lines)
+        self.assertNotIn("PRIVATE", lines)
+        # The fleet installer takes them from there as supplied bundles.
+        config = fleet_setup.fleet_config(answers, members, "a" * 40)
+        cfg = validate(config, {"proxyKey": "fixture-model-proxy-key"}, check_files=False)
+        self.assertEqual(set(runtime.irc_bundles(cfg, fleet_setup.INPUTS / "fleet.secrets")), {"atlas", "orion"})
+
+    def test_the_operator_password_is_read_from_a_root_only_file_and_never_shown(self):
+        secret = "operator-secret-value"
+        path = fleet_setup.INPUTS / "operator"
+        path.write_text(secret + "\n")
+        path.chmod(0o600)
+        _, args = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", str(path))
+        self.assertEqual(fleet_setup.irc_operator(args), ("ircop", secret, None))
+        account = fleet_setup.INPUTS / "account"
+        account.write_text("account-secret-value\n")
+        account.chmod(0o600)
+        _, args = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", str(path),
+                               "--irc-operator-account", "opsuser", "--irc-operator-account-password-file", str(account))
+        self.assertEqual(fleet_setup.irc_operator(args), ("ircop", secret, ("opsuser", "account-secret-value")))
+        account.chmod(0o640)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "IRC account password file .* mode 0600") as refused:
+            fleet_setup.irc_operator(args)
+        self.assertNotIn("account-secret-value", str(refused.exception))
+        account.chmod(0o600)
+        for extra, message in ((["--irc-operator-account", "opsuser"], "together"),
+                               (["--irc-operator-account", "opsuser", "--irc-operator-account-password-file",
+                                 str(account)], "pass --irc-operator too")):
+            with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                self.answers(*extra)
+        path.chmod(0o644)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "mode 0600") as refused:
+            fleet_setup.irc_operator(args)
+        self.assertNotIn(secret, str(refused.exception))
+        path.chmod(0o600)
+        _, args = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", "operator")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "absolute path"):
+            fleet_setup.irc_operator(args)
+        # setup keeps neither in its answers.
+        answers, _ = self.answers("--irc-operator", "ircop", "--irc-operator-password-file", str(path))
+        self.assertFalse({"ircOperator", "ircOperatorPasswordFile"} & answers.keys())
+        self.assertNotIn(secret, json.dumps(answers))
+
+    def test_with_an_operator_setup_registers_binds_and_checks_each_certificate(self):
+        answers, _ = self.answers()
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        certificates = fleet_setup.officer_certificates(members, generate=True)
+        server = FakeIrcServer(self.root, [path.read_text() for path, _ in certificates.values()])
+        self.addCleanup(server.listener.close)
+        answers.update(ircHost="localhost", ircPort=server.port, ircCa=server.ca)
+        output = []
+        operator = ("ircop", "fixture-operator-password", None)
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            # A dry run only checks the operator and reports that no certificate signs in yet.
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=False)
+            self.assertEqual(server.accounts, {})
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+        accounts = [person["account"] for person in members]
+        self.assertEqual(server.accounts, {account: {certificates[account][1]} for account in accounts})
+        self.assertEqual(server.requests, [request for account in accounts for request in
+                                           (["SAREGISTER", account], ["CERT", "ADD", account, certificates[account][1]])])
+        self.assertIn(f"{accounts[0]}: its certificate does not sign in yet", output)
+        self.assertIn(f"{accounts[1]}: its certificate signs in", output)
+        self.assertNotIn(operator[1], "\n".join(output))
+        self.assertEqual(irc_accounts.check_login("localhost", server.port, server.ca,
+                                                  str(certificates[accounts[1]][0])), accounts[1])
+        # A rerun finds every certificate signing in and asks NickServ for nothing.
+        requests = len(server.requests)
+        with patch.object(fleet_setup, "say"):
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+        self.assertEqual(len(server.requests), requests)
+        # An account that already exists without this officer's certificate is never changed: the run stops.
+        server.accounts[accounts[0]] = {"0" * 64}
+        with patch.object(fleet_setup, "say"), \
+                self.assertRaisesRegex(fleet_setup.SetupError, f"did not register {accounts[0]} .*Name reserved.*"
+                                       "never changes an existing account's certificates"):
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+        self.assertEqual(server.accounts[accounts[0]], {"0" * 64})
+        self.assertEqual(server.requests[requests:], [["SAREGISTER", accounts[0]]])
+        server.accounts[accounts[0]] = {certificates[accounts[0]][1]}
+        # A wrong operator password is refused without repeating it.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "refused the operator credential for ircop") as refused:
+            fleet_setup.check_certificates(answers, members, certificates, ("ircop", "wrong-password", None),
+                                           register=True)
+        self.assertNotIn("wrong-password", str(refused.exception))
+        # A server that admits only signed-in connections: without an account the run stops, naming the options,
+        # and with one the operator's connection signs in first, then opers up.
+        server.require_sasl, server.passwords, server.accounts = True, {"opsuser": "fixture-account-password"}, {}
+        with self.assertRaisesRegex(fleet_setup.SetupError, "--irc-operator-account and "
+                                    "--irc-operator-account-password-file"):
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "refused the sign-in of the account opsuser"):
+            fleet_setup.check_certificates(answers, members, certificates,
+                                           (*operator[:2], ("opsuser", "wrong")), register=True)
+        with patch.object(fleet_setup, "say"):
+            fleet_setup.check_certificates(answers, members, certificates,
+                                           (*operator[:2], ("opsuser", "fixture-account-password")), register=True)
+        self.assertEqual(server.accounts, {account: {certificates[account][1]} for account in accounts})
+        # A certificate the server does not accept after registration stops the run.
+        server.operator = ("ircop", "other")
+        with patch.object(fleet_setup, "say"), \
+                patch.object(irc_accounts, "register", return_value={}), \
+                patch.object(irc_accounts, "check_login", return_value=None), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "cannot sign in to localhost"):
+            fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+
+
+class OutboundTests(unittest.TestCase):
+    """setup stops at once, saying what to open, when the VM cannot reach what the install downloads."""
+
+    def test_the_package_mirrors_come_from_both_apt_source_formats(self):
+        with tempfile.TemporaryDirectory() as temp:
+            apt = Path(temp)
+            (apt / "sources.list.d").mkdir()
+            (apt / "sources.list").write_text("# comment\ndeb [arch=amd64] http://mirror.example.com/ubuntu noble main\n"
+                                              "deb cdrom:[Ubuntu]/ noble main\n")
+            (apt / "sources.list.d/ubuntu.sources").write_text(
+                "Types: deb\nURIs: http://archive.example.org/ubuntu/ http://mirror.example.com/ubuntu\n"
+                "Suites: noble\n\nTypes: deb\nURIs: http://disabled.example.net/ubuntu\nEnabled: no\n")
+            self.assertEqual(fleet_setup.apt_mirrors(apt), ["http://mirror.example.com/ubuntu",
+                                                            "http://archive.example.org/ubuntu/"])
+
+    def test_mirrors_are_probed_through_apts_own_proxy(self):
+        dump = ('Acquire "";\nAcquire::http::Proxy "http://proxy.example.com:3128/";\n'
+                'Acquire::https::Proxy "DIRECT";\n')
+        with patch.object(fleet_setup.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0, stdout=dump)):
+            self.assertEqual(fleet_setup.apt_proxies(), {"http": "http://proxy.example.com:3128/"})
+        opened = []
+
+        class Opener:
+            def open(self, request, timeout):
+                opened.append(request.full_url)
+                raise URLError("refused")
+        with patch.object(fleet_setup, "build_opener", return_value=Opener()) as build, \
+                patch.object(fleet_setup, "urlopen", side_effect=AssertionError("not through the environment")):
+            self.assertFalse(fleet_setup.reachable("http://archive.example.org/ubuntu/", "http://proxy.example.com:3128/"))
+        self.assertEqual(build.call_args.args[0].proxies, {"http": "http://proxy.example.com:3128/",
+                                                           "https": "http://proxy.example.com:3128/"})
+        with patch.object(fleet_setup, "apt_mirrors", return_value=["http://archive.example.org/ubuntu/"]), \
+                patch.object(fleet_setup, "apt_proxies", return_value={"http": "http://proxy.example.com:3128/"}), \
+                patch.object(fleet_setup, "docker_ready", return_value=True):
+            self.assertEqual(fleet_setup.outbound_targets({"api": True}), [
+                ("GitHub", "https://github.com", None),
+                ("the package mirror", "http://archive.example.org/ubuntu/", "http://proxy.example.com:3128/")])
+
+    def test_no_outbound_access_stops_at_once_and_says_what_to_open(self):
+        targets = [("GitHub", "https://github.com", None),
+                   ("the package mirror", "http://archive.example.org/ubuntu/", None)]
+        with patch.object(fleet_setup, "outbound_targets", return_value=targets), \
+                patch.object(fleet_setup, "urlopen", side_effect=URLError("timed out")) as opened, \
+                self.assertRaisesRegex(fleet_setup.SetupError, r"no outbound access to GitHub \(github.com\), the "
+                                       r"package mirror \(archive.example.org\).*Open outbound HTTPS \(TCP 443\)"):
+            check_outbound({"api": True})
+        self.assertTrue(all(call.kwargs["timeout"] == fleet_setup.OUTBOUND_TIMEOUT for call in opened.call_args_list))
+        # An HTTP error is an answer: the host is reachable.
+        refused = HTTPError("https://github.com", 403, "Forbidden", {}, None)
+        with patch.object(fleet_setup, "outbound_targets", return_value=targets), \
+                patch.object(fleet_setup, "urlopen", side_effect=refused):
+            check_outbound({"api": True})
+        # Docker's repository only matters when the VM runs containers and has no Docker Compose yet.
+        def labels(answers, ready=False):
+            with patch.object(fleet_setup, "apt_mirrors", return_value=[]), \
+                    patch.object(fleet_setup, "docker_ready", return_value=ready):
+                return [label for label, _, _ in fleet_setup.outbound_targets(answers)]
+        self.assertNotIn("Docker's package repository", labels({"api": False, "irc": "remote"}))
+        self.assertIn("Docker's package repository", labels({"api": True}))
+        self.assertNotIn("Docker's package repository", labels({"api": True}, ready=True))
+
+    def test_the_release_lookup_says_why_it_failed(self):
+        with patch.object(fleet_setup, "run", side_effect=fleet_setup.SetupError("git ls-remote did not finish")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "no outbound access to GitHub.*--stargate-ref"):
+            fleet_setup.latest_stargate()
+
+
+class HostInstallerTests(unittest.TestCase):
+    """The host install.sh, run with a fake ssh that prints its arguments."""
+
+    def test_ssh_puts_options_before_the_host_and_a_command_after_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            (work / "bin").mkdir()
+            (work / "home/targets/example").mkdir(parents=True)
+            (work / "home/targets/example/target.env").write_text("KIND=remote\n")
+            fake = work / "bin/ssh"
+            fake.write_text('#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done\n')
+            fake.chmod(0o755)
+            installer = Path(fleet_setup.HERE).parents[1] / "install.sh"
+            environment = {**os.environ, "PATH": f"{work / 'bin'}:{os.environ['PATH']}", "SUBSPACE_HOME": str(work / "home")}
+
+            def ssh(*argv):
+                result = subprocess.run(["bash", str(installer), "ssh", "--target", "example", *argv],
+                                        env=environment, capture_output=True, text=True, check=True)
+                return result.stdout.splitlines()
+            config = str(work / "home/targets/example/ssh_config")
+            self.assertEqual(ssh("--", "sudo", "uptime"), ["-F", config, "subspace-target", "sudo", "uptime"])
+            self.assertEqual(ssh("-L", "8080:127.0.0.1:8080"),
+                             ["-L", "8080:127.0.0.1:8080", "-F", config, "subspace-target"])
+            self.assertEqual(ssh(), ["-F", config, "subspace-target"])
+            # Everything after -- is the remote command's, even words that look like the installer's options.
+            self.assertEqual(ssh("--", "df", "-h", "--yes", "--target", "other", "--local"),
+                             ["-F", config, "subspace-target", "df", "-h", "--yes", "--target", "other", "--local"])
+
+    @unittest.skipUnless(shutil.which("pwsh"), "needs PowerShell (pwsh)")
+    def test_install_ps1_ssh_runs_a_command_under_strict_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            (work / "bin").mkdir()
+            (work / "home/targets/example").mkdir(parents=True)
+            (work / "home/targets/example/target.env").write_text(
+                "KIND=remote\nHOST=ops@vm.example.com\nPORT=22\nIDENTITY=\nPROXY=\n")
+            fake = work / "bin/ssh.exe"
+            fake.write_text('#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done\n')
+            fake.chmod(0o755)
+            # Off Windows, the script's ACL helper cannot run; nothing else on this path needs Windows.
+            script = (Path(fleet_setup.HERE).parents[1] / "install.ps1").read_text()
+            script = re.sub(r"(?ms)^function Protect-File\b.*?^}\n", "function Protect-File([string]$Path) { }\n",
+                            script, count=1)
+            (work / "install.ps1").write_text(script)
+            environment = {**os.environ, "PATH": f"{work / 'bin'}:{os.environ['PATH']}", "SUBSPACE_HOME": str(work / "home")}
+            config = str(work / "home/targets/example/ssh_config")
+
+            def ssh(words, file=False):
+                command = ["pwsh", "-NoProfile", "-File", str(work / "install.ps1"), "ssh", "--target", "example",
+                           *words] if file else ["pwsh", "-NoProfile", "-Command",
+                                                 f"& '{work / 'install.ps1'}' ssh --target example {' '.join(words)}"]
+                result = subprocess.run(command, env=environment, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout.splitlines()
+            host = ["-F", config, "subspace-target"]
+            self.assertEqual(ssh(["uptime"]), [*host, "uptime"])
+            self.assertEqual(ssh(["--", "uptime"]), [*host, "uptime"])
+            self.assertEqual(ssh(["df", "-h"]), [*host, "df", "-h"])
+            self.assertEqual(ssh(["-L", "8080:127.0.0.1:8080", "sudo", "uptime", "--yes"]),
+                             ["-F", config, "-L", "8080:127.0.0.1:8080", "subspace-target", "sudo", "uptime", "--yes"])
+            self.assertEqual(ssh([]), host)
+            self.assertEqual(ssh(["--"], file=True), host)
+            self.assertEqual(ssh(["--", "df", "-h", "--yes"], file=True), [*host, "df", "-h", "--yes"])
 
 
 class IrcServerTests(unittest.TestCase):

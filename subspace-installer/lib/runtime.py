@@ -1758,7 +1758,10 @@ def new_irc_bundle(account):
     with tempfile.TemporaryDirectory() as work:
         key, certificate = Path(work) / "key.pem", Path(work) / "certificate.pem"
         subprocess.run(
-            ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+            # A named curve: an OpenSSL that writes explicit curve parameters (LibreSSL) makes a certificate that
+            # Go TLS servers such as Ergo refuse during the handshake.
+            ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+             "-pkeyopt", "ec_param_enc:named_curve", "-nodes",
              "-sha256", "-days", "3650", "-subj", f"/CN={account}", "-keyout", key, "-out", certificate],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
@@ -1956,6 +1959,34 @@ def maintenance_units(cfg):
         ]), 0o644)
         timers.extend((f"{unit}.service", timer))
     return timers
+
+
+def readable_without_credentials(url):
+    """Whether Git can list a repository's branches with no credentials, as the installer clones a public one."""
+    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true", "SSH_ASKPASS": "true"}
+    try:
+        return subprocess.run(["git", "-c", "credential.helper=", "ls-remote", "--heads", "--", url], env=environment,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=30, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def unreadable_repositories(cfg):
+    """Repositories the installer would clone as public that Git cannot read without credentials, such as
+    private ones that fleet.json does not mark private. Those already installed are not checked again."""
+    path = ETC / "repository-sources.json"
+    installed = read_json(path, private=True) if os.access(path, os.R_OK) else {}
+    return [name for name, repo in cfg["repositories"].items()
+            if not repo["private"] and installed.get(name) != repo and not readable_without_credentials(repo["url"])]
+
+
+def unreadable_message(names):
+    return (f"Git cannot read {', '.join(names)} without credentials, so the installer cannot clone "
+            f"{'it' if len(names) == 1 else 'them'} as public repositories. If a repository is private, mark it "
+            '"private": true in fleet.json and give the rear admiral and every captain a GitHub App that can read '
+            "it (installer README, 'GitHub Apps per fleet member'); otherwise check its URL, or remove it from "
+            "repositories.")
 
 
 def reconcile_workspaces(cfg, homes, refresh_only=False):
@@ -2556,6 +2587,13 @@ def main(args):
         bundles = irc_bundles(cfg, directory)
         for person in cfg["members"]:
             check_sign_in(irc_agent(cfg, person, {})[0], cfg["irc"])
+        unreadable = unreadable_repositories(cfg)
+        # The real run stops before it clones anything, and so does subspace-setup's check before it changes the
+        # API (SUBSPACE_FLEET_CHECK=strict); a dry run says what the real run would do.
+        strict = verb == "prepare" or os.environ.get("SUBSPACE_FLEET_CHECK") == "strict"
+        require(not strict or not unreadable, unreadable_message(unreadable))
+        if unreadable:
+            print(f"WARNING: {unreadable_message(unreadable)} The installation stops before cloning until then.")
         if verb == "prepare":
             stage = Path(tail[2])
             (stage / "fleet.json").write_text(json_text(config))

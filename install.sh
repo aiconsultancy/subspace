@@ -21,7 +21,7 @@
 #   skills        install Subspace skills and the API's MCP server into your local
 #                 agents' user profiles (--agents claude,codex,opencode --name YOU)
 #   desktop       write the desktop app's IRC connection for this fleet
-#   ssh           open a shell on the VM
+#   ssh           open a shell on the VM, or run a command: ./install.sh ssh -- uptime
 #   status        show the VM, the fleet and its services
 #   audit         run the privacy audit on the VM
 #   stop | start  stop or start a local VM
@@ -50,6 +50,13 @@
 #                        copied to the VM as root's; add --migrate to migrate it
 #   --database-ca-file FILE   that server's CA certificate (PEM), when the
 #                        VM does not already trust it
+#   --irc-operator-password-file FILE  with --irc-operator NAME: a private
+#                        (chmod 600) file holding a remote IRC server's operator
+#                        password, so setup registers the officers' certificate
+#                        accounts itself; removed from the VM after the run
+#   --irc-operator-account-password-file FILE  with --irc-operator-account
+#                        NAME: the same for the IRC account the operator's
+#                        connection signs in to first (servers with require-sasl)
 #   --fleet-console ID   (desktop) the Board ID of the Fleet Console web Space
 #                        (default fleet-console, the one built into Subspace)
 #   --yes                never prompt; fail when an answer is missing
@@ -90,10 +97,13 @@ irc_target=
 api_target=
 database_url_file=
 database_ca_file=
+irc_operator_password_file=
+irc_operator_account_password_file=
 fleet_console=fleet-console
 assume_yes=false
 background=false
 passthrough=()
+transient=()
 
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
 say() { printf '==> %s\n' "$*"; }
@@ -119,6 +129,10 @@ case ${1:-} in
     install|irc-server|tunnel|providers|skills|desktop|ssh|status|audit|stop|start|destroy) command=$1; shift ;;
 esac
 while [ $# -gt 0 ]; do
+    if [ "$command" = ssh ] && [ "$1" = -- ]; then
+        # The remote command is not the installer's: everything from -- goes to ssh unchanged.
+        passthrough+=("$@"); break
+    fi
     case $1 in
         --local) mode=local; shift ;;
         --remote) mode=remote; remote=${2:?--remote needs USER@HOST}; shift 2 ;;
@@ -135,6 +149,8 @@ while [ $# -gt 0 ]; do
         --api-target) api_target=${2:?}; shift 2 ;;
         --database-url-file) database_url_file=${2:?}; shift 2 ;;
         --database-ca-file) database_ca_file=${2:?}; shift 2 ;;
+        --irc-operator-password-file) irc_operator_password_file=${2:?}; shift 2 ;;
+        --irc-operator-account-password-file) irc_operator_account_password_file=${2:?}; shift 2 ;;
         --fleet-console) fleet_console=${2:?}; shift 2 ;;
         --yes|-y) assume_yes=true; shift ;;
         --background) background=true; shift ;;
@@ -192,6 +208,25 @@ ssh_opts() {
     else
         ssh_args=(-F "$state/ssh_config" subspace-target)
     fi
+}
+
+remove_transient() {
+    # The EXIT trap's cleanup: remove this run's own copies from the VM, once.
+    (( ${#transient[@]} )) || return 0
+    local -a dirs=("${transient[@]}")
+    transient=()
+    vm sudo -n rm -rf "${dirs[@]}" 2>/dev/null ||
+        note "Remove ${dirs[*]} on the VM by hand: they hold this run's copies, such as the IRC operator's password."
+}
+
+do_ssh() {
+    # ./install.sh ssh [ssh options] [-- command...]: ssh options go before the host, the command after it.
+    local -a options=() remote_command=()
+    while [ $# -gt 0 ]; do
+        if [ "$1" = -- ]; then shift; remote_command=("$@"); break; fi
+        options+=("$1"); shift
+    done
+    exec ssh ${options[@]+"${options[@]}"} "${ssh_args[@]}" ${remote_command[@]+"${remote_command[@]}"}
 }
 
 vm() {
@@ -422,6 +457,8 @@ remote_connect() {
 # Payload --------------------------------------------------------------------
 
 send_payload() {
+    # send_payload [DIR]: the installer goes to /opt/subspace/bootstrap, or DIR for a dry run.
+    local payload_dir=${1:-$payload_dir}
     say "Copying the installer to $payload_dir on the VM."
     local -a tar_opts=()
     if tar --help 2>&1 | grep -q -- '--no-xattrs'; then tar_opts+=(--no-xattrs); fi
@@ -694,13 +731,19 @@ do_install() {
     for arg in ${passthrough[@]+"${passthrough[@]}"}; do
         if [ "$arg" = --dry-run ]; then dry_run=true; inputs=/root/subspace-setup-dry-run; fi
     done
+    # Directories on the VM that hold this run's own copies (a dry run's files, the IRC operator's passwords),
+    # removed when the run ends, however it ends.
+    transient=()
+    trap remove_transient EXIT
+    "$dry_run" && transient+=("$inputs")
     if [ -n "$irc_target" ]; then
         [ -f "$home/targets/$irc_target/summary.env" ] || die "No shared IRC server '$irc_target'. Run ./install.sh irc-server first."
         local irc_host irc_port self_signed
         irc_host=$(sed -n 's/^SUBSPACE_IRC_HOST=//p' "$home/targets/$irc_target/summary.env")
         irc_port=$(sed -n 's/^SUBSPACE_IRC_PORT=//p' "$home/targets/$irc_target/summary.env")
         self_signed=$(sed -n 's/^SUBSPACE_IRC_SELF_SIGNED=//p' "$home/targets/$irc_target/summary.env")
-        passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port")
+        # The shared server this installer runs seeds each officer's account with a password.
+        passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port" --irc-auth password)
         if [ "$self_signed" = 1 ]; then
             vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/irc-ca.pem'" < "$home/targets/$irc_target/ca.pem"
             passthrough+=(--irc-ca "$inputs/irc-ca.pem")
@@ -725,22 +768,47 @@ do_install() {
             die "Could not copy the database CA certificate to the VM."
         passthrough+=(--database-ca-file "$inputs/database-ca.pem")
     fi
+    # The IRC operator's passwords are for this run only: checked here, copied to the VM only after the
+    # installer, never into the fleet's inputs, and removed when the run ends.
+    local operator_dir=/root/subspace-setup-operator option file name operator_perms
+    "$dry_run" && operator_dir=$inputs
+    for option in irc-operator-password irc-operator-account-password; do
+        if [ "$option" = irc-operator-password ]; then file=$irc_operator_password_file; else file=$irc_operator_account_password_file; fi
+        [ -n "$file" ] || continue
+        [ -f "$file" ] && [ -r "$file" ] || die "Cannot read --$option-file $file."
+        if [ "$os" = Darwin ]; then operator_perms=$(stat -f %Lp "$file"); else operator_perms=$(stat -c %a "$file"); fi
+        case $operator_perms in [0-7]00) ;; *) die "--$option-file $file must be private to you: chmod 600 it." ;; esac
+    done
 
-    send_payload
+    # The dry run's installer copy goes beside its files and is removed with them, so the installed
+    # /opt/subspace/bootstrap and the subspace-setup command stay as the last real run left them.
+    if "$dry_run"; then send_payload "$inputs/bootstrap"; else send_payload; fi
+    for option in irc-operator-password irc-operator-account-password; do
+        if [ "$option" = irc-operator-password ]; then file=$irc_operator_password_file; else file=$irc_operator_account_password_file; fi
+        [ -n "$file" ] || continue
+        name=$operator_dir/$option
+        transient+=("$operator_dir")
+        vm sudo -n sh -c "'umask 077; mkdir -p $operator_dir; cat > $name'" < "$file" ||
+            die "Could not copy the --$option-file to the VM."
+        passthrough+=("--$option-file" "$name")
+    done
+
     local -a setup_args=(setup)
     interactive || setup_args+=(--non-interactive)
     setup_args+=(${passthrough[@]+"${passthrough[@]}"})
+    local setup_status=0
     if "$dry_run"; then
-        say "Running subspace-setup --dry-run on the VM. It changes nothing there."
-        local status=0
-        vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")" || status=$?
-        vm sudo -n rm -rf "$inputs" || note "Remove $inputs on the VM by hand."
-        [ "$status" = 0 ] || die "The dry run failed; read subspace-setup's output above."
+        say "Running subspace-setup --dry-run on the VM from $inputs, which is removed afterwards."
+        vm_tty sudo "$inputs/bootstrap/subspace-installer/vm/setup.sh" "$(quote_args "${setup_args[@]}")" || setup_status=$?
+        remove_transient
+        [ "$setup_status" = 0 ] || die "The dry run failed; read subspace-setup's output above."
         say "Dry run complete. Run the same command without --dry-run to install."
         return
     fi
     say "Running subspace-setup on the VM. This takes a while the first time."
-    vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")"
+    vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")" || setup_status=$?
+    remove_transient
+    [ "$setup_status" = 0 ] || die "subspace-setup failed on the VM; read its output above."
 
     fetch_private "$state/summary.env" sudo -n cat /root/fleet/summary.env
     read_summary
@@ -930,7 +998,7 @@ case $command in
             fetch_private "$state/stargate-api.token" sudo -n subspace-setup stargate-token || true
         fi
         IRC_TARGET=$irc_target write_desktop_config ;;
-    ssh) load_target; ssh_opts; exec ssh ${passthrough[@]+"${passthrough[@]}"} "${ssh_args[@]}" ;;
+    ssh) load_target; ssh_opts; do_ssh ${passthrough[@]+"${passthrough[@]}"} ;;
     audit) load_target; vm sudo -n subspace-setup audit ;;
     status)
         load_target

@@ -21,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import runtime  # noqa: E402
 import sessions  # noqa: E402
 
+# Tests never reach the network (policy_test.py checks the anonymous repository check itself).
+runtime.readable_without_credentials = lambda url: True
+
 DIRECTORY = "/var/lib/subspace-fleet/agents/orion/workspace/project"
 PERMISSIONS = [{"action": "*", "resource": "*", "effect": "deny"},
                {"action": "stargate_crew", "resource": "*", "effect": "allow"}]

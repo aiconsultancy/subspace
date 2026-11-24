@@ -182,7 +182,21 @@ answer it now.
      they work across fleets while seeing only the channels and captains of
      the fleet they are in.
    - **An IRC server they already run:** collect its DNS name, TLS port and
-     CA certificate, and who can add the fleets' accounts to it.
+     CA certificate, and who can add the fleets' accounts to it. Officers sign
+     in to it by certificate (`--irc remote --irc-host NAME`): setup makes one
+     per officer and prints its account, fingerprint and the two NickServ
+     lines (`/NS SAREGISTER`, `/NS CERT ADD`) that the server's operator runs.
+     If the user holds an IRC operator credential with NickServ's `accreg`
+     capability, pass `--irc-operator NAME --irc-operator-password-file FILE`
+     (a `chmod 600` file on this computer, removed from the VM after the run)
+     and setup registers the accounts and checks each sign-in itself; it
+     never prints or keeps the password. If the server lets only signed-in
+     accounts connect (Ergo's `require-sasl`), also pass
+     `--irc-operator-account NAME --irc-operator-account-password-file FILE`
+     for the account the operator signs in to first. Use `--irc-auth password` only for a
+     server that cannot take certificates, and then its operator sets each
+     officer's password. See
+     [IRC sign-in](subspace-installer/README.md#irc-sign-in).
 
    **If the user cannot answer, put Ergo on the fleet VM**: it creates no
    extra cloud resources and costs nothing more. Tell them that moving to a
@@ -214,14 +228,21 @@ answer it now.
    (see [GitHub Apps per fleet member](subspace-installer/README.md#github-apps-per-fleet-member)).
    Ask whether those Apps exist and where their keys are. If not, install
    with the public repositories only, and tell the user how to add the private
-   ones once the Apps exist. **Default: no repositories, so no crew yet.**
+   ones once the Apps exist. Setup cannot tell a private repository from its
+   URL: the dry run warns about every repository Git cannot read without
+   credentials, and the install stops before cloning until it is marked
+   `"private": true` with the Apps in place, or removed.
+   **Default: no repositories, so no crew yet.**
 5. **Crew per captain** (**2 Claude, 2 Codex**; 0 to 10 each,
    `--crew-claude`, `--crew-codex`). Explain that crew run inside their
    captain's OpenCode server as the captain's Linux user: they share the
    captain's files, credentials and GitHub App, commit as the captain, and
    have no IRC accounts. The user talks to the captain, who delegates to its
    crew. A captain's crew roster is fixed once the fleet first starts, so
-   settle the counts now.
+   settle the counts now. Ask which model each kind of crew member uses
+   (**`claude-sonnet-5-5` and `gpt-5.4`**), for example
+   `--crew-claude-model claude-opus-5-5 --crew-codex-model gpt-6.2-sol`; the
+   models, unlike the counts, can change later.
 6. **Their IRC account name** (**admiral**), used as their nickname. The
    agents only take orders from this account.
 7. **Demo data?** (**yes**) Fictional fleets, initiatives and issues so they can
@@ -291,6 +312,22 @@ answer it now.
     to renew it, or see
     [Agent dispatch](subspace-installer/README.md#agent-dispatch) for a
     long-lived token. An unattended run leaves it off.
+15. **An existing PostgreSQL for the tracker?** (**no**: the API keeps its
+    own PostgreSQL on the fleet VM.) If they already run one, for example a
+    managed server, the fleet's API can use it instead, with no database on
+    the VM. Ask for a file on this computer holding its
+    `postgresql://USER:PASSWORD@HOST:5432/DATABASE?sslmode=verify-full` URL
+    (`chmod 600`; never paste the URL into the chat), its CA certificate when
+    the VM does not trust it, whether its migrations may be applied (back it
+    up first), and the `--organisation` and `--admin-email` of someone who is
+    already an administrator there, unless the database is empty. Pass
+    `--database-url-file FILE`, `--database-ca-file FILE` and, to migrate it,
+    `--migrate`. The VM must reach the server, so its firewall must allow the
+    VM. Do a `--dry-run` first: it connects read-only and says whether
+    migrations are missing and whether that person is an administrator. There
+    is no demo data in a database the installer did not create, and no way
+    back to a database on the VM. See
+    [An existing PostgreSQL](subspace-installer/README.md#an-existing-postgresql).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -391,7 +428,11 @@ run-command (`az vm run-command invoke --resource-group subspace-fleet-rg
 commands from [Private access](docs/private-access.md). If that cannot reach
 the package repositories, the VM has no outbound access: Azure is retiring
 default outbound access for new virtual networks, so the subnet needs a NAT
-gateway, which the user must agree to. Then read the host key:
+gateway, which the user must agree to. `subspace-setup` checks this first, in
+a dry run too: without outbound HTTPS to GitHub (and `download.docker.com`
+when the VM runs containers and has no Docker Compose yet) or access to the
+package mirrors its enabled apt sources name, through apt's own proxy when it
+has one, it stops at once and names what to open. Then read the host key:
 
 ```sh
 az vm run-command invoke -g subspace-fleet-rg -n subspace-fleet --command-id RunShellScript \
@@ -418,6 +459,12 @@ whichever ports sshd listens on), and
 `--access cloudflare` with the `--ssh-proxy` from
 [Private access](docs/private-access.md#cloudflare-zero-trust) instead. Leave
 `--access` out only for an existing VM you reach another private way.
+
+For an existing PostgreSQL (question 15), add `--database-url-file FILE`
+(`--database-ca-file FILE` for a private CA, `--migrate` to apply missing
+migrations), and the `--organisation` and `--admin-email` of an
+administrator already in that database. Run it with `--dry-run` first: the
+dry run checks the database read-only and changes nothing on the VM.
 
 To keep the generated secrets in Azure Key Vault, give the VM a managed
 identity that can read and write the vault's secrets (for example the Key
@@ -446,7 +493,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-d
 ```
 
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
-optionally `ID=URL`) and their crew counts as `--crew-claude N --crew-codex N`,
+optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`
+and the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`,
 on this command and on the cloud VM one above. Leave out `--install-deps`
 to stop and ask instead of installing Lima, QEMU or Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first
 run downloads an Ubuntu image, the agents' tools and the container images, so
@@ -645,8 +693,9 @@ accounts in Ergo.
 
 1. **Each fleet.** Copy `irc-ca.pem` to the fleet VM first (for example
    `scp irc-ca.pem azureuser@fleet-one.example.ts.net:`) and install with
-   `--irc remote --irc-host irc.example.com --irc-ca /home/azureuser/irc-ca.pem`
-   (add `--irc-port` for a port other than 6697). Then fetch its bundle over
+   `--irc remote --irc-host irc.example.com --irc-ca /home/azureuser/irc-ca.pem --irc-auth password`
+   (add `--irc-port` for a port other than 6697): the seeds give each officer
+   a password. Then fetch its bundle over
    the same SSH route the installer uses, add it to the seeds as above and
    restart the server:
 
@@ -921,8 +970,11 @@ the agents come online. CLIProxyAPI also supports `antigravity`, `kimi`,
 
 The default models are `gpt-5.4` for Codex-family agents and
 `claude-sonnet-5-5` for Claude-family crew. Use model IDs your accounts can
-reach: change them under `harness` and `crew` (`crew.claude.model`,
-`crew.codex.model`) in `/root/fleet/fleet.json` and run `sudo subspace-setup`.
+reach. Set the crew's with `sudo subspace-setup --crew-claude-model MODEL
+--crew-codex-model MODEL` (or the same options on `./install.sh`); setup
+keeps them on later runs, and `''` returns to the default. Change the rear
+admiral's and captains' model under `harness` in `/root/fleet/fleet.json`
+and run `sudo subspace-setup`, which keeps it.
 The [fleet installer's guide](subspace-installer/README.md#model-provider-sign-in)
 covers models and harnesses. On the VM, `sudo subspace-setup providers`
 does the same as `./install.sh providers`.
@@ -1076,6 +1128,9 @@ permissions, Slack and Teams.
 | --- | --- |
 | IRC passwords, model proxy key, PostgreSQL password | Generated on the VM in `/root/fleet/` (root-only), optionally also in Key Vault |
 | Installed copies the services read | `/etc/subspace-fleet/` (root-only), and each agent's files in its own home with mode 0600 |
+| An existing PostgreSQL's URL and CA | `/root/fleet/database-url` and `database-ca.pem` (root-only), copied from your files on each run that passes them |
+| Officers' IRC certificates (remote IRC) | `/root/fleet/fleet.secrets/<officer-id>/irc-client.pem` (root-only), generated on the VM; only fingerprints are printed |
+| An IRC operator's password, and its sign-in account's | Your files only: copied to the VM for the run that passes them, then removed; never printed or saved |
 | Model provider logins | `/var/lib/subspace-fleet/proxy/auth` on the VM, owned by the proxy user |
 | Your IRC password and Stargate API token | `~/.subspace/targets/<target>/` on your computer, owner-only |
 | A shared IRC server's secrets, in a container | Owner-only files on your computer and the platform's secret store ([Run the shared IRC server in a container](#run-the-shared-irc-server-in-a-container)) |

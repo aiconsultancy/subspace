@@ -116,6 +116,13 @@ the mirror service refreshes, and works in its reference checkout of the
 first repository. The rear admiral can inspect them from its own Linux
 account, including Git history. `subspace-setup --repositories` fills this
 list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
+A repository without `"private": true` is cloned without credentials, so the
+installer first checks that Git can read it that way: `--dry-run` warns about
+each one it cannot read, and an install or upgrade, and `subspace-setup`
+before it changes the API, stop before cloning anything. Mark a private
+repository `"private": true` and give the officers
+[GitHub Apps](#github-apps-per-fleet-member). An installed repository is not
+checked again.
 
 A repository also takes an optional one-line `description` and `tracker`,
 free text that names where its work is tracked, for example
@@ -128,7 +135,9 @@ recorded. Unlike the URL and visibility, both may change at any time.
 
 Set fleet-wide `crew.claude` and `crew.codex` defaults, or override either
 under a captain's `crew`. Each family takes a `count` from 0 to 10 and a
-`model`. Crew run inside their captain's OpenCode server, as the captain's
+`model`. `subspace-setup` writes the fleet-wide ones from `--crew-claude`,
+`--crew-codex`, `--crew-claude-model` and `--crew-codex-model`, and keeps a
+model set in `fleet.json` by hand when no option names one. Crew run inside their captain's OpenCode server, as the captain's
 Linux user, through Stargate's crew plugin:
 
 - Each crew member has one permanent worktree per repository, under
@@ -539,7 +548,8 @@ to move without a gap, work on your copies of the inputs in this order:
 
    ```sh
    umask 077
-   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+     -pkeyopt ec_param_enc:named_curve -nodes \
      -days 3650 -sha256 -subj "/CN=example-orion" -keyout key.pem -out irc-client.pem
    cat key.pem >> irc-client.pem && rm key.pem
    ```
@@ -555,9 +565,46 @@ Without step 2 the dry run cannot print fingerprints, because the VM
 generates the certificates during the upgrade: the install summary prints
 them, and the officers stay off IRC until you bind them.
 
+**With `subspace-setup` and a remote server**, officers sign in by
+certificate too, unless `--irc-auth password` says otherwise. Without the
+option, setup keeps how the installed fleet signs in (its
+`/etc/subspace-fleet/fleet.json`, which the fleet installer alone may have
+changed), else its own earlier choice; a remote fleet it set up before this
+release keeps passwords. Setup keeps each officer's bundle in
+`/root/fleet/fleet.secrets/<officer-id>/irc-client.pem`, from where the
+fleet installer takes it: the installed fleet's bundle when there is one, so
+a fingerprint already bound stays valid, else a new one, made once. It
+prints, for each officer, its account, its
+SHA-256 fingerprint and the two lines the server's operator runs:
+
+```text
+/NS SAREGISTER example-fleet-orion
+/NS CERT ADD example-fleet-orion 4b1d…0c9e
+```
+
+A dry run generates nothing, so it prints these only for certificates a
+real run has made. When you hold an operator credential whose class has
+NickServ's `accreg` capability, pass `--irc-operator NAME` and
+`--irc-operator-password-file FILE` (a root-only file with mode `0600`; from
+your machine, the host installers copy it for that run and remove it
+afterwards). On a server that admits only signed-in connections (Ergo's
+`require-sasl`), whose operators are not accounts, also pass
+`--irc-operator-account NAME` and `--irc-operator-account-password-file FILE`
+(the same rules) for an IRC account the connection signs in to first by SASL
+PLAIN; without them setup stops when the server answers `ACCOUNT_REQUIRED`,
+naming these options. Setup then opers up (`OPER`) and, before any officer
+starts, sends both lines for every officer whose certificate does not sign in
+yet, binding a certificate only to an account `SAREGISTER` has just created:
+it never changes an existing account's certificates, and stops, naming the
+account, when one exists without the officer's certificate. It then checks
+that each certificate signs in by SASL EXTERNAL as its account, stopping if one does not. A dry run with
+the credential only checks it and reports which certificates already sign
+in. The passwords are sent only to the server, over TLS, and never printed or
+saved.
+
 **The Ergo the installer manages keeps passwords for now**, in local mode
-and on `subspace-setup`'s shared server alike: `subspace-setup` writes
-`"auth": "password"` for a shared server. Three things are missing:
+and on the shared server `./install.sh irc-server` runs, for which the host
+installer passes `--irc-auth password`. Three things are missing:
 
 - Fleet members reach local Ergo over plain loopback IRC, and Stargate
   presents a client certificate only over TLS. The gateways would need the
@@ -729,11 +776,14 @@ From your machine, `./install.sh --remote USER@HOST --database-url-file FILE`
 (or `install.ps1` with the same options) takes a local file that is private to
 you (`chmod 600`), copies it over SSH to `/root/fleet/database-url` as root's
 and passes it on. `--database-ca-file FILE` and `--migrate` work the same way.
-A `--dry-run` changes nothing on the VM: the host installers copy the files
-to a scratch directory they remove afterwards, and `subspace-setup
---dry-run` works on a private copy of `/root/fleet`, so the saved answers,
-the database URL file and every other input stay as the last real run left
-them.
+A `--dry-run` leaves the installed fleet as it is: the host installers copy
+the installer and these files to `/root/subspace-setup-dry-run`, run setup
+from there and remove it, and `subspace-setup --dry-run` works on a private
+copy of `/root/fleet`, so `/opt/subspace/bootstrap`, the `subspace-setup`
+command, the saved answers, the database URL file and every other input stay
+as the last real run left them. The one exception is a VM without
+`python3`, `git`, `curl` or `nftables`: setup installs those first, saying
+so, because it cannot run without them.
 
 - **No database on the VM.** The Compose project's `postgres` service moves
   to a profile nothing starts, so there is no PostgreSQL container, no
@@ -758,6 +808,14 @@ them.
 - `--database-url-file` runs the API on this VM, so it cannot be combined with
   `--no-api` or, on the host, `--api-target`. On a fleet set up with
   `--no-api`, it turns the API back on.
+- **The dry run checks the database, read-only.** `--dry-run` connects with
+  the URL as the API will, TLS and `--database-ca-file` included, in a
+  read-only session, and prints what it finds: whether it connected and over
+  TLS, how many of this API's migrations the database lacks, and whether the
+  admin (`--admin-email` in the development `--organisation`) is already an
+  administrator there, or the database has no organisation yet. It stops
+  when the real run would: no connection, missing migrations without
+  `--migrate`, or an admin who is not there or not an administrator.
 
 ### Migrations
 
@@ -1514,10 +1572,11 @@ one is refused, none of them is applied.
   supply bundles you generated yourself, dry-run to print their
   fingerprints, bind them on the server, then upgrade; "Keep passwords"
   under IRC sign-in has the steps. Local IRC keeps
-  passwords. `subspace-setup` writes `"auth": "password"` for a shared
-  server on its next run, so upgrade those fleets through setup (or the
-  host installer), not with the fleet installer and the installed inputs
-  alone.
+  passwords. `subspace-setup` keeps passwords for a remote fleet it set up
+  before, and writes `"auth": "password"` on its next run, so upgrade those
+  fleets through setup (or the host installer), not with the fleet
+  installer and the installed inputs alone; `--irc-auth certificate` moves
+  one to certificates.
 - **Captains start in their workspace.** Only new captains: a pinned root
   never moves, and an installed captain keeps its root until its
   `sessionRoot` moves it ([Captain sessions](#captain-sessions)). Asking a

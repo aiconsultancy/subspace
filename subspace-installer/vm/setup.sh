@@ -38,11 +38,16 @@ command -v python3 >/dev/null || need+=(python3)
 command -v git >/dev/null || need+=(git)
 command -v curl >/dev/null || need+=(curl ca-certificates)
 command -v nft >/dev/null || need+=(nftables)
+dry_run=false
+for arg in "$@"; do [[ $arg == --dry-run ]] && dry_run=true; done
 if (( ${#need[@]} )); then
+    # Setup cannot run, not even a dry run, without these; the one thing a dry run may change on the VM.
+    "$dry_run" && printf 'subspace-setup: the dry run first installs %s, which setup needs to run.\n' "${need[*]}"
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need[@]}"
 fi
-if [[ $(readlink /usr/local/sbin/subspace-setup 2>/dev/null) != "$here/setup.sh" ]]; then
+# A dry run may run from a copy that is removed afterwards: the command keeps naming the installed one.
+if ! "$dry_run" && [[ $(readlink /usr/local/sbin/subspace-setup 2>/dev/null) != "$here/setup.sh" ]]; then
     ln -sfnT "$here/setup.sh" /usr/local/sbin/subspace-setup
 fi
 
