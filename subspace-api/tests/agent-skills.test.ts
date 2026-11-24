@@ -76,7 +76,8 @@ test("the MCP server states the tracker skill's rules for filing work at the poi
     for (const rule of [
       "subspace-tracker skill",
       "subspace_list_issues",
-      "closed and archived",
+      "includeArchived true",
+      "stateType",
       "one working session",
       "small finding, review note or follow-up",
       "one issue per area",
@@ -94,4 +95,21 @@ test("the MCP server states the tracker skill's rules for filing work at the poi
     ])
       expect([owner, rule, text.includes(rule)]).toEqual([owner, rule, true]);
   }
+});
+
+test("the prescribed search for existing work finds open, closed and archived issues", () => {
+  // Filters combine, so a search told to filter by closed states would miss an open duplicate.
+  const closedOnly = /stateType\W+completed/u;
+  const skill = readFileSync(join(root, "claude/subspace-tracker/SKILL.md"), "utf8");
+  const searches = {
+    skill,
+    instructions: mcpInstructions,
+    subspace_create_issue: mcpTools.subspace_create_issue.description,
+    subspace_list_issues: mcpTools.subspace_list_issues.description,
+  };
+  for (const [owner, text] of Object.entries(searches))
+    expect([owner, closedOnly.test(text)]).toEqual([owner, false]);
+  expect(skill).toContain('"includeArchived": true');
+  expect(mcpTools.subspace_list_issues.description).toContain("every state, open and closed");
+  expect(mcpTools.subspace_update_issue.description).toContain("one-line summary current");
 });
