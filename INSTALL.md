@@ -419,11 +419,13 @@ answer it now.
     file. Explain that the captains' caps may add up to more than the VM,
     on the bet that no more than three ships build heavily at once. Ask
     whether that suits how they will use the fleet: if several ships will
-    run heavy builds at the same time, offer a lower cap, and if one ship's
+    run heavy builds at the same time, offer a lower cap, and if their
     builds need more, a higher one. The options are `--captain-memory SIZE`
-    (each captain's hard cap, such as `16G`; `none` for no cap),
+    (every captain's hard cap, such as `16G`; `none` for no cap),
     `--rear-admiral-memory SIZE`, and `--swap SIZE` or `--swap none` (leave
-    the VM's swap as it is); `auto` returns any of them to the sizing. The
+    the VM's swap as it is); `auto` returns any of them to the sizing. One
+    ship's own cap goes in `/root/fleet/fleet.json` after the install, as
+    `memory` on that captain. The
     dry run and the end of the install print the VM's memory, each engine's
     limits and why, any limits set on the VM by hand, the swap decision and
     any warning, in lines that start `Memory` and `Swap`. Read them and
