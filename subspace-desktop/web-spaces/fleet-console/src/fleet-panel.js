@@ -4,7 +4,7 @@
 
 import { normalizeEndpoint } from "./api.js";
 import { cleanName } from "./fleet-store.js";
-import { describeConnection, tokenProblem } from "./connection.js";
+import { CORS_HELP, connectionHelp, describeConnection, tokenProblem } from "./connection.js";
 import { fleetStatus } from "./scene/landscape.js";
 import { esc } from "./html.js";
 
@@ -38,14 +38,17 @@ export function validateFleetForm({ name, endpoint, token }, { editing = false, 
 }
 
 /** Words for a failed test connection. */
-export function describeTestError(error) {
+export function describeTestError(error, endpoint) {
   const status = error?.status;
   if (status === 401) return "Stargate refused the token (401). Check it, or create a new one with stargate api token.";
   if (status === 403) return "Stargate refused this network (403). Reach it over your private network: Tailscale, a Cloudflare Tunnel, or an SSH tunnel.";
   if (status === 404) return "No Fleet API at this address (404). Check the address and that Stargate's api block is enabled.";
   if (Number.isInteger(status)) return `Stargate answered ${status}. Check the fleet VM and Stargate's logs.`;
-  if (error?.name === "TimeoutError" || error?.name === "AbortError") return "Stargate did not answer within ten seconds.";
-  return "Cannot reach this address. Check that the fleet VM is running, your private network is up, and Stargate's api.corsOrigins allows this Space.";
+  const help = connectionHelp(endpoint);
+  if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+    return `Stargate did not answer within ten seconds. ${help}`;
+  }
+  return `Cannot reach this address. ${help}${CORS_HELP}`;
 }
 
 /** Words for a successful test connection. */

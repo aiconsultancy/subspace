@@ -152,11 +152,11 @@ server tags their messages with `account`, and `astra` sends the agreed
    python3 scripts/irc-thread-status-fixture.py --config "${TMPDIR:-/tmp}/irc-thread-status.json" &
    ```
 
-3. Capture from `subspace-desktop`. The fixture times its steps from when
-   the capture build joins: after 15 seconds the first request's stream is
-   lost, after 30 the second request's reply starts and its final answer
-   goes to the main room without a reply tag, and after 45 the second
-   request completes.
+3. Capture from `subspace-desktop`. The second request addresses its agent
+   with an inline @mention. The fixture times its steps from when the
+   capture build joins. After 15 seconds the first request's stream is
+   lost. After 30 seconds the final answer joins the second request's
+   thread. After 45 seconds the second request completes.
 
    ```sh
    CAPTURE_THEME="Twilight Two" \
@@ -174,6 +174,15 @@ server tags their messages with `account`, and `astra` sends the agreed
    show, as they do by default. When another checkout already uses port
    16667, start the server and the fixture with the same `IRC_TEST_LISTEN`,
    such as `IRC_TEST_LISTEN=127.0.0.1:16922`.
+
+For the inline mention follow-up, the same fixture ran against local Ergo
+with `#aurora-lyra` selected. The completed request in the changed build
+shows four replies, including the final answer. The progress notices fold
+into the status line. Both views are also checked with the Thread pane
+open while the answer and completion arrive separately.
+
+- [Before the inline mention fix](evidence/inline-mention-before.png)
+- [After the inline mention fix](evidence/inline-mention-after.png)
 
 The shots should show, in Twilight Two, on the workspace shell: the
 navigator with the network and `#thread-status` selected, the pane's tab

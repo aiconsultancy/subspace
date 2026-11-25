@@ -124,7 +124,7 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
         0 => "Replies".to_owned(),
         count => format!("{} · {count}", replies_heading(thread)),
     };
-    let section = workspace::section(title, cx);
+    let section = workspace::section(title, cx).test_support();
     if thread.replies.is_empty() {
         return section
             .child(
