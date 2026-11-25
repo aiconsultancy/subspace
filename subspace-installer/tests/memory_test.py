@@ -542,6 +542,53 @@ class SwapTests(unittest.TestCase):
             memory.apply_swap(8, {**on, "swappinessFiles": [(Path("/etc/sysctl.conf"), "30")]}, 64, run=run)
             self.assertFalse(names["SYSCTL_FILE"].exists())
 
+    def test_fstab_is_only_ever_appended_to_and_never_written_from_a_failed_read(self):
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        root = Path(work.name)
+        commands = []
+
+        def run(command, **_options):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0)
+
+        names = dict(SWAP_FILE=root / "subspace-fleet.swap", FSTAB=root / "fstab", SWAPPINESS_PROC=root / "swappiness",
+                     SYSCTL_FILE=root / "60-subspace-fleet-swap.conf")
+        entry = f"{memory.FSTAB_MARK}\n{names['SWAP_FILE']} none swap sw 0 0\n".encode()
+        # Not UTF-8 (a Latin-1 comment), with a data volume and no newline at the end: every byte stays.
+        original = b"# Donn\xe9es\nUUID=0000 / ext4 defaults 0 1\nUUID=1111 /data ext4 defaults,nofail 0 2"
+        names["FSTAB"].write_bytes(original)
+        with patch.multiple(memory, **names):
+            memory.apply_swap(8, state(), 64, run=run)
+        self.assertEqual(names["FSTAB"].read_bytes(), original + b"\n" + entry)
+        # A file that exists but cannot be read: no swap file, no command, the file as it was, and the reason.
+        names["SWAP_FILE"].unlink()
+        names["FSTAB"].write_bytes(original)
+        commands.clear()
+        real = {"read_bytes": Path.read_bytes, "read_text": Path.read_text}
+
+        def refused(method):
+            def read(path, *args, **kwargs):
+                if path == names["FSTAB"]:
+                    raise PermissionError(13, "Permission denied", str(path))
+                return real[method](path, *args, **kwargs)
+            return read
+
+        with patch.multiple(memory, **names), patch.object(Path, "read_bytes", refused("read_bytes")), \
+                patch.object(Path, "read_text", refused("read_text")):
+            lines = memory.apply_swap(8, state(), 64, run=run)
+            lines += memory.apply_swap("auto", state(configured=[str(names["SWAP_FILE"])], own=True), 64, run=run)
+        self.assertEqual(lines, [f"Swap warning: could not read {names['FSTAB']} (Permission denied), so the installer "
+                                 "leaves it untouched and sets up no swap file. The install carries on without it; run "
+                                 "the installer again once the file can be read."] * 2)
+        self.assertEqual((commands, names["SWAP_FILE"].exists()), ([], False))
+        self.assertEqual(names["FSTAB"].read_bytes(), original)
+        # No /etc/fstab at all: one is made, readable by everyone as fstab is.
+        names["FSTAB"].unlink()
+        with patch.multiple(memory, **names):
+            memory.apply_swap(8, state(), 64, run=run)
+        self.assertEqual((names["FSTAB"].read_bytes(), names["FSTAB"].stat().st_mode & 0o777), (entry, 0o644))
+
     def test_a_swap_file_that_cannot_be_turned_on_never_stops_the_install(self):
         work = tempfile.TemporaryDirectory()
         self.addCleanup(work.cleanup)

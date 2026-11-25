@@ -2074,7 +2074,10 @@ pressure. It adds no swap file, saying why, when:
 - the root filesystem cannot hold a plain swap file (anything but ext2,
   ext3, ext4 and XFS, such as btrfs);
 - the disk is tight: a quarter of the free space is under 1 GiB, or a size
-  you set is more than half of it.
+  you set is more than half of it;
+- `/etc/fstab` exists but cannot be read. The installer only ever appends
+  its one entry to that file, byte for byte after what is there, and never
+  writes it from a read that failed.
 
 Whenever the VM has swap, the installer's or another, it sets
 `vm.swappiness` to 10 the same way, unless another `sysctl` file sets it:

@@ -78,6 +78,10 @@ class Refused(ValueError):
     """A memory setting the installer cannot use; runtime.py reports it as invalid configuration."""
 
 
+class FstabUnreadable(OSError):
+    """/etc/fstab exists but cannot be read, so the installer must not add to it."""
+
+
 # Sizes -----------------------------------------------------------------------
 
 SIZE = re.compile(r"([0-9]{1,7}(?:\.[0-9]{1,3})?)\s*([MGT])(?:i?B)?", re.IGNORECASE)
@@ -510,9 +514,10 @@ def unescape(name):
 
 
 def read(path):
+    """A system file's text for the installer to inspect, or "" when it cannot be read. Never used to rewrite one."""
     try:
-        return path.read_text()
-    except (OSError, UnicodeError):
+        return path.read_bytes().decode(errors="replace")
+    except OSError:
         return ""
 
 
@@ -715,14 +720,35 @@ def write_root_file(path, text, mode=0o644):
     os.replace(temporary, path)
 
 
+def read_fstab():
+    """/etc/fstab's bytes as they are, or b"" when there is none. Any other failure to read it raises
+    FstabUnreadable: the installer then leaves the file untouched rather than write it from what it could not read."""
+    try:
+        return FSTAB.read_bytes()
+    except FileNotFoundError:
+        return b""
+    except OSError as error:
+        raise FstabUnreadable(f"could not read {FSTAB} ({error.strerror or error})") from None
+
+
 def add_to_fstab():
-    text = read(FSTAB)
-    if any(line.split()[:1] == [str(SWAP_FILE)] for line in text.splitlines()):
+    """The swap file's entry, appended to /etc/fstab unless it is there already. The file's bytes are never
+    decoded or rewritten: whatever encoding or entries it has stay exactly as they are."""
+    existing = read_fstab()
+    if any(line.split()[:1] == [os.fsencode(SWAP_FILE)] for line in existing.splitlines()):
         return
-    if text and not text.endswith("\n"):
-        text += "\n"
-    write_root_file(FSTAB, f"{text}{FSTAB_MARK}\n{SWAP_FILE} none swap sw 0 0\n",
-                    os.stat(FSTAB).st_mode & 0o777 if FSTAB.exists() else 0o644)
+    entry = f"{FSTAB_MARK}\n{SWAP_FILE} none swap sw 0 0\n".encode()
+    if existing and not existing.endswith(b"\n"):
+        entry = b"\n" + entry
+    created = not existing and not FSTAB.exists()
+    descriptor = os.open(FSTAB, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        if created:
+            os.fchmod(descriptor, 0o644)
+        os.write(descriptor, entry)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def create_swap_file(size, run=subprocess.run):
@@ -760,6 +786,14 @@ def apply_swap(setting, state, total, run=subprocess.run):
     and the install carries on."""
     decision = swap_plan(setting, state, total)
     lines = []
+    try:
+        if decision["action"] in ("create", "activate"):
+            # Before anything changes: a swap file that cannot be added to /etc/fstab is not set up at all.
+            read_fstab()
+    except FstabUnreadable as error:
+        lines.append(f"Swap warning: {error}, so the installer leaves it untouched and sets up no swap file. The "
+                     "install carries on without it; run the installer again once the file can be read.")
+        decision = {"action": "skip"}
     try:
         if decision["action"] == "create":
             create_swap_file(decision["size"], run)
