@@ -54,6 +54,8 @@ conversation as the inspector moves from the roster to a crew member.
 
 ![Quill’s crew details with the current task, progress and project Git state](evidence/crew-detail-quill.png)
 
+![The open crew view shows the Settings › Fleets hint after the fleet token is cleared and the roster is unavailable](evidence/crew-detail-no-token.png)
+
 Not captured: the before state and the older-gateway fallback. The Fleet
 API fixture serves the crew detail route and has no switch to omit it.
 
