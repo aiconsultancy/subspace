@@ -685,7 +685,14 @@ Debian packages:
   `filter_bins`, `runtime`, `features`, `default-features`, `crate`, `locked`
   and `channel`, and refuses any other, such as `postinstall` or
   `install_env`: root installs the shared tools, and no setting may make it
-  run a command.
+  run a command. Each is checked for what it is for: `bin`, `exe` and
+  `rename_exe` are file names, never paths; `bin_path` is a directory inside
+  the tool's install directory (relative, without `.` or `..`); `components`,
+  `targets`, `filter_bins` and `features` are names separated by commas;
+  `profile` is `minimal`, `default` or `complete`; `locked` and
+  `default-features` are `true` or `false`; the rest are plain names (a
+  `channel` is a name, never an address). Detection reports an option it
+  cannot carry over in its "could not determine" list.
 - **Names are strict.** They end up on command lines run as root, so a tool,
   version, option or package that is not plainly a name or a version is
   refused before anything is installed.

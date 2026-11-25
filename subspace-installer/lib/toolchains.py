@@ -49,15 +49,50 @@ BACKENDS = ("aqua", "asdf", "cargo", "conda", "dotnet", "gem", "github", "gitlab
 # the user's own Rust.
 USER_TOOLS = {"rust"}
 USER_BACKENDS = {"cargo"}
-# The mise tool options a toolchain may carry. Options that run commands or set an install's environment, such
-# as postinstall or install_env, are refused: root installs the shared tools.
-OPTION_KEYS = {"components", "targets", "profile", "bin", "bin_path", "exe", "rename_exe", "asset_pattern",
-               "matching", "version_prefix", "filter_bins", "runtime", "features", "default-features", "crate",
-               "locked", "channel"}
 PLAIN_TOOL = r"[a-z0-9][a-z0-9._-]{0,63}"
 BACKEND_TOOL = rf"(?:{'|'.join(BACKENDS)}):@?[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9._+-]+){{0,6}}"
 VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}"
-OPTION_VALUE = r"[A-Za-z0-9._,:/@+=*{}-]{0,200}"
+# The mise tool options a toolchain may carry, each checked for what it is for: they reach the configuration root's
+# mise reads, and repositories can propose them. Options that run commands or set an install's environment, such as
+# postinstall or install_env, are refused: root installs the shared tools.
+NAME = r"[A-Za-z0-9][A-Za-z0-9._+-]{0,99}"
+NAMES = rf"{NAME}(?:,{NAME}){{0,49}}"
+FEATURE = r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,63}(?:/[A-Za-z0-9_][A-Za-z0-9_.+-]{0,63})?"
+# Relative, inside the tool's install directory: no leading /, and no . or .. component.
+SUBDIRECTORY = r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,99}(?:/[A-Za-z0-9_][A-Za-z0-9_.+-]{0,99}){0,7}"
+OPTIONS = {
+    # Lists of names, comma-separated: Rust components and targets, executables to link, cargo features.
+    "components": (NAMES, "names separated by commas"),
+    "targets": (NAMES, "names separated by commas"),
+    "filter_bins": (NAMES, "executable names separated by commas"),
+    "features": (rf"{FEATURE}(?:,{FEATURE}){{0,49}}", "cargo features separated by commas"),
+    # An executable inside the tool's install directory: a file name, never a path.
+    "bin": (NAME, "an executable's file name, not a path"),
+    "exe": (NAME, "an executable's file name, not a path"),
+    "rename_exe": (NAME, "an executable's file name, not a path"),
+    # A directory inside the tool's install directory.
+    "bin_path": (SUBDIRECTORY, "a directory inside the tool's install directory: relative, without . or .."),
+    # How a release asset or a version is chosen: matched against names, never a path or an address.
+    "asset_pattern": (r"[A-Za-z0-9._*?+-]{1,100}", "a release asset's name, with * or ?"),
+    "matching": (NAME, "a word in a release asset's name"),
+    "version_prefix": (r"[A-Za-z0-9._+-]{1,40}", "the text before the version in a release's tag"),
+    "profile": ("minimal|default|complete", "minimal, default or complete"),
+    "channel": (NAME, "a channel's name, not an address"),
+    "crate": (r"[A-Za-z0-9_-]{1,64}", "a crate's name"),
+    "runtime": (NAME, "a name"),
+    "locked": (bool, "true or false"),
+    "default-features": (bool, "true or false"),
+}
+OPTION_KEYS = set(OPTIONS)
+LIST_OPTIONS = {"components", "targets", "filter_bins", "features"}
+
+
+def option_valid(key, value):
+    """Whether a value is what the option is for (OPTIONS)."""
+    rule = OPTIONS[key][0]
+    if rule is bool:
+        return type(value) is bool
+    return isinstance(value, str) and re.fullmatch(rule, value) is not None
 # A Debian package name (Debian Policy 5.6.1: lower case letters, digits, plus, minus and full stops) as apt
 # installs it, and only installs it: never ending in a minus, which apt-get takes for "remove this package", and
 # with no version (=), release (/), architecture (:) or pattern. A trailing plus is allowed, as in g++: apt-get
@@ -107,8 +142,8 @@ def tool_options(value, spec):
         require(key in OPTION_KEYS, f"Toolchain {spec} has the option {key!r}, which the installer does not pass to "
                 f"mise. It takes {', '.join(sorted(OPTION_KEYS))}; options that run commands, such as postinstall, "
                 "are refused because root installs the shared tools.")
-        require(type(option) is bool or type(option) is int or isinstance(option, str)
-                and re.fullmatch(OPTION_VALUE, option), f"Invalid value for toolchain {spec}'s option {key}.")
+        require(option_valid(key, option), f"Invalid value for toolchain {spec}'s option {key}: use "
+                f"{OPTIONS[key][1]}.")
         options[key] = option
     return options
 
@@ -677,16 +712,18 @@ def carried_options(finder, source, spec, options):
     """The options detection proposes: those the installer passes on; the rest are reported."""
     kept = {}
     for key, option in options.items():
-        if key in ("components", "targets") and isinstance(option, (str, list)):
+        if key in LIST_OPTIONS and isinstance(option, (str, list)):
             # A list or a comma-separated string, in any order: one form, so equal requests are one item.
             parts = option if isinstance(option, list) else option.split(",")
             option = ",".join(sorted({str(part).strip() for part in parts if str(part).strip()}))
-        if key in OPTION_KEYS and (type(option) in (bool, int) or isinstance(option, str)
-                                   and re.fullmatch(OPTION_VALUE, option)):
+        if key in OPTION_KEYS and option_valid(key, option):
             kept[key] = option
         elif key in ("postinstall", "install_env") or "env" in key or "hook" in key:
             finder.cannot(source, f"{spec}'s option {key} is not carried over: root installs the shared tools, so "
                           "no option that runs a command or sets an install's environment is passed to mise")
+        elif key in OPTION_KEYS:
+            finder.cannot(source, f"{spec}'s option {key} is not carried over: the installer takes only "
+                          f"{OPTIONS[key][1]} for it")
         else:
             finder.cannot(source, f"{spec}'s option {key} is not carried over: it is not one of the mise options the "
                           "installer passes on")
@@ -752,7 +789,6 @@ def scan_rust_toolchain(finder, repository, rel, text):
     if not isinstance(channel, str) or not valid_version(channel):
         finder.cannot(source, "no Rust channel the installer can install")
         return
-    options = {key: sorted(value) if isinstance(value, list) else value for key, value in options.items()}
     finder.add("tool", "rust", channel, "high", source, carried_options(finder, source, "rust", options))
 
 

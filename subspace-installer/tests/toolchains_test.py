@@ -360,6 +360,17 @@ class DetectionTests(unittest.TestCase):
         self.assertEqual([word for word, _ in others], ["nano-", "foo/bookworm-backports", "lib*"])
         self.assertIn("apt-get removes nano", others[0][1])
 
+    def test_options_that_reach_outside_the_install_directory_are_reported_not_proposed(self):
+        repo = write_repositories(self.directory.name, {"paths": {"mise.toml": (
+            '[tools]\n"github:example/tool" = { version = "1.0.0", bin_path = "/usr/local/bin", '
+            'rename_exe = "../../../usr/bin/sudo", asset_pattern = "tool-*.tar.gz" }\n')}})["paths"]
+        proposal = toolchains.detect({"paths": repo})
+        self.assertEqual(items_of(proposal, "github:example/tool")["1.0.0"]["options"],
+                         {"asset_pattern": "tool-*.tar.gz"})
+        unknown = reasons(proposal, "paths")
+        self.assertTrue(any("bin_path is not carried over" in reason and "relative" in reason for reason in unknown))
+        self.assertTrue(any("rename_exe is not carried over" in reason and "file name" in reason for reason in unknown))
+
     def test_a_removal_in_a_workflow_is_reported_not_proposed(self):
         repo = write_repositories(self.directory.name, {"removes": {".github/workflows/ci.yml": (
             "jobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n"
@@ -418,6 +429,21 @@ class ConfigurationTests(unittest.TestCase):
                       {"rust": {"version": "1", "install": "root"}}, {"rust": {"versions": ["1"]}}, {"rust": True}):
             with self.subTest(tools=tools), self.assertRaises(Invalid):
                 toolchains.toolchain_config(tools)
+        # Options by what they are for: an executable is a file name, a directory stays inside the install
+        # directory, and the rest are plain names or choices; none is a path or an address elsewhere.
+        for options in ({"bin_path": "/usr/local/bin"}, {"bin_path": "../../etc"}, {"bin_path": "bin/../../x"},
+                        {"bin_path": "./bin"}, {"bin_path": "bin//x"}, {"rename_exe": "../../usr/bin/tool"},
+                        {"rename_exe": "/usr/bin/tool"}, {"bin": "bin/tool"}, {"exe": ".."},
+                        {"filter_bins": "tool,../x"}, {"channel": "https://example.com/conda"},
+                        {"asset_pattern": "../tool.tar.gz"}, {"version_prefix": "{{env.HOME}}"},
+                        {"profile": "everything"}, {"locked": "true"}, {"locked": 1}, {"components": "a b"},
+                        {"crate": "a/b"}):
+            with self.subTest(options=options), self.assertRaises(Invalid):
+                toolchains.toolchain_config({"github:example/tool": {"version": "1.0.0", "options": options}})
+        allowed = {"bin": "tool", "rename_exe": "tool", "bin_path": "tool-1.0.0/bin", "filter_bins": "tool,toolctl",
+                   "asset_pattern": "tool-*-linux-x64.tar.gz", "version_prefix": "release-", "locked": True}
+        self.assertEqual(toolchains.toolchain_config({"github:example/tool": {"version": "1.0.0", "options": allowed}})[
+            "github:example/tool"]["options"], allowed)
         # Only names apt installs: never a removal (a trailing minus), a version, release, architecture or pattern.
         for packages in (["zsh; reboot"], ["-y"], ["Clang"], ["libssl-dev", "libssl-dev"], "zsh", [7], ["a"],
                          ["nano-"], ["zsh=5.9-6"], ["zsh/noble-updates"], ["zsh:arm64"], ["lib*"], ["zsh?"],
