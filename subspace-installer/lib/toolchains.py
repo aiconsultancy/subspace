@@ -1067,8 +1067,10 @@ def scan_pyproject(finder, repository, rel, text):
                constraint={"kind": "range", "intervals": [[list(lo), list(hi) if hi else None] for lo, hi in intervals]})
 
 
-# A YAML subset for workflows and Compose files: block mappings and sequences, plain and quoted scalars, block
-# scalars, with each scalar's line. Flow collections stay text; anchors and tags are not read.
+# A YAML subset for workflows and Compose files: block mappings and sequences, plain and quoted scalars, literal
+# and folded block scalars, and flow collections ({a: b}, [1, 2]), with each scalar's line. What it does not read
+# (anchors, aliases, tags, merge keys, or any line it cannot place) is reported as a problem, never dropped
+# silently: a workflow with problems is listed under "could not determine".
 
 class Scalar(str):
     line = 0
@@ -1096,14 +1098,140 @@ def strip_comment(text):
     return text.rstrip()
 
 
-KEY = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([^\s#'"][^:#]*?|[^\s#'"]))\s*:(?:\s+(.*)|\s*)$""")
+KEY = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([^\s#'"{\[][^:#]*?|[^\s#'"{\[]))\s*:(?:\s+(.*)|\s*)$""")
+UNREAD = {"&": "an anchor", "*": "an alias", "!": "a tag"}
 
 
-def parse_yaml(text):
+def flow_depth(text):
+    """How many flow collections are open at the end of text, outside quotes."""
+    depth, quote = 0, None
+    for char in text:
+        if quote:
+            quote = None if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+    return depth
+
+
+def flow(text, line):
+    """A flow collection ({version: '9.12.3'}, [20, 22]) as Python values, each scalar with the line; ValueError
+    for one this reader does not handle."""
+    position = 0
+
+    def skip():
+        nonlocal position
+        while position < len(text) and text[position] in " \t\n":
+            position += 1
+
+    def peek():
+        return text[position:position + 1]
+
+    def quoted():
+        nonlocal position
+        quote, out = text[position], []
+        position += 1
+        while True:
+            if position >= len(text):
+                raise ValueError("an unterminated quoted string")
+            char = text[position]
+            if quote == "'" and char == "'" and text[position + 1:position + 2] == "'":
+                out.append("'")
+                position += 2
+            elif quote == '"' and char == "\\":
+                out.append(text[position + 1:position + 2])
+                position += 2
+            elif char == quote:
+                position += 1
+                break
+            else:
+                out.append(char)
+                position += 1
+        value = Scalar("".join(out))
+        value.line = line
+        return value
+
+    def plain():
+        nonlocal position
+        begin = position
+        while position < len(text) and text[position] not in ",[]{}" and not (
+                text[position] == ":" and text[position + 1:position + 2] in ("", " ", ",", "]", "}", "\n")):
+            position += 1
+        word = text[begin:position].strip()
+        if word[:1] in UNREAD:
+            raise ValueError(UNREAD[word[0]])
+        return scalar(word, line)
+
+    def node():
+        nonlocal position
+        skip()
+        if peek() in ("{", "["):
+            closing, result = ("}", {}) if peek() == "{" else ("]", [])
+            position += 1
+            while True:
+                skip()
+                if peek() == closing:
+                    position += 1
+                    return result
+                if isinstance(result, dict):
+                    key = quoted() if peek() in ("'", '"') else plain()
+                    skip()
+                    value = scalar("", line)
+                    if peek() == ":":
+                        position += 1
+                        skip()
+                        if peek() not in (",", closing):
+                            value = node()
+                    result[str(key)] = value
+                else:
+                    result.append(node())
+                skip()
+                if peek() == ",":
+                    position += 1
+                elif peek() != closing:
+                    raise ValueError(f"a flow collection this reader cannot follow at {text[position:position + 20]!r}")
+        if peek() in ("'", '"'):
+            return quoted()
+        return plain()
+
+    value = node()
+    skip()
+    if position != len(text):
+        raise ValueError(f"text after a flow collection: {text[position:position + 20]!r}")
+    return value
+
+
+def folded(lines):
+    """A folded block scalar's text (>): lines joined by spaces, an empty line a line break, and more-indented
+    lines kept on their own lines."""
+    out, previous = "", None
+    for line in lines:
+        if not line.strip():
+            out += "\n"
+            previous = "empty"
+            continue
+        indented = line[:1] in (" ", "\t")
+        if out and previous == "text" and not indented:
+            out += " "
+        elif out and previous != "empty":
+            out += "\n"
+        out += line
+        previous = "indented" if indented else "text"
+    return out
+
+
+def parse_yaml(text, problems=None):
+    """The YAML subset above as Python values. problems, when given, receives (line, what) for each thing it does
+    not read: anchors, aliases, tags, merge keys, flow collections it cannot follow and lines it cannot place."""
+    problems = [] if problems is None else problems
     raw = text.splitlines()
     lines = []
     for number, line in enumerate(raw, 1):
         lines.append((len(line) - len(line.lstrip(" ")), line.strip(), number, line))
+    consumed = set()
 
     def skip(index):
         while index < len(lines) and (not lines[index][1] or lines[index][1].startswith("#")
@@ -1111,27 +1239,48 @@ def parse_yaml(text):
             index += 1
         return index
 
-    def block_scalar(index, indent):
+    def block_scalar(index, indent, style):
         collected = []
         while index < len(lines) and (not lines[index][1] or lines[index][0] > indent):
             collected.append(lines[index][3])
+            consumed.add(index)
             index += 1
+        while collected and not collected[-1].strip():
+            collected.pop()
         width = min((len(line) - len(line.lstrip(" ")) for line in collected if line.strip()), default=0)
-        return "\n".join(line[width:] for line in collected), index
+        body = [line[width:] for line in collected]
+        return (folded(body) if style == ">" else "\n".join(body)), index
 
     def value_of(rest, index, indent, number):
         rest = strip_comment(rest)
         if re.fullmatch(r"[|>][-+0-9]*", rest):
-            body, index = block_scalar(index, indent)
+            body, index = block_scalar(index, indent, rest[0])
             value = Scalar(body)
             value.line = number + 1
             return value, index
+        if rest[:1] in UNREAD:
+            problems.append((number, UNREAD[rest[0]]))
+            return scalar(rest, number), index
+        if rest[:1] in ("{", "["):
+            # A flow collection, perhaps over several lines.
+            parts = [rest]
+            while flow_depth(" ".join(parts)) > 0 and index < len(lines) and lines[index][1] \
+                    and lines[index][0] > indent:
+                parts.append(strip_comment(lines[index][1]))
+                consumed.add(index)
+                index += 1
+            try:
+                return flow(" ".join(parts), number), index
+            except (ValueError, IndexError) as error:
+                problems.append((number, str(error)))
+                return scalar(" ".join(parts), number), index
         if rest:
             # A plain scalar continued on deeper lines.
             parts = [rest]
             while index < len(lines) and lines[index][1] and lines[index][0] > indent \
-                    and not lines[index][1].startswith("#") and not rest.startswith(("'", '"', "[", "{")):
+                    and not lines[index][1].startswith("#") and not rest.startswith(("'", '"')):
                 parts.append(strip_comment(lines[index][1]))
+                consumed.add(index)
                 index += 1
             return scalar(" ".join(parts), number), index
         following = skip(index)
@@ -1148,14 +1297,19 @@ def parse_yaml(text):
                 if index >= len(lines) or lines[index][0] != indent or lines[index][1].startswith("-"):
                     return result, index
                 content, number = lines[index][1], lines[index][2]
+                match = KEY.match(content)
+                if not match:
+                    return result, index
+                consumed.add(index)
                 index += 1
             else:
-                content, number = first
-                first = None
-            match = KEY.match(content)
-            if not match:
-                return result, index
+                (content, number), first = first, None
+                match = KEY.match(content)
+                if not match:
+                    return result, index
             key = next(group for group in match.groups()[:3] if group is not None).strip()
+            if key == "<<":
+                problems.append((number, "a merge key"))
             value, index = value_of(match.group(4) or "", index, indent, number)
             result[key] = value
 
@@ -1168,6 +1322,7 @@ def parse_yaml(text):
                 return result, index
             content, number = lines[index][1], lines[index][2]
             rest = content[1:].lstrip()
+            consumed.add(index)
             index += 1
             if not rest:
                 following = skip(index)
@@ -1175,7 +1330,8 @@ def parse_yaml(text):
                     value, index = node(following, lines[following][0])
                 else:
                     value = scalar("", number)
-            elif KEY.match(strip_comment(rest)) and not rest.startswith(("'", '"')):
+            elif rest[:1] not in ("{", "[") and KEY.match(strip_comment(rest)):
+                # A mapping that starts on the item's line, its first key quoted or not.
                 value, index = mapping(index, indent + len(content) - len(rest), (strip_comment(rest), number))
             else:
                 value, index = value_of(rest, index, indent, number)
@@ -1187,9 +1343,12 @@ def parse_yaml(text):
         return mapping(index, indent)
 
     start = skip(0)
-    if start >= len(lines):
-        return {}
-    return node(start, lines[start][0])[0]
+    data = node(start, lines[start][0])[0] if start < len(lines) else {}
+    for index, (_, content, number, _) in enumerate(lines):
+        if index not in consumed and content and not content.startswith("#") and content not in ("---", "..."):
+            problems.append((number, "a line this reader cannot place"))
+    problems.sort()
+    return data
 
 
 def steps_of(value, job=None):
@@ -1254,11 +1413,19 @@ def apt_packages(command):
 
 
 def scan_workflow(finder, repository, rel, text):
+    problems = []
     try:
-        data = parse_yaml(text)
+        data = parse_yaml(text, problems)
     except (IndexError, ValueError, RecursionError):
         finder.cannot(source_of(repository, rel, 1), "a workflow detection could not read")
         return
+    if problems:
+        # Never lose requirements quietly: say where the reader stopped understanding the workflow.
+        line, what = problems[0]
+        more = f" and {len(problems) - 1} more" if len(problems) > 1 else ""
+        finder.cannot(source_of(repository, rel, line), f"detection does not read {what} at line {line}{more} in "
+                      "this workflow, so tools or packages it names there may be missing from the proposal; check "
+                      "it yourself")
     if not isinstance(data, dict):
         return
     jobs = data.get("jobs", {}) if isinstance(data.get("jobs"), dict) else {}
@@ -1319,6 +1486,8 @@ def scan_workflow(finder, repository, rel, text):
                                 strategy = job.get("strategy", {})
                                 listed = strategy.get("matrix", {}).get(matrix.group(1)) if isinstance(strategy, dict) \
                                     and isinstance(strategy.get("matrix"), dict) else None
+                                if isinstance(listed, list):
+                                    listed = ", ".join(str(value) for value in listed)
                                 values_text = f" (the matrix lists {listed})" if listed else ""
                             why = "a matrix" if matrix else "a secret, variable or expression"
                             finder.cannot(source, f"{tool}'s version comes from {why}: {value}{values_text}")

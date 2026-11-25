@@ -816,7 +816,13 @@ carries on to the lockdown. Its sources, most confident first:
 | low | documentation: `apt-get install` in code blocks of READMEs, install and contributing guides and `docs/` | those packages, proposed only |
 
 A version belongs to the `uses:` of its own workflow step, wherever `with:`
-sits in the step; `jdx/mise-action`'s `version:` is mise's own. A range or
+sits in the step; `jdx/mise-action`'s `version:` is mise's own. Workflows are
+read with a small YAML reader (the VM's Python has no YAML module) that
+handles block and flow collections (`with: {version: '9.12.3'}`), quoted
+keys and values, and literal and folded (`run: >`) block scalars. A workflow
+that uses what it does not read, such as anchors, aliases, tags or merge
+keys, is listed under "could not determine" with the line, since requirements
+there may be missing from the proposal. A range or
 prefix that another proposed version meets is joined to it, with both
 sources, so `engines: {"node": ">=20"}` beside a `.tool-versions` pin of
 `22.11.0` proposes that one version; one that a configured version (or, for

@@ -275,7 +275,7 @@ class DetectionTests(unittest.TestCase):
         # The matrix-driven Node is reported, with the matrix's values, not guessed.
         matrix = [reason for reason in reasons(proposal, "orbit-platform") if "matrix" in reason]
         self.assertEqual(len(matrix), 1)
-        self.assertIn("[20, 22]", matrix[0])
+        self.assertIn("(the matrix lists 20, 22)", matrix[0])
 
     def test_a_naive_reading_of_the_trap_is_what_detection_avoids(self):
         # The same steps, read as the workflow's lines in order: a version: line after jdx/mise-action and before
@@ -287,6 +287,54 @@ class DetectionTests(unittest.TestCase):
         self.assertEqual(steps[1]["with"], {"version": "2026.1.0"})
         self.assertEqual(steps[2]["with"], {"deno-version": "v2.x"})
         self.assertEqual(steps[7]["run"], "pnpm install --frozen-lockfile && pnpm test")
+
+    def test_common_workflow_syntax_is_read_and_the_rest_is_reported(self):
+        workflow = """jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - 'uses': pnpm/action-setup@v4
+        with: {version: '9.12.3', run_install: false}
+      - "uses": "actions/setup-node@v4"
+        with:
+          node-version: 22.11.0
+      - uses: oven-sh/setup-bun@v2
+        with: {
+          bun-version: "1.3.2" }
+      - run: >
+          sudo apt-get install -y
+          libssl-dev
+          pkg-config
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+"""
+        repo = write_repositories(self.directory.name, {"flow": {".github/workflows/ci.yml": workflow}})["flow"]
+        proposal = toolchains.detect({"flow": repo})
+        self.assertEqual({(item["name"], item["version"]) for item in proposal["items"]}, {
+            ("pnpm", "9.12.3"), ("node", "22.11.0"), ("bun", "1.3.2"), ("libssl-dev", None), ("pkg-config", None),
+            ("terraform", "1.9.8")})
+        self.assertEqual(items_of(proposal, "pnpm")["9.12.3"]["sources"][0]["line"], 6)
+        self.assertEqual(reasons(proposal, "flow"), [])
+        # What the reader does not handle is reported against the workflow, never dropped quietly.
+        unsupported = """jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - &setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.11.0
+      - *setup
+      - uses: pnpm/action-setup@v4
+        with: {version: [unclosed}
+"""
+        repo = write_repositories(self.directory.name, {"anchors": {".github/workflows/ci.yml": unsupported}})["anchors"]
+        proposal = toolchains.detect({"anchors": repo})
+        problem = [reason for reason in reasons(proposal, "anchors") if "detection does not read" in reason]
+        self.assertEqual(len(problem), 1, reasons(proposal, "anchors"))
+        self.assertIn("an anchor at line 5 and", problem[0])
+        self.assertIn("may be missing from the proposal", problem[0])
 
     def test_detection_never_follows_a_symbolic_link_or_reads_a_huge_file(self):
         outside = Path(self.directory.name) / "outside"
