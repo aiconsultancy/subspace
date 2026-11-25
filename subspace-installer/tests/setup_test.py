@@ -420,6 +420,17 @@ class SetupInputsTests(unittest.TestCase):
         with patch.object(fleet_setup, "FLEET_ETC", etc):
             self.assertNotIn("captainTools", answers_for([*base, *repositories])[0])
 
+    def test_peer_message_selection_survives_setup_and_can_be_disabled(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo",
+                "--repositories", "https://github.com/example/project.git", "--captain-peer-messages",
+                "--crew-names", "Orion=Rigel,Deneb,Mira,Sirius;Vega=Arden,Brook,Cedar,Dale"]
+        answers, members, config, _, _ = self.generate(argv)
+        self.assertTrue(config["captainPeerMessages"])
+        kept = self.rerun(answers, config)
+        self.assertTrue(fleet_setup.fleet_config(kept, members, "a" * 40)["captainPeerMessages"])
+        off = self.rerun(kept, config, "--no-captain-peer-messages")
+        self.assertNotIn("captainPeerMessages", fleet_setup.fleet_config(off, members, "a" * 40))
+
     def test_captain_merge_selection_survives_setup_and_can_be_cleared(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
                 "--repositories", "https://github.com/example/project.git",

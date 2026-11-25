@@ -2935,3 +2935,12 @@ including that a workflow step's `with: version:` belongs to that step's
 
 The Subspace fleet installer is licensed under the
 [Apache License 2.0](../LICENSE).
+
+## Captain peer messages
+
+Pass `--captain-peer-messages` to guided setup, or set `captainPeerMessages` to true in
+`fleet.json`, with a Stargate revision containing [#364](https://github.com/aiconsultancy/stargate/pull/364).
+The default is off. Each pinned OpenCode captain with crew can use `stargate_dm` to reach
+another pinned crew-hosting captain by ID with `via: "ship"` or `via: "command"`.
+Omit `via` for local crew mail. Agent dispatch has its own switch. Setup saves the choice
+for upgrades. Use `--no-captain-peer-messages` to turn it off.

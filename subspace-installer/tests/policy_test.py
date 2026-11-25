@@ -1310,7 +1310,7 @@ class AgentDispatchTests(unittest.TestCase):
         with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
                 patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine-orion.service"):
             _, backend, _, _ = runtime.render_engine(cfg, captain, home, home / "workspace/project", 4097, b"seed",
-                                                     documents, "ses_captain", answers_offers=True)
+                                                     documents, "ses_captain", fleet_tools=True)
             crew_plugin, fleet_plugin = saved["opencode-orion"]["plugins"]
             self.assertEqual(fleet_plugin, {
                 "package": f"/opt/subspace-fleet/src/stargate-{runtime.STARGATE_REF}/src/fleet",
