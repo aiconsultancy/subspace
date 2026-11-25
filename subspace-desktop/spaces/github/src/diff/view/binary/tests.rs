@@ -6,7 +6,7 @@ use serde_json::json;
 use subspace_client_fleet::diff::DiffSide;
 use subspace_framework::client_test_support::Mock;
 
-use super::DiffView;
+use super::{BinaryView, DiffView, Move, Position};
 use crate::diff::view::crew_tests::mount;
 
 const PATH: &str = "icon.png";
@@ -74,19 +74,37 @@ fn a_binary_page_conflict_keeps_the_displayed_bytes_and_offers_refresh(cx: &mut 
     window.update(|window, _| assert!(window.find("crew-binary-refresh").visible()));
 }
 
+#[test]
+fn an_empty_binary_terminator_keeps_the_last_nonempty_page_visible() {
+    let mut binary = BinaryView::new(0, DiffSide::New);
+    let bytes = serde_json::from_value(json!({
+        "side": "new", "encoding": "base64", "offset": 0, "size": 3,
+        "data": "iVBO", "nextPage": "eof",
+    }))
+    .unwrap();
+    binary.show(bytes, Position::default(), Move::Start);
+    let position = binary.destination(&Move::Next).unwrap();
+    let empty = serde_json::from_value(json!({
+        "side": "new", "encoding": "base64", "offset": 3, "size": 3, "data": "",
+    }))
+    .unwrap();
+    binary.show(empty, position, Move::Next);
+    let displayed = binary.page.as_ref().unwrap();
+    assert_eq!(displayed.offset, 0);
+    assert_eq!(displayed.bytes, b"\x89PN");
+    assert!(displayed.next_page.is_none());
+}
+
 #[gpui_kit::test]
-fn a_binary_eof_terminator_keeps_the_last_nonempty_page_visible(cx: &mut TestAppContext) {
+fn hex_and_preview_stop_at_the_last_byte_without_fetching_a_terminator(cx: &mut TestAppContext) {
     let mock = Mock::new(|request| {
+        if request.path.contains("&page=eof") {
+            return (404, String::new());
+        }
         let (status, body) = binary_response(request);
-        if request.path.contains("&page=png-tail") || request.path.contains("&page=eof") {
+        if request.path.contains("&page=png-tail") {
             let mut page: serde_json::Value = serde_json::from_str(&body).unwrap();
-            if request.path.contains("&page=png-tail") {
-                page["content"]["nextPage"] = json!("eof");
-            } else {
-                page["content"]["offset"] = json!(70);
-                page["content"]["data"] = json!("");
-                page["content"]["nextPage"] = serde_json::Value::Null;
-            }
+            page["content"]["nextPage"] = json!("eof");
             (status, page.to_string())
         } else {
             (status, body)
@@ -95,16 +113,15 @@ fn a_binary_eof_terminator_keeps_the_last_nonempty_page_visible(cx: &mut TestApp
     let (view, window) = mount(cx, &mock);
     click(window, ("crew-diff-bytes", 0usize));
     click(window, "crew-binary-next");
-    click(window, "crew-binary-next");
     assert_page(&view, window, DiffSide::New, 3);
+    window.update(|window, _| assert!(window.try_find("crew-binary-next").is_none()));
+    let _image = open_preview(&view, window);
     assert!(
-        mock.requests()
+        !mock
+            .requests()
             .iter()
             .any(|request| request.path.contains("&page=eof"))
     );
-    window.update(|window, _| assert!(window.try_find("crew-binary-next").is_none()));
-    click(window, "crew-binary-previous");
-    assert_page(&view, window, DiffSide::New, 0);
 }
 
 fn click(window: &mut VisualTestContext, id: impl Into<ElementId>) {

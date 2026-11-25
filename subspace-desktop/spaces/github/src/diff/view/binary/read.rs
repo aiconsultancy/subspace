@@ -104,14 +104,14 @@ impl Blob<'_> {
             side: Some(self.side),
         };
         let page = validate_page(read.retry(|| client.diff_file(target, request))?, &request)?;
-        let content = page.content.ok_or(Error::InvalidResponse)?;
-        validate_content(&content, position, self.side)?;
+        let mut content = page.content.ok_or(Error::InvalidResponse)?;
+        validate_content(&mut content, position, self.side)?;
         Ok((content, page.unstable))
     }
 }
 
 fn validate_content(
-    content: &DiffContent,
+    content: &mut DiffContent,
     position: &Position,
     side: DiffSide,
 ) -> Result<(), Error> {
@@ -131,6 +131,11 @@ fn validate_content(
         }
     {
         return Err(Error::InvalidResponse);
+    }
+    // Older gateways may offer an empty terminator after the last bytes.
+    // The verified size already tells both the pager and the preview to stop.
+    if end == content.size {
+        content.next_page = None;
     }
     Ok(())
 }
@@ -154,12 +159,15 @@ mod tests {
             (2, "QQ==", None, Err(Error::InvalidResponse)),
             (3, "QQ==", None, Ok(())),
         ] {
-            let page: DiffContent = serde_json::from_value(json!({
+            let mut page: DiffContent = serde_json::from_value(json!({
                 "side": "new", "encoding": "base64", "offset": 2, "size": size, "data": data,
                 "nextPage": next,
             }))
             .unwrap();
-            assert_eq!(validate_content(&page, &position, DiffSide::New), expected);
+            assert_eq!(
+                validate_content(&mut page, &position, DiffSide::New),
+                expected
+            );
         }
     }
 
@@ -178,13 +186,24 @@ mod tests {
                 cursor: cursor.map(str::to_owned),
                 offset: offset as u64,
             };
-            let page: DiffContent = serde_json::from_value(json!({
+            let mut page: DiffContent = serde_json::from_value(json!({
                 "side": "new", "encoding": "base64", "offset": offset, "size": size,
                 "data": data, "nextPage": next,
             }))
             .unwrap();
             assert_eq!(page.bytes.len(), if data.is_empty() { 0 } else { MIB });
-            assert_eq!(validate_content(&page, &position, DiffSide::New), Ok(()));
+            assert_eq!(
+                validate_content(&mut page, &position, DiffSide::New),
+                Ok(())
+            );
+            assert_eq!(
+                page.next_page.as_deref(),
+                if offset + page.bytes.len() < size {
+                    next
+                } else {
+                    None
+                }
+            );
         }
     }
 }
