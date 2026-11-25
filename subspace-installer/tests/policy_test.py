@@ -117,8 +117,9 @@ class FleetPolicyTests(unittest.TestCase):
                 patch.object(github_app, "installation_token", return_value="fixture-token") as mint, \
                 patch.object(github_app.os, "execve") as gh:
             github_app.main(["gh", *args])
-        self.assertEqual(mint.call_args.args[1:], ({"contents": "write", "pull_requests": "read"}, ["project"]))
-        self.assertEqual(gh.call_args.args[1], ["gh", *args, "--repo", "example/project"])
+        self.assertEqual(mint.call_args.args[1:], ({"contents": "write"}, ["project"]))
+        self.assertEqual(gh.call_args.args[1], ["gh", "api", "--method", "PUT", "repos/example/project/pulls/4/merge",
+                                                "-f", "sha=" + "a" * 40, "-f", "merge_method=squash"])
 
     def test_merge_repository_selection_only_grants_write_capable_captains(self):
         config = example_config()

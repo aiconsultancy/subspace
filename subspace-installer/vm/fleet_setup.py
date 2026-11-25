@@ -428,7 +428,7 @@ def gather(args, saved):
         require(policy in ("standard", "delegate"), "Choose standard or delegate for --captain-tools.")
         answers["captainTools"] = policy
     merge_repos = args.captain_merge_repositories
-    if merge_repos is None and interactive and not saved and repositories:
+    if merge_repos is None and interactive and not saved and repositories and not (INPUTS / "fleet.json").exists():
         merge_repos = prompt("May captains squash-merge pull requests? Enter the GitHub owner/repository names "
                              "(comma-separated), or 'none'", "none")
     if merge_repos is not None:

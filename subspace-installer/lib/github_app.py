@@ -164,8 +164,11 @@ def main(args):
         if rest[:2] == ["pr", "merge"]:
             repository = merge_repository(rest, policy, Path.cwd())
             repositories = [repository_name(repository)]
-            permissions = {"contents": "write", "pull_requests": "read"}
-            rest += ["--repo", repository]
+            permissions = {"contents": "write"}
+            # gh pr merge can set up a future merge on queued branches. Submit the reviewed SHA
+            # directly with the immediate REST merge so this request cannot enable auto-merge.
+            rest = ["api", "--method", "PUT", f"repos/{repository}/pulls/{rest[2]}/merge",
+                    "-f", f"sha={rest[5]}", "-f", "merge_method=squash"]
         else:
             permissions = cli_permissions(rest)
         env = {key: value for key, value in os.environ.items() if key not in

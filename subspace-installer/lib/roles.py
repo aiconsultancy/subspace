@@ -302,7 +302,7 @@ def role_documents(cfg, person, references, home):
         repos = ", ".join(f"`{name}`" for name in checkouts)
         instructions += (
             f"\n## Merging pull requests\n\n"
-            f"You may squash-merge pull requests from your own checkout of {repos}. "
+            f"You may squash-merge pull requests from the root of your own checkout of {repos}. "
             "Check the repository's approval and CI requirements first. Run "
             "`subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA` "
             "with the head SHA you reviewed. Handle the merge yourself.\n"

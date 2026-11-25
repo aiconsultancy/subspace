@@ -1958,9 +1958,10 @@ subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA
 
 Use the full SHA the captain reviewed and check the repository's approval
 and CI requirements first. The helper scopes the installation token to that
-repository. GitHub enforces branch protections. Crew hand the PR and head SHA
-back to their captain. The helper refuses merges from crew worktrees. Crew
-still share the captain's Linux user and GitHub App.
+repository and sends an immediate merge request. GitHub enforces branch
+protections and refuses a changed head SHA. Crew hand the PR and head SHA back
+to their captain. The helper refuses merges from crew worktrees. Crew still
+share the captain's Linux user and GitHub App.
 
 ### Add private repositories later
 
