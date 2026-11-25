@@ -336,7 +336,7 @@ install_file "$scratch/fleet.json" "$etc/fleet.json" 0600
 install_file "$scratch/secrets.json" "$etc/secrets.json" 0600
 install_file "$scratch/extra-secrets.json" "$etc/extra-secrets.json" 0600
 mapfile -t source < "$scratch/sources"
-ensure_packages ca-certificates curl git openssh-client tmux unzip xz-utils build-essential jq ripgrep rsync nftables python3-venv
+ensure_packages ca-certificates curl git openssh-client tmux unzip zip xz-utils build-essential jq ripgrep rsync nftables python3-venv
 # fleet.json's systemPackages, which runtime.py prepare checked are Debian package names. Never removed.
 mapfile -t system_packages < "$scratch/system-packages"
 if (( ${#system_packages[@]} )); then

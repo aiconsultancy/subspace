@@ -1116,6 +1116,21 @@ class InstalledFleet(unittest.TestCase):
             with self.assertRaisesRegex(runtime.Invalid, "Usage guard requires a newer Stargate"):
                 runtime.require_usage_guard_source(cfg, installed_only=True)
 
+    def test_peer_messages_render_for_pinned_crew_captains_without_dispatch(self):
+        config, private = crew_fleet("orion", "vega")
+        config["captainPeerMessages"] = True
+        cfg = runtime.validate(config, private)
+        rear, captain, peer = cfg["members"]
+        pins = {captain["id"]: "ses_orion", peer["id"]: "ses_vega"}
+        gateway = Path("/gateway")
+        control = runtime.fleet_control(cfg, captain, "ses_orion", None, gateway, pins)
+        self.assertEqual(control["targets"], [{"id": peer["id"], "account": peer["account"],
+                                               "role": "captain", "channel": peer["channel"], "sessionID": "ses_vega"}])
+        self.assertIsNone(runtime.fleet_control(cfg, rear, "ses_rear", None, gateway, pins))
+        self.assertIsNone(runtime.fleet_control(cfg, captain, "ses_orion", None, gateway, {}))
+        grants = [rule for rule in runtime.captain_permissions(cfg, captain) if rule["action"] == "fleet_peer_message"]
+        self.assertEqual(grants, [{"action": "fleet_peer_message", "resource": peer["id"], "effect": "allow"}])
+
     def test_usage_guard_defaults_route_all_captains_and_all_crew_engines_read_one_file(self):
         config, private = crew_fleet("orion", "vega")
         self.render(config, private)
