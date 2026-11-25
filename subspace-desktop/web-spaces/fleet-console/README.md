@@ -222,28 +222,48 @@ closes it, as does moving to another tier; focus returns to the button.
 
 - **Nothing is cut.** Content is shown in full. Long text wraps, scrolls
   inside its block and stays selectable. An item larger than 64 KiB arrives
-  paged: **Load in full** reads every page and shows it whole; if the item
-  changes between pages, or the pages do not add up to its size, the read
-  starts again from page 0.
+  paged: **Load in full** reads every page, one item at a time, and shows
+  it whole; if the item changes between pages the read starts again from
+  page 0, and a page that is not the one asked for or does not add up to
+  the item's size stops the read with an error. A loaded item over 256 KiB
+  shows in 64 KiB parts with First, Previous, Next and Last. A view keeps
+  at most 64 MiB of loaded items; past that the least recently opened is
+  freed and offers **Load in full** again. A loaded item is not read again
+  by itself when it changes, as a running tool changes often: it says a
+  newer version is on the gateway and offers **Load the latest**. When a
+  tool call has both parsed
+  and streamed input, both show. An item or content of a kind this console
+  doesn't know, or that fails its checks, shows as JSON.
 - **Content is text.** Every value is set as text, never parsed as HTML.
   Control characters (other than newline and tab) and bidi formatting
-  characters show as `⟨U+XXXX⟩` markers, so content cannot hide or reorder
-  itself. Activity stays in memory only: it is never stored or logged, and
-  closing the view drops it.
+  characters show as `⟨U+XXXX⟩` markers, in JSON keys and values too, so
+  content cannot hide or reorder itself. Activity stays in memory only: it
+  is never stored or logged, never reaches chat or an agent's context, and
+  closing the view drops it. A change to the fleet's address or token drops
+  it too, and the view starts again from the new stream; removing the token
+  or the fleet closes the view.
 - **One stream.** The gateway allows eight event-stream viewers in total, so
   the view never opens a second stream: the fleet's stream re-opens with
   `?agent=<registration ID>` while the view is open and without it after.
   The re-open is quiet (no Connecting pill) and resumes from the last event
-  ID. A gateway that refuses the parameter (400 or 404) gets its plain stream
-  back.
+  ID. A gateway that refuses the parameter (400 or 404, or a ninth agent)
+  gets its plain stream back, and the view reads the snapshot every five
+  seconds instead, saying so.
 - **Joining.** The snapshot is read only after the stream has answered, as
   the gateway registers the watch when the events response starts. Events
-  that arrive meanwhile are buffered; those at or below the snapshot's
+  that arrive meanwhile are buffered, up to 512 events or 8 MiB (past
+  that they are dropped and the snapshot is read again); those at or below
+  the snapshot's
   cursor are dropped. A `seq` that fails to rise, a new `generation`, an
   item for an unknown turn and every stream re-open read the snapshot
-  again, one read at a time. A skipped `seq` is not a gap. If that read
-  fails, the view keeps the last activity read, stops applying changes and
-  offers **Try again**.
+  again, one read at a time. A skipped `seq` is not a gap. A turn the view
+  no longer holds is placed by its start time, so a late end for a turn
+  already dropped never shows as the newest. If that read
+  fails, the view keeps the last activity read, marked stale with the
+  error, holds changes rather than applying them and reads again by itself
+  after 1, 2, 4 … up to 30 seconds (or the gateway's `Retry-After`, up to
+  30), then applies the held changes newer than what it read. **Try again**
+  is offered throughout and waits for the current stream to answer.
 - **Messages.** "Some changes may be missing (the stream reconnected)" on a
   turn the gateway saw its officer's stream reconnect in; "This officer's
   backend isn't collected yet." when the gateway does not collect it; and
