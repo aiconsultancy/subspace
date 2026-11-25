@@ -366,10 +366,10 @@ class FleetPolicyTests(unittest.TestCase):
                     cfg, person, home, home / "workspace/project", 4097, b"seed", documents, "ses_fixture")
             engine = saved[f"opencode-{person['id']}"]
             # The officer, and crew sessions on its server, act as the officer's agent record, with no token.
-            self.assertEqual(engine["mcp"], {"servers": {"subspace": {
+            self.assertEqual(engine["mcp"]["servers"]["subspace"], {
                 "type": "remote", "url": "http://127.0.0.1:3001/mcp",
                 "headers": {"X-Subspace-Agent": person["account"]},
-            }}})
+            })
             self.assertNotIn("Authorization", json.dumps(engine["mcp"]))
             self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
             self.assertIn(runtime.SUBSPACE_MCP_GRANT, backend["permissions"])
@@ -1311,6 +1311,11 @@ class AgentDispatchTests(unittest.TestCase):
                                                      "ses_rear")
             self.assertEqual(backend["sessionID"], "ses_rear")
             self.assertNotIn("plugins", saved["opencode-atlas"])
+            self.assertNotIn("repo_refresh", saved["opencode-orion"].get("mcp", {}).get("servers", {}))
+            tool = saved["opencode-atlas"]["mcp"]["servers"]["repo_refresh"]
+            self.assertEqual(tool["command"], runtime.repository_refresh_command())
+            self.assertIn({"action": "repo_refresh_refresh_origin", "resource": "*", "effect": "allow"},
+                          backend["permissions"])
         runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
 
     def test_the_delegate_policy_and_extra_permissions_meet_stargates_fleet_tool_check(self):

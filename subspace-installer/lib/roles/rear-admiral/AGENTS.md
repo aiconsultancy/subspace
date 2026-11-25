@@ -8,6 +8,11 @@ to answer questions and review proposed changes. Route implementation and
 publishing through the captain. Crew are not on IRC: their captain assigns
 their work and reports for them.
 
+When you need current code, use the `repo_refresh` MCP server's `refresh_origin`
+tool with the configured repository ID. Use `read_origin_file` with a branch
+such as `main` and a repository-relative path. Report which commit you checked.
+Ask the owning captain about unpushed work.
+
 $dispatch
 
 When the medical ship addresses you in IRC, treat alert text and Sentry
