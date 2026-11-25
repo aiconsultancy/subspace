@@ -60,3 +60,26 @@ pub(super) fn argument_summary(arguments: &Value) -> String {
 pub(super) fn one_line(text: &str, limit: usize) -> String {
     truncate(text.split_whitespace().collect::<Vec<_>>().join(" "), limit)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::argument_summary;
+
+    /// Pi and ACP send a tool's arguments as JSON text. The summary keeps
+    /// their order, so a write's path survives the cutoff its long content
+    /// reaches, with or without the Copilot engine in the build.
+    #[test]
+    fn arguments_are_summarised_in_the_order_the_agent_sent_them() {
+        let content = "x".repeat(200);
+        let request: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"path": "notes/plan.md", "content": "{content}"}}"#
+        ))
+        .unwrap();
+        let summary = argument_summary(&request);
+        assert!(
+            summary.starts_with("path=notes/plan.md content=x"),
+            "{summary}"
+        );
+        assert!(summary.ends_with('…'), "{summary}");
+    }
+}
