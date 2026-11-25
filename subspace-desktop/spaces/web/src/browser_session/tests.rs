@@ -1,7 +1,7 @@
 //! The session's lifecycle, driven through the state machine's
 //! transitions: sign-in, a new view, account changes and failures here;
 //! renewal and expiry in `renewal`; the site's signal in `signal`; the
-//! grant in `grant`.
+//! product's start route in `start` and `moved`; the grant in `grant`.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -15,8 +15,10 @@ use crate::page::SiteCookie;
 
 mod board;
 mod grant;
+mod moved;
 mod renewal;
 mod signal;
+mod start;
 
 const HOME: &str = "https://app.example.com/desktop/";
 const WEBSITE: &str = "https://app.example.com/";

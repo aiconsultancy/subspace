@@ -10,6 +10,10 @@ use super::grant::{CookieProblem, Now, SessionFailure, SessionGrant};
 use crate::page::SiteCookie;
 
 mod phase;
+mod start;
+
+#[cfg(test)]
+pub(super) use start::OUTSIDE;
 
 use phase::{Base, Live, Phase};
 
@@ -60,9 +64,10 @@ pub(crate) enum Effect {
     Discard(u64),
     /// Tell the page its session was renewed.
     Renewed,
-    /// Load this address again, the page the view showed, after a renewal
-    /// the site's signal asked for.
-    Return(String),
+    /// Load this address in the view the session shows: the page it showed,
+    /// again, after a renewal the site's signal asked for, or the start the
+    /// product moved.
+    Load(String),
     /// Close the view, which drops its store.
     Close,
     /// Say this in the status bar.
@@ -81,17 +86,27 @@ pub(crate) enum Waiting {
 
 pub(crate) struct Session {
     scope: SessionScope,
+    /// Where a new view starts and Go to the start page goes: the scope's
+    /// home, or the product's start under it.
+    start: String,
     /// The message when the session ends at the site or expires.
     ended: String,
     /// The account the session belongs to.
     generation: Option<u64>,
     attempts: u64,
     phase: Phase,
+    /// The page the view showed when the start last moved, until the
+    /// session next goes live or ends. The site may have sent the move's
+    /// load back to its signal, leaving the view there: returning or
+    /// resuming to that page would undo the move, so the start opens
+    /// instead.
+    left: Here,
 }
 
 impl Session {
     pub(crate) fn new(scope: SessionScope, title: &str) -> Self {
         Self {
+            start: scope.home().to_owned(),
             scope,
             ended: format!(
                 "Your {title} session has ended. Unsaved changes may be lost when you retry."
@@ -99,11 +114,16 @@ impl Session {
             generation: None,
             attempts: 0,
             phase: Phase::SignedOut,
+            left: None,
         }
     }
 
     pub(crate) fn scope(&self) -> &SessionScope {
         &self.scope
+    }
+
+    pub(crate) fn start(&self) -> &str {
+        &self.start
     }
 
     /// Runs `transition` at `now`, with the view at `here`.
@@ -305,8 +325,10 @@ impl Session {
         self.ended_with(self.ended.clone(), here)
     }
 
-    /// Ends the session with `message`; Retry reopens at `resume`.
+    /// Ends the session with `message`; Retry reopens at `resume`, or at
+    /// the start when that is the page a move left.
     fn ended_with(&mut self, message: String, resume: Here) -> Vec<Effect> {
+        let resume = self.unless_left(resume);
         self.phase = Phase::Ended { message, resume };
         vec![Effect::Close]
     }
@@ -360,7 +382,8 @@ impl Session {
 
     /// The new grant replaces the old one, which is then revoked. A new
     /// view shows where the session should resume, and one the signal sent
-    /// back loads `here` again; either falls back to the scope's home.
+    /// back loads `here` again, unless that is the page a move left; either
+    /// falls back to the start.
     fn go_live(
         &mut self,
         attempt: u64,
@@ -369,16 +392,17 @@ impl Session {
         now: Now,
         here: Here,
     ) -> Vec<Effect> {
-        let home = self.scope.home();
+        let here = self.unless_left(here);
+        let start = &self.start;
         let (effect, returned) = match base {
             Base::Fresh { resume } => (
-                Effect::Show(attempt, resume.unwrap_or_else(|| home.to_owned())),
+                Effect::Show(attempt, resume.unwrap_or_else(|| start.clone())),
                 None,
             ),
             Base::Renewal {
                 signalled: true, ..
             } => (
-                Effect::Return(here.unwrap_or_else(|| home.to_owned())),
+                Effect::Load(here.unwrap_or_else(|| start.clone())),
                 Some(now.after(SIGNAL_GUARD)),
             ),
             Base::Renewal { .. } => (Effect::Renewed, None),
