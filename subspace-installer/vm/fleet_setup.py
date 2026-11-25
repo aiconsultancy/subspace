@@ -3276,8 +3276,6 @@ def configure(args):
     elif answers["api"] and (INPUTS / "api.env").is_file() and dev_auth_enabled() and api_healthy():
         problems += local_name_problems(answers, members, api_reader(answers))
     require_names(problems)
-    if answers["usageGuard"]["enabled"] and saved and "usageGuard" not in saved:
-        say("This upgrade enables the usage guard. Pass --no-usage-guard to keep it off.")
     if args.dry_run:
         if external_database(answers):
             database_checks(answers, args.migrate)
@@ -3408,7 +3406,6 @@ def configure(args):
     channels = values["SUBSPACE_CHANNELS"].split()
     print()
     say(f"fleet {values['SUBSPACE_FLEET_NAME']} ({values['SUBSPACE_FLEET_SLUG']}) is set up.")
-    say(runtime.usage_guard_line(answers["usageGuard"], members[0]))
     say(f"Starbase is {channels[0]}; fleet command is {channels[1]}; ship channels: {' '.join(channels[2:])}.")
     if api_block and stargate_api:
         address = answers.get("fleetApiUrl") or f"http://{LOOPBACK}:{STARGATE_API_PORT}"

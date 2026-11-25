@@ -3557,6 +3557,8 @@ def main(args):
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
             print(officer_models_line(cfg))
+            if cfg["usageGuard"]["enabled"] and saved_config and "usageGuard" not in saved_config:
+                print("This upgrade enables the usage guard. Pass --no-usage-guard in guided setup to keep it off.")
             print(usage_guard_line(cfg["usageGuard"], cfg["members"][0]))
             for line in names_plan(cfg):
                 print(line)
