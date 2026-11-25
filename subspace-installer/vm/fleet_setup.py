@@ -603,10 +603,10 @@ def crew_installed(captain_id):
         isinstance(person, dict) and person.get("id") == captain_id for person in config.get("captains", []))
 
 
-def installed_crew_ids(captain_id):
-    """An installed captain's crew IDs by slot, from the fleet's inputs, or None for a captain whose crew are not
-    installed: the ID Stargate keeps each one's sessions, worktrees and queued tasks under, from crewIds, else its
-    name (crewNames, else the slot's own name, 'Claude 1')."""
+def installed_crew(captain_id):
+    """An installed captain's crew by slot as (ID, name), from the fleet's inputs, or None for a captain whose crew
+    are not installed: the ID Stargate keeps each one's sessions, worktrees and queued tasks under, from crewIds,
+    else its name's; the name from crewNames, else the slot's own name, 'Claude 1'."""
     if not crew_installed(captain_id):
         return None
     config = read_json(INPUTS / "fleet.json", {}) or {}
@@ -616,18 +616,24 @@ def installed_crew_ids(captain_id):
         team = {**((config.get("crew") or {}).get(family) or {}), **((person.get("crew") or {}).get(family) or {})}
         counts[family] = team.get("count", 2)  # The fleet installer's default.
     names, ids = person.get("crewNames") or {}, person.get("crewIds") or {}
-    return {slot: ids.get(slot) or runtime.crew_id(names.get(slot, slot_label(slot))) for slot in crew_slots({"crew": counts})}
+    crew = {}
+    for slot in crew_slots({"crew": counts}):
+        name = names.get(slot, slot_label(slot))
+        crew[slot] = (ids.get(slot) or runtime.crew_id(name), name)
+    return crew
 
 
 def refuse_installed_crew_ids(named):
     """Refuse --crew-names that would give an installed crew member another ID, before anything is saved: its
     sessions, worktrees and queued tasks are kept under its ID, and a captain whose session is pinned refuses any
-    change on every later run. rename-officers --crew-names names them and keeps their IDs."""
+    change on every later run. rename-officers --crew-names names them and keeps their IDs; the name a crew member
+    has is accepted again, also when it keeps another ID under it (crewIds)."""
     changed = []
     for captain_id, names in named.items():
-        installed = installed_crew_ids(captain_id) or {}
-        changed += [f"{captain_id}'s {slot_label(slot)} ({installed[slot]} would become {runtime.crew_id(name)})"
-                    for slot, name in names.items() if slot in installed and runtime.crew_id(name) != installed[slot]]
+        installed = installed_crew(captain_id) or {}
+        changed += [f"{captain_id}'s {slot_label(slot)} ({installed[slot][0]} would become {runtime.crew_id(name)})"
+                    for slot, name in names.items() if slot in installed
+                    and runtime.crew_id(name) not in (installed[slot][0], runtime.crew_id(installed[slot][1]))]
     require(not changed, f"--crew-names would give installed crew new IDs: {'; '.join(changed)}. Stargate keeps a crew "
             "member's sessions, worktrees and queued tasks under its ID, so setup never changes an installed one. "
             "Name an installed fleet's crew with 'sudo subspace-setup rename-officers --crew-names ...', which keeps "
@@ -791,9 +797,9 @@ def check_crew_answers(answers, ids):
             key = runtime.crew_id(name)
             require(key not in officers, f"Crew name {name} for {captain_id} is an officer's name. Crew names are "
                     "unique in the fleet and differ from the officers' names.")
-            require(key not in seen, f"Crew names {seen.get(key)} and {name} are the same, ignoring case. Give each "
-                    "crew member in the fleet its own name.")
-            seen[key] = name
+            require(key not in seen, f"Crew names {seen.get(key)} and {captain_id}'s {name} are the same, ignoring "
+                    "case. Give each crew member in the fleet its own name.")
+            seen[key] = f"{captain_id}'s {name}"
     repositories = answers.get("repositories")
     if repositories is None:
         repositories = (read_json(INPUTS / "fleet.json", {}) or {}).get("repositories") or []
@@ -1233,17 +1239,19 @@ def irc_source():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def installer(config_path, dry_run=False, secrets_dir=None):
+def installer(config_path, dry_run=False, secrets_dir=None, quiet=False):
+    """Run the fleet installer. quiet keeps its plan to itself, as a check whose plan would mislead does; what it
+    refuses still reaches the terminal."""
     args = [INSTALLER / "install.sh", "--config", config_path]
     if secrets_dir:
         args += ["--secrets-dir", secrets_dir]
     if dry_run:
         args.append("--dry-run")
     say("running the fleet installer" + (" (dry run)" if dry_run else ""))
-    run(*args)
+    run(*args, capture=quiet)
 
 
-def preflight(config, private):
+def preflight(config, private, before="the API changes", quiet=False):
     """Check the fleet's inputs as the installer will (configuration, credentials, the secrets directory and
     pinned sessions), before setup changes the API or its database. A run the installer would refuse then
     migrates nothing and restarts nothing."""
@@ -1252,8 +1260,36 @@ def preflight(config, private):
         config_path = Path(scratch) / "fleet.json"
         write_json(config_path, config)
         write_json(Path(scratch) / "fleet.secrets.json", private)
-        say("checking the fleet's configuration before the API changes")
-        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None)
+        say(f"checking the fleet's configuration before {before}")
+        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None, quiet=quiet)
+
+
+def stargate_release(answers):
+    """The Stargate a run installs, as (tag, commit): the pinned --stargate-ref, else the newest release."""
+    if answers.get("stargateRef"):
+        return "pinned", answers["stargateRef"]
+    return latest_stargate()
+
+
+def run_inputs(answers, members, secret_store, stargate_ref, irc_ref, api_block=None, stargate_api=False, token="",
+               history=None, dispatch_token=""):
+    """The fleet installer's inputs, fleet.json and its secrets, as a run writes them."""
+    config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
+    private = fleet_secrets(secret_store, members, answers["admin"], token, answers["irc"] == "local",
+                            certificates=answers.get("ircAuth") == "certificate",
+                            dispatch_token=dispatch_token if api_block else "")
+    if history:
+        private["ircHistoryPassword"] = secret_store.password("ergo-history")
+    return config, private
+
+
+def planned_run_inputs(answers, members, secret_store, stargate_ref):
+    """The inputs a real run writes, as far as is known before the API runs, for the installer's check: the
+    API settings it will have (planned_api_block), with stand-ins for the tokens it will get."""
+    block = planned_api_block(answers)
+    dispatch = PLANNED_TOKENS["rearAdmiralApiToken"] if block and answers["agentDispatch"] else ""
+    return run_inputs(answers, members, secret_store, stargate_ref, hashlib.sha1(b"dry-run").hexdigest(), block,
+                      False, PLANNED_TOKENS["apiToken"] if block else "", dispatch_token=dispatch)
 
 
 def installed_stargate_source():
@@ -2703,10 +2739,7 @@ def configure(args):
             "This VM's API already keeps its tracker in its own PostgreSQL, which setup does not move. To use an "
             "existing PostgreSQL, restore a dump of that database there and set up a fresh VM with "
             "--database-url-file (installer README, 'An existing PostgreSQL').")
-    if answers.get("stargateRef"):
-        stargate_tag, stargate_ref = "pinned", answers["stargateRef"]
-    else:
-        stargate_tag, stargate_ref = latest_stargate()
+    stargate_tag, stargate_ref = stargate_release(answers)
     say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
     enrolment = None
     if answers.get("apiUrl"):
@@ -2732,21 +2765,11 @@ def configure(args):
     dispatch_token = ""
 
     def inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None, dispatch=None):
-        config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
-        private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc,
-                                certificates=answers.get("ircAuth") == "certificate",
-                                dispatch_token=(dispatch_token if dispatch is None else dispatch) if api_block else "")
-        if history:
-            private["ircHistoryPassword"] = secret_store.password("ergo-history")
-        return config, private
+        return run_inputs(answers, members, secret_store, stargate_ref, irc_ref, api_block, stargate_api, token,
+                          history, dispatch_token if dispatch is None else dispatch)
 
     def planned_inputs():
-        """The inputs a real run writes, as far as is known before the API runs, for the installer's check: the
-        API settings it will have (planned_api_block), with stand-ins for the tokens it will get."""
-        block = planned_api_block(answers)
-        dispatch = PLANNED_TOKENS["rearAdmiralApiToken"] if block and answers["agentDispatch"] else ""
-        return inputs(hashlib.sha1(b"dry-run").hexdigest(), block, False,
-                      PLANNED_TOKENS["apiToken"] if block else "", dispatch=dispatch)
+        return planned_run_inputs(answers, members, secret_store, stargate_ref)
 
     def write_inputs(*args):
         config, private = inputs(*args)
@@ -3086,6 +3109,44 @@ def copy_gateway_key(old, new):
         say(f"copied Stargate's {source.name} to {target.name}")
 
 
+def check_switch(answers):
+    """Check the rename's last step, the switch (setup's run with the new names), before the rename changes
+    anything, with the code and checks the switch itself runs. answers are the switch's: plain names, and any new
+    crew names with the crew's kept IDs. They are read and checked as setup reads and checks them, and the
+    fleet.json and secrets setup then hands the fleet installer are checked by the fleet installer's validation,
+    then by its own dry run (crew names across the fleet, pinned sessions, a new captain's crew, repositories). It
+    works on a private copy of the fleet's inputs, as setup's dry run does, so nothing it writes stays. Returns
+    lines that show each ship's crew as the switch installs them."""
+    global INPUTS
+    original = INPUTS
+    with tempfile.TemporaryDirectory(prefix="subspace-setup-rename-check-") as scratch:
+        INPUTS = Path(scratch) / "inputs"
+        if original.is_dir():
+            shutil.copytree(original, INPUTS, symlinks=True)
+        try:
+            switch = gather(parse_args(["--non-interactive"]), json.loads(json.dumps(answers)))
+            rear, captains = check_answers(switch)
+            members = roster(switch, rear, captains)
+            config, private = planned_run_inputs(switch, members, Secrets(INPUTS, switch["slug"], None),
+                                                 stargate_release(switch)[1])
+            try:
+                cfg = runtime.validate(config, private, check_files=False)
+            except runtime.Invalid as error:
+                raise SetupError(f"{error} The fleet installer would refuse the switch to the new names, so the "
+                                 "rename stops here. Nothing was changed.") from None
+            # Quietly: before the switch, the installer's plan would show the officers' current certificates
+            # against their new accounts, which the rename binds to new certificates of its own.
+            preflight(config, private, "the rename changes anything", quiet=True)
+        finally:
+            INPUTS = original
+    crews = [person for person in cfg["members"][1:] if person["crew"]]
+    if not crews:
+        return []
+    return ["crew after the switch, by ship (name, ID, model family and slot):"] + [
+        f"  {person['name']}: " + "; ".join(f"{worker['name']} ({worker['id']}, {slot_label(worker['slot'])})"
+                                            for worker in person["crew"]) for person in crews]
+
+
 def rename_officers(argv):
     """subspace-setup rename-officers: move an installed fleet from fleet-prefixed officer names to plain ones, and
     name the crew of installed captains where the installed Stargate allows it.
@@ -3113,7 +3174,9 @@ def rename_officers(argv):
             say(line)
         return
     members = [{"id": person["id"], "name": person["name"], "account": new} for person, _, new, *_ in plan]
-    plain = {**answers, "officerNames": "plain"}
+    # The answers the switch runs setup with: plain names, and any new crew names with the crew's kept IDs.
+    plain = {**answers, "officerNames": "plain",
+             **{key: {**(answers.get(key) or {}), **values} for key, values in crew.items()}}
     hosted = bool(answers.get("apiUrl"))
     local_api = answers.get("api") and not hosted and (INPUTS / "api.env").is_file()
     certificate = answers.get("irc") == "remote" and answers.get("ircAuth") == "certificate"
@@ -3123,9 +3186,6 @@ def rename_officers(argv):
         for person, old, new, old_api, new_api, channel in plan:
             say(f"  {person['name']}: IRC account {old} -> {new}; API agent {old_api} -> {new_api}"
                 + (f"; ship channel {channel[0]} -> {channel[1]}" if channel else ""))
-        # Read-only checks first. The answers as setup reads them with plain names, checked as a new fleet's are
-        # (names IRC, the API or the installer keep for themselves, the ship channels, the account lengths).
-        check_answers(gather(parse_args(["--non-interactive"]), json.loads(json.dumps(plain))))
         require(hosted or local_api or args.no_api_records,
                 f"Fleet {answers['slug']} has no Subspace API on this VM and no hosted API (--api-url), so this VM "
                 "cannot rename its agent records. If another fleet's API keeps them (a fleet installed with "
@@ -3136,6 +3196,14 @@ def rename_officers(argv):
         require(not local_api or dev_auth_enabled(),
                 "The Subspace API on this VM no longer offers development sign-in, which setup renames its agent "
                 "records with. Keep the fleet's fleet-prefixed names. Nothing was changed.")
+    elif pending:
+        say(f"fleet {answers['slug']}'s officers have their plain names on IRC and in the API, but setup has not yet "
+            "finished a run with them: this run does that, then checks the installed certificates")
+    # Read-only checks first, the switch's own before any other: what the switch (step 4) hands the fleet
+    # installer, checked as it will be, so that neither the dry run nor this check passes what the switch refuses.
+    for line in check_switch(plain):
+        say(line)
+    if officers:
         admin = bearer_token_file(args.api_admin_token_file, "--api-admin-token-file", "API administrator token") \
             if args.api_admin_token_file else None
         require(not hosted or admin or args.dry_run,
@@ -3166,9 +3234,6 @@ def rename_officers(argv):
         require(not problems, "Cannot rename: " + "; ".join(problems) + ". An officer's ID is its plain name and "
                 "cannot change here; free the name on the IRC server or in the API, or keep the fleet's prefixed "
                 "names. Nothing was changed.")
-    elif pending:
-        say(f"fleet {answers['slug']}'s officers have their plain names on IRC and in the API, but setup has not yet "
-            "finished a run with them: this run does that, then checks the installed certificates")
     if args.dry_run:
         if officers:
             steps = []
