@@ -684,7 +684,8 @@ every fleet VM gets the means in its base install, whatever its toolchains:
   a vector diagram and `mermaid-render diagram.mmd diagram.png` takes a
   screenshot of just the diagram. Write the Mermaid syntax in the `.mmd`
   file without Markdown fences. The command uses the installed browser
-  offline so private diagrams stay on the VM.
+  offline so private diagrams stay on the VM. The rear admiral can also pass
+  `-` as the input to author a diagram on standard input.
 
 Every version is pinned in one place,
 [`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright and Mermaid

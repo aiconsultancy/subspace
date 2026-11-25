@@ -1045,7 +1045,7 @@ class ScreenshotTests(unittest.TestCase):
                     path.mkdir(parents=True, exist_ok=True)
             if command[1:2] == ["ci"]:
                 for name in ("playwright", "mermaid"):
-                    package = screenshots.PLAYWRIGHT / "node_modules" / name
+                    package = kwargs["cwd"] / "node_modules" / name
                     package.mkdir(parents=True)
                     (package / "package.json").write_text(json.dumps({"version": self.pins[name]}))
             if command[1:2] == ["install"] and command[2].startswith("node@"):
@@ -1061,7 +1061,7 @@ class ScreenshotTests(unittest.TestCase):
             [str(Path(node).parent / "npm"), "ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
             [node, str(screenshots.PLAYWRIGHT / "node_modules/playwright/cli.js"), "install", "chromium"]])
         self.assertEqual(calls[0][1]["env"], environment)
-        self.assertEqual(calls[1][1]["cwd"], screenshots.PLAYWRIGHT)
+        self.assertEqual(calls[1][1]["cwd"].parent, screenshots.PLAYWRIGHT)
         self.assertEqual(calls[2][1]["env"]["PLAYWRIGHT_BROWSERS_PATH"], str(screenshots.BROWSERS))
         # npm ci installs from the pinned lockfile, copied beside the pinned manifest.
         self.assertEqual((screenshots.PLAYWRIGHT / "package-lock.json").read_text(),
@@ -1085,6 +1085,26 @@ class ScreenshotTests(unittest.TestCase):
             problems = screenshots.install(self.pins, environment)
         self.assertEqual(len(problems), 1)
         self.assertIn("CalledProcessError", problems[0])
+
+    def test_a_failed_npm_upgrade_keeps_the_installed_playwright(self):
+        screenshots.node(self.pins).parent.mkdir(parents=True)
+        screenshots.node(self.pins).touch()
+        installed = screenshots.PLAYWRIGHT / "node_modules/playwright"
+        installed.mkdir(parents=True)
+        saved = installed / "package.json"
+        saved.write_text(json.dumps({"version": self.pins["playwright"]}))
+        lock = screenshots.PLAYWRIGHT / "package-lock.json"
+        lock.write_text("prior lockfile")
+
+        def fail(command, **options):
+            self.assertEqual(command[1], "ci")
+            self.assertNotEqual(options["cwd"], screenshots.PLAYWRIGHT)
+            raise subprocess.CalledProcessError(1, command)
+
+        with patch.object(screenshots.subprocess, "run", side_effect=fail):
+            self.assertTrue(screenshots.install(self.pins, {}))
+        self.assertEqual(screenshots.installed_version("playwright"), self.pins["playwright"])
+        self.assertEqual(lock.read_text(), "prior lockfile")
 
     def test_a_crew_user_takes_page_and_mermaid_screenshots(self):
         calls = []

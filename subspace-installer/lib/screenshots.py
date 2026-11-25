@@ -147,6 +147,30 @@ def write_file(path, text, mode):
     os.replace(stream.name, path)
 
 
+def install_packages(pinned, manifest, lock):
+    """Download into a staging directory so a failed npm run leaves the installed tools usable."""
+    modules = PLAYWRIGHT / "node_modules"
+    with tempfile.TemporaryDirectory(prefix=".npm-", dir=PLAYWRIGHT) as temporary:
+        stage = Path(temporary)
+        write_file(stage / "package.json", manifest, 0o644)
+        write_file(stage / "package-lock.json", lock, 0o644)
+        subprocess.run([str(node(pinned).parent / "npm"), "ci", "--ignore-scripts", "--omit=dev", "--no-audit",
+                        "--no-fund"], cwd=stage, check=True, env={
+                            "PATH": f"{node(pinned).parent}:{toolchains.BASE_PATH}", "HOME": "/root",
+                            "npm_config_cache": str(stage / "cache"), "npm_config_update_notifier": "false"})
+        backup = stage / "previous-node-modules"
+        if modules.exists():
+            modules.rename(backup)
+        try:
+            (stage / modules.name).rename(modules)
+        except OSError:
+            if backup.exists():
+                backup.rename(modules)
+            raise
+    write_file(PLAYWRIGHT / "package.json", manifest, 0o644)
+    write_file(PLAYWRIGHT / "package-lock.json", lock, 0o644)
+
+
 def install(pinned, root_environment, say=print):
     """As root, install what the pins name that is missing: Node into the shared toolchain store (mise, explicit
     node@VERSION), Playwright and Mermaid with npm ci from the lockfile (scripts off), and Playwright's Chromium
@@ -162,13 +186,7 @@ def install(pinned, root_environment, say=print):
         if any(installed_version(package) != pinned[package] for package in ("playwright", "mermaid")) or \
                 not (PLAYWRIGHT / "package-lock.json").is_file() or \
                 (PLAYWRIGHT / "package-lock.json").read_text() != lock:
-            write_file(PLAYWRIGHT / "package.json", (PINS / "package.json").read_text(), 0o644)
-            write_file(PLAYWRIGHT / "package-lock.json", lock, 0o644)
-            with tempfile.TemporaryDirectory(prefix="subspace-npm-") as cache:
-                subprocess.run([str(node(pinned).parent / "npm"), "ci", "--ignore-scripts", "--omit=dev", "--no-audit",
-                                "--no-fund"], cwd=PLAYWRIGHT, check=True, env={
-                                    "PATH": f"{node(pinned).parent}:{toolchains.BASE_PATH}", "HOME": "/root",
-                                    "npm_config_cache": cache, "npm_config_update_notifier": "false"})
+            install_packages(pinned, (PINS / "package.json").read_text(), lock)
         # Playwright skips a browser it has installed already, and removes the browsers of an earlier pin.
         subprocess.run([str(node(pinned)), str(cli()), "install", "chromium"], cwd=PLAYWRIGHT, check=True, env={
             "PATH": f"{node(pinned).parent}:{toolchains.BASE_PATH}", "HOME": "/root",

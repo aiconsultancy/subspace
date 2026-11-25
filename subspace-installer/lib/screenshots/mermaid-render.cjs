@@ -37,7 +37,7 @@ async function main(args) {
                 diagram.setAttribute("height", height);
                 diagram.style.maxWidth = "none";
             }
-            return diagram.outerHTML;
+            return new XMLSerializer().serializeToString(diagram);
         }, definition);
         if (format === ".svg") {
             await writeFile(output, svg);
