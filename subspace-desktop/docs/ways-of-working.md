@@ -93,6 +93,9 @@ it. The repository's pull request template
   change's key images or link the pull requests that carry them. Without
   them a pull request is not ready to merge. `gh pr create --body` skips the
   template, so copy its sections into the body.
+- [ ] Complete the [thermo-nuclear review](../../AGENTS.md#required-thermo-nuclear-review)
+  and record the outcome and final head in the PR. For a documentation-only
+  diff, leave the review box unticked and mark the outcome N/A.
 - [ ] Before merging, independent reviews from Claude Opus 5.5 (high) and
   GPT-6.2 Sol (high) clear the final head. Record each review and its method
   under **Reviews**. Read-only subagents and restricted CLI reviewers count.
