@@ -42,9 +42,10 @@ fn pages_both_binary_sides_and_evicts_the_preview_on_close(cx: &mut TestAppConte
     window.update(|window, _| assert!(!window.has_image_atlas_entry(&image)));
 
     click(window, ("crew-diff-bytes", 0usize));
-    let image = open_preview(&view, window);
-    click(window, ("crew-binary-side", 1usize));
     assert_page(&view, window, DiffSide::New, 0);
+    let image = open_preview(&view, window);
+    click(window, ("crew-binary-side", 0usize));
+    assert_page(&view, window, DiffSide::Old, 0);
     window.update(|window, _| assert!(!window.has_image_atlas_entry(&image)));
 
     let image = open_preview(&view, window);
