@@ -158,6 +158,26 @@ fn copying_a_name_puts_the_exact_reference_on_the_clipboard(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn the_inspector_sample_keeps_focus_after_redraw(cx: &mut TestAppContext) {
+    let (gallery, mut cx) = open_gallery(cx);
+    cx.update(|window, cx| {
+        gallery.update(cx, |gallery, cx| {
+            gallery.reveal("workspace::InspectorTab", window, cx);
+        });
+        window.render_frame(cx);
+        window.click("gallery-focus-thread", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .within("gallery-sample:inspector-tabs")
+                .find(("workspace-inspector-tab", 1usize))
+                .focused(),
+            Some(true)
+        );
+    });
+}
+
+#[gpui_kit::test]
 fn hiding_unused_kit_components_removes_their_cards(cx: &mut TestAppContext) {
     let (gallery, mut cx) = open_gallery(cx);
     let kit = SECTIONS

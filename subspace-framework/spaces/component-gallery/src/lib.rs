@@ -44,6 +44,7 @@ const SEARCH_PLACEHOLDER: &str = "Search the component gallery";
 // qual:allow(srp, god_struct) reason: "One board view owns its retained samples, its navigation state and the repository picker sample's owner state; each group is small and only the view coordinates them."
 pub struct ComponentGallery {
     focus: FocusHandle,
+    inspector_sample_tab: FocusHandle,
     retained: state::Retained,
     menu_anchors: MenuAnchors,
     /// The section shown while the filter is empty.
@@ -225,6 +226,7 @@ impl Dashboard for ComponentGallery {
         let (filter, filter_changes) = filter_input(window, cx);
         Self {
             focus: cx.focus_handle(),
+            inspector_sample_tab: cx.focus_handle().tab_stop(true),
             retained: state::Retained::new(window, cx),
             menu_anchors: MenuAnchors::default(),
             section: browse::section(&prefs::get(cx, SECTION_KEY).unwrap_or_default()).id,

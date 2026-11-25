@@ -37,19 +37,22 @@ pub(in crate::samples) const INSPECTOR_TAB: Item = Item {
 };
 
 pub(in crate::samples) fn inspector_tabs(
-    _: &ComponentGallery,
+    gallery: &ComponentGallery,
     tokens: &Tokens,
     _: &mut Window,
     cx: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
-    let focus = cx.focus_handle().tab_stop(true);
     vec![
         sample(
             "Three tabs, one with a count, the second open, and Close",
             bounded(
                 TABBED_INSPECTOR_BOX,
                 tokens,
-                tabbed_inspector("gallery-sample:inspector-tabs", Some(focus), cx),
+                tabbed_inspector(
+                    "gallery-sample:inspector-tabs",
+                    Some(gallery.inspector_sample_tab.clone()),
+                    cx,
+                ),
             ),
         ),
         sample(
