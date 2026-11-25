@@ -49,7 +49,9 @@ pub(super) fn live() -> FleetState {
 fn a_live_ship_channel_s_inspector_has_ship_thread_and_people_tabs(cx: &mut TestAppContext) {
     let (board, hub, cx) = ship(cx);
     set_fleet(&hub, live(), cx);
-    cx.update(|window, _| {
+    super::crew::install_fleet_api(cx);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
         let tabs = window.find("workspace-inspector-tabs");
         assert_eq!(tabs.label(), Some("#aurora-lyra details"));
         let tabs = window.within("workspace-inspector-tabs");

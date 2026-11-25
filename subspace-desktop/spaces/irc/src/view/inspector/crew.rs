@@ -20,6 +20,7 @@ use state::{DetailState, Roster};
 
 pub(crate) struct CrewFocus {
     pub(super) ship_tab: FocusHandle,
+    pub(super) show_all: bool,
     row: FocusHandle,
     returned: Option<String>,
 }
@@ -28,6 +29,7 @@ impl CrewFocus {
     pub(crate) fn new(cx: &mut Context<Irc>) -> Self {
         Self {
             ship_tab: cx.focus_handle().tab_stop(true),
+            show_all: false,
             row: cx.focus_handle().tab_stop(true),
             returned: None,
         }
@@ -35,6 +37,7 @@ impl CrewFocus {
 
     pub(crate) fn clear(&mut self) {
         self.returned = None;
+        self.show_all = false;
     }
 }
 
@@ -45,7 +48,9 @@ pub(crate) struct Selection {
     state: DetailState,
     back: FocusHandle,
     client_state: Option<FleetState>,
+    live: bool,
     request: Option<Task<()>>,
+    retry_timer: Option<Task<()>>,
     _updates: Subscription,
 }
 
@@ -64,6 +69,7 @@ pub(super) fn open(
         roster_of(service, fleet, ship, member),
         service.directory_revision(),
     );
+    let live = service.state(fleet).is_live();
     let back = cx.focus_handle().tab_stop(true);
     back.focus(window, cx);
     board.inspector_crew = Some(Selection {
@@ -73,12 +79,33 @@ pub(super) fn open(
         state,
         back,
         client_state: None,
+        live,
         request: None,
-        // The selected member may move beyond the Ship tab's bounded list.
+        retry_timer: None,
+        // The selected member may move beyond the Ship tab's compact list.
         _updates: cx.observe(&api, sync),
     });
     sync(board, api, cx);
     cx.notify();
+}
+
+pub(crate) fn retry(board: &mut Irc, cx: &mut Context<Irc>) {
+    if let Some(api) = FleetApi::current(cx)
+        && let Some(selection) = &mut board.inspector_crew
+    {
+        selection.retry_timer = None;
+        selection.state.rearm();
+        sync(board, api, cx);
+        cx.notify();
+    }
+}
+
+pub(crate) fn visibility_changed(board: &mut Irc, cx: &mut Context<Irc>) {
+    if board.inspector_crew.is_some()
+        && let Some(api) = FleetApi::current(cx)
+    {
+        sync(board, api, cx);
+    }
 }
 
 fn roster_of(api: &FleetApi, fleet: &str, ship: &str, member: &str) -> Roster {
@@ -86,20 +113,51 @@ fn roster_of(api: &FleetApi, fleet: &str, ship: &str, member: &str) -> Roster {
 }
 
 fn sync(board: &mut Irc, api: Entity<FleetApi>, cx: &mut Context<Irc>) {
+    let visible = visible(board, cx);
     let Some(selection) = &mut board.inspector_crew else {
         return;
     };
     let roster_changed = selection.update(api.read(cx));
-    let client_changed = selection.refresh(&api, cx);
+    let client_changed = if visible {
+        selection.refresh(&api, cx)
+    } else {
+        selection.retry_timer = None;
+        false
+    };
     if roster_changed || client_changed {
         cx.notify();
     }
 }
 
+pub(crate) fn visible(board: &Irc, cx: &gpui_kit::App) -> bool {
+    let Some(selection) = &board.inspector_crew else {
+        return false;
+    };
+    board.active
+        && board.dock.members_open()
+        && board.inspector_tab == super::InspectorTab::Subject
+        && super::front(board, cx).is_some_and(|front| {
+            crate::live::fleet_id(&front.roster, &front.channel) == Some(&selection.fleet)
+                && matches!(front.subject, super::Subject::Ship { captain } if selection.ship.eq_ignore_ascii_case(&captain))
+        })
+}
+
 impl Selection {
     fn update(&mut self, api: &FleetApi) -> bool {
+        let directory = api.directory_revision();
+        if self.state.directory_changed(directory) {
+            self.request = None;
+            self.retry_timer = None;
+        }
         let next = roster_of(api, &self.fleet, &self.ship, &self.member);
-        self.state.update(next, api.directory_revision())
+        let changed = self.state.update(next, directory);
+        let live = api.state(&self.fleet).is_live();
+        if live && !self.live {
+            self.retry_timer = None;
+            self.state.rearm();
+        }
+        self.live = live;
+        changed
     }
 
     fn refresh(&mut self, api: &Entity<FleetApi>, cx: &mut Context<Irc>) -> bool {
@@ -108,11 +166,37 @@ impl Selection {
         let changed = self.client_state != state;
         self.client_state = state;
         if let Ok(client) = client
-            && let Some(generation) = self.state.begin()
+            && self.retry_timer.is_none()
         {
-            self.request = Some(self.read(client, generation, api, cx));
+            if let Some(generation) = self.state.begin() {
+                self.request = Some(self.read(client, generation, api, cx));
+            } else if let Some(delay) = self.state.retry_delay() {
+                self.retry_timer = Some(self.schedule_retry(delay, api, cx));
+            }
         }
         changed
+    }
+
+    fn schedule_retry(
+        &self,
+        delay: std::time::Duration,
+        api: &Entity<FleetApi>,
+        cx: &mut Context<Irc>,
+    ) -> Task<()> {
+        let selection_id = self.back.clone();
+        let api = api.clone();
+        cx.spawn(async move |board, cx| {
+            cx.background_executor().timer(delay).await;
+            _ = board.update(cx, |board, cx| {
+                if let Some(selection) = &mut board.inspector_crew
+                    && selection.back == selection_id
+                {
+                    selection.retry_timer = None;
+                    selection.state.retry_elapsed();
+                    sync(board, api, cx);
+                }
+            });
+        })
     }
 
     fn read(
@@ -139,7 +223,7 @@ impl Selection {
                 {
                     selection.update(api.read(cx));
                     selection.state.finish(generation, result);
-                    selection.refresh(&api, cx);
+                    sync(board, api, cx);
                     cx.notify();
                 }
             });
@@ -162,8 +246,11 @@ fn close(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
         return;
     };
     let ship = super::front(board, cx).and_then(|front| front.fleet?.ship(&selection.ship));
-    let row = ship.as_ref().and_then(|ship| selection.return_row(ship));
     let focus = &mut board.inspector_crew_focus;
+    let row = ship.as_ref().and_then(|ship| {
+        FleetApi::current(cx)?;
+        selection.return_row(visible_members(ship, focus.show_all))
+    });
     focus.returned = row.map(str::to_owned);
     if row.is_some() {
         focus.row.focus(window, cx);
@@ -173,9 +260,18 @@ fn close(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
     cx.notify();
 }
 
+pub(super) fn visible_members(ship: &ShipLive, show_all: bool) -> &[crate::live::CrewLine] {
+    let count = if show_all {
+        ship.members.len()
+    } else {
+        ship.members.len().min(crate::live::ship::MAX_CREW)
+    };
+    &ship.members[..count]
+}
+
 impl Selection {
-    fn return_row<'a>(&self, ship: &'a ShipLive) -> Option<&'a str> {
-        let mut rows = ship.members.iter().filter(|member| {
+    fn return_row<'a>(&self, members: &'a [crate::live::CrewLine]) -> Option<&'a str> {
+        let mut rows = members.iter().filter(|member| {
             !matches!(self.state.roster, Roster::Gone) || member.id != self.member
         });
         let first = rows.next()?;
@@ -214,11 +310,22 @@ pub(super) fn body(
         .map(str::to_owned)
         .or(connection)
         .map(|note| feedback::empty_line(&tokens, "irc-crew-note", note));
+    let retry = (member.is_some() && selection.state.can_retry()).then(|| {
+        action_button("irc-crew-retry", Intent::Quiet, None, "Try again")
+            .on_click(cx.listener(|board, _, _, cx| self::retry(board, cx)))
+    });
+    let status = (note.is_some() || retry.is_some()).then(|| {
+        v_flex()
+            .w_full()
+            .min_w_0()
+            .items_start()
+            .gap_2()
+            .children(note)
+            .children(retry)
+    });
     let detail = member
         .zip(board.dock.focused.as_ref())
-        .map(|(member, buffer)| {
-            detail::view(&member, selection.state.current_task(&member), buffer, cx)
-        });
+        .map(|(member, buffer)| detail::view(&member, member.current_task(), buffer, cx));
     Some(
         v_flex()
             .w_full()
@@ -226,7 +333,7 @@ pub(super) fn body(
             .items_start()
             .gap_4()
             .child(back)
-            .children(note)
+            .children(status)
             .children(detail)
             .into_any_element(),
     )

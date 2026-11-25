@@ -1,7 +1,7 @@
 //! Keyboard and pointer navigation of the Ship tab's crew detail.
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{TestAppContext, VisualTestContext};
+use gpui_kit::{ScrollDelta, TestAppContext, VisualTestContext, point, px};
 use subspace_client_fleet::{FleetApi, TokenStore};
 use subspace_client_irc::Event;
 
@@ -13,13 +13,13 @@ use crate::{fixtures::channel, view};
 const ROW: &str = "irc-inspector-crew:wren";
 const BACK: &str = "irc-crew-back";
 const SHIP: (&str, usize) = ("workspace-inspector-tab", 0);
+const THREAD: (&str, usize) = ("workspace-inspector-tab", 1);
 
-fn install_fleet_api(cx: &mut VisualTestContext) {
+pub(super) fn install_fleet_api(cx: &mut VisualTestContext) {
     cx.update(|_, cx| FleetApi::install_new(TokenStore::memory(), vec![], cx));
 }
 
 pub(super) fn round_trip(cx: &mut VisualTestContext) {
-    install_fleet_api(cx);
     cx.update(|window, cx| {
         window.click(SHIP, cx);
         for _ in 0..20 {
@@ -39,6 +39,91 @@ pub(super) fn round_trip(cx: &mut VisualTestContext) {
         assert!(window.find(BACK).visible());
         window.click(BACK, cx);
         assert!(window.find(ROW).visible());
+    });
+}
+
+#[gpui_kit::test]
+fn a_roster_without_fleet_api_shows_plain_rows(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    set_fleet(&hub, live(), cx);
+    cx.update(|window, cx| {
+        assert!(window.find(ROW).visible());
+        assert_ne!(window.find(ROW).label(), Some("Open crew member Wren"));
+        window.click(ROW, cx);
+        assert!(window.try_find(BACK).is_none());
+    });
+    board.read_with(cx, |board, _| assert!(board.inspector_crew.is_none()));
+}
+
+#[gpui_kit::test]
+fn thread_tab_pauses_refresh_until_the_ship_tab_returns(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    set_fleet(&hub, live(), cx);
+    install_fleet_api(cx);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.click(ROW, cx);
+    });
+    board.read_with(cx, |board, cx| {
+        assert!(view::inspector::crew::visible(board, cx))
+    });
+    cx.update(|window, cx| window.click(THREAD, cx));
+    set_fleet(&hub, live(), cx);
+    board.read_with(cx, |board, cx| {
+        assert!(board.inspector_crew.is_some());
+        assert!(!view::inspector::crew::visible(board, cx));
+    });
+    cx.update(|window, cx| window.click(SHIP, cx));
+    board.read_with(cx, |board, cx| {
+        assert!(view::inspector::crew::visible(board, cx))
+    });
+}
+
+#[gpui_kit::test]
+fn an_expanded_roster_opens_the_thirtieth_member(cx: &mut TestAppContext) {
+    const LAST: &str = "irc-inspector-crew:member-30";
+    const TOGGLE: &str = "irc-crew-toggle-roster";
+    let (_, hub, cx) = ship(cx);
+    let mut snapshot = crate::live::tests::snapshot();
+    let members = &mut snapshot.ships.get_mut("aurora-lyra").unwrap().crew_members;
+    *members = (1..=30)
+        .map(|i| {
+            let mut member = subspace_client_fleet::model::CrewMember::default();
+            member.id = format!("member-{i}");
+            member.name = format!("Member {i}");
+            member
+        })
+        .collect();
+    hub.update(cx, |hub, cx| {
+        hub.fleets = [(
+            "aurora".to_owned(),
+            crate::live::FleetLive::new(live(), Some(&snapshot)),
+        )]
+        .into();
+        cx.notify();
+    });
+    settle(cx);
+    install_fleet_api(cx);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(LAST).is_none());
+        assert_eq!(window.find(TOGGLE).label(), Some("Show all 30 members"));
+        window.click(TOGGLE, cx);
+        window.render_frame(cx);
+        window.scroll(
+            "workspace-inspector-body",
+            ScrollDelta::Pixels(point(px(0.), px(-1600.))),
+            cx,
+        );
+    });
+    settle(cx);
+    cx.update(|window, cx| {
+        assert_eq!(
+            window.find(LAST).label(),
+            Some("Open crew member Member 30")
+        );
+        window.click(LAST, cx);
+        assert!(window.find(BACK).visible());
     });
 }
 

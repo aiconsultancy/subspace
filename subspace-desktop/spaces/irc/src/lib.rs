@@ -251,6 +251,7 @@ impl Dashboard for Irc {
 
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active = false;
+        view::inspector::crew::visibility_changed(self, cx);
         self.initiative_menu.dismiss(window, cx);
         if let Some(toolbar) = &self.toolbar {
             toolbar.update(cx, |toolbar, cx| toolbar.dismiss(window, cx));
@@ -410,6 +411,7 @@ impl Dashboard for Irc {
     /// Reconnects every network that is not connected.
     fn reload(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         initiatives::refresh(self, cx);
+        view::inspector::crew::retry(self, cx);
         let Some(hub) = self.hub.clone() else {
             return;
         };

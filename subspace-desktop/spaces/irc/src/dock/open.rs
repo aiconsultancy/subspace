@@ -173,6 +173,7 @@ pub(crate) fn toggle_buffers(board: &mut Irc, cx: &mut Context<Irc>) {
 /// Shows or hides the inspector's member list.
 pub(crate) fn toggle_members(board: &mut Irc, cx: &mut Context<Irc>) {
     board.dock.members.open = !board.dock.members.open;
+    crate::view::inspector::crew::visibility_changed(board, cx);
     super::persist::docks_changed(board, cx);
 }
 

@@ -18,7 +18,7 @@ fn roster(id: &str, progress: &str, checked: u64) -> Roster {
 
 fn assert_progress(state: &DetailState, progress: &str) {
     let shown = state.shown(true).0.unwrap();
-    assert_eq!(state.current_task(&shown).unwrap().progress, progress);
+    assert_eq!(shown.current_task().unwrap().progress, progress);
     assert_eq!(
         shown.contexts[0].current.as_ref().unwrap().progress,
         progress
@@ -60,7 +60,7 @@ fn task_changes_after_a_read_show_the_roster_task_until_the_new_full_detail() {
 }
 
 #[test]
-fn git_only_changes_trigger_a_read_but_keep_full_text_in_the_meantime() {
+fn git_only_changes_keep_full_text_without_triggering_another_read() {
     let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
     let first = state.begin().unwrap();
     let previous = "Checking the navigation marks. ".repeat(160);
@@ -68,11 +68,62 @@ fn git_only_changes_trigger_a_read_but_keep_full_text_in_the_meantime() {
     assert!(!state.update(roster("first", "Checking…", 1), 0));
     assert_eq!(state.begin(), None);
     assert!(state.update(roster("first", "Checking…", 2), 0));
-    let latest = state.begin().unwrap();
+    assert_eq!(state.begin(), None);
     assert_progress(&state, &previous);
-    let full = "Checking the rest of the navigation marks. ".repeat(160);
-    state.finish(latest, Ok(member("first", &full, 2)));
+}
+
+#[test]
+fn checked_at_churn_does_not_discard_a_read_or_queue_a_follow_up() {
+    let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
+    let first = state.begin().unwrap();
+    for checked in 2..=4 {
+        assert!(state.update(roster("first", "Checking…", checked), 0));
+        assert_eq!(state.begin(), None);
+    }
+    let full = "Full first response. ".repeat(200);
+    state.finish(first, Ok(member("first", &full, 1)));
     assert_progress(&state, &full);
+    assert_eq!(state.begin(), None);
+    assert!(state.update(roster("first", "Checking again…", 5), 0));
+    assert!(state.has_full_detail());
+    assert_progress(&state, "Checking again…");
+    let follow_up = state.begin().unwrap();
+    assert!(state.update(roster("first", "Checking again…", 6), 0));
+    assert_eq!(state.begin(), None);
+    let newer = "Full follow-up response. ".repeat(200);
+    state.finish(follow_up, Ok(member("first", &newer, 5)));
+    assert_progress(&state, &newer);
+    assert_eq!(state.begin(), None);
+}
+
+#[test]
+fn a_response_merges_task_text_changed_during_the_read() {
+    let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
+    let first = state.begin().unwrap();
+    assert!(state.update(roster("first", "Checking the next chart…", 2), 0));
+    state.finish(first, Ok(member("first", "Full older progress", 1)));
+    assert!(state.has_full_detail());
+    assert_progress(&state, "Checking the next chart…");
+}
+
+#[test]
+fn a_routine_git_change_keeps_unchanged_full_fields() {
+    let mut bounded = member("first", "Checking…", 1);
+    bounded.contexts[0].git.as_mut().unwrap().branch = Some("Short…".into());
+    let mut state = DetailState::new(Roster::Present(Box::new(bounded.clone())), 0);
+    let read = state.begin().unwrap();
+    let mut full = bounded.clone();
+    full.contexts[0].git.as_mut().unwrap().branch = Some("The complete branch name".into());
+    let git = bounded.contexts[0].git.as_mut().unwrap();
+    git.ahead = Some(2);
+    git.checked_at = 3;
+    assert!(state.update(Roster::Present(Box::new(bounded)), 0));
+    state.finish(read, Ok(full));
+    let shown = state.shown(true).0.unwrap();
+    let git = shown.contexts[0].git.as_ref().unwrap();
+    assert_eq!(git.branch.as_deref(), Some("The complete branch name"));
+    assert_eq!(git.ahead, Some(2));
+    assert_eq!(state.begin(), None);
 }
 
 #[test]
@@ -88,10 +139,13 @@ fn summary_phase_and_progress_changes_each_replace_the_bounded_task_temporarily(
             "phase" => task.phase = "review".into(),
             _ => task.progress = "More work".into(),
         }
-        let expected = task.clone();
+        let mut expected = task.clone();
+        if change != "progress" {
+            expected.progress = "Full chart progress".into();
+        }
         assert!(state.update(Roster::Present(Box::new(live)), 0));
         let shown = state.shown(true).0.unwrap();
-        assert_eq!(state.current_task(&shown), Some(&expected), "{change}");
+        assert_eq!(shown.current_task(), Some(&expected), "{change}");
         assert_eq!(
             shown.contexts[0].current.as_ref(),
             Some(&expected),
@@ -108,14 +162,15 @@ fn directory_revision_invalidates_a_held_detail_and_an_in_flight_read() {
         first,
         Ok(member("first", "Full text from the old address", 1)),
     );
-    assert!(state.update(roster("first", "Checking…", 2), 0));
+    state.rearm();
     let old = state.begin().unwrap();
     assert!(state.update(roster("first", "Checking…", 2), 1));
     assert_progress(&state, "Checking…");
-    assert_eq!(state.begin(), None);
+    let new = state
+        .begin()
+        .expect("new directory does not wait for old I/O");
     state.finish(old, Ok(member("first", "Obsolete address", 2)));
     assert_progress(&state, "Checking…");
-    let new = state.begin().unwrap();
     state.finish(
         new,
         Ok(member("first", "Full text from the new address", 2)),
@@ -128,7 +183,7 @@ fn removal_and_unavailable_roster_win_after_a_change_even_if_a_read_succeeds() {
     let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
     let first = state.begin().unwrap();
     state.finish(first, Ok(member("first", "Full chart progress", 1)));
-    assert!(state.update(roster("first", "Checking…", 2), 0));
+    state.rearm();
     assert_progress(&state, "Full chart progress");
     let pending = state.begin().unwrap();
     assert!(state.shown(false).0.is_none());
@@ -158,6 +213,54 @@ fn missing_route_uses_the_current_roster() {
             "Crew detail is unavailable. Showing the ship's roster data. Older Stargate gateways don't serve crew detail."
         )
     );
+    assert!(!state.can_retry());
+    assert_eq!(state.retry_delay(), None);
+    state.queue();
+    assert_eq!(
+        state.begin(),
+        None,
+        "reloading does not retry a missing route"
+    );
+}
+
+#[test]
+fn a_transient_failure_can_be_retried_without_roster_changes() {
+    let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
+    let first = state.begin().unwrap();
+    state.finish(first, Err(Error::Busy(Some(6))));
+    assert!(state.can_retry());
+    assert!(state.shown(true).1.unwrap().contains("Could not load"));
+    assert_eq!(state.begin(), None);
+    assert_eq!(state.retry_delay(), Some(std::time::Duration::from_secs(6)));
+    state.retry_elapsed();
+    let retry = state.begin().unwrap();
+    assert!(!state.can_retry());
+    assert_eq!(state.begin(), None);
+    state.finish(retry, Ok(member("first", "Full detail after retry", 1)));
+    assert_progress(&state, "Full detail after retry");
+    assert!(state.shown(true).1.is_none());
+}
+
+#[test]
+fn retry_backoff_is_bounded_and_does_not_poll_early() {
+    let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
+    for seconds in [1, 2, 4, 8, 16] {
+        let flight = state.begin().unwrap();
+        state.finish(flight, Err(Error::Unreachable));
+        assert_eq!(
+            state.retry_delay(),
+            Some(std::time::Duration::from_secs(seconds))
+        );
+        state.retry_elapsed();
+    }
+    let flight = state.begin().unwrap();
+    state.finish(flight, Err(Error::Unreachable));
+    assert_eq!(state.retry_delay(), None);
+    assert!(state.can_retry());
+    state.rearm();
+    let manual = state.begin().unwrap();
+    state.finish(manual, Err(Error::Busy(Some(31))));
+    assert_eq!(state.retry_delay(), None);
 }
 
 #[test]
@@ -165,7 +268,7 @@ fn refresh_not_found_switches_from_full_detail_to_the_roster() {
     let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
     let first = state.begin().unwrap();
     state.finish(first, Ok(member("first", "Full chart progress", 1)));
-    assert!(state.update(roster("first", "Checking…", 2), 0));
+    state.rearm();
     assert_progress(&state, "Full chart progress");
     let refresh = state.begin().unwrap();
     state.finish(refresh, Err(Error::NotFound));

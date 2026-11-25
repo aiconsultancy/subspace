@@ -183,11 +183,15 @@ fn untrusted_names_and_tasks_are_bounded_one_line_text() {
     detail.crew_members.extend(crowd);
     snapshot.ships.insert("aurora-lyra".into(), detail);
     let ship = ship::of(&snapshot, "aurora-lyra").unwrap();
-    assert_eq!(ship.members.len(), MAX_CREW, "the list is bounded");
+    assert_eq!(
+        ship.members.len(),
+        MAX_CREW + 9,
+        "the full roster is reachable"
+    );
     assert_eq!(
         ship.crew.map(|(_, people)| people),
         Some(MAX_CREW + 9),
-        "counts are not"
+        "the compact view does not change counts"
     );
     let wren = &ship.members[0];
     assert!(wren.name.starts_with("<b>WrenWren"), "markup stays text");

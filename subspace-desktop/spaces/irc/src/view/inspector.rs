@@ -194,6 +194,7 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
             move |index, _, _, cx| {
                 _ = board_entity.update(cx, |board, cx| {
                     board.inspector_tab = InspectorTab::at(index);
+                    crew::visibility_changed(board, cx);
                     // Shown now: ask for what In play here lists.
                     want_in_play(board, cx);
                     cx.notify();

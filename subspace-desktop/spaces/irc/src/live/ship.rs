@@ -14,7 +14,7 @@ pub(crate) const MAX_NAME_CHARS: usize = 32;
 pub(crate) const MAX_TASK_CHARS: usize = 120;
 /// The most characters of a task's phase or a model's name shown.
 pub(crate) const MAX_WORD_CHARS: usize = 40;
-/// The most crew lines a ship keeps; its figures still count everyone.
+/// The most crew lines shown before expanding the Ship tab's roster.
 pub(crate) const MAX_CREW: usize = 24;
 
 /// One ship, as the Fleet API reports it.
@@ -152,12 +152,10 @@ fn busy(member: &CrewMember) -> bool {
     member.current_task().is_some()
 }
 
-/// The crew's lines, the working first, at most [`MAX_CREW`]: chosen
-/// before any is formatted, however large the crew.
+/// The complete roster, working members first, with bounded row text.
 fn lines(members: &[CrewMember]) -> Vec<CrewLine> {
     let mut chosen: Vec<&CrewMember> = members.iter().collect();
     chosen.sort_by_key(|member| Reverse(busy(member)));
-    chosen.truncate(MAX_CREW);
     chosen.into_iter().map(line).collect()
 }
 

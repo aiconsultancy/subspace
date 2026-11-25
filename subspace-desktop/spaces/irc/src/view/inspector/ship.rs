@@ -10,7 +10,8 @@ use gpui_kit::{
     AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement as _,
     ParentElement as _, Styled as _, TestSupportExt as _,
 };
-use subspace_client_fleet::model::Activity;
+use subspace_client_fleet::{FleetApi, model::Activity};
+use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::avatar::{self, AgentIcons, AgentRank};
 use subspace_framework::dashboard::badge::Pill;
 use subspace_framework::dashboard::{Tokens, Tone, dates, feedback, truncated, workspace};
@@ -196,8 +197,24 @@ fn crew_section(
             ))
             .into_any_element();
     }
+    let fleet = fleet.filter(|_| FleetApi::current(cx).is_some());
+    let members = crew::visible_members(ship, focus.show_all);
+    let toggle = (ship.members.len() > crate::live::ship::MAX_CREW).then(|| {
+        let label = if focus.show_all {
+            "Show fewer members".to_owned()
+        } else {
+            format!("Show all {} members", ship.members.len())
+        };
+        action_button("irc-crew-toggle-roster", Intent::Quiet, None, label).on_click(cx.listener(
+            |board, _, _, cx| {
+                board.inspector_crew_focus.show_all = !board.inspector_crew_focus.show_all;
+                cx.notify();
+            },
+        ))
+    });
     section
-        .children(ship.members.iter().map(|member| {
+        .children(toggle)
+        .children(members.iter().map(|member| {
             let since = member.since.map(|at| age(at, now)).unwrap_or_default();
             crew::list::row(focus, member, (ship, fleet), since, cx)
         }))
