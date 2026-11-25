@@ -54,12 +54,27 @@ content. The PRs Space’s GitHub path keeps its own account, links and marks.
   the view without a GitHub account. The capture Fleet API serves Wren’s
   paged chart diff, Talon’s clean checkout and Corvin’s unavailable checkout.
   The capture-only `link:` step opens the native PRs viewer without the
-  separate Channels control. Screenshot evidence remains pending.
+  separate Channels control.
 - Progressive file-list display and a shared patch cache budget are SUB-67
   follow-ups, deferred from this change under STAR decision `01c2e208`.
 - An empty HTTP 404 means either the checkout is unavailable or the gateway
   predates the route. A successful empty snapshot means no changes, including
   on an unborn branch.
+
+## Screenshot evidence
+
+Linux native captures use the fictional Aurora Fleet API. Wren’s six-file
+tree combines two successful file-list requests.
+
+- Wren: [first patch page](evidence/01-text-first.png),
+  [continued patch](evidence/02-text-complete.png) and
+  [full-line reader](evidence/03-full-line.png).
+- Wren: [new PNG preview](evidence/04-png-new.png) and
+  [old PNG preview](evidence/05-png-old.png).
+- Wren: removed binary, [first hex page](evidence/06-hex-first.png) and
+  [last hex page](evidence/07-hex-last.png).
+- Talon: [no changed files](evidence/08-empty.png) (HTTP 200).
+- Corvin: [diff unavailable](evidence/09-unavailable.png) (HTTP 404).
 
 ## Board checklist: `github`
 
@@ -79,5 +94,5 @@ content. The PRs Space’s GitHub path keeps its own account, links and marks.
 - **Navigation and diagnostics:** the audit lists the broker responder.
   Navigation and Back carry IDs only; errors omit paths and diff content.
 - **Verification:** fixture tests cover HTTP paging, event decoding and
-  opening the viewer through its route. Visual capture remains pending as
-  noted above.
+  opening the viewer through its route. The native captures above show the
+  paged diff, readers and distinct empty states.
