@@ -1,6 +1,6 @@
 //! Review fixes: a `SendAllTogether` the server's limits refuse, Enter
 //! again while queued, a missing or expired upload uploads afresh only on
-//! an explicit send, and "Send as attachment…" waits for earlier files.
+//! an explicit send, and "Attach draft as Markdown" waits for earlier files.
 use super::super::completion::{composer, text};
 use super::connect;
 use super::tray::{
