@@ -1,0 +1,253 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createBudget } from "../src/budget.js";
+import { createPager, PagerError, splitBounded, stepPart } from "../src/pager.js";
+import { splitUtf8, utf8Length } from "../src/utf8.js";
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 1));
+
+/**
+ * A source paged by cursor, as a crew diff's patch is: each read returns up
+ * to `size()` bytes from the cursor (a UTF-16 offset) and the next cursor.
+ * Every reader stops itself after `max` reads, so a pager that loops fails
+ * the test instead of growing.
+ */
+function cursorSource(text, { size = () => 100, max = 200, hold = null } = {}) {
+  const reads = [];
+  const read = async ({ part, cursor, signal }) => {
+    reads.push({ part, cursor });
+    if (reads.length > max) throw new Error("runaway read");
+    const from = cursor ?? 0;
+    const [data] = splitUtf8(text.slice(from), size());
+    const next = from + data.length < text.length ? from + data.length : null;
+    const reply = { data, next };
+    if (hold?.(part, reads.length)) return new Promise((resolve) => hold.release.push(() => resolve(reply)));
+    void signal;
+    return reply;
+  };
+  return { read, reads };
+}
+
+/** Read every part in order with Next, joining them. */
+async function readAll(pager, limit = 100) {
+  await pager.open("first");
+  const out = [pager.view.data];
+  for (let i = 0; pager.view.hasNext; i += 1) {
+    assert.ok(i < limit, "Next ends");
+    await pager.open("next");
+    out.push(pager.view.data);
+  }
+  return out.join("");
+}
+
+test("pager: stepPart stays within the parts", () => {
+  assert.equal(stepPart("first", 3, 5), 0);
+  assert.equal(stepPart("previous", 0, 5), 0);
+  assert.equal(stepPart("next", 4, 5), 4);
+  assert.equal(stepPart("last", 1, 5), 4);
+  assert.equal(stepPart(9, 1, 5), 4);
+  assert.equal(stepPart("next", 0, 1), 0);
+  assert.equal(stepPart("sideways", 2, 5), 2);
+});
+
+test("pager: splitBounded keeps every window within its bytes and lines, and joins exactly", () => {
+  const text = `${"ünï ✓ 🛰\n".repeat(500)}${"x".repeat(3000)}\n\n\n`;
+  const windows = splitBounded(text, { maxBytes: 1000, maxLines: 40 });
+  assert.equal(windows.join(""), text);
+  assert.ok(windows.every((window) => utf8Length(window) <= 1000));
+  assert.ok(windows.every((window) => window.split("\n").length - (window.endsWith("\n") ? 1 : 0) <= 40));
+  assert.ok(windows.every((window) => !/^[\uDC00-\uDFFF]/.test(window) && !/[\uD800-\uDBFF]$/.test(window)), "split between code points");
+  // A line longer than the byte bound is split too: the bound is never exceeded.
+  assert.ok(splitBounded("y".repeat(5000), { maxBytes: 1000, maxLines: 1 }).every((window) => window.length === 1000));
+  assert.deepEqual(splitBounded("", { maxBytes: 10 }), [""]);
+});
+
+test("pager: a source paged by cursor reaches every part in order, holding one part within the budget", async () => {
+  const text = "ab✓🛰\n".repeat(400);
+  const budget = createBudget(1000);
+  const { read } = cursorSource(text);
+  const pager = createPager({ budget, key: "a", read, partBytes: 100 });
+  assert.equal(pager.view.hasLast, false, "the last part is not known yet");
+  const joined = await readAll(pager);
+  assert.equal(joined, text, "every byte, nothing repeated");
+  assert.equal(pager.view.count, pager.view.part + 1, "the end is known once reached");
+  assert.ok(budget.used <= 100, "only the part on show is held");
+  // Back to the start and to the end, all known now.
+  await pager.open("first");
+  assert.equal(pager.view.part, 0);
+  await pager.open("previous");
+  assert.equal(pager.view.part, 0);
+  await pager.open("last");
+  assert.equal(pager.view.part, pager.view.count - 1);
+  assert.ok(text.endsWith(pager.view.data));
+});
+
+test("pager: a source paged by number reads any part directly with cursorAt, including the last", async () => {
+  const pages = splitUtf8("0123456789".repeat(50), 64);
+  const asked = [];
+  const pager = createPager({
+    budget: createBudget(10_000),
+    key: "n",
+    partBytes: 64,
+    cursorAt: (part) => part,
+    read: async ({ part, cursor }) => {
+      asked.push(part);
+      if (asked.length > 20) throw new Error("runaway read");
+      const at = cursor ?? 0;
+      return { data: pages[at], next: at + 1 < pages.length ? at + 1 : null, count: pages.length, version: "v1" };
+    },
+  });
+  await pager.open("first");
+  assert.equal(pager.view.hasLast, true);
+  await pager.open("last");
+  assert.equal(pager.view.part, pages.length - 1);
+  assert.equal(pager.view.data, pages.at(-1));
+  await pager.open("previous");
+  assert.equal(pager.view.data, pages.at(-2));
+  assert.deepEqual(asked, [0, pages.length - 1, pages.length - 2], "no part read on the way");
+});
+
+test("pager: a late reply after an eviction is dropped, and the evicted source reads in full, in order, from the start (A3)", async () => {
+  const textA = "A-line ✓\n".repeat(60);
+  const textB = "B".repeat(150);
+  // Room for one part beside the one on show, not for two pagers.
+  const budget = createBudget(250);
+  const release = [];
+  const hold = Object.assign((part) => holding && part === 2, { release });
+  let holding = true;
+  // After its eviction, A's pages come back in another size: boundaries differ.
+  let sizeA = 100;
+  const a = cursorSource(textA, { size: () => sizeA, hold });
+  const b = cursorSource(textB);
+  const changes = { a: 0 };
+  const pagerA = createPager({ budget, key: "a", read: a.read, partBytes: 100, onEvict: () => (changes.a += 1) });
+  const pagerB = createPager({ budget, key: "b", read: b.read, partBytes: 100 });
+  await pagerA.open("first");
+  await pagerA.open("next");
+  // Page 2 of A is held.
+  const late = pagerA.open("next");
+  await settle();
+  assert.equal(release.length, 1);
+  assert.equal(pagerA.view.state, "loading");
+  // Opening B makes room by evicting A, the least recently opened.
+  await pagerB.open("first");
+  assert.equal(changes.a, 1);
+  assert.equal(pagerA.view.state, "evicted");
+  assert.equal(pagerA.view.data, null);
+  assert.equal(pagerA.view.hasNext, false, "no Next that leads nowhere");
+  // The old reply arrives: it neither shows nor moves A's cursor.
+  holding = false;
+  release[0]();
+  await late;
+  assert.equal(pagerA.view.state, "evicted");
+  assert.equal(pagerA.view.data, null);
+  assert.equal(pagerA.view.known, 1);
+  // A again: read from its start, in its new page size, in full and in order.
+  sizeA = 70;
+  const before = a.reads.length;
+  assert.equal(await readAll(pagerA), textA);
+  assert.equal(a.reads[before].cursor, null, "re-read from the start, with no cursor from before");
+  assert.equal(pagerB.view.state, "evicted", "B made room for A in turn");
+  assert.ok(budget.used <= budget.limit);
+  // A → B → A: B's Next is never dead after it comes back.
+  await pagerB.open("next");
+  assert.equal(pagerB.view.part, 0, "an evicted pager starts from its first part");
+  assert.equal(pagerB.view.hasNext, true);
+  await pagerB.open("next");
+  assert.equal(pagerB.view.part, 1);
+});
+
+test("pager: a newer version restarts at its first part and says so; restart forgets it", async () => {
+  let version = 1;
+  let reads = 0;
+  const pager = createPager({
+    budget: createBudget(1000),
+    key: "v",
+    partBytes: 10,
+    read: async ({ part }) => {
+      reads += 1;
+      if (reads > 10) throw new Error("runaway read");
+      if (part === 1 && version === 1) {
+        version = 2;
+        return { data: "v2-part-0", next: 1, version: 2, newer: true };
+      }
+      return { data: `v${version}-part-${part}`, next: part === 0 ? 1 : null, version };
+    },
+  });
+  await pager.open("first");
+  await pager.open("next");
+  assert.equal(pager.view.part, 0);
+  assert.equal(pager.view.newer, true);
+  assert.equal(pager.view.data, "v2-part-0");
+  assert.equal(pager.view.version, 2);
+  await pager.open("next");
+  assert.equal(pager.view.data, "v2-part-1");
+  await pager.restart();
+  assert.equal(pager.view.newer, false);
+  assert.equal(pager.view.part, 0);
+});
+
+test("pager: a reply that does not advance, is empty before the end or is too large fails, and nothing loops", async () => {
+  const cases = [
+    { reply: (cursor) => ({ data: "x", next: cursor }), why: /does not advance/ },
+    { reply: () => ({ data: "", next: 5 }), why: /does not advance/ },
+    { reply: () => ({ data: "x".repeat(11), next: null }), why: /more than 10/ },
+    { reply: () => ({ next: null }), why: /no content/ },
+  ];
+  for (const { reply, why } of cases) {
+    let reads = 0;
+    const budget = createBudget(1000);
+    const pager = createPager({
+      budget,
+      key: "k",
+      partBytes: 10,
+      read: async ({ cursor }) => {
+        reads += 1;
+        if (reads > 5) throw new Error("runaway read");
+        return reads === 1 ? { data: "first", next: 1 } : reply(cursor);
+      },
+    });
+    await pager.open("first");
+    await pager.open("next");
+    assert.equal(pager.view.state, "failed");
+    assert.ok(pager.view.error instanceof PagerError);
+    assert.match(pager.view.error.message, why);
+    assert.equal(pager.view.data, "first", "the part on show stays");
+    assert.equal(budget.bytes("k"), 5, "charged for what it shows");
+    assert.equal(reads, 2);
+  }
+});
+
+test("pager: room is made before the read starts, and drop discards a reply in flight", async () => {
+  const budget = createBudget(300);
+  let evicted = 0;
+  budget.reserve("other", 250, () => (evicted += 1));
+  const release = [];
+  const pager = createPager({ budget, key: "p", partBytes: 100, read: () => new Promise((resolve) => release.push(() => resolve({ data: "late", next: null }))) });
+  const done = pager.open("first");
+  assert.equal(evicted, 1, "the other entry went before the read was sent");
+  assert.equal(budget.bytes("p"), 100);
+  pager.drop();
+  assert.equal(budget.bytes("p"), 0);
+  release[0]();
+  await done;
+  assert.equal(pager.view.state, "dropped");
+  assert.equal(pager.view.data, null);
+  assert.equal(budget.used, 0);
+});
+
+test("budget: least recently opened first out; a forced floor stays alone; evictions run after the reservation", () => {
+  const budget = createBudget(100);
+  const out = [];
+  budget.reserve("a", 40, (key) => out.push([key, budget.has("c")]));
+  budget.reserve("b", 40, (key) => out.push([key, budget.has("c")]));
+  budget.touch("a");
+  budget.reserve("c", 40, null);
+  assert.deepEqual(out, [["b", true]], "b, the least recently opened, went; c was in place when it was told");
+  assert.equal(budget.reserve("d", 200, null), false);
+  assert.equal(budget.has("d"), false);
+  assert.equal(budget.used, 80, "nothing freed for a reservation that cannot fit");
+  assert.equal(budget.reserve("d", 200, null, { force: true }), false);
+  assert.equal(budget.used, 200, "a forced floor is held alone");
+  assert.deepEqual(out.map(([key]) => key), ["b", "a"]);
+});
