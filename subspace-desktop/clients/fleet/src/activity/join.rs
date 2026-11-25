@@ -12,10 +12,13 @@
 //!    the officer) does the view fetch on a timer instead
 //!    ([`ActivityJoin::set_fleet_state`]).
 //! 3. Apply each waiting or later event whose `seq` is above the
-//!    snapshot's `cursor.seq`, as an upsert by ID; drop the rest.
+//!    snapshot's `cursor.seq`, as an upsert by ID; drop the rest. An event
+//!    at or below the cursor as fetched is covered: it is dropped and
+//!    counts for nothing else.
 //! 4. Fetch again, one fetch at a time, when the stream reconnects or
-//!    closes, when an event's `generation` is not the cursor's, when `seq`
-//!    fails to rise, when an item names a turn the snapshot lacks, or when
+//!    closes, when an event's `generation` is not the cursor's, when the
+//!    `seq` of the live events (those the snapshot does not cover) fails
+//!    to rise, when an item names a turn the snapshot lacks, or when
 //!    the reader fell so far behind that the feed dropped events for it.
 //!
 //! 5. When a fetch fails, keep showing the last snapshot with the error
@@ -33,7 +36,9 @@
 
 use std::time::Duration;
 
-use super::{ActivityChange, ActivityEntry, ActivityTurn, AgentActivity, AgentActivityEvent};
+use super::{
+    ActivityChange, ActivityCursor, ActivityEntry, ActivityTurn, AgentActivity, AgentActivityEvent,
+};
 use super::{TurnStatus, TurnSummary};
 use crate::{Error, FleetState, Link};
 
@@ -93,6 +98,9 @@ pub enum Fetch {
 /// One officer's turns, kept current from the snapshot and the events.
 pub struct ActivityJoin {
     snapshot: Option<AgentActivity>,
+    /// The cursor of the last snapshot fetched, which events applied to it
+    /// never move: an event at or below it is covered by what was fetched.
+    fetched: Option<ActivityCursor>,
     error: Option<Error>,
     connection: Option<u64>,
     refused: bool,
@@ -156,6 +164,7 @@ impl ActivityJoin {
     pub fn new() -> Self {
         Self {
             snapshot: None,
+            fetched: None,
             error: None,
             connection: None,
             refused: false,
@@ -267,6 +276,7 @@ impl ActivityJoin {
         let moved = connection != self.connection;
         match result {
             Ok(snapshot) => {
+                self.fetched = Some(snapshot.cursor.clone());
                 self.snapshot = Some(snapshot);
                 self.error = None;
                 self.failures = 0;
@@ -306,15 +316,29 @@ impl ActivityJoin {
         };
     }
 
-    /// One event off the stream: checks that `seq` rises, then waits for
-    /// the fetch or applies it.
+    /// One event off the stream: drops it when the fetched snapshot covers
+    /// it, else checks that `seq` rises among the live events, then waits
+    /// for the fetch or applies it. A covered event is no live event, so
+    /// it neither fetches again nor moves the `seq` the next must pass.
     fn take(&mut self, event: AgentActivityEvent) -> bool {
+        if self.covered(&event) {
+            return false;
+        }
         if self.stream_seq.is_some_and(|last| event.seq <= last) {
             self.drop_held();
             self.want();
         }
         self.stream_seq = Some(event.seq);
         self.take_settled(event)
+    }
+
+    /// Whether the last snapshot fetched already holds `event`: of its
+    /// generation, at or below its cursor as fetched, whatever events
+    /// moved the cursor since.
+    fn covered(&self, event: &AgentActivityEvent) -> bool {
+        self.fetched
+            .as_ref()
+            .is_some_and(|cursor| cursor.generation == event.generation && event.seq <= cursor.seq)
     }
 
     /// Waits for the fetch while one is wanted, runs or failed; else

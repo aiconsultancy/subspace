@@ -90,6 +90,22 @@ fn a_seq_that_fails_to_rise_fetches_again() {
     assert_eq!(join.fetch(), Fetch::Idle);
 }
 
+/// An event the snapshot already covers is no live event: it neither
+/// fetches again nor lowers the `seq` the live events must pass, though a
+/// live event moved the cursor past it.
+#[test]
+fn an_event_the_snapshot_covers_never_fetches_again() {
+    let mut join = joined();
+    join.absorb(news(Some(1), vec![item_event("g1", 12, "i4", "live")], 1));
+    assert_eq!(join.fetch(), Fetch::Idle);
+    join.absorb(news(Some(1), vec![item_event("g1", 8, "i4", "covered")], 2));
+    assert_eq!(join.fetch(), Fetch::Idle, "the snapshot at 9 covers 8");
+    assert_eq!(words_of(&join, "i4").as_deref(), Some("live"));
+    // The live events' seq still has to rise past 12.
+    join.absorb(news(Some(1), vec![item_event("g1", 12, "i4", "again")], 3));
+    assert_eq!(join.fetch(), Fetch::Wanted);
+}
+
 #[test]
 fn a_new_generation_fetches_again_and_its_events_wait() {
     let mut join = joined();
