@@ -222,7 +222,7 @@ test("api: paged items join in full, and a seq change between pages starts again
   assert.equal(item.seq, 11);
   assert.deepEqual(item.item, JSON.parse(v2), "the whole item, not cut");
   assert.equal(item.item.content[0].text.length, 100);
-  await assert.rejects(readPagedItem(async (page) => ({ seq: page, page, pages: 2, bytes: 1, data: "x" }), 2), /kept changing/);
+  await assert.rejects(readPagedItem(async (page) => ({ seq: page, page, pages: 2, bytes: 2, data: "x" }), { restarts: 2 }), /kept changing/);
 });
 
 test("api: joined pages must have the item's UTF-8 byte length, or the read is invalid", async () => {
@@ -799,15 +799,17 @@ test("fix 1: a source change drops the old snapshot and page reads, and no later
 });
 
 test("fix 2: a page claiming more than it may hold is refused before another page is read", async () => {
-  const reads = [];
+  let reads = 0;
   await assert.rejects(
     readPagedItem(async (page) => {
-      reads.push(page);
+      reads += 1;
+      assert.equal(reads, 1, "reject the oversized item on its first read");
+      assert.equal(page, 0);
       return { agent: "a", turn: "t", item: "i", seq: 1, page, pages: 1_000_000, bytes: 60_000_000_000, data: "{" };
     }, { agent: "a", turn: "t", item: "i" }),
     InvalidResponseError,
   );
-  assert.deepEqual(reads, [0], "no further reads");
+  assert.equal(reads, 1);
   const page = (fields) => async (n) => ({ agent: "a", turn: "t", item: "i", seq: 1, page: n, pages: 1, bytes: 2, data: "{}", ...fields });
   await assert.rejects(readPagedItem(page({ pages: 0 })), /not a valid page/);
   await assert.rejects(readPagedItem(page({ bytes: 70_000 })), /claims 70000 bytes in 1 pages/);
@@ -819,6 +821,22 @@ test("fix 2: a page claiming more than it may hold is refused before another pag
   await assert.rejects(client.activityItemPage("a", "t", "i", 0), /over 524288 bytes/);
   const declared = recordingClient(() => ({ ok: true, status: 200, headers: { get: (name) => (name === "content-length" ? String(MAX_PAGE_BODY_BYTES + 1) : null) }, json: async () => assert.fail("decoded") }));
   await assert.rejects(declared.client.activityItemPage("a", "t", "i", 0), /over 524288 bytes/);
+});
+
+test("api: a multi-page item must have enough bytes for its pages and make progress", async () => {
+  const reads = [];
+  const readPage = async (page, fields) => {
+    assert.ok(reads.length < 2, "stop acquiring pages at the first invalid page");
+    reads.push(page);
+    return { seq: 9, page, ...fields };
+  };
+
+  await assert.rejects(readPagedItem((page) => readPage(page, { pages: 3, bytes: 2, data: "{" })), /claims 3 pages for 2 bytes/);
+  assert.deepEqual(reads, [0]);
+
+  reads.length = 0;
+  await assert.rejects(readPagedItem((page) => readPage(page, { pages: 3, bytes: 3, data: page === 0 ? "{" : "" })), /Page 1 of the item is empty/);
+  assert.deepEqual(reads, [0, 1]);
 });
 
 test("fix 2: one item read at a time, and a large item shows in parts that reach its last byte", async () => {

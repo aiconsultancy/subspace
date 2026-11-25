@@ -36,7 +36,7 @@ export const MAX_TURNS = 16;
 export const MAX_BUFFER = 512;
 export const MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 /** The most one view keeps of items read in full; the least recently opened go first. */
-export const MAX_LOADED_BYTES = 64 * 1024 * 1024;
+export const MAX_LOADED_BYTES = MAX_ITEM_BYTES;
 /** How often a gateway that refuses the subscription is read instead. */
 export const POLL_MS = 5_000;
 /** Backoff for reading the snapshot again after a failure: 1, 2, 4 … 30 s. */
