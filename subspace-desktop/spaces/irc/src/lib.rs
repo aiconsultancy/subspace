@@ -255,6 +255,8 @@ impl Dashboard for Irc {
             toolbar.update(cx, |toolbar, cx| toolbar.dismiss(window, cx));
         }
         join::close(self, window, cx);
+        // The turns close with the Space: no watch or read outlives it.
+        view::inspector::activity::close(self, cx);
         view::publish_visible(self, cx);
         live::watch::sync(self, cx);
     }
