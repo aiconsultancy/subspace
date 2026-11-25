@@ -408,6 +408,8 @@ class InstalledFleet(unittest.TestCase):
                                        side_effect=lambda cfg: {person["id"]: 4096 + index
                                                                 for index, person in enumerate(cfg["members"])}))
         self.start(patch.object(sys, "stdout", io.StringIO()))
+        # The engines' limits are sized from the VM's memory: a 64 GB VM, as /proc/meminfo reports one.
+        self.start(patch.object(runtime.memory, "total_memory", return_value=64154))
         self.store = sessions.SessionRecord(self.etc / "sessions", "orion")
         self.workspace = str(self.state / "agents/orion/workspace/project")
 
@@ -1087,6 +1089,69 @@ class InstalledFleet(unittest.TestCase):
                 self.assertRaisesRegex(runtime.Invalid, "has not got it"):
             runtime.render(cfg, extra)
         self.assertFalse((self.etc / "stargate.json").exists())
+
+    def test_memory_limits_reach_every_unit_and_hand_made_ones_stay_and_are_reported(self):
+        config, secrets = crew_fleet("orion", "vega")
+        config["captains"][1].update(harness={"type": "claude-sdk", "family": "claude"},
+                                     crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        config["memory"] = {"captain": {"max": "24G"}, "rearAdmiral": {"tasksMax": 1024}}
+        config["captains"][0]["memory"] = {"max": "28G", "swapMax": 0}
+        # Limits set by hand before this installer had its own: systemctl set-property, and a drop-in file.
+        root = Path(self.root.name)
+        control, system = root / "system.control", root / "system"
+        orion = "subspace-fleet-engine-orion.service"
+        hand = {
+            control / f"{orion}.d/50-MemoryMax.conf": f"[Service]\nMemoryMax={20 * 1024 ** 3}\n",
+            control / f"{orion}.d/50-TasksMax.conf": "[Service]\nTasksMax=4096\n",
+            system / f"{orion}.d/60-oom.conf": "[Service]\nOOMPolicy=continue\n",
+        }
+        for path, text in hand.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.start(patch.object(runtime.memory, "DROPIN_DIRS", (control, system)))
+        self.render(config, secrets)
+
+        def service(unit):
+            return (self.systemd / unit).read_text().splitlines()
+
+        # The officer's own setting, its role's, the sizing: each unit has its officer's limits.
+        self.assertEqual(service(orion)[-8:-3], ["OOMPolicy=continue", "MemoryHigh=25G", "MemoryMax=28G",
+                                                  "MemorySwapMax=0", "TasksMax=4096"])
+        # A Claude Agent SDK captain's work runs in its own gateway, which takes the captain's limits.
+        self.assertIn("MemoryMax=24G", service("subspace-fleet-gateway-agent-vega.service"))
+        self.assertIn("MemoryHigh=21G", service("subspace-fleet-gateway-agent-vega.service"))
+        self.assertIn("TasksMax=1024", service("subspace-fleet-engine-atlas.service"))
+        self.assertIn("MemoryMax=4G", service("subspace-fleet-engine-atlas.service"))
+        # The shared gateway has no cap and a lowered OOM score.
+        gateway = service("subspace-fleet-gateway.service")
+        self.assertIn("OOMScoreAdjust=-500", gateway)
+        self.assertFalse([line for line in gateway if line.startswith(("Memory", "TasksMax", "OOMPolicy"))])
+        # The hand-made limits are neither removed nor loosened nor repeated: the installer writes no drop-in.
+        self.assertEqual({path: path.read_text() for path in hand}, hand)
+        self.assertEqual(sorted(path for path in root.rglob("*.conf") if path.is_file()), sorted(hand))
+        # The dry run and the summary say which win, against the installer's values, and how to hand them over.
+        with patch.object(runtime.memory, "swap_state", return_value={
+                "active": [{"name": "/swapfile", "size": 8192, "used": 0}], "configured": [], "agent": None,
+                "filesystem": "ext4", "mount": "/", "free": 102400, "swappiness": 10,
+                "swappinessFiles": [(Path("/etc/sysctl.d/99-swap.conf"), "10")], "own": False, "ownSettings": False}):
+            lines = runtime.memory_lines(runtime.validate(config, secrets))
+        [entry] = [line for line in lines if line.startswith("  orion: ")]
+        self.assertEqual(entry, f"  orion: MemoryMax=20G (the installer's: 28G), TasksMax=4096 in {control / orion}.d; "
+                                f"OOMPolicy=continue in {system / orion}.d/60-oom.conf.")
+        self.assertEqual(lines[-3:-1], [f"  sudo rm -- {control / orion}.d/50-MemoryMax.conf "
+                                        f"{control / orion}.d/50-TasksMax.conf {system / orion}.d/60-oom.conf",
+                                        "  sudo systemctl daemon-reload"])
+        self.assertEqual(lines[-1], "Swap: this VM already has swap: /swapfile (8 GiB). The kernel's vm.swappiness is "
+                                    "10, set to 10 in /etc/sysctl.d/99-swap.conf, which the installer leaves.")
+        # After the install, the summary says what the VM has, once.
+        with patch.object(runtime.memory, "swap_state", return_value={
+                "active": [{"name": "/swapfile", "size": 8192, "used": 512}], "configured": [], "agent": None,
+                "filesystem": "ext4", "mount": "/", "free": 102400, "swappiness": 10, "swappinessFiles": [],
+                "own": False, "ownSettings": True}):
+            summary = runtime.memory_lines(runtime.validate(config, secrets), installed=True)
+        self.assertEqual(summary[-1], "Swap: this VM has swap: /swapfile, 8 GiB with 512 MiB in use. The kernel's "
+                                      "vm.swappiness is 10, the installer's setting "
+                                      "(/etc/sysctl.d/60-subspace-fleet-swap.conf), so it swaps only under pressure.")
 
     def test_the_default_modes_render_byte_for_byte_as_before(self):
         """The modes that existed before the hosted API render exactly what they rendered then, and a fleet with

@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
+import memory
 from network import rules
 from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions, provision_role
 from roles import role_documents
@@ -260,7 +261,7 @@ def source(value, label, repo, ref=None):
 def member(value):
     require(not isinstance(value, dict) or "crewGitHubApps" not in value,
             "Remove crewGitHubApps: crew run as their captain and commit and push with the captain's githubApp.")
-    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames crewIds serviceTokenClientId sessionRoot slack", ["id", "name"])
+    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames crewIds serviceTokenClientId sessionRoot slack memory", ["id", "name"])
     pattern(value["id"], r"[a-z][a-z0-9-]{0,19}", "member ID")
     require(not value["id"].startswith("fleet-"), "Member IDs cannot start with fleet-.")
     require(value["id"] != SENTRY_TOKEN[0], "The medical member ID is reserved for integration credentials.")
@@ -290,6 +291,14 @@ def member(value):
     if "slack" in value:
         officer_slack(value["slack"], value["id"])
     return value
+
+
+def memory_config(parse, *args):
+    """fleet.json's memory settings (lib/memory.py), refused as invalid configuration."""
+    try:
+        return parse(*args)
+    except memory.Refused as error:
+        raise Invalid(str(error)) from None
 
 
 def github_app(value):
@@ -1018,7 +1027,7 @@ def officer_names(officers, naming):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
     naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
@@ -1064,7 +1073,8 @@ def validate(config, credentials, check_files=True):
         role = "captain" if index else "rear_admiral"
         officer = {key: val for key, val in person.items() if key not in ("crew", "crewNames", "crewIds")}
         agents.append({**officer, "role": role, "channel": room, "crew": [],
-                       "harness": harness_config(person.get("harness", {}), hulls[role])})
+                       "harness": harness_config(person.get("harness", {}), hulls[role]),
+                       "memory": memory_config(memory.limits, person.get("memory", {}), f"{person['id']}'s memory")})
         if role != "captain":
             continue
         crew_names = person.get("crewNames", {})
@@ -1245,6 +1255,7 @@ def validate(config, credentials, check_files=True):
         "passwords": passwords, "operatorPassword": operator_password, "token": token, "listeners": listeners,
         "historyPassword": history_password(irc, private),
         "captainTools": captain_tools,
+        "memory": memory_config(memory.config, cfg.get("memory", {})),
     }
 
 
@@ -1985,7 +1996,8 @@ def publish_ready(pins):
             sessions.write_durable(marker, f"{session_id}\n")
 
 
-def render_engine(cfg, person, home, workspace, engine_port, seed, documents, session_id, answers_offers=False):
+def render_engine(cfg, person, home, workspace, engine_port, seed, documents, session_id, answers_offers=False,
+                  limits=None):
     agent_id = person["id"]
     user = f"ss-{agent_id}"
     database_dir = STATE / "sessions" / agent_id
@@ -2061,8 +2073,37 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         f"engine-{agent_id}", f"OpenCode engine {agent_id}",
         f"{APP}/lib/runtime.py engine {settings}", user, [f"{PREFIX}proxy.service"],
         user_paths=[home, database_dir], post_start=f"{APP}/lib/runtime.py share-database {settings}",
+        # The officer's memory and task limits (lib/memory.py); its crew run in this engine, within them.
+        service_options=memory.unit_options(limits) if limits else (),
     )
     return unit, backend, {auth_var: header}, database_dir
+
+
+def memory_plan(cfg, total=None):
+    """Each officer's memory and task limits for this VM (lib/memory.py), from its memory and the fleet's shape."""
+    api = cfg["api"]
+    api_here = bool(api) and not enrolled(cfg) and urlsplit(api["url"]).hostname in {"localhost", LOOPBACK, "::1"}
+    officers = [{"id": person["id"], "role": person["role"], "memory": person["memory"]} for person in cfg["members"]]
+    return memory.plan(cfg["memory"], officers, memory.total_memory() if total is None else total,
+                       api_here=api_here, irc_here=cfg["irc"]["mode"] == "local")
+
+
+def officer_unit(cfg, person):
+    """The unit an officer's work runs in: its OpenCode engine, or a Claude Agent SDK officer's own gateway."""
+    if person["harness"]["type"] == "opencode":
+        return f"{PREFIX}engine-{person['id']}.service"
+    if person["role"] == "rear_admiral":
+        return f"{PREFIX}gateway.service"
+    return f"{PREFIX}gateway-agent-{person['id']}.service"
+
+
+def memory_lines(cfg, installed=False, managed=True):
+    """The dry run's and the install summary's account of memory: each engine's limits and why, limits set by hand,
+    and swap (left alone by an install with --no-systemd, which managed false says)."""
+    result = memory_plan(cfg)
+    officers = {person["id"]: officer_unit(cfg, person) for person in cfg["members"]}
+    return [*memory.plan_lines(result), *memory.hand_made_lines(officers, result),
+            *memory.swap_lines(cfg["memory"]["swap"], memory.swap_state(), result["total"], installed, managed)]
 
 
 def claude_backend(cfg, person, workspace, documents):
@@ -2311,7 +2352,8 @@ def render_proxy(cfg, tokens):
     if "proxy-management-key" in tokens:
         options["management"]["secret-key"] = tokens["proxy-management-key"]
     config_path = save_settings("proxy", options, PROXY)
-    return serve_unit("proxy", "CLIProxyAPI model proxy", f"{APP}/bin/cli-proxy-api --local-model --config {config_path}", PROXY, user_paths=[home])
+    return serve_unit("proxy", "CLIProxyAPI model proxy", f"{APP}/bin/cli-proxy-api --local-model --config {config_path}", PROXY, user_paths=[home],
+                      service_options=memory.SHARED_OPTIONS)
 
 
 def render_view(cfg, session_roots, home):
@@ -2803,6 +2845,8 @@ def render(cfg, extra, prune=False):
     if "reportChannel" not in cfg["integrations"]["usage"]:
         tokens.pop("proxy-management-key", None)
     units = [render_proxy(cfg, tokens)]
+    # Every officer's memory and task limits, sized from this VM's memory and the fleet (lib/memory.py).
+    limits = memory_plan(cfg)["limits"]
     view_home = account(VIEW, STATE / "view")
     for path in (STATE / "agents", STATE / "sessions"):
         directory(path, 0o711)
@@ -2873,7 +2917,8 @@ def render(cfg, extra, prune=False):
             pin = rear_session if person["role"] == "rear_admiral" else pins.get(agent_id)
             unit, backend, headers, database = render_engine(
                 cfg, person, home, workspace, ports[agent_id], seed, documents[agent_id], pin,
-                answers_offers=bool(fleet_control(cfg, person, pin, rear_session, gateway_home)))
+                answers_offers=bool(fleet_control(cfg, person, pin, rear_session, gateway_home)),
+                limits=limits[agent_id])
             databases.append(database)
             units.append(unit)
             engines.append(unit)
@@ -2907,6 +2952,9 @@ def render(cfg, extra, prune=False):
         home = homes[agent_id] if native else gateway_home
         opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "ready": [],
                                          "writable": []})
+        # A Claude Agent SDK officer's own gateway runs its tools, so it takes the officer's limits, as an engine
+        # does; the shared gateway has no cap (memory.SHARED_OPTIONS).
+        opts["service"] = memory.unit_options(limits[agent_id]) if native else memory.SHARED_OPTIONS
         entry = irc_officer(cfg, person, registrations[agent_id])
         check_sign_in(entry, entry["server"])
         if control := fleet_control(cfg, person, pins.get(agent_id), rear_session, gateway_home):
@@ -2974,6 +3022,7 @@ def render(cfg, extra, prune=False):
         units.append(serve_unit(
             group, "Stargate fleet gateway", f"{APP}/lib/runtime.py gateway {runtime_path} start", user, after,
             user_paths=writable, unit_options=[f"ConditionPathExists={path}" for path in options["ready"]],
+            service_options=options["service"],
         ))
     write(ETC / "gateway-checks.json", json_text(checks))
     dash = cfg["dashboard"]
@@ -3258,6 +3307,8 @@ def main(args):
                 print(line)
             for line in policy_lines(cfg):
                 print(line)
+            for line in memory_lines(cfg):
+                print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":
         commission(tail[0] == "true", existing="existing" in tail[1:])
@@ -3267,6 +3318,18 @@ def main(args):
         gateway(tail[0], tail[1:])
     elif verb == "maintenance":
         maintain(tail[0])
+    elif verb == "swap":
+        # Make sure the VM has swap (lib/memory.py). Never fails the install: a problem is reported.
+        cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True),
+                       check_files=False)
+        for line in memory.apply_swap(cfg["memory"]["swap"], memory.swap_state(), memory.total_memory()):
+            print(line)
+    elif verb == "memory-summary":
+        # The install summary: each engine's limits and why, limits set by hand, and the VM's swap.
+        cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True),
+                       check_files=False)
+        for line in memory_lines(cfg, installed=True, managed="no-systemd" not in tail):
+            print(line)
     elif verb == "share-database":
         share_database(tail[0])
     elif verb == "view-config":

@@ -327,7 +327,7 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py memory.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
 done
 install -d -m 0755 "$app/lib/git-hooks"
@@ -351,6 +351,10 @@ if [[ $(readlink "$app/bin/subspace-github") != "$app/lib/github_app.py" ]]; the
 fi
 python3 "$app/lib/runtime.py" render "$etc/fleet.json" "$etc/secrets.json" "$prune_secrets"
 python3 "$app/lib/runtime.py" check
+if ! "$no_systemd"; then
+    # Swap for the engines' swap allowances, before they start (lib/memory.py). A problem is reported, never fatal.
+    python3 "$app/lib/runtime.py" swap || printf 'subspace-fleet: swap could not be checked; the install carries on.\n' >&2
+fi
 if [[ ${source[2]} == local ]]; then
     "$app/lib/runtime.py" irc config --quiet
 fi
@@ -383,4 +387,8 @@ if ! "$no_systemd"; then
 fi
 # With certificates, the fingerprints an IRC operator binds to the officers' accounts. No key material.
 python3 "$app/lib/runtime.py" irc-fingerprints
+# The VM's memory, each engine's limits and why, limits set by hand, and swap: for the operator and their agent.
+summary=(memory-summary)
+if "$no_systemd"; then summary+=(no-systemd); fi
+python3 "$app/lib/runtime.py" "${summary[@]}" || printf 'subspace-fleet: the memory summary could not run.\n' >&2
 printf 'Fleet installation complete.\n'
