@@ -49,6 +49,9 @@ pub(crate) const MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
 const FIRST_RETRY: Duration = Duration::from_secs(1);
 /// The longest wait before a retry, `Retry-After` included.
 const MAX_RETRY: Duration = Duration::from_secs(30);
+/// The most times the first wait doubles: 32 seconds, capped at
+/// [`MAX_RETRY`].
+const MAX_DOUBLINGS: u32 = 5;
 
 /// What the feed holds for a reader of one officer's events since it last
 /// read ([`crate::FleetApi::activity_news`]).
@@ -142,6 +145,7 @@ impl ActivityJoin {
     /// ([`Link::Polling`]) lets a fetch start without one: a stream that is
     /// connecting or reconnecting is waited for, so the snapshot never
     /// starts before the events it must join with.
+    // qual:allow(dry, boilerplate) reason: "Reads or sets one field without opening the join's state to writes that skip its rules."
     pub fn set_fleet_state(&mut self, state: &FleetState) {
         self.polling = *state == FleetState::Followed(Link::Polling);
     }
@@ -199,7 +203,7 @@ impl ActivityJoin {
         if self.fetch != Fetch::Failed {
             return None;
         }
-        let doublings = self.failures.saturating_sub(1).min(5);
+        let doublings = self.failures.saturating_sub(1).min(MAX_DOUBLINGS);
         let backoff = FIRST_RETRY.saturating_mul(1 << doublings).min(MAX_RETRY);
         match self.error? {
             Error::NotFound => None,
