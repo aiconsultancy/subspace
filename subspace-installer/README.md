@@ -649,9 +649,60 @@ server password and firewall identity, so a captain and its crew cannot read
 the rear admiral's or another captain's files, and the agents still cannot
 reach operator services or the cloud metadata service.
 
-The base tools include Git, Bun, a C/C++ build toolchain, and system Python with
-virtual environments. Mise installs Node 24 by default; the
-[toolchains](#toolchains) the repositories need come on top.
+The base tools include Git, Bun, a C/C++ build toolchain, system Python with
+virtual environments, and the [screenshot tools](#screenshots). Mise installs
+Node 24 by default; the [toolchains](#toolchains) the repositories need come
+on top.
+
+### Screenshots
+
+Agents always need to take screenshots, of web pages and of desktop apps, so
+every fleet VM gets the means in its base install, whatever its toolchains:
+
+- **A virtual display**: Xvfb (with `xvfb-run` and `xauth`) and working
+  keyboard maps (`x11-xkb-utils`, whose `xkbcomp` Xvfb needs to start, and
+  `xkb-data`), with basic fonts (DejaVu, Liberation, FreeFont, Noto colour
+  emoji and the X core fonts). A desktop app runs under
+  `xvfb-run -a -s "-screen 0 1280x800x24" <app>`.
+- **A headless browser**: Playwright's Chromium and its headless shell, at the
+  revision the pinned Playwright names, installed by root into
+  `/opt/subspace-fleet/browsers`. Its shared libraries come from the
+  distribution's packages, never from Playwright's `--with-deps`.
+- **The Playwright command line**: `playwright` on every officer's and crew
+  member's `PATH` (`/opt/subspace-fleet/bin/playwright`), the pinned
+  Playwright run by a pinned Node from the shared toolchain store, pointed at
+  those browsers. Officers and crew have no outbound network to download a
+  browser, so it never does: `playwright screenshot https://example.com
+  shot.png`, or `playwright screenshot --full-page` for a whole page.
+
+Every version is pinned in one place,
+[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright
+(with its `package-lock.json`, so `npm ci` checks each package's integrity
+hash and runs no package scripts), the Chromium revision that Playwright
+names, the Node that runs it, and the distribution packages for Ubuntu
+24.04 and Debian 12 on amd64 and arm64. An upgrade is a deliberate change
+there, then `npm install --package-lock-only --ignore-scripts` in that
+directory. The installer's dry run says what a run adds, so an existing
+fleet gains the tools on its next run and its dry run says so. A package
+apt does not offer, or a browser download that fails, is reported and does
+not stop the install; the next run tries again.
+
+After every install, the installer checks that a crew member can take one
+screenshot of a local page: as the user of a captain with crew, with its
+tool environment, under `xvfb-run`. It prints `Screenshot check ... PASS` or a
+`WARNING` with what failed, and never fails the install.
+
+A repository's own Playwright downloads its own browsers into the officer's
+`~/.cache/ms-playwright`, which needs network the lockdown does not give
+officers; one pinned to this Playwright version can use the installed
+browsers with `PLAYWRIGHT_BROWSERS_PATH=/opt/subspace-fleet/browsers`.
+
+To do without them, set `"screenshots": false` in `fleet.json` (on a VM set
+up with `subspace-setup`, `/root/fleet/fleet.json`, which setup keeps) and run
+the installer or `sudo subspace-setup` again. Nothing is removed; to remove
+what an earlier run installed, `sudo rm -rf /opt/subspace-fleet/playwright
+/opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright` (the
+distribution packages stay).
 
 ### Toolchains
 
@@ -2165,6 +2216,7 @@ their crew's assignments through `stargate_crew`.
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
 | `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
 | `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
+| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots): Xvfb with keyboard maps, fonts, and Playwright with its Chromium. `false` installs nothing for them and leaves in place what an earlier run installed. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. The rear admiral posts them through `stakeholders.slack` or its own Slack bot, so one of them is required. |
@@ -2361,6 +2413,13 @@ setting together before it changes the fleet, in the dry run and the real
 run alike, so when an upgrade introduces several new settings at once and
 one is refused, none of them is applied.
 
+- **Screenshot tools on every fleet VM.** The next run of an existing fleet
+  installs the [screenshot tools](#screenshots): Xvfb, `x11-xkb-utils`,
+  fonts and the browser's libraries from apt, Node 24 into the shared store
+  if it has not got that version, Playwright into `/opt/subspace-fleet/playwright`
+  and its Chromium into `/opt/subspace-fleet/browsers` (several hundred
+  megabytes), and `playwright` on the officers' `PATH`. The dry run lists
+  what it adds. `"screenshots": false` in `fleet.json` leaves them out.
 - **Officers call the tracker's REST route as `subspace-request`.** On a
   fleet with a hosted API, officers' instructions now name
   `subspace-request` instead of the long Stargate command. The starter

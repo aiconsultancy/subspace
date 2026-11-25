@@ -411,7 +411,9 @@ answer it now.
     is outward-facing: ask for that separately. **Default: yes for a cloud
     or hosted deployment, no for a trial on a local VM.**
 20. **Which toolchains do the repositories need?** The VM has Git, Bun, a
-    C/C++ build toolchain, Python and Node 24; anything else the
+    C/C++ build toolchain, Python, Node 24 and the screenshot tools (Xvfb,
+    fonts and Playwright with its Chromium, which every fleet gets); anything
+    else the
     repositories build or test with (a .NET SDK, Rust, pnpm, Terraform, GUI
     development libraries) must be installed for the officers and crew. Offer
     three answers:

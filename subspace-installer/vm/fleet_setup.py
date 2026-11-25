@@ -1082,7 +1082,7 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
             crew["model"] = model
     # Keep anything the operator added by hand, such as private repositories, GitHub Apps or stakeholders.
     for key in ("harness", "stakeholders", "usage", "medical", "maintenance",
-                "githubPolicy", "dashboard", "proxy", "agentsview"):
+                "githubPolicy", "dashboard", "proxy", "agentsview", "screenshots"):
         if key in previous:
             config[key] = previous[key]
     # Each role's model and effort: this or an earlier run's answer, over one set in fleet.json by hand.

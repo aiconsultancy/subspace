@@ -336,6 +336,12 @@ mapfile -t system_packages < "$scratch/system-packages"
 if (( ${#system_packages[@]} )); then
     ensure_listed_packages required "${system_packages[@]}"
 fi
+# The base screenshot tools' packages (lib/screenshots/package.json): a virtual display with keyboard maps, fonts
+# and the browser's libraries. Unless fleet.json turns screenshots off; one apt cannot install is reported.
+mapfile -t screenshot_packages < "$scratch/screenshot-packages"
+if (( ${#screenshot_packages[@]} )); then
+    ensure_listed_packages optional "${screenshot_packages[@]}"
+fi
 if [[ ${source[2]} == local ]]; then
     install_docker
 fi
@@ -373,8 +379,13 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
+done
+# The screenshot tools' pinned versions, which runtime.py render installs from.
+install -d -m 0755 "$app/lib/screenshots"
+for pins in package.json package-lock.json; do
+    install_file "$here/lib/screenshots/$pins" "$app/lib/screenshots/$pins" 0644
 done
 install -d -m 0755 "$app/lib/git-hooks"
 install_file "$here/lib/git-hooks/pre-push" "$app/lib/git-hooks/pre-push" 0755
@@ -429,6 +440,8 @@ if ! "$no_systemd"; then
 fi
 # With certificates, the fingerprints an IRC operator binds to the officers' accounts. No key material.
 python3 "$app/lib/runtime.py" irc-fingerprints
+# A crew member takes one screenshot of a local page; a failure is reported, never fatal.
+python3 "$app/lib/runtime.py" check-screenshots || printf 'subspace-fleet: the screenshot check could not run.\n' >&2
 if "$verify_toolchains"; then
     # Reports each repository's result; a failed check never fails the install.
     python3 "$app/lib/runtime.py" verify-toolchains || printf 'subspace-fleet: the toolchain check could not run.\n' >&2

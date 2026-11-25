@@ -29,6 +29,7 @@ from network import rules
 from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions, provision_role
 from roles import role_documents
 from roles import provision_workspace, workspace_documents
+import screenshots
 import sessions
 import standard_channels
 import toolchains
@@ -1020,7 +1021,7 @@ def officer_names(officers, naming):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains systemPackages maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains systemPackages screenshots maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
     naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
@@ -1240,6 +1241,8 @@ def validate(config, credentials, check_files=True):
         "integrations": integrations, "operators": operators, "protectedBranches": protected,
         "toolchains": toolchain_config(cfg.get("toolchains", {})),
         "systemPackages": toolchains.package_config(cfg.get("systemPackages", [])),
+        # The base screenshot tools (lib/screenshots.py): on unless fleet.json says "screenshots": false.
+        "screenshots": boolean(cfg.get("screenshots", True)),
         "maintenance": maintenance_config(cfg.get("maintenance", {})),
         "stargate": {**source({key: stargate[key] for key in ("repo", "ref") if key in stargate},
                               "Stargate source", STARGATE_REPO, STARGATE_REF), "api": stargate_api},
@@ -2445,6 +2448,37 @@ def verify_toolchains():
         print(f"Toolchain check of {repo_id}, as {user} in {directory}: {'PASS' if passed else 'FAIL'} ({report}).")
 
 
+def install_screenshots(cfg):
+    """The base screenshot tools (lib/screenshots.py), as root, unless fleet.json turns them off. A problem is
+    reported and never stops the install; the next run tries again, and the installer's screenshot check says
+    whether a crew member can take one."""
+    if not cfg["screenshots"]:
+        return
+    for problem in screenshots.install(screenshots.pins(), toolchains.root_environment(cfg["toolchains"])):
+        print(f"WARNING: the screenshot tools are not complete: {problem}. The install carries on; the next run "
+              "tries again.", file=sys.stderr)
+
+
+def check_screenshots():
+    """The installer's screenshot check: one screenshot of a local page as a crew member would take it, as the
+    user of a captain with crew (else any captain, else the rear admiral), with its tool environment. Reports pass
+    or fail, and never fails the install."""
+    cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True),
+                   check_files=False)
+    if not cfg["screenshots"]:
+        print("Screenshot check: screenshots are off (\"screenshots\": false in fleet.json).")
+        return
+    captains = [person for person in cfg["members"] if person["role"] == "captain"]
+    person = next((captain for captain in captains if captain["crew"]), captains[0] if captains else cfg["members"][0])
+    home, user = STATE / "agents" / person["id"], f"ss-{person['id']}"
+    passed, report = screenshots.check(user, home, officer_tool_environment(cfg, person, home))
+    if passed:
+        print(f"Screenshot check, as {user}: PASS ({report}).")
+    else:
+        print(f"WARNING: screenshot check, as {user}: FAIL ({report}). Officers and crew may not be able to take "
+              "screenshots; the install carries on. See the installer README, 'Screenshots'.")
+
+
 def maintenance_units(cfg):
     settings = cfg["maintenance"]
     actions = {
@@ -3064,6 +3098,7 @@ def render(cfg, extra, prune=False):
     units.insert(0, render_firewall(cfg))
     write(ETC / "toolchains.toml", toolchains.mise_config(cfg["toolchains"]), 0o644)
     install_toolchains(cfg, homes)
+    install_screenshots(cfg)
     units.extend(maintenance_units(cfg))
 
     path = ETC / "units"
@@ -3299,6 +3334,9 @@ def main(args):
                 (directory / "github-app.pem").write_text(key)
             # fleet.json's systemPackages, validated as Debian package names, which install.sh installs with apt.
             (stage / "system-packages").write_text("".join(f"{name}\n" for name in cfg["systemPackages"]))
+            # The base screenshot tools' packages for this distribution, unless screenshots are off.
+            wanted = screenshots.packages(screenshots.pins(), screenshots.release()) if cfg["screenshots"] else []
+            (stage / "screenshot-packages").write_text("".join(f"{name}\n" for name in wanted))
             sources = [cfg["stargate"]["repo"], cfg["stargate"]["ref"], cfg["irc"]["mode"]]
             if cfg["irc"]["mode"] == "local":
                 sources.extend(cfg["irc"]["compose"][key] for key in ("repo", "ref"))
@@ -3359,6 +3397,8 @@ def main(args):
                 print(line)
             for line in toolchain_plan(cfg):
                 print(line)
+            for line in screenshots.plan_lines(cfg["screenshots"], screenshots.pins(), screenshots.release()):
+                print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":
         commission(tail[0] == "true", existing="existing" in tail[1:])
@@ -3370,6 +3410,8 @@ def main(args):
         maintain(tail[0])
     elif verb == "verify-toolchains":
         verify_toolchains()
+    elif verb == "check-screenshots":
+        check_screenshots()
     elif verb == "share-database":
         share_database(tail[0])
     elif verb == "view-config":

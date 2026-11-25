@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
 import fleet_setup  # noqa: E402
 import runtime  # noqa: E402
+import screenshots  # noqa: E402
 import toolchains  # noqa: E402
 from toolchains import Invalid  # noqa: E402
 
@@ -944,6 +946,169 @@ class PlanTests(unittest.TestCase):
         # Documentation-only packages are proposed, but left out of the suggested command.
         self.assertIn("--system-packages libssl-dev,libwebkit2gtk-4.1-dev,pkg-config", command)
         self.assertNotIn("clang", command)
+
+
+class ScreenshotTests(unittest.TestCase):
+    """The base screenshot tools every fleet VM gets: pinned in one place, installed by root, checked as crew."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.pins = screenshots.pins()
+        for name, value in (("APP", self.root / "app"), ("PLAYWRIGHT", self.root / "app/playwright"),
+                            ("BROWSERS", self.root / "app/browsers"), ("WRAPPER", self.root / "app/bin/playwright")):
+            patcher = patch.object(screenshots, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(toolchains, "SHARED", self.root / "app/toolchains")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        (self.root / "app/bin").mkdir(parents=True)
+
+    def test_the_versions_and_packages_are_pinned_in_one_place(self):
+        source = Path(screenshots.__file__).resolve().parent / "screenshots"
+        manifest = json.loads((source / "package.json").read_text())
+        lock = json.loads((source / "package-lock.json").read_text())
+        # The lockfile is npm's for exactly the manifest's Playwright, with an integrity hash for every package.
+        self.assertEqual(lock["packages"][""]["dependencies"], manifest["dependencies"])
+        self.assertEqual(lock["packages"]["node_modules/playwright"]["version"], self.pins["playwright"])
+        self.assertTrue(all(entry["integrity"].startswith("sha512-") for name, entry in lock["packages"].items() if name))
+        self.assertRegex(self.pins["node"], r"^\d+\.\d+\.\d+$")
+        for distribution, extra in (("ubuntu:24.04", "libasound2t64"), ("debian:12", "libasound2")):
+            names = screenshots.packages(self.pins, distribution)
+            # Xvfb cannot start without xkbcomp (x11-xkb-utils): the first fleet's desktop captures failed for it.
+            self.assertTrue({"xvfb", "xauth", "x11-xkb-utils", "xkb-data", "fonts-liberation", "libnss3",
+                             extra} <= set(names), distribution)
+            self.assertEqual(len(names), len(set(names)))
+            self.assertTrue(all(re.fullmatch(toolchains.PACKAGE, name) for name in names))
+
+    def test_it_is_on_unless_fleet_json_turns_it_off(self):
+        config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        secrets = {"proxyKey": "fixture-model-proxy-key"}
+        self.assertIs(runtime.validate(config, secrets, check_files=False)["screenshots"], True)
+        self.assertIs(runtime.validate({**config, "screenshots": False}, secrets, check_files=False)["screenshots"],
+                      False)
+        with self.assertRaises(Invalid):
+            runtime.validate({**config, "screenshots": "no"}, secrets, check_files=False)
+        # The installer's run stages the packages for this distribution, or none when they are off.
+        work = self.root / "work"
+        work.mkdir()
+        (work / "fleet.secrets.json").write_text(json.dumps(secrets))
+        (work / "fleet.secrets.json").chmod(0o600)
+        for value, expected in ((True, screenshots.packages(self.pins, "ubuntu:24.04")), (False, [])):
+            (work / "fleet.json").write_text(json.dumps({**config, "screenshots": value}))
+            stage = work / f"stage-{value}"
+            stage.mkdir()
+            with patch.object(runtime, "ETC", work / "etc"), patch.object(runtime, "STATE", work / "state"), \
+                    patch.object(screenshots, "release", return_value="ubuntu:24.04"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                runtime.main(["prepare", str(work / "fleet.json"), str(work / "fleet.secrets.json"), str(stage), "",
+                              "false"])
+            self.assertEqual((stage / "screenshot-packages").read_text().split(), expected)
+
+    def test_the_dry_run_says_what_an_existing_fleet_gains(self):
+        names = screenshots.packages(self.pins, "ubuntu:24.04")
+        lines = screenshots.plan_lines(True, self.pins, "ubuntu:24.04", present={"xvfb", *names[3:]},
+                                       done={"node": True, "playwright": False, "chromium": False})
+        self.assertIn(f"Playwright {self.pins['playwright']} with its Chromium {self.pins['chromiumVersion']}", lines[0])
+        self.assertEqual(lines[1], f"  This run installs: 2 of {len(names)} packages (xauth, x11-xkb-utils); "
+                                   f"Playwright {self.pins['playwright']}; Chromium.")
+        self.assertEqual(screenshots.plan_lines(True, self.pins, "ubuntu:24.04", present=set(names),
+                                                done=dict.fromkeys(("node", "playwright", "chromium"), True))[1],
+                         "  Installed already.")
+        off = screenshots.plan_lines(False, self.pins, "ubuntu:24.04")
+        self.assertIn("Screenshots: off", off[0])
+        self.assertIn("sudo rm -rf", off[0])
+
+    def test_root_installs_the_pinned_browser_and_the_wrapper(self):
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs))
+            if command[-2:] == ["install", "chromium"]:
+                for path in screenshots.browser_directories(self.pins):
+                    path.mkdir(parents=True, exist_ok=True)
+            if command[1:2] == ["ci"]:
+                package = screenshots.PLAYWRIGHT / "node_modules/playwright"
+                package.mkdir(parents=True)
+                (package / "package.json").write_text(json.dumps({"version": self.pins["playwright"]}))
+            if command[1:2] == ["install"] and command[2].startswith("node@"):
+                screenshots.node(self.pins).parent.mkdir(parents=True)
+                screenshots.node(self.pins).write_text("")
+            return subprocess_result(0, "")
+        environment = toolchains.root_environment(toolchains.toolchain_config({}))
+        with patch.object(screenshots.subprocess, "run", side_effect=run):
+            self.assertEqual(screenshots.install(self.pins, environment), [])
+        node = str(screenshots.node(self.pins))
+        self.assertEqual([command for command, _ in calls], [
+            [str(toolchains.MISE), "install", f"node@{self.pins['node']}"],
+            [str(Path(node).parent / "npm"), "ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
+            [node, str(screenshots.PLAYWRIGHT / "node_modules/playwright/cli.js"), "install", "chromium"]])
+        self.assertEqual(calls[0][1]["env"], environment)
+        self.assertEqual(calls[1][1]["cwd"], screenshots.PLAYWRIGHT)
+        self.assertEqual(calls[2][1]["env"]["PLAYWRIGHT_BROWSERS_PATH"], str(screenshots.BROWSERS))
+        # npm ci installs from the pinned lockfile, copied beside the pinned manifest.
+        self.assertEqual((screenshots.PLAYWRIGHT / "package-lock.json").read_text(),
+                         (screenshots.PINS / "package-lock.json").read_text())
+        wrapper = screenshots.WRAPPER.read_text()
+        self.assertEqual(screenshots.WRAPPER.stat().st_mode & 0o777, 0o755)
+        self.assertIn(f"export PLAYWRIGHT_BROWSERS_PATH={screenshots.BROWSERS}\n", wrapper)
+        self.assertTrue(wrapper.endswith(f"exec {node} {screenshots.PLAYWRIGHT}/node_modules/playwright/cli.js \"$@\"\n"))
+        # A second run installs nothing again but asks Playwright, which skips what it has.
+        calls.clear()
+        with patch.object(screenshots.subprocess, "run", side_effect=run):
+            self.assertEqual(screenshots.install(self.pins, environment), [])
+        self.assertEqual([command[-1] for command, _ in calls], ["chromium"])
+        # A failure is reported, never raised: the install carries on.
+        with patch.object(screenshots.subprocess, "run",
+                          side_effect=subprocess.CalledProcessError(1, ["playwright", "install"])):
+            problems = screenshots.install(self.pins, environment)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("CalledProcessError", problems[0])
+
+    def test_a_crew_user_takes_one_screenshot_of_a_local_page(self):
+        calls = []
+        shot = self.root / "shot"
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs))
+            if command[-3:-1] == ["mktemp", "-d"]:
+                shot.mkdir()
+                return subprocess_result(0, f"{shot}\n")
+            if "xvfb-run" in command:
+                Path(command[-1]).write_bytes(screenshots.PNG + b"\x00\x00\x00\rIHDR" + (800).to_bytes(4, "big")
+                                              + (600).to_bytes(4, "big") + b"\x08\x02")
+            return subprocess_result(0, "")
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        environment = {"PATH": "/p", "TMPDIR": "/tmp/ss-orion"}
+        with patch.object(screenshots.subprocess, "run", side_effect=run):
+            passed, report = screenshots.check("ss-orion", home, environment)
+        self.assertEqual((passed, report), (True, "a 800x600 PNG of a local page, with Playwright's Chromium under Xvfb"))
+        command, options = calls[1]
+        self.assertEqual(command[:6], ["runuser", "-u", "ss-orion", "--", "/usr/bin/env", "-i"])
+        self.assertIn(f"TMPDIR={shot}", command)
+        tail = command[command.index("xvfb-run"):]
+        self.assertEqual(tail[:4], ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1280x800x24",
+                                    str(screenshots.WRAPPER)])
+        self.assertTrue(tail[-2].startswith("data:text/html,"))
+        self.assertEqual(calls[-1][0][-4:], ["rm", "-rf", "--", str(shot)])
+        # A failure, or no picture, is reported.
+        failing = {"xvfb-run": subprocess_result(1, "", "xvfb-run: error: Xvfb failed to start\n")}
+
+        def run_failing(command, **kwargs):
+            if command[-3:-1] == ["mktemp", "-d"]:
+                return subprocess_result(0, f"{shot}\n")
+            return failing["xvfb-run"] if "xvfb-run" in command else subprocess_result(0, "")
+        (shot / "check.png").unlink()
+        with patch.object(screenshots.subprocess, "run", side_effect=run_failing):
+            passed, report = screenshots.check("ss-orion", home, environment)
+        self.assertFalse(passed)
+        self.assertIn("Xvfb failed to start", report)
+        failing["xvfb-run"] = subprocess_result(0, "")
+        with patch.object(screenshots.subprocess, "run", side_effect=run_failing):
+            self.assertEqual(screenshots.check("ss-orion", home, environment),
+                             (False, "the browser ran, but wrote no PNG"))
 
 
 def setup_args(*argv):

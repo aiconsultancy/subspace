@@ -394,7 +394,7 @@ class InstalledFleet(unittest.TestCase):
             self.start(patch.object(runtime, name, value))
         self.start(patch.object(runtime, "write", side_effect=write))
         self.start(patch.object(runtime.sessions, "write_durable", side_effect=durable))
-        for name in ("directory", "run", "configure_git", "install_toolchains"):
+        for name in ("directory", "run", "configure_git", "install_toolchains", "install_screenshots"):
             self.start(patch.object(runtime, name))
         self.start(patch.object(runtime.subprocess, "run"))
         self.start(patch.object(runtime, "account", side_effect=lambda user, home, mode=0o700: home))
