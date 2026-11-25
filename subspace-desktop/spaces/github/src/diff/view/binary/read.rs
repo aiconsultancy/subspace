@@ -105,16 +105,17 @@ impl Blob<'_> {
         };
         let page = validate_page(read.retry(|| client.diff_file(target, request))?, &request)?;
         let mut content = page.content.ok_or(Error::InvalidResponse)?;
-        validate_content(&mut content, position, self.side)?;
+        let end = validate_content(&content, position, self.side)?;
+        clear_eof_cursor(&mut content, end);
         Ok((content, page.unstable))
     }
 }
 
 fn validate_content(
-    content: &mut DiffContent,
+    content: &DiffContent,
     position: &Position,
     side: DiffSide,
-) -> Result<(), Error> {
+) -> Result<u64, Error> {
     let end = content
         .offset
         .checked_add(content.bytes.len() as u64)
@@ -132,19 +133,22 @@ fn validate_content(
     {
         return Err(Error::InvalidResponse);
     }
+    Ok(end)
+}
+
+fn clear_eof_cursor(content: &mut DiffContent, end: u64) {
     // Older gateways may offer an empty terminator after the last bytes.
     // The verified size already tells both the pager and the preview to stop.
     if end == content.size {
         content.next_page = None;
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{DiffContent, DiffSide, Error, Position, validate_content};
+    use super::{DiffContent, DiffSide, Error, Position, clear_eof_cursor, validate_content};
 
     #[test]
     fn rejects_a_short_final_page_and_an_empty_continuation() {
@@ -157,17 +161,14 @@ mod tests {
             (3, "", None, Err(Error::InvalidResponse)),
             (3, "", Some("no-progress"), Err(Error::InvalidResponse)),
             (2, "QQ==", None, Err(Error::InvalidResponse)),
-            (3, "QQ==", None, Ok(())),
+            (3, "QQ==", None, Ok(3)),
         ] {
-            let mut page: DiffContent = serde_json::from_value(json!({
+            let page: DiffContent = serde_json::from_value(json!({
                 "side": "new", "encoding": "base64", "offset": 2, "size": size, "data": data,
                 "nextPage": next,
             }))
             .unwrap();
-            assert_eq!(
-                validate_content(&mut page, &position, DiffSide::New),
-                expected
-            );
+            assert_eq!(validate_content(&page, &position, DiffSide::New), expected);
         }
     }
 
@@ -192,17 +193,13 @@ mod tests {
             }))
             .unwrap();
             assert_eq!(page.bytes.len(), if data.is_empty() { 0 } else { MIB });
-            assert_eq!(
-                validate_content(&mut page, &position, DiffSide::New),
-                Ok(())
-            );
+            let end = validate_content(&page, &position, DiffSide::New).unwrap();
+            assert_eq!(end, (offset + page.bytes.len()) as u64);
+            assert_eq!(page.next_page.as_deref(), next);
+            clear_eof_cursor(&mut page, end);
             assert_eq!(
                 page.next_page.as_deref(),
-                if offset + page.bytes.len() < size {
-                    next
-                } else {
-                    None
-                }
+                if end < page.size { next } else { None }
             );
         }
     }
