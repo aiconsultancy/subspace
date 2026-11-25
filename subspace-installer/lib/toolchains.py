@@ -698,6 +698,39 @@ def overlaps(intervals, version):
     return any(start < (high or (10 ** 9, 0, 0)) and low < end for low, high in intervals)
 
 
+def within(intervals, version):
+    """Whether what a version request installs lies in one of the intervals. An exact version (24.11.0) must lie in
+    one; a prefix (24, 24.11) installs the newest version that starts with it, which must lie in one too: so the
+    prefix must end at or below the interval's upper bound, and above its lower one."""
+    if not re.fullmatch(r"\d+(?:\.\d+){0,2}", str(version)):
+        return False
+    parts = numbers(version)
+    if len(parts) == 3:
+        return any(low <= parts and (high is None or parts < high) for low, high in intervals)
+    end = bump(parts, len(parts) - 1)
+    return any((high is None or end <= high) and end > low for low, high in intervals)
+
+
+def version_number(text):
+    """The first version number in a tool's --version output (v22.11.0, go1.23.4, Python 3.12.3), as text."""
+    match = re.search(r"(?<![\d.])(\d+(?:\.\d+)+)", text)
+    return match.group(1) if match else None
+
+
+def version_meets(item, version):
+    """Whether an exact version a tool reports meets what an item asks for: True, False, or None when the request
+    is a channel or name (lts, stable, temurin-21) that a version cannot be compared with."""
+    constraint = item.get("constraint")
+    if constraint and constraint["kind"] == "dotnet":
+        return dotnet_accepts(constraint, version)
+    if constraint:
+        return within([(tuple(low), tuple(high) if high else None) for low, high in constraint["intervals"]], version)
+    requested = item["version"]
+    if not re.fullmatch(r"\d+(?:\.\d+)*", requested or ""):
+        return None
+    return version == requested or version.startswith(requested + ".")
+
+
 # How far each global.json rollForward policy lets the SDK move from its version: within the feature band
 # (8.0.4xx), the minor version (8.0), the major version (8), or anywhere above it.
 ROLL_FORWARD = {"disable": "exact", "patch": "band", "latestPatch": "band", "feature": "minor",
@@ -735,7 +768,7 @@ def accepts(item, version):
         if constraint["kind"] == "dotnet":
             return dotnet_accepts(constraint, version)
         intervals = [(tuple(low), tuple(high) if high else None) for low, high in constraint["intervals"]]
-        return overlaps(intervals, version)
+        return within(intervals, version)
     requested = item["version"]
     return bool(requested) and re.fullmatch(r"\d+(?:\.\d+)*", requested) is not None \
         and version.startswith(requested + ".")
@@ -907,19 +940,38 @@ def scan_global_json(finder, repository, rel, text):
                note=f"global.json accepts {notes.get(policy, version)}")
 
 
-def range_proposal(tool, intervals):
-    """The version request a range proposes: the newest major below an upper bound (an even one for Node, whose
-    long-term releases are even), Node's lts for an open range, else the lowest major."""
-    lows = [low for low, _ in intervals]
-    bounded = [high for _, high in intervals if high]
-    if bounded and len(bounded) == len(intervals):
-        top = max(high for high in bounded)
-        majors = [major for major in range(min(low[0] for low in lows), top[0] + 1)
-                  if overlaps(intervals, str(major))]
-        if tool == "node" and any(major % 2 == 0 for major in majors):
-            majors = [major for major in majors if major % 2 == 0]
-        return str(max(majors)) if majors else None
-    return "lts" if tool == "node" else str(min(lows)[0])
+def range_proposal(tool, intervals, depth=1):
+    """The version request a range proposes: one whose installed version lies in the range (within), since mise
+    installs the newest version a prefix names. The newest such prefix at the coarsest level that has one (a major,
+    then a minor), else the lowest version the range allows, exactly; Node prefers its even (long-term) majors. An
+    open range proposes its lowest major (Node's next even one), whose newest version meets it, and a range with
+    no bounds Node's lts. depth is the coarsest level: 2 for Python, whose major does not move."""
+    if all(low == (0, 0, 0) and high is None for low, high in intervals):
+        return "lts" if tool == "node" else "latest"
+    for level in range(depth, 4):
+        candidates = []
+        for low, high in intervals:
+            if high is not None and low >= high:
+                continue
+            if level == 3:
+                candidates.append(low)
+            elif high is None or level == 2 and high[0] > low[0]:
+                # Open above (or, for minors, beyond this major): the lowest prefix's newest version meets it.
+                candidates.append(low[:level])
+                if tool == "node" and level == 1 and low[0] % 2:
+                    candidates.append((low[0] + 1,))
+            elif level == 1:
+                # The newest major M whose versions all lie below the bound, (M + 1).0.0 <= high, and above low.
+                top = high[0] - 1
+                if top >= low[0]:
+                    candidates += [(top,), *([(top - 1,)] if top - 1 >= low[0] else [])]
+            elif high[0] == low[0] and high[1] - 1 >= low[1]:
+                candidates.append((low[0], high[1] - 1))
+        if tool == "node" and level == 1:
+            candidates = [major for major in candidates if major[0] % 2 == 0] or candidates
+        if candidates:
+            return ".".join(str(part) for part in max(candidates))
+    return None
 
 
 def scan_package_json(finder, repository, rel, text):
@@ -1007,8 +1059,11 @@ def scan_pyproject(finder, repository, rel, text):
     if not intervals or intervals[0][0] == (0, 0, 0):
         finder.cannot(source, f"Python {expression!r} names no lowest version")
         return
-    low = intervals[0][0]
-    finder.add("tool", "python", f"{low[0]}.{low[1]}", "medium", source, note=f"requires Python {expression}",
+    proposed = range_proposal("python", intervals, depth=2)
+    if not proposed:
+        finder.cannot(source, f"Python {expression!r} allows no version")
+        return
+    finder.add("tool", "python", proposed, "medium", source, note=f"requires Python {expression}",
                constraint={"kind": "range", "intervals": [[list(lo), list(hi) if hi else None] for lo, hi in intervals]})
 
 
@@ -1578,49 +1633,87 @@ def proposal_lines(proposal):
 PROBES = {
     "node": ["node", "--version"], "pnpm": ["pnpm", "--version"], "yarn": ["yarn", "--version"],
     "bun": ["bun", "--version"], "deno": ["deno", "--version"], "dotnet": ["dotnet", "--version"],
-    "rust": ["cargo", "--version"], "go": ["go", "version"], "python": ["python", "--version"],
+    "rust": ["rustc", "--version"], "go": ["go", "version"], "python": ["python3", "--version"],
     "terraform": ["terraform", "version"], "opentofu": ["tofu", "version"], "java": ["java", "-version"],
     "ruby": ["ruby", "--version"], "zig": ["zig", "version"], "uv": ["uv", "--version"],
     "kubectl": ["kubectl", "version", "--client"], "helm": ["helm", "version"],
 }
 
 
-def verification_commands(found, tools, check=None):
-    """The commands a repository's basic check runs: each configured tool its files name, run from the checkout
-    (so mise, global.json and rust-toolchain resolve as they will for the crew), then its own check, if any."""
-    commands, missing = [], []
+def probe_directory(item):
+    """Where a tool's version is asked for: the directory of the first file that names it (so a nested mise.toml,
+    global.json or package.json applies), or the worktree for one only a workflow names."""
+    for source in item["sources"]:
+        if source["file"] and "/.github/" not in f"/{source['file']}":
+            return source["file"].rpartition("/")[0]
+    return ""
+
+
+def verification_checks(found, tools, check=None):
+    """A repository's basic check: (command, directory in the worktree, item) for each tool its files name that
+    has a version probe (PROBES), run where the file that names it is, so mise files, global.json and
+    rust-toolchain resolve as they will for the crew; then its own check, if any, from the worktree. Also the
+    tools its files name that cannot be probed and are not in toolchains."""
+    checks, unchecked = [], []
     for item in found["items"]:
         if item["kind"] != "tool" or item["confidence"] == "low":
             continue
-        if item["name"] not in tools and not item.get("configured"):
-            missing.append(item_label(item))
-        elif item["name"] in PROBES and PROBES[item["name"]] not in commands:
-            commands.append(PROBES[item["name"]])
+        if item["name"] in PROBES:
+            check_row = (PROBES[item["name"]], probe_directory(item), item)
+            if check_row not in checks:
+                checks.append(check_row)
+        elif item["name"] not in tools and not item.get("configured"):
+            unchecked.append(item_label(item))
     if check:
-        commands.append(["/bin/bash", "-c", check])
-    return commands, missing
+        checks.append((["/bin/bash", "-c", check], "", None))
+    return checks, unchecked
 
 
-def verify_repository(user, home, directory, environment, commands, timeout):
-    """Run each command as the officer's user in the directory with the engine's environment, in a fresh private
-    temporary directory. Returns (passed, report)."""
+def check_result(command, directory, item, result):
+    """What one check found: (passed, report). A tool's version must meet what the repository asks for, not just
+    run: the version it reports is compared with the item (version_meets)."""
+    where = f" in {directory}" if directory else ""
+    if result.returncode:
+        tail = (result.stderr or result.stdout).strip().splitlines()[-3:]
+        return False, f"{shlex.join(command)}{where} failed ({result.returncode}): " + " / ".join(tail)
+    if item is None:
+        return True, f"{shlex.join(command)} passed"
+    version = version_number(f"{result.stdout}\n{result.stderr}")
+    if version is None:
+        return False, f"{shlex.join(command)}{where} printed no version to compare with {item_label(item)}"
+    meets = version_meets(item, version)
+    asked = "; ".join(item.get("notes", [])) or f"{item['name']} {item['version']}"
+    source = source_label(item["sources"][0]) if item["sources"] else "its files"
+    if meets is False:
+        return False, f"{item['name']} is {version}{where}, but {source} asks for {asked}"
+    return True, f"{item['name']} {version}" + ("" if meets else f" ({item['version']} is not a version to compare)")
+
+
+def verify_repository(user, home, worktree, environment, checks, timeout):
+    """Run each check as the officer's user with the engine's environment, in a fresh private temporary directory,
+    from its directory in the worktree (the worktree itself if the checkout has not got it). Returns (passed,
+    report): every failure, or what passed."""
     scratch = subprocess.run(["runuser", "-u", user, "--", "mktemp", "-d", f"/tmp/{user}-verify.XXXXXX"],
                              capture_output=True, text=True, check=False)
     if scratch.returncode:
         return False, "could not make a private temporary directory"
     temporary = scratch.stdout.strip()
     env = {**environment, "TMPDIR": temporary}
+    passed, failed = [], []
     try:
-        for command in commands:
+        for command, directory, item in checks:
+            cwd = Path(worktree) / directory if directory and (Path(worktree) / directory).is_dir() else Path(worktree)
             try:
                 result = subprocess.run(["runuser", "-u", user, "--", *clean_environment(user, home, env), *command],
-                                        cwd=directory, capture_output=True, text=True, timeout=timeout, check=False)
+                                        cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
             except subprocess.TimeoutExpired:
-                return False, f"{shlex.join(command)} did not finish within {timeout} seconds"
-            if result.returncode:
-                tail = (result.stderr or result.stdout).strip().splitlines()[-3:]
-                return False, f"{shlex.join(command)} failed ({result.returncode}): " + " / ".join(tail)
-        return True, f"{len(commands)} checks passed"
+                failed.append(f"{shlex.join(command)} did not finish within {timeout} seconds")
+                continue
+            ok, report = check_result(command, directory if cwd != Path(worktree) else "", item, result)
+            (passed if ok else failed).append(report)
+        if failed:
+            return False, "; ".join(failed)
+        return True, f"{len(checks)} checks passed: " + "; ".join(passed)
     finally:
         subprocess.run(["runuser", "-u", user, "--", "rm", "-rf", "--", temporary], check=False)
 

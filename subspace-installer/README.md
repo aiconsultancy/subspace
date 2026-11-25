@@ -811,7 +811,7 @@ carries on to the lockdown. Its sources, most confident first:
 | high | `global.json` | the SDK, honouring `rollForward`: `disable` and the patch policies the exact SDK, `latestFeature` the minor version (`8.0`), `latestMinor` and `latestMajor` the major |
 | high | `packageManager` (and `volta`) in `package.json` | an exact pnpm, Yarn or Bun |
 | high | version files: `.node-version`, `.nvmrc`, `.python-version`, `.ruby-version`, `.terraform-version`, `.go-version` and others | that version |
-| medium | `engines` in `package.json`, `go.mod`, `requires-python` in `pyproject.toml` | a version that meets the range or minimum |
+| medium | `engines` in `package.json`, `go.mod`, `requires-python` in `pyproject.toml` | a request whose installed version meets the range: mise installs the newest version a prefix names, so `>=22.11.0 <22.12.0` proposes `22.11`, never `22` |
 | medium | CI workflows: set-up actions with their `with:` keys, and `apt-get install` lines | that tool and version; those packages |
 | low | documentation: `apt-get install` in code blocks of READMEs, install and contributing guides and `docs/` | those packages, proposed only |
 
@@ -851,12 +851,16 @@ run also prints the proposal when the repositories are already cloned.
 **Checking that the tools work.** `--verify-toolchains`, on `subspace-setup`
 or the fleet installer, runs each repository's basic check after installing,
 as a crew member would: as its captain's Linux user, in a crew worktree, with
-the engine's environment. It runs each configured tool the repository's files
-name (`node --version`, `dotnet --version`, `cargo --version`, ...) from the
-worktree, so `global.json`, `rust-toolchain` and the repository's mise files
-resolve as they will for the crew, then the repository's own `check`, if
-`fleet.json` gives one (`"check": "make check"` on the repository). It prints
-pass or fail per repository and never fails the install.
+the engine's environment. It asks each tool the repository's files name for
+its version (`node --version`, `dotnet --version`, `rustc --version`, ...) in
+the directory of the file that names it, so `global.json`, `rust-toolchain`
+and the repository's mise files resolve as they will for the crew, and
+compares that version with what the file asks for: a tool that runs at
+another version fails, and one the system already provides, such as Python
+for a `requires-python`, passes when its version meets the request. Then it
+runs the repository's own `check`, if `fleet.json` gives one (`"check": "make
+check"` on the repository). It prints pass or fail per repository, with every
+failure, and never fails the install.
 
 ### Channels
 

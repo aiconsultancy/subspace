@@ -2414,8 +2414,10 @@ def toolchain_plan(cfg):
 def verify_toolchains():
     """Run each repository's basic check as a crew member would: as its captain's user, in a crew worktree (the
     checkout for a captain without crew), with the engine's tool environment. Each tool the repository's files
-    name is run from there, then the repository's own check, if fleet.json gives one. Reports pass or fail per
-    repository and never fails the install."""
+    name is asked its version where the file that names it is, and that version must meet what the file asks for
+    (a tool that merely runs is not enough; one the system already provides, such as Python, passes when its
+    version meets the request); then the repository's own check, if fleet.json gives one. Reports pass or fail
+    per repository and never fails the install."""
     cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True),
                    check_files=False)
     captains = [person for person in cfg["members"] if person["role"] == "captain"]
@@ -2430,16 +2432,16 @@ def verify_toolchains():
         directory = crew_worktree(home, captain["crew"][0], repo_id) if captain["crew"] else home / "workspace" / repo_id
         # Which tools the repository names: read as data from the rear admiral's reference checkout.
         found = toolchains.detect({repo_id: STATE / "references" / rear / repo_id})
-        commands, missing = toolchains.verification_commands(found, cfg["toolchains"],
-                                                             cfg["repositoryChecks"].get(repo_id))
+        checks, unchecked = toolchains.verification_checks(found, cfg["toolchains"],
+                                                           cfg["repositoryChecks"].get(repo_id))
         if not directory.is_dir():
             passed, report = False, f"{directory} does not exist"
-        elif not commands:
+        elif not checks:
             passed, report = True, "no tool to check and no check configured"
         else:
-            passed, report = toolchains.verify_repository(user, home, directory, environment, commands, 900)
-        if missing:
-            passed, report = False, f"{report}; named by its files but not in toolchains: {', '.join(missing)}"
+            passed, report = toolchains.verify_repository(user, home, directory, environment, checks, 900)
+        if unchecked:
+            passed, report = False, f"{report}; named by its files but not in toolchains: {', '.join(unchecked)}"
         print(f"Toolchain check of {repo_id}, as {user} in {directory}: {'PASS' if passed else 'FAIL'} ({report}).")
 
 

@@ -745,34 +745,86 @@ class VerificationTests(unittest.TestCase):
             paths = write_repositories(directory)
             found = toolchains.detect({"harbour-api": paths["harbour-api"]})
         tools = toolchains.toolchain_config({"dotnet": "8.0.404", "node": "22.11.0"})
-        commands, missing = toolchains.verification_commands(found, tools, "make check")
-        # Each configured tool the repository names, run from its worktree, then its own check.
-        self.assertEqual(commands, [["dotnet", "--version"], ["node", "--version"], ["/bin/bash", "-c", "make check"]])
-        self.assertEqual(missing, ["pnpm@9.12.3"])
+        checks, unchecked = toolchains.verification_checks(found, tools, "make check")
+        # Each tool the repository names that has a version probe, asked where the file naming it is (pnpm in web/,
+        # whose package.json names it), then its own check from the worktree.
+        self.assertEqual([(command, directory, item and toolchains.item_label(item)) for command, directory, item in checks], [
+            (["dotnet", "--version"], "", "dotnet@8.0.404"), (["node", "--version"], "", "node@22.11.0"),
+            (["pnpm", "--version"], "web", "pnpm@9.12.3"), (["/bin/bash", "-c", "make check"], "", None)])
+        self.assertEqual(unchecked, [])
 
-    def test_it_runs_as_the_captain_and_reports_without_failing(self):
+    def run_checks(self, outputs, checks):
         def run(command, **kwargs):
             results.append((command, kwargs))
             if command[-3:-1] == ["mktemp", "-d"]:
                 return subprocess_result(0, "/tmp/ss-orion-verify.abc123\n")
-            if command[-1] == "check":
-                return subprocess_result(2, "", "first\nsecond\nthird\nfourth\n")
-            return subprocess_result(0, "v22.11.0\n")
-
+            return next((outputs[word] for word in command if word in outputs), subprocess_result(0, ""))
         results = []
         environment = {"PATH": "/p", "TMPDIR": "/tmp/ss-orion"}
         home = Path("/var/lib/subspace-fleet/agents/orion")
-        with patch.object(toolchains.subprocess, "run", side_effect=run):
-            passed, report = toolchains.verify_repository("ss-orion", home, "/w", environment,
-                                                          [["node", "--version"], ["make", "check"]], 60)
+        with tempfile.TemporaryDirectory() as worktree, patch.object(toolchains.subprocess, "run", side_effect=run):
+            (Path(worktree) / "web").mkdir()
+            passed, report = toolchains.verify_repository("ss-orion", home, worktree, environment, checks, 60)
+            return passed, report.replace(worktree, "<worktree>"), results, worktree
+
+    def test_it_runs_as_the_captain_and_compares_what_each_tool_resolves_to(self):
+        node = {"kind": "tool", "name": "node", "version": "22.11.0", "options": {}, "confidence": "high",
+                "sources": [{"repository": "web", "file": "web/.nvmrc", "line": 1, "detail": ""}]}
+        outputs = {"node": subprocess_result(0, "v22.11.0\n"), "check": subprocess_result(2, "", "a\nb\nc\nd\n")}
+        passed, report, results, worktree = self.run_checks(outputs, [
+            (["node", "--version"], "web", node), (["make", "check"], "", None)])
         self.assertFalse(passed)
-        self.assertEqual(report, "make check failed (2): second / third / fourth")
-        node = results[1][0]
-        self.assertEqual(node[:6], ["runuser", "-u", "ss-orion", "--", "/usr/bin/env", "-i"])
-        self.assertIn("TMPDIR=/tmp/ss-orion-verify.abc123", node)
-        self.assertEqual(results[1][1]["cwd"], "/w")
+        self.assertEqual(report, "make check failed (2): b / c / d")
+        command, options = results[1]
+        self.assertEqual(command[:6], ["runuser", "-u", "ss-orion", "--", "/usr/bin/env", "-i"])
+        self.assertIn("TMPDIR=/tmp/ss-orion-verify.abc123", command)
+        self.assertEqual(options["cwd"], Path(worktree) / "web")
         # The private temporary directory is removed afterwards.
         self.assertEqual(results[-1][0][-4:], ["rm", "-rf", "--", "/tmp/ss-orion-verify.abc123"])
+        # A tool that runs but resolves to another version than the repository asks for fails.
+        outputs = {"node": subprocess_result(0, "v24.11.1\n")}
+        passed, report, _, _ = self.run_checks(outputs, [(["node", "--version"], "web", node)])
+        self.assertFalse(passed)
+        self.assertEqual(report, "node is 24.11.1 in web, but web: web/.nvmrc:1 asks for node 22.11.0")
+        outputs = {"node": subprocess_result(0, "v22.11.0\n")}
+        self.assertEqual(self.run_checks(outputs, [(["node", "--version"], "web", node)])[:2],
+                         (True, "1 checks passed: node 22.11.0"))
+
+    def test_a_range_the_system_already_meets_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = write_repositories(directory, {"py": {
+                "pyproject.toml": '[project]\nname = "py"\nrequires-python = ">=3.11"\n',
+                "package.json": json.dumps({"engines": {"node": ">=22.11.0 <22.12.0"}})}})["py"]
+            found = toolchains.detect({"py": repo})
+        checks, unchecked = toolchains.verification_checks(found, toolchains.toolchain_config({}))
+        self.assertEqual(unchecked, [])
+        by_name = {item["name"]: (command, directory, item) for command, directory, item in checks}
+        self.assertEqual(by_name["python"][0], ["python3", "--version"])
+        # Python 3.12 from the system meets >=3.11; Node 22.20 does not meet >=22.11.0 <22.12.0, though 22 runs.
+        outputs = {"python3": subprocess_result(0, "Python 3.12.3\n"), "node": subprocess_result(0, "v22.20.0\n")}
+        passed, report, _, _ = self.run_checks(outputs, [by_name["python"]])
+        self.assertEqual((passed, report), (True, "1 checks passed: python 3.12.3"))
+        passed, report, _, _ = self.run_checks(outputs, [by_name["node"]])
+        self.assertFalse(passed)
+        self.assertIn("node is 22.20.0, but py: package.json:1 asks for engines node >=22.11.0 <22.12.0", report)
+
+    def test_ranges_propose_a_request_that_installs_within_them(self):
+        # mise installs the newest version a prefix names, so a range proposes a prefix all of whose versions it
+        # allows, or the exact lowest version.
+        cases = {">=22.11.0 <22.12.0": "22.11", ">=22.11.0 <22.11.5": "22.11.0", "^20.11.0": "20",
+                 ">=20.11 <23": "22", "20.x || 22.x": "22", "~22.3": "22.3", ">22": "24", "*": "lts"}
+        for expression, expected in cases.items():
+            self.assertEqual(toolchains.range_proposal("node", toolchains.semver_alternatives(expression)), expected,
+                             expression)
+        for expression, expected in {">=3.11,<3.14": "3.13", "==3.11.4": "3.11.4", ">=3.11": "3.11"}.items():
+            self.assertEqual(toolchains.range_proposal("python", toolchains.pep440_alternatives(expression), depth=2),
+                             expected, expression)
+        # A configured prefix meets a range only if everything it installs lies within it.
+        narrow = {"kind": "tool", "name": "node", "version": "22.11", "constraint": {
+            "kind": "range", "intervals": [[[22, 11, 0], [22, 12, 0]]]}}
+        self.assertFalse(toolchains.accepts(narrow, "22"))
+        self.assertTrue(toolchains.accepts(narrow, "22.11.0"))
+        self.assertTrue(toolchains.accepts(narrow, "22.11"))
 
 
 def subprocess_result(code, stdout, stderr=""):
