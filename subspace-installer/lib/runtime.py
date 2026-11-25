@@ -1081,10 +1081,12 @@ def require_peer_message_source(cfg, installed_only=False):
 
 
 def check_stargate_source(source, repo, ref, path, message, installed_only, marker=None):
-    if installed_only or source.is_dir():
-        file = source / path
-        require(file.is_file() and (not marker or marker in file.read_text()), message)
+    file = source / path
+    if file.is_file() and (not marker or marker in file.read_text()):
         return
+    # A repeat install restores tracked files before rendering. Preflight checks
+    # the requested revision when the installed tree needs that repair.
+    require(not installed_only, message)
 
     with tempfile.TemporaryDirectory(prefix="subspace-stargate-check-") as work:
         try:
@@ -3686,7 +3688,9 @@ def main(args):
                                                    "that lets operators alone create channels needs them created "
                                                    "first."))
             if cfg["captainPeerMessages"]:
-                print("Captain peer messages are enabled between pinned captains with crew.")
+                count = sum(bool(person["crew"]) for person in cfg["members"][1:])
+                print(f"Captain peer messages requested for {count} crew-hosting captains. "
+                      "Routes become available once two or more are pinned.")
             if dispatch := cfg["agentDispatch"]:
                 print(f"Agent dispatch is on: the rear admiral checks {cfg['api']['url']} every "
                       f"{dispatch['pollIntervalSeconds']} seconds as its own API agent and offers issues in "
