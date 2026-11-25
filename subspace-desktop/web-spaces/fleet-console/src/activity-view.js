@@ -105,7 +105,7 @@ function fields(object) {
 const label = (title, ...rest) => h("h4", { class: "act-label" }, title, ...rest);
 
 const TOOL_STATUS = { input: "Receiving input", running: "Running", completed: "Completed", failed: "Failed" };
-const TURN_STATUS = { running: "Running", completed: "Completed", failed: "Failed", cancelled: "Cancelled" };
+const TURN_STATUS = { running: "Running", completed: "Completed", failed: "Failed", cancelled: "Cancelled", unreadable: "Unreadable" };
 const STEP_STATUS = { running: "Running", completed: "Completed", failed: "Failed" };
 const TEXT_STATUS = { streaming: "Streaming", completed: "Completed" };
 const tone = (status) => ({ running: "s-running", input: "s-running", streaming: "s-running", completed: "s-completed", failed: "s-failed", cancelled: "s-cancelled" })[status] ?? "s-idle";
@@ -348,9 +348,10 @@ export function itemTree(turnId, item, full = null, { window = 0, format = null 
 /** A turn's summary line. */
 export function turnSummary(turn) {
   const usage = turn.usage ? ` · ${turn.usage.steps} ${turn.usage.steps === 1 ? "step" : "steps"} · ${tokensText(turn.usage.tokens)} · ${formatCost(turn.usage.cost)}` : "";
-  const ended = Number.isFinite(turn.endedAt) ? ` · took ${formatDuration(turn.endedAt - turn.startedAt)}` : "";
+  const started = Number.isFinite(turn.startedAt);
+  const ended = started && Number.isFinite(turn.endedAt) ? ` · took ${formatDuration(turn.endedAt - turn.startedAt)}` : "";
   return [
-    h("span", { class: "act-turn-head" }, chip(turn.status, TURN_STATUS), h("span", { class: "mono" }, `Started ${formatClock(turn.startedAt)}`), turn.status === "running" ? h("span", { class: "act-sub" }, "for ", h("span", { "data-since": String(Math.round(turn.startedAt)) }, "")) : null),
+    h("span", { class: "act-turn-head" }, chip(turn.status, TURN_STATUS), h("span", { class: "mono" }, started ? `Started ${formatClock(turn.startedAt)}` : "Start not known"), started && turn.status === "running" ? h("span", { class: "act-sub" }, "for ", h("span", { "data-since": String(Math.round(turn.startedAt)) }, "")) : null),
     h("span", { class: "act-sub mono act-turn-id" }, txt(turn.id), ended, usage),
   ];
 }
