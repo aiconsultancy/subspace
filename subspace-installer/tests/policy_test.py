@@ -824,6 +824,9 @@ class CaptainPolicyTests(unittest.TestCase):
         self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "allow")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git add -A", "git commit -m wip"]), "allow")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git push origin HEAD"]), "deny")
+        for command in ("mermaid-render diagram.mmd diagram.png", "playwright screenshot URL page.png"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["playwright test"]), "deny")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git status", "head -20"]), "deny")
         # Its crew's worktrees, and nothing else outside its workspace (the read tool and a shell's directory).
         for directory in (f"{self.worktrees}/claude-1/project/*", f"{self.worktrees}/codex-2/project/src/*"):

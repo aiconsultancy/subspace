@@ -205,7 +205,8 @@ def default_permissions(role, references, *, delegate=False, worktrees=None):
             # absolute path (OpenCode's file-access.ts).
             rules.append({"action": "edit", "resource": f"{worktrees}/*", "effect": "deny"})
         commands += ["git add", "git commit", "git fetch", "make", "npm test", "npm run", "bun test", "bun run",
-                     "cargo check", "cargo test", "cargo build", "go test", "python3 -m unittest", "pytest"]
+                     "cargo check", "cargo test", "cargo build", "go test", "python3 -m unittest", "pytest",
+                     "mermaid-render", "playwright screenshot"]
     rules.extend({"action": "shell", "resource": f"{command} *", "effect": "allow"} for command in commands)
     return rules
 

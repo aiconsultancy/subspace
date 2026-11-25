@@ -968,7 +968,8 @@ class ScreenshotTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.pins = screenshots.pins()
         for name, value in (("APP", self.root / "app"), ("PLAYWRIGHT", self.root / "app/playwright"),
-                            ("BROWSERS", self.root / "app/browsers"), ("WRAPPER", self.root / "app/bin/playwright")):
+                            ("BROWSERS", self.root / "app/browsers"), ("WRAPPER", self.root / "app/bin/playwright"),
+                            ("MERMAID_WRAPPER", self.root / "app/bin/mermaid-render")):
             patcher = patch.object(screenshots, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -981,9 +982,10 @@ class ScreenshotTests(unittest.TestCase):
         source = Path(screenshots.__file__).resolve().parent / "screenshots"
         manifest = json.loads((source / "package.json").read_text())
         lock = json.loads((source / "package-lock.json").read_text())
-        # The lockfile is npm's for exactly the manifest's Playwright, with an integrity hash for every package.
+        # The lockfile matches the manifest and pins the integrity of every package.
         self.assertEqual(lock["packages"][""]["dependencies"], manifest["dependencies"])
-        self.assertEqual(lock["packages"]["node_modules/playwright"]["version"], self.pins["playwright"])
+        for package in ("playwright", "mermaid"):
+            self.assertEqual(lock["packages"][f"node_modules/{package}"]["version"], self.pins[package])
         self.assertTrue(all(entry["integrity"].startswith("sha512-") for name, entry in lock["packages"].items() if name))
         self.assertRegex(self.pins["node"], r"^\d+\.\d+\.\d+$")
         for distribution, extra in (("ubuntu:24.04", "libasound2t64"), ("debian:12", "libasound2")):
@@ -1021,12 +1023,13 @@ class ScreenshotTests(unittest.TestCase):
     def test_the_dry_run_says_what_an_existing_fleet_gains(self):
         names = screenshots.packages(self.pins, "ubuntu:24.04")
         lines = screenshots.plan_lines(True, self.pins, "ubuntu:24.04", present={"xvfb", *names[3:]},
-                                       done={"node": True, "playwright": False, "chromium": False})
+                                       done={"node": True, "playwright": True, "mermaid": False, "chromium": True})
         self.assertIn(f"Playwright {self.pins['playwright']} with its Chromium {self.pins['chromiumVersion']}", lines[0])
         self.assertEqual(lines[1], f"  This run installs: 2 of {len(names)} packages (xauth, x11-xkb-utils); "
-                                   f"Playwright {self.pins['playwright']}; Chromium.")
+                                   f"Mermaid {self.pins['mermaid']}.")
         self.assertEqual(screenshots.plan_lines(True, self.pins, "ubuntu:24.04", present=set(names),
-                                                done=dict.fromkeys(("node", "playwright", "chromium"), True))[1],
+                                                done=dict.fromkeys(("node", "playwright", "mermaid", "chromium"),
+                                                                   True))[1],
                          "  Installed already.")
         off = screenshots.plan_lines(False, self.pins, "ubuntu:24.04")
         self.assertIn("Screenshots: off", off[0])
@@ -1041,9 +1044,10 @@ class ScreenshotTests(unittest.TestCase):
                 for path in screenshots.browser_directories(self.pins):
                     path.mkdir(parents=True, exist_ok=True)
             if command[1:2] == ["ci"]:
-                package = screenshots.PLAYWRIGHT / "node_modules/playwright"
-                package.mkdir(parents=True)
-                (package / "package.json").write_text(json.dumps({"version": self.pins["playwright"]}))
+                for name in ("playwright", "mermaid"):
+                    package = screenshots.PLAYWRIGHT / "node_modules" / name
+                    package.mkdir(parents=True)
+                    (package / "package.json").write_text(json.dumps({"version": self.pins[name]}))
             if command[1:2] == ["install"] and command[2].startswith("node@"):
                 screenshots.node(self.pins).parent.mkdir(parents=True)
                 screenshots.node(self.pins).write_text("")
@@ -1066,6 +1070,10 @@ class ScreenshotTests(unittest.TestCase):
         self.assertEqual(screenshots.WRAPPER.stat().st_mode & 0o777, 0o755)
         self.assertIn(f"export PLAYWRIGHT_BROWSERS_PATH={screenshots.BROWSERS}\n", wrapper)
         self.assertTrue(wrapper.endswith(f"exec {node} {screenshots.PLAYWRIGHT}/node_modules/playwright/cli.js \"$@\"\n"))
+        renderer = screenshots.PLAYWRIGHT / "mermaid-render.cjs"
+        self.assertEqual(renderer.read_text(), (screenshots.PINS / renderer.name).read_text())
+        self.assertEqual(screenshots.MERMAID_WRAPPER.stat().st_mode & 0o777, 0o755)
+        self.assertTrue(screenshots.MERMAID_WRAPPER.read_text().endswith(f"exec {node} {renderer} \"$@\"\n"))
         # A second run installs nothing again but asks Playwright, which skips what it has.
         calls.clear()
         with patch.object(screenshots.subprocess, "run", side_effect=run):
@@ -1078,7 +1086,7 @@ class ScreenshotTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("CalledProcessError", problems[0])
 
-    def test_a_crew_user_takes_one_screenshot_of_a_local_page(self):
+    def test_a_crew_user_takes_page_and_mermaid_screenshots(self):
         calls = []
         shot = self.root / "shot"
 
@@ -1087,7 +1095,7 @@ class ScreenshotTests(unittest.TestCase):
             if command[-3:-1] == ["mktemp", "-d"]:
                 shot.mkdir()
                 return subprocess_result(0, f"{shot}\n")
-            if "xvfb-run" in command:
+            if "xvfb-run" in command or str(screenshots.MERMAID_WRAPPER) in command:
                 Path(command[-1]).write_bytes(screenshots.PNG + b"\x00\x00\x00\rIHDR" + (800).to_bytes(4, "big")
                                               + (600).to_bytes(4, "big") + b"\x08\x02")
             return subprocess_result(0, "")
@@ -1095,7 +1103,7 @@ class ScreenshotTests(unittest.TestCase):
         environment = {"PATH": "/p", "TMPDIR": "/tmp/ss-orion"}
         with patch.object(screenshots.subprocess, "run", side_effect=run):
             passed, report = screenshots.check("ss-orion", home, environment)
-        self.assertEqual((passed, report), (True, "a 800x600 PNG of a local page, with Playwright's Chromium under Xvfb"))
+        self.assertEqual((passed, report), (True, "a 800x600 PNG of a local page under Xvfb and a 800x600 Mermaid PNG"))
         command, options = calls[1]
         self.assertEqual(command[:6], ["runuser", "-u", "ss-orion", "--", "/usr/bin/env", "-i"])
         self.assertIn(f"TMPDIR={shot}", command)
@@ -1103,6 +1111,8 @@ class ScreenshotTests(unittest.TestCase):
         self.assertEqual(tail[:4], ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1280x800x24",
                                     str(screenshots.WRAPPER)])
         self.assertTrue(tail[-2].startswith("data:text/html,"))
+        self.assertEqual(calls[2][0][-3:], [str(screenshots.MERMAID_WRAPPER), "-", str(shot / "diagram.png")])
+        self.assertEqual(calls[2][1]["input"], screenshots.DIAGRAM)
         self.assertEqual(calls[-1][0][-4:], ["rm", "-rf", "--", str(shot)])
         # A failure, or no picture, is reported.
         failing = {"xvfb-run": subprocess_result(1, "", "xvfb-run: error: Xvfb failed to start\n")}
@@ -1119,7 +1129,7 @@ class ScreenshotTests(unittest.TestCase):
         failing["xvfb-run"] = subprocess_result(0, "")
         with patch.object(screenshots.subprocess, "run", side_effect=run_failing):
             self.assertEqual(screenshots.check("ss-orion", home, environment),
-                             (False, "the browser ran, but wrote no PNG"))
+                             (False, "Playwright wrote no valid PNG"))
 
 
 def setup_args(*argv):

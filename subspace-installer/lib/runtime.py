@@ -2663,9 +2663,8 @@ def install_screenshots(cfg):
 
 
 def check_screenshots():
-    """The installer's screenshot check: one screenshot of a local page as a crew member would take it, as the
-    user of a captain with crew (else any captain, else the rear admiral), with its tool environment. Reports pass
-    or fail, and never fails the install."""
+    """Verify page screenshots and Mermaid rendering as a captain with crew (else any captain, else the rear
+    admiral) with its tool environment. Reports pass or fail and never fails the install."""
     cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True),
                    check_files=False)
     if not cfg["screenshots"]:
@@ -2678,8 +2677,8 @@ def check_screenshots():
     if passed:
         print(f"Screenshot check, as {user}: PASS ({report}).")
     else:
-        print(f"WARNING: screenshot check, as {user}: FAIL ({report}). Officers and crew may not be able to take "
-              "screenshots; the install carries on. See the installer README, 'Screenshots'.")
+        print(f"WARNING: screenshot check, as {user}: FAIL ({report}). The install carries on. "
+              "See the installer README, 'Screenshots'.")
 
 
 def maintenance_units(cfg):
