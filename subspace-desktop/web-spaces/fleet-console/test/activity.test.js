@@ -195,6 +195,26 @@ test("api: paged items join in full, and a seq change between pages starts again
   await assert.rejects(readPagedItem(async (page) => ({ seq: page, page, pages: 2, bytes: 1, data: "x" }), 2), /kept changing/);
 });
 
+test("api: joined pages must have the item's UTF-8 byte length, or the read starts again", async () => {
+  const text = JSON.stringify(textItem("i3", 9, "héllo ✓ wörld"));
+  const bytes = new TextEncoder().encode(text).length;
+  assert.notEqual(bytes, text.length, "the fixture has multi-byte characters");
+  let attempt = 0;
+  const reads = [];
+  const item = await readPagedItem(async (page) => {
+    reads.push(page);
+    if (page === 0) attempt += 1;
+    // The first attempt's second page comes back short.
+    const second = attempt === 1 ? text.slice(20, -5) : text.slice(20);
+    return { seq: 9, page, pages: 2, bytes, data: page === 0 ? text.slice(0, 20) : second };
+  });
+  assert.deepEqual(reads, [0, 1, 0, 1]);
+  assert.equal(item.item.text, "héllo ✓ wörld");
+  // Always short: give up rather than parse a smaller item.
+  const short = '{"id":"i3"}';
+  await assert.rejects(readPagedItem(async (page) => ({ seq: 9, page, pages: 1, bytes: short.length + 40, data: short }), 2), /kept changing/);
+});
+
 // ---------- the watcher: snapshot and stream joined ----------
 
 function fakeActivityClient(snapshots) {
@@ -263,6 +283,43 @@ test("watcher: a seq that fails to rise, a generation change and a re-opened str
   await settle();
   assert.equal(client.calls.length, 4, "the stream re-opened: refetch");
   assert.equal(watcher.view.cursor.seq, 41);
+  watcher.stop();
+});
+
+test("watcher: a failed refetch while ready goes stale, applies no events, and Try again brings it back in step", async () => {
+  const client = fakeActivityClient([activitySnapshot({ seq: 9 }), new Error("network down"), "hold"]);
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false });
+  watcher.start();
+  await settle();
+  assert.equal(watcher.view.stale, false);
+  // A new generation asks for a snapshot, and that read fails.
+  watcher.event(activityEvent(20, { type: "item", item: textItem("i3", 20, "lost") }, { generation: "gen-example-2" }));
+  await settle();
+  assert.equal(client.calls.length, 2);
+  let view = watcher.view;
+  assert.equal(view.status, "ready");
+  assert.equal(view.stale, true);
+  assert.equal(view.error, "network down");
+  assert.equal(view.turns[0].items.length, 2, "the last snapshot stays on show");
+  // A later event in the old generation is not applied on top of it.
+  watcher.event(activityEvent(21, { type: "item", item: textItem("i4", 21, "not applied") }));
+  assert.ok(!watcher.view.turns[0].items.some((item) => item.id === "i4"));
+  assert.equal(client.calls.length, 2, "no refetch storm while stale");
+  const header = mount(headerTree(watcher.view, { name: "Example", role: "captain", live: true }), fakeDoc);
+  assert.ok(header.findAll((node) => "data-activity-retry" in node.attributes).length === 1, "Try again is offered");
+  // Try again: events during the read are buffered and joined after it.
+  watcher.retry();
+  assert.equal(client.calls.length, 3);
+  watcher.event(activityEvent(42, { type: "item", item: textItem("i3", 42, "after") }, { generation: "gen-example-2" }));
+  client.pending[0](activitySnapshot({ seq: 41, generation: "gen-example-2" }));
+  await settle();
+  view = watcher.view;
+  assert.equal(view.stale, false);
+  assert.equal(view.error, null);
+  assert.equal(view.cursor.generation, "gen-example-2");
+  assert.equal(view.turns[0].items.find((item) => item.id === "i3")?.text, "after", "back in step");
+  watcher.event(activityEvent(43, { type: "item", item: textItem("i4", 43, "applied") }, { generation: "gen-example-2" }));
+  assert.ok(watcher.view.turns[0].items.some((item) => item.id === "i4"));
   watcher.stop();
 });
 

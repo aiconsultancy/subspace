@@ -123,7 +123,9 @@ const fullKey = (turn, item) => `${turn}\u0000${item}`;
  * @param {boolean} [options.awaitStream]  read the first snapshot only on `reopened()`, once the stream answered with this agent
  */
 export function createActivityWatcher({ client, agent, onChange, awaitStream = true }) {
-  let state = { status: "loading", agent: null, turns: [], cursor: null, snapshotSeq: 0, lastSeq: 0, error: null, refreshing: false };
+  // `stale`: a refetch failed while ready. The last snapshot stays on show,
+  // but events are not applied on top of it until a snapshot is read again.
+  let state = { status: "loading", agent: null, turns: [], cursor: null, snapshotSeq: 0, lastSeq: 0, error: null, refreshing: false, stale: false };
   /** Paged items read in full: key -> {seq, state: loading|ready|failed, item, error}. */
   const full = new Map();
   const reads = new Map();
@@ -145,7 +147,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     try {
       const snapshot = decodeActivity(await client.activity(agent, {}, own.signal));
       if (stopped) return;
-      state = { ...state, status: "ready", agent: snapshot.agent, turns: snapshot.turns.slice(-MAX_TURNS), cursor: snapshot.cursor, snapshotSeq: snapshot.cursor.seq, lastSeq: snapshot.cursor.seq, error: null, refreshing: false };
+      state = { ...state, status: "ready", agent: snapshot.agent, turns: snapshot.turns.slice(-MAX_TURNS), cursor: snapshot.cursor, snapshotSeq: snapshot.cursor.seq, lastSeq: snapshot.cursor.seq, error: null, refreshing: false, stale: false };
       pending = false;
       const queued = buffer;
       buffer = [];
@@ -163,7 +165,10 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       buffer = [];
       state = error?.status === 404
         ? { ...state, status: "unavailable", error: null, refreshing: false }
-        : { ...state, status: state.status === "ready" ? "ready" : "failed", error: error?.message ?? String(error), refreshing: false };
+        : state.status === "ready"
+          ? // Out of step: the events that asked for the refetch are gone, so stop applying events until a snapshot is read.
+            { ...state, stale: true, error: error?.message ?? String(error), refreshing: false }
+          : { ...state, status: "failed", error: error?.message ?? String(error), refreshing: false };
     } finally {
       if (controller === own) controller = null;
     }
@@ -188,7 +193,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       }
       return true;
     }
-    if (state.status !== "ready") return true;
+    if (state.status !== "ready" || state.stale) return true;
     if (event.generation !== state.cursor.generation) return refetch(), false;
     if (event.seq <= state.snapshotSeq) return true;
     if (event.seq <= state.lastSeq) return refetch(), false;
@@ -252,6 +257,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       cursor: state.cursor,
       error: state.error,
       refreshing: state.refreshing,
+      stale: state.stale,
       waiting,
       full: (turnId, itemId) => full.get(fullKey(turnId, itemId)) ?? null,
     };

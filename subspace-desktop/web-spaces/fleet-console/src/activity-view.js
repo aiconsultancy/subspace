@@ -201,7 +201,12 @@ export function headerTree(view, officer) {
   if (view.status === "ready") {
     if (view.agent && !view.agent.collected) messages.push(h("p", { class: "act-warn" }, ACTIVITY_MESSAGES.notCollected));
     else if (!view.turns.length) messages.push(h("p", { class: "act-note" }, "No turns yet. A turn appears when the officer's input is submitted."));
-    if (view.error) messages.push(h("p", { class: "act-warn" }, "Could not refresh: ", txt(view.error), ". Showing the last activity read."));
+    if (view.stale) {
+      messages.push(
+        h("p", { class: "act-warn" }, "Could not refresh: ", txt(view.error), ". Showing the last activity read; newer changes appear once it is read again."),
+        view.refreshing ? h("p", { class: "act-note" }, "Reading activity again…") : h("button", { class: "btn", type: "button", "data-activity-retry": "" }, "Try again"),
+      );
+    }
     if (!officer.live) messages.push(h("p", { class: "act-note" }, "Not live: the event stream is not connected, so this may be out of date."));
   }
   return h(
@@ -286,7 +291,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onRetry }) {
   return {
     root,
     update(view, officer) {
-      const key = JSON.stringify([view.status, view.waiting, view.error, view.agent, view.agentId, view.turns.length === 0, officer.name, officer.role, officer.live]);
+      const key = JSON.stringify([view.status, view.waiting, view.stale, view.refreshing && view.stale, view.error, view.agent, view.agentId, view.turns.length === 0, officer.name, officer.role, officer.live]);
       if (key !== headerKey) {
         header.replaceChildren(mount(headerTree(view, officer), doc));
         headerKey = key;

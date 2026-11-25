@@ -104,7 +104,8 @@ export const PAGE_RESTARTS = 8;
 /**
  * Read every page of a paged activity item and return its complete JSON,
  * parsed. Pages with a different `seq` belong to another version of the item,
- * so the read starts again from page 0. Nothing is cut: it either returns the
+ * and joined data whose UTF-8 length is not the page's `bytes` is incomplete,
+ * so either way the read starts again from page 0. Nothing is cut: it either returns the
  * whole item or throws.
  *
  * @param {(page: number) => Promise<{seq: number, page: number, pages: number, bytes: number, data: string}>} readPage
@@ -126,12 +127,17 @@ export async function readPagedItem(readPage, restarts = PAGE_RESTARTS) {
       parts.push(next.data);
     }
     if (changed) continue;
-    return { seq: first.seq, item: JSON.parse(parts.join("")) };
+    const data = parts.join("");
+    // A short or long read is another version, or a broken one: never parse it as the item.
+    if (utf8Length(data) !== first.bytes) continue;
+    return { seq: first.seq, item: JSON.parse(data) };
   }
   throw new Error("The item kept changing while its pages were read.");
 }
 
+const utf8Length = (text) => new TextEncoder().encode(text).length;
+
 function checkPage(page, number) {
-  const ok = page && typeof page.data === "string" && Number.isInteger(page.pages) && page.pages >= 1 && page.page === number && Number.isFinite(page.seq);
+  const ok = page && typeof page.data === "string" && Number.isInteger(page.pages) && page.pages >= 1 && page.page === number && Number.isFinite(page.seq) && Number.isInteger(page.bytes) && page.bytes >= 0;
   if (!ok) throw new Error(`Page ${number} of the item is not a valid page.`);
 }

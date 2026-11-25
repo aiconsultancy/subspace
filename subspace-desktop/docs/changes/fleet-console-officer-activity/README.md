@@ -17,7 +17,8 @@ the desktop side are separate work.
   item, page)` for its pages. `events()` sends each watched officer as a
   repeated `agent` query parameter. `readPagedItem` joins an item's pages
   in full and starts again from page 0 when `seq` or the page count changes
-  between pages; after eight restarts it reports that the item kept
+  between pages, or when the joined data's UTF-8 length is not the page's
+  `bytes`; after eight restarts it reports that the item kept
   changing. Nothing is ever truncated.
 - **One stream.** The gateway allows eight event-stream viewers in total.
   `src/live.js` `setAgents(ids)` re-opens the fleet's one stream with
@@ -34,6 +35,9 @@ the desktop side are separate work.
   are dropped. A `seq` at or below the last applied one, a new
   `generation`, an item for an unknown turn and every stream (re)open read
   the snapshot again, single-flight. `seq` may skip; a skip is not a gap.
+  If such a read fails, the view goes stale: it keeps the last snapshot on
+  show, applies no events until a snapshot is read again (on **Try again**
+  or the next stream open), and says so.
   Turn events upsert the turn and keep its items; item events upsert by ID,
   keeping the higher `seq`. A loaded paged item is read again when its
   `seq` rises.

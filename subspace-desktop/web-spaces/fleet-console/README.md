@@ -223,7 +223,8 @@ closes it, as does moving to another tier; focus returns to the button.
 - **Nothing is cut.** Content is shown in full. Long text wraps, scrolls
   inside its block and stays selectable. An item larger than 64 KiB arrives
   paged: **Load in full** reads every page and shows it whole; if the item
-  changes between pages, the read starts again from page 0.
+  changes between pages, or the pages do not add up to its size, the read
+  starts again from page 0.
 - **Content is text.** Every value is set as text, never parsed as HTML.
   Control characters (other than newline and tab) and bidi formatting
   characters show as `⟨U+XXXX⟩` markers, so content cannot hide or reorder
@@ -240,7 +241,9 @@ closes it, as does moving to another tier; focus returns to the button.
   that arrive meanwhile are buffered; those at or below the snapshot's
   cursor are dropped. A `seq` that fails to rise, a new `generation`, an
   item for an unknown turn and every stream re-open read the snapshot
-  again, one read at a time. A skipped `seq` is not a gap.
+  again, one read at a time. A skipped `seq` is not a gap. If that read
+  fails, the view keeps the last activity read, stops applying changes and
+  offers **Try again**.
 - **Messages.** "Some changes may be missing (the stream reconnected)" on a
   turn the gateway saw its officer's stream reconnect in; "This officer's
   backend isn't collected yet." when the gateway does not collect it; and
