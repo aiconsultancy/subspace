@@ -4,6 +4,7 @@ use gpui_kit::App;
 use subspace_core::diagnostics::ErrorDetails;
 
 use super::ChatPanel;
+use super::copilot_only::{self, CopilotOnly};
 use super::failure_view::legacy::legacy_error_details;
 use super::tabs::Tab;
 
@@ -53,7 +54,7 @@ impl ChatPanel {
             return false;
         }
         self.tab_mut()
-            .set_error("YOLO is unavailable with Pi. Choose Copilot in Settings to use it.".into());
+            .set_error(copilot_only::unavailable(CopilotOnly::Yolo).into());
         self.log_accepted_errors(cx);
         cx.notify();
         true

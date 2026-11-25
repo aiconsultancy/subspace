@@ -2,6 +2,7 @@
 //! runtime: each component reports what the user chose, and the panel turns it
 //! into a command.
 
+use super::copilot_only::{self, CopilotOnly};
 use super::input::{ChatInput, ChatInputEvent};
 use super::logic::{effort_for, sdk_mode};
 use super::slash::{SlashEvent, SlashList};
@@ -78,10 +79,8 @@ impl ChatPanel {
                 if self.capabilities().copilot_controls {
                     self.send_chat(ChatCommand::SetMode(sdk_mode(*mode)), cx);
                 } else {
-                    self.tab_mut().set_error(
-                        "Interaction modes are unavailable with Pi. Choose Copilot in Settings to use them."
-                            .into(),
-                    );
+                    self.tab_mut()
+                        .set_error(copilot_only::unavailable(CopilotOnly::Modes).into());
                 }
             }
             ToolbarEvent::SetApproveAll(approve_all) => self.request_yolo(*approve_all, cx),
@@ -89,10 +88,8 @@ impl ChatPanel {
                 if self.capabilities().copilot_controls {
                     self.send_chat(ChatCommand::SetAgent(agent.to_string()), cx);
                 } else {
-                    self.tab_mut().set_error(
-                        "Custom agents are unavailable with Pi. Choose Copilot in Settings to use them."
-                            .into(),
-                    );
+                    self.tab_mut()
+                        .set_error(copilot_only::unavailable(CopilotOnly::Agents).into());
                 }
             }
             ToolbarEvent::SetModel { model } => self.choose_model(model.clone().as_ref(), cx),

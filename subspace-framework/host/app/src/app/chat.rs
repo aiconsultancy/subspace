@@ -80,12 +80,18 @@ impl SubspaceApp {
     }
 
     /// Opens the pane when it is closed, then replays the cloud agent task.
+    /// When the pane cannot replay it, a toast says why and the pane is left
+    /// as it is: Chat off, or the Sessions tab, would hide the reason.
     fn open_cloud_session(
         &mut self,
         task: &CloudSession,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(refusal) = self.chat.read(cx).cloud_replay_refusal() {
+            self.push_toast(Toast::error(refusal), cx);
+            return;
+        }
         if !self.chat_open {
             self.toggle_chat(&ToggleChat, window, cx);
         }
@@ -214,6 +220,10 @@ fn chat_open_preference(open: bool) -> &'static str {
 fn added_message(label: &str) -> String {
     format!("Added to the chat: {label}")
 }
+
+#[cfg(test)]
+#[path = "chat_tests.rs"]
+mod replay_tests;
 
 #[cfg(test)]
 mod tests {

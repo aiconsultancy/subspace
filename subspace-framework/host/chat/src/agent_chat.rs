@@ -10,6 +10,7 @@ mod bridge;
 mod canvas;
 mod carry;
 mod content;
+mod copilot_only;
 mod effects;
 mod engine;
 mod error_logging;

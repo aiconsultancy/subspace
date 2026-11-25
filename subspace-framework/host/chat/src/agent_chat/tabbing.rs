@@ -1,5 +1,6 @@
 //! Opening, choosing and closing chat tabs, and the saved chats they show.
 
+use super::copilot_only::{self, CopilotOnly};
 use super::interaction::chat_preferences;
 use super::tabs::{
     SessionChoice, Tab, can_open, choose_session, index_after_close, stepped_index, tab_index,
@@ -66,10 +67,23 @@ impl ChatPanel {
         let _ = opened.then(|| self.place_tab(Tab::opened(chat), window, cx));
     }
 
+    /// Why a cloud session would not open here, when it would not. The shell
+    /// asks before it opens the pane and shows the reason as a toast: the
+    /// pane may be off, or on its Sessions tab, where a chat tab's error is
+    /// hidden.
+    pub fn cloud_replay_refusal(&self) -> Option<&'static str> {
+        copilot_only::refuses_replay(
+            self.capabilities().cloud_replay(),
+            self.is_disabled(),
+            subspace_agent::COPILOT_BUILT_IN,
+        )
+        .then(|| copilot_only::unavailable(CopilotOnly::Replay))
+    }
+
     /// Replays a cloud agent task's last session in a read-only tab. Every
     /// replay opens a fresh tab: the connected session is transient, so
     /// there is no saved chat to focus instead. The shell opens the pane
-    /// first.
+    /// first, unless `cloud_replay_refusal` gives a reason not to.
     pub fn show_cloud_session(
         &mut self,
         task: &CloudSession,
@@ -81,7 +95,7 @@ impl ChatPanel {
         }
         if !self.capabilities().cloud_replay() {
             self.tab_mut()
-                .set_error(replay_unavailable(subspace_agent::COPILOT_BUILT_IN).into());
+                .set_error(copilot_only::unavailable(CopilotOnly::Replay).into());
             self.log_accepted_errors(cx);
             cx.notify();
             return;
@@ -166,16 +180,6 @@ impl ChatPanel {
     }
 }
 
-/// Why a cloud session does not open: only Copilot replays one, and a build
-/// without Copilot cannot switch to it.
-fn replay_unavailable(copilot_built_in: bool) -> &'static str {
-    if copilot_built_in {
-        "Cloud-session replay is unavailable with Pi. Choose Copilot in Settings and restart Subspace to open this session."
-    } else {
-        "Cloud-session replay needs Copilot chat, which this build of Subspace does not include. Open the task on GitHub instead."
-    }
-}
-
 fn new_chat_command(chat: ChatId, cx: &super::App) -> Command {
     Command::OpenChat {
         chat,
@@ -186,17 +190,9 @@ fn new_chat_command(chat: ChatId, cx: &super::App) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{new_chat_command, replay_unavailable};
+    use super::new_chat_command;
     use crate::prefs;
     use subspace_agent::Command;
-
-    #[test]
-    fn a_build_without_copilot_does_not_suggest_choosing_it_for_a_replay() {
-        assert!(replay_unavailable(true).contains("Choose Copilot in Settings"));
-        let missing = replay_unavailable(false);
-        assert!(missing.contains("does not include"), "{missing}");
-        assert!(!missing.contains("Choose Copilot"), "{missing}");
-    }
 
     #[gpui_kit::test]
     fn same_app_context_refreshes_new_chat_snapshot_without_mutating_old_one(
