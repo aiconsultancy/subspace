@@ -116,3 +116,50 @@ fn a_missing_member_gets_one_probe_when_it_returns() {
     assert_progress(&state, "Full detail on return");
     assert_eq!(state.begin(), None);
 }
+
+fn read_with_queued_task_revision() -> (DetailState, u64) {
+    let mut state = DetailState::new(roster("first", "Working…", 1), 0);
+    let flight = state.begin().unwrap();
+    let mut newer = member("first", "Working…", 1);
+    newer.contexts[0].current.as_mut().unwrap().updated_at = Some(2);
+    assert!(state.update(Roster::Present(Box::new(newer)), 0));
+    assert_eq!(state.begin(), None);
+    (state, flight)
+}
+
+#[test]
+fn a_queued_task_revision_survives_an_invalid_response() {
+    let (mut state, flight) = read_with_queued_task_revision();
+    state.finish(flight, Err(Error::InvalidResponse));
+    assert_eq!(state.retry_delay(), None);
+    let follow_up = state
+        .begin()
+        .expect("the newer task revision still needs a read");
+    state.finish(follow_up, Ok(member("first", "Unbounded latest detail", 1)));
+    assert_progress(&state, "Unbounded latest detail");
+    assert_eq!(state.begin(), None);
+}
+
+#[test]
+fn a_queued_task_revision_waits_for_the_gateway_retry_after() {
+    let (mut state, flight) = read_with_queued_task_revision();
+    state.finish(flight, Err(Error::Busy(Some(6))));
+    assert_eq!(state.begin(), None);
+    assert_eq!(state.retry_delay(), Some(std::time::Duration::from_secs(6)));
+    state.retry_elapsed();
+    let follow_up = state.begin().expect("read the revision after Retry-After");
+    state.finish(
+        follow_up,
+        Ok(member("first", "Latest detail after waiting", 1)),
+    );
+    assert_progress(&state, "Latest detail after waiting");
+    assert_eq!(state.begin(), None);
+}
+
+#[test]
+fn a_missing_route_discards_the_queued_task_revision() {
+    let (mut state, flight) = read_with_queued_task_revision();
+    state.finish(flight, Err(Error::NotFound));
+    assert_eq!(state.begin(), None);
+    assert_eq!(state.retry_delay(), None);
+}

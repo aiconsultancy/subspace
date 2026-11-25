@@ -268,7 +268,7 @@ fn retry_backoff_is_bounded_and_does_not_poll_early() {
     state.finish(flight, Err(Error::Unreachable));
     assert_eq!(state.retry_delay(), None);
     assert!(state.can_retry());
-    state.rearm();
+    state.probe();
     let manual = state.begin().unwrap();
     state.finish(manual, Err(Error::Busy(Some(31))));
     assert_eq!(state.retry_delay(), None);

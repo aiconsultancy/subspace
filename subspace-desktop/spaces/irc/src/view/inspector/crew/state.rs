@@ -6,20 +6,21 @@ use std::time::Duration;
 use subspace_client_fleet::Error;
 use subspace_client_fleet::model::{CrewContext, CrewMember};
 
+mod retry;
 mod roster;
+use retry::{retry_delay, retry_wait};
 pub(super) use roster::Roster;
 use roster::{current_in, same_task_facts};
-
-const MAX_RETRIES: u32 = 5;
-const MAX_RETRY_WAIT_SECS: u64 = 30;
-const SERVER_ERRORS: std::ops::RangeInclusive<u16> = 500..=599;
 
 pub(super) struct DetailState {
     pub roster: Roster,
     connection: u64,
     generation: u64,
     visible: bool,
+    // Demand not yet covered by the active read, independent of its result.
     pending: bool,
+    // A transient failure gates pending demand behind the retry policy.
+    waiting_to_retry: bool,
     flight: Option<(u64, Box<CrewMember>)>,
     detail: Option<FullDetail>,
     error: Option<Error>,
@@ -34,6 +35,7 @@ impl DetailState {
             generation: 0,
             visible: true,
             pending: true,
+            waiting_to_retry: false,
             flight: None,
             detail: None,
             error: None,
@@ -56,6 +58,7 @@ impl DetailState {
         if connection_changed {
             self.flight = None;
             self.error = None;
+            self.waiting_to_retry = false;
         }
         self.connection = connection;
         self.roster = roster;
@@ -84,6 +87,7 @@ impl DetailState {
         self.retries = 0;
         self.flight = None;
         self.pending = true;
+        self.waiting_to_retry = false;
     }
 
     /// Reports a transition so the owner can let go of obsolete work.
@@ -107,30 +111,21 @@ impl DetailState {
     }
 
     pub fn can_retry(&self) -> bool {
-        !self.pending
+        (!self.pending || self.waiting_to_retry)
             && self.flight.is_none()
             && self.error.is_some_and(|err| err != Error::NotFound)
     }
 
     pub fn retry_delay(&self) -> Option<Duration> {
-        if self.retries >= MAX_RETRIES
-            || !self.can_retry()
-            || !matches!(self.roster, Roster::Present(_))
-        {
+        if !self.can_retry() || !matches!(self.roster, Roster::Present(_)) {
             return None;
         }
-        let wait = match self.error? {
-            Error::Busy(wait) => wait.unwrap_or_default(),
-            Error::Unreachable => 0,
-            Error::UnexpectedStatus(status) if SERVER_ERRORS.contains(&status) => 0,
-            _ => return None,
-        };
-        // Don't automatically retry earlier than the gateway asked us to.
-        (wait <= MAX_RETRY_WAIT_SECS).then(|| Duration::from_secs(wait.max(1 << self.retries)))
+        retry_delay(self.error?, self.retries)
     }
 
     pub fn retry_elapsed(&mut self) {
         self.retries += 1;
+        self.waiting_to_retry = false;
         self.queue();
     }
 
@@ -138,7 +133,7 @@ impl DetailState {
         let Roster::Present(roster) = &self.roster else {
             return None;
         };
-        if !self.visible || self.flight.is_some() || !self.pending {
+        if !self.visible || self.flight.is_some() || !self.pending || self.waiting_to_retry {
             return None;
         }
         self.pending = false;
@@ -166,8 +161,8 @@ impl DetailState {
                 self.error = Some(Error::NotFound);
             }
             Err(error) => {
-                self.pending = false;
                 self.error = Some(error);
+                self.waiting_to_retry = retry_wait(error).is_some();
             }
         }
     }
