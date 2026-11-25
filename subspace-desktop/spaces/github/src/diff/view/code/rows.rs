@@ -116,7 +116,9 @@ impl DiffView {
                         Some(IconName::FileCode),
                         "View binary",
                     )
-                    .on_click(cx.listener(move |view, _, _, cx| view.open_binary(file, cx))),
+                    .on_click(
+                        cx.listener(move |view, _, window, cx| view.open_binary(file, window, cx)),
+                    ),
                 )
             })
             .when_some(view.binary_size, |el, bytes| {
@@ -156,7 +158,7 @@ impl DiffView {
                         Some(IconName::RefreshCw),
                         "Refresh diff",
                     )
-                    .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
+                    .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
                 )
                 .into_any_element();
         }

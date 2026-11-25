@@ -22,6 +22,8 @@ pub enum Error {
     NotFound,
     #[error("The checkout changed while loading. Refresh to try again.")]
     StaleDiff,
+    #[error("The diff read was cancelled.")]
+    DiffReadCancelled,
     /// 429 or 503, with the server's wait in whole seconds when it gave one.
     #[error("Stargate is busy. Subspace will try again.")]
     Busy(Option<u64>),

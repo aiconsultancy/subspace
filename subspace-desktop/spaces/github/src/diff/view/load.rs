@@ -1,9 +1,9 @@
 //! Loading the diff and the text behind a hunk gap.
 
-use gpui_kit::{AppContext as _, Context};
+use gpui_kit::{AppContext as _, Context, Window};
 use subspace_client_fleet::{
     Error,
-    diff::{DiffFilePage, DiffMode, V1DiffFilePage},
+    diff::{DiffFilePage, DiffMode, DiffRead, V1DiffFilePage},
 };
 use subspace_framework::dashboard::{Toast, prefs};
 
@@ -19,38 +19,58 @@ enum LoadError {
 }
 
 impl DiffView {
+    pub(crate) fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fleet.read.cancel();
+        self._load = None;
+        self.close_binary(Some(window), cx);
+    }
+
+    pub(crate) fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_binary(Some(window), cx);
+        self.load(cx);
+    }
+
     /// Load the diff again (reload).
     pub fn load(&mut self, cx: &mut Context<Self>) {
         let source = self.source.clone();
         let mode = self.fleet.mode;
         let fleet_client = match &source {
             DiffSource::Fleet(source) => {
-                self.reset_fleet_load();
+                self.observe_current_crew(cx);
+                self.reset_fleet_load(cx);
                 Some(source.client(cx))
             }
             DiffSource::GitHub(_) => None,
         };
         let generation = self.fleet.generation;
+        let baseline = self.fleet.live_revision;
+        let read = self.fleet.read.clone();
         self.error = None;
         self._load = Some(cx.spawn(async move |view, cx| {
             let result = cx
-                .background_spawn(async move { read_diff(source, mode, fleet_client) })
+                .background_spawn(async move { read_diff(source, mode, fleet_client, &read) })
                 .await;
             _ = view.update(cx, |view, cx| {
                 if view.fleet.generation != generation {
                     return;
                 }
-                view.finish_load(result, cx);
+                view.finish_load(result, baseline, cx);
                 cx.notify();
             });
         }));
         cx.notify();
     }
 
-    fn finish_load(&mut self, result: Result<Loaded, LoadError>, cx: &mut Context<Self>) {
+    fn finish_load(
+        &mut self,
+        result: Result<Loaded, LoadError>,
+        baseline: u64,
+        cx: &mut Context<Self>,
+    ) {
         match result {
-            Ok(diff) => self.set_diff(diff, cx),
+            Ok(diff) => self.set_diff(diff, baseline, cx),
             Err(LoadError::Message(message)) => self.error = Some(message),
+            Err(LoadError::Fleet(Error::DiffReadCancelled)) => {}
             Err(LoadError::Fleet(error)) => {
                 self.fleet.stale_page = error == Error::StaleDiff;
                 self.error = Some(diff_error(error));
@@ -58,7 +78,9 @@ impl DiffView {
         }
     }
 
-    fn reset_fleet_load(&mut self) {
+    fn reset_fleet_load(&mut self, cx: &mut Context<Self>) {
+        self.fleet.read.cancel();
+        self.fleet.read = DiffRead::default();
         self.fleet.generation += 1;
         self.fleet.fingerprint = None;
         self.fleet.unavailable = false;
@@ -67,7 +89,7 @@ impl DiffView {
         self.fleet.live_changed = false;
         self.fleet.busy = None;
         self.fleet.loading.clear();
-        self.binary = None;
+        self.close_binary(None, cx);
         self.full_line = None;
         self.loaded = false;
         self.total = 0;
@@ -82,7 +104,7 @@ impl DiffView {
         self.tree_scroll = gpui_kit::UniformListScrollHandle::new();
     }
 
-    fn set_diff(&mut self, diff: Loaded, cx: &mut Context<Self>) {
+    fn set_diff(&mut self, diff: Loaded, baseline: u64, cx: &mut Context<Self>) {
         let files = match diff {
             Loaded::GitHub(diff) => {
                 if self.loaded && diff.head_sha == self.head_sha && diff.base_sha == self.base_sha {
@@ -94,8 +116,7 @@ impl DiffView {
                 diff.files.into_iter().map(FileView::new).collect()
             }
             Loaded::Fleet(diff) => {
-                self.seed_crew_fingerprint(cx);
-                self.fleet.fingerprint = Some(diff.fingerprint);
+                self.fleet.accept_fingerprint(diff.fingerprint, baseline);
                 self.fleet.unstable = diff.unstable;
                 self.total = diff.total;
                 diff.files.into_iter().map(fleet_file).collect()
@@ -165,6 +186,7 @@ impl DiffView {
         };
         self.fleet.loading.insert(index);
         let (mode, generation) = (self.fleet.mode, self.fleet.generation);
+        let read = self.fleet.read.clone();
         let path = file.file.path.clone();
         cx.spawn(async move |view, cx| {
             let result = cx
@@ -175,7 +197,7 @@ impl DiffView {
                         at: &at,
                         side: None,
                     };
-                    let result = client.diff_file(source.request(mode), request)?;
+                    let result = read.retry(|| client.diff_file(source.request(mode), request))?;
                     validate_page(result, &request)
                 })
                 .await;
@@ -213,6 +235,7 @@ impl DiffView {
 
     pub(super) fn fleet_page_error(&mut self, error: Error, cx: &mut Context<Self>) {
         match error {
+            Error::DiffReadCancelled => {}
             Error::StaleDiff => self.fleet.stale_page = true,
             Error::Busy(_) => self.fleet.busy = Some(diff_error(error)),
             Error::NotFound => cx.emit(DiffEvent::Toast(Toast::error(
@@ -258,6 +281,7 @@ fn read_diff(
     source: DiffSource,
     mode: DiffMode,
     fleet_client: Option<Result<subspace_client_fleet::FleetClient, String>>,
+    read: &DiffRead,
 ) -> Result<Loaded, LoadError> {
     match source {
         DiffSource::GitHub(source) => source
@@ -274,6 +298,7 @@ fn read_diff(
                     })?
                     .map_err(LoadError::Message)?,
                 mode,
+                read,
             )
             .map_err(LoadError::Fleet),
     }

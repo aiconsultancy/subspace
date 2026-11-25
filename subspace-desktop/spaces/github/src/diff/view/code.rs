@@ -211,7 +211,7 @@ impl DiffView {
                         Some(IconName::RefreshCw),
                         "Refresh",
                     )
-                    .on_click(cx.listener(|view, _, _, cx| view.load(cx)))],
+                    .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx)))],
                 )
                 .into_any_element()
             }

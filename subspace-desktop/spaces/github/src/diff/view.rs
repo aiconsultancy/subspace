@@ -274,6 +274,11 @@ impl DiffView {
             _search_subscription: subscription,
             _load: None,
         };
+        cx.on_release(|view, cx| {
+            view.fleet.read.cancel();
+            view.close_binary(None, cx);
+        })
+        .detach();
         view.follow_crew(cx);
         view.load(cx);
         view

@@ -2,7 +2,7 @@
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{Context, Div, Entity, ParentElement as _, Styled as _, px};
+use gpui_kit::{Context, Div, Entity, ParentElement as _, Styled as _, Window, px};
 use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
@@ -21,15 +21,15 @@ impl DiffView {
     pub(crate) fn crew_commands(view: &Entity<Self>) -> Vec<PaletteCommand> {
         let mut commands = Vec::from(MODES.map(|(label, mode)| {
             let view = view.downgrade();
-            PaletteCommand::callback(label, move |_, cx| {
-                _ = view.update(cx, |view, cx| view.set_mode(mode, cx));
+            PaletteCommand::callback(label, move |window, cx| {
+                _ = view.update(cx, |view, cx| view.set_mode(mode, Some(window), cx));
             })
         }));
         let view = view.downgrade();
         commands.push(PaletteCommand::callback(
             "Refresh crew diff",
-            move |_, cx| {
-                _ = view.update(cx, Self::load);
+            move |window, cx| {
+                _ = view.update(cx, |view, cx| view.reload(window, cx));
             },
         ));
         commands
@@ -60,7 +60,7 @@ impl DiffView {
                             Some(IconName::RefreshCw),
                             "Refresh",
                         )
-                        .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
+                        .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
                     ),
             )
             .child(
@@ -90,7 +90,7 @@ impl DiffView {
                         Some(IconName::RefreshCw),
                         "Refresh",
                     )
-                    .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
+                    .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
                 )
                 .when_some(detail, |row, busy| row.child(busy.to_owned())),
         )
@@ -105,16 +105,22 @@ impl DiffView {
                 .iter()
                 .position(|(_, value)| *value == self.fleet.mode),
             tokens,
-            move |index, _, _, cx| {
+            move |index, _, window, cx| {
                 if let Some((_, mode)) = MODES.get(index) {
-                    _ = weak.update(cx, |view, cx| view.set_mode(*mode, cx));
+                    _ = weak.update(cx, |view, cx| view.set_mode(*mode, Some(window), cx));
                 }
             },
         )
     }
 
-    pub(super) fn set_mode(&mut self, mode: DiffMode, cx: &mut Context<Self>) {
+    pub(super) fn set_mode(
+        &mut self,
+        mode: DiffMode,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
         if self.fleet.mode != mode {
+            self.close_binary(window, cx);
             self.fleet.mode = mode;
             self.load(cx);
         }

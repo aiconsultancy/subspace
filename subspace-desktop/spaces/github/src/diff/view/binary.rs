@@ -1,18 +1,13 @@
 //! A viewport for one decoded Fleet page. Page history holds positions only;
 //! switching sides or closing the viewer drops its bytes and pending read.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, Div, IntoElement, ParentElement as _, Styled as _, Task,
-    UniformListScrollHandle, div,
+    UniformListScrollHandle, Window, div,
 };
-use subspace_client_fleet::diff::{DiffContent, DiffSide};
+use subspace_client_fleet::diff::{DiffContent, DiffRead, DiffSide};
 use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
@@ -24,6 +19,8 @@ use super::DiffView;
 mod hex;
 mod preview;
 mod read;
+#[cfg(test)]
+mod tests;
 
 use preview::Preview;
 
@@ -62,8 +59,10 @@ fn side_selector(binary: &BinaryView, tokens: &Tokens, cx: &Context<DiffView>) -
         [Segment::new("Old"), Segment::new("New")],
         Some(binary.side_index()),
         tokens,
-        move |index, _, _, cx| {
-            _ = weak.update(cx, |view, cx| view.select_binary_side(file, index, cx));
+        move |index, _, window, cx| {
+            _ = weak.update(cx, |view, cx| {
+                view.select_binary_side(file, index, window, cx)
+            });
         },
     )
     .into_any_element()
@@ -85,7 +84,7 @@ pub(super) struct BinaryView {
     scroll: UniformListScrollHandle,
     read: Option<Task<()>>,
     preview: Option<Preview>,
-    closed: Arc<AtomicBool>,
+    closed: DiffRead,
 }
 
 impl BinaryView {
@@ -106,7 +105,7 @@ impl BinaryView {
             scroll: UniformListScrollHandle::new(),
             read: None,
             preview: None,
-            closed: Arc::new(AtomicBool::new(false)),
+            closed: DiffRead::default(),
         }
     }
 
@@ -136,18 +135,35 @@ impl BinaryView {
         self.page = Some(page);
         self.scroll = UniformListScrollHandle::new();
     }
+
+    fn replace_preview(
+        &mut self,
+        preview: Option<Preview>,
+        window: Option<&mut Window>,
+        cx: &mut gpui_kit::App,
+    ) {
+        if let Some(previous) = std::mem::replace(&mut self.preview, preview) {
+            previous.evict(window, cx);
+        }
+    }
 }
 
 impl Drop for BinaryView {
     fn drop(&mut self) {
-        self.closed.store(true, Ordering::Release);
+        self.closed.cancel();
     }
 }
 
 impl DiffView {
-    fn select_binary_side(&mut self, file: usize, index: usize, cx: &mut Context<Self>) {
+    fn select_binary_side(
+        &mut self,
+        file: usize,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(side) = self.other_binary_side(file, index) {
-            self.open_binary_side(file, side, cx);
+            self.open_binary_side(file, side, window, cx);
         }
     }
 
@@ -157,7 +173,7 @@ impl DiffView {
         (binary.file == file && binary.side != side && !self.fleet.changed()).then_some(side)
     }
 
-    pub(super) fn open_binary(&mut self, file: usize, cx: &mut Context<Self>) {
+    pub(super) fn open_binary(&mut self, file: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = self.files.get(file).filter(|view| view.binary) else {
             return;
         };
@@ -166,13 +182,32 @@ impl DiffView {
             _ => DiffSide::New,
         };
         self.current = file;
-        self.open_binary_side(file, side, cx);
+        self.open_binary_side(file, side, window, cx);
     }
 
-    fn open_binary_side(&mut self, file: usize, side: DiffSide, cx: &mut Context<Self>) {
+    fn open_binary_side(
+        &mut self,
+        file: usize,
+        side: DiffSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_binary(Some(window), cx);
         self.binary = Some(BinaryView::new(file, side));
         self.read_binary(Move::Start, cx);
         cx.notify();
+    }
+
+    pub(super) fn close_binary(
+        &mut self,
+        window: Option<&mut Window>,
+        cx: &mut gpui_kit::App,
+    ) -> bool {
+        let Some(mut binary) = self.binary.take() else {
+            return false;
+        };
+        binary.replace_preview(None, window, cx);
+        true
     }
 
     pub(super) fn binary_view(
@@ -203,8 +238,8 @@ impl DiffView {
                             Some(IconName::X),
                             "Close bytes",
                         )
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            view.binary = None;
+                        .on_click(cx.listener(|view, _, window, cx| {
+                            view.close_binary(Some(window), cx);
                             cx.notify();
                         })),
                     ),
@@ -258,7 +293,7 @@ fn paging_controls(
                     Some(IconName::RefreshCw),
                     "Refresh diff",
                 )
-                .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
+                .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
             )
             .when(preview, |row| row.child(preview::bytes_button(cx))),
         (false, true, _) => row.child(div().text_color(tokens.muted).child("Loading…")),
@@ -280,7 +315,7 @@ fn binary_body(
         return Some(preview.body(tokens));
     }
     let page = binary.page.as_ref()?;
-    Some(if page.bytes.is_empty() {
+    Some(if page.size == 0 {
         div().px_3().child("Empty file").into_any_element()
     } else {
         hex::list(binary, page, tokens, cx).into_any_element()

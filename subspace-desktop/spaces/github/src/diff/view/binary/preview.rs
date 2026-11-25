@@ -3,11 +3,10 @@
 
 use std::io::Cursor;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, IntoElement as _, ParentElement as _, RenderImage,
-    Styled as _, div,
+    AnyElement, App, AppContext as _, Context, IntoElement as _, ParentElement as _, RenderImage,
+    Styled as _, Window, div,
 };
 use image::{Frame, ImageDecoder as _, ImageFormat, ImageReader, Limits};
 use subspace_client_fleet::{Error, diff::DiffContent};
@@ -31,6 +30,21 @@ pub(super) struct Preview {
 }
 
 impl Preview {
+    #[cfg(test)]
+    pub(super) fn image(&self) -> Arc<RenderImage> {
+        self.image.clone()
+    }
+
+    pub(super) fn evict(self, window: Option<&mut Window>, cx: &mut App) {
+        let image = self.image;
+        if let Some(window) = window {
+            cx.drop_image(image, Some(window));
+        } else {
+            // An app-only callback may be running inside a window update.
+            cx.defer(move |cx| cx.drop_image(image, None));
+        }
+    }
+
     pub(super) fn body(&self, tokens: &Tokens) -> AnyElement {
         div()
             .min_w_0()
@@ -43,7 +57,6 @@ impl Preview {
 enum PreviewError {
     Fleet(Error),
     NotRenderable,
-    Closed,
 }
 
 impl DiffView {
@@ -79,18 +92,13 @@ impl DiffView {
                     let mut unstable = false;
                     let result = read_preview(
                         |position| {
-                            if closed.load(Ordering::Acquire) {
-                                return Err(PreviewError::Closed);
-                            }
-                            blob.read(&client, source.request(mode), position)
+                            blob.read(&client, source.request(mode), position, &closed)
                                 .map_err(PreviewError::Fleet)
                         },
                         &mut unstable,
                     )
                     .and_then(|bytes| {
-                        if closed.load(Ordering::Acquire) {
-                            return Err(PreviewError::Closed);
-                        }
+                        closed.check().map_err(PreviewError::Fleet)?;
                         decode(format, &bytes).ok_or(PreviewError::NotRenderable)
                     });
                     (result, unstable)
@@ -117,11 +125,10 @@ impl DiffView {
         self.fleet.unstable |= unstable;
         match result {
             Ok(preview) => {
-                binary.preview = Some(preview);
+                binary.replace_preview(Some(preview), None, cx);
                 self.fleet.busy = None;
             }
             Err(PreviewError::Fleet(error)) => self.fleet_page_error(error, cx),
-            Err(PreviewError::Closed) => {}
             Err(PreviewError::NotRenderable) => cx.emit(DiffEvent::Toast(Toast::error(
                 "Cannot preview this image. You can still read its bytes.",
             ))),
@@ -158,9 +165,9 @@ pub(super) fn bytes_button(cx: &Context<DiffView>) -> AnyElement {
         Some(IconName::FileCode),
         "Show bytes",
     )
-    .on_click(cx.listener(|view, _, _, cx| {
+    .on_click(cx.listener(|view, _, window, cx| {
         if let Some(binary) = view.binary.as_mut() {
-            binary.preview = None;
+            binary.replace_preview(None, Some(window), cx);
         }
         cx.notify();
     }))

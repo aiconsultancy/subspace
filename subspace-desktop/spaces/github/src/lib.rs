@@ -1341,6 +1341,9 @@ impl Github {
                 DiffEvent::Toast(toast) => emit_toast(toast.clone(), cx),
             });
         self.composer = None;
+        if let Some((previous, _)) = self.diff.take() {
+            previous.update(cx, |diff, cx| diff.close(window, cx));
+        }
         self.diff = Some((view, subscription));
         self.focus.focus(window, cx);
         cx.notify();
@@ -1351,7 +1354,9 @@ impl Github {
             cx.notify();
             return;
         }
-        self.diff = None;
+        if let Some((view, _)) = self.diff.take() {
+            view.update(cx, |diff, cx| diff.close(window, cx));
+        }
         if let Some(origin) = self.crew_diff.take().and_then(|diff| diff.origin) {
             cx.emit(DashboardEvent::Return(origin));
         }
@@ -1647,7 +1652,7 @@ impl Dashboard for Github {
 
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((diff, _)) = &self.diff {
-            diff.update(cx, |diff, _| diff.unfollow_crew());
+            diff.update(cx, |diff, cx| diff.unfollow_crew(window, cx));
         }
         self.menu_anchors.dismiss(window, cx);
         self.menu = None;
@@ -1777,11 +1782,11 @@ impl Dashboard for Github {
         })
     }
 
-    fn reload(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((diff, _)) = &self.diff
             && diff.read(cx).item().is_none()
         {
-            diff.update(cx, |diff, cx| diff.load(cx));
+            diff.update(cx, |diff, cx| diff.reload(window, cx));
             return;
         }
         if !self.started {

@@ -14,12 +14,15 @@ and project. The PRs Space resolves the fleet connection and displays **All
 changes**, **Committed only** or **Uncommitted only**. It reads file-list pages
 for one snapshot; **Load next page** continues a long patch at that snapshot’s
 fingerprint. The shared Fleet feed can also report a new fingerprint for
-that checkout. A newly observed fingerprint can mark the open snapshot
-stale; a cached fingerprint from before the list loaded cannot. A conflict
+that checkout. A change observed during a load or after it can mark the
+snapshot stale; the feed value already known when the load started cannot.
+The viewer checks for changes again when the Space becomes active. A conflict
 or missing list continuation also asks for **Refresh**. If a list or file
 page reports an unstable read, the viewer still displays the content and
-shows **Changed while loading · Refresh**. A busy response offers a manual
-refresh rather than promising an automatic retry.
+shows **Changed while loading · Refresh**. Closing or refreshing cancels the
+old load before it requests another page. Busy requests retry the same page
+up to twice, respecting a numeric `Retry-After`. If the wait is over ten
+seconds or the retries run out, the viewer offers manual **Refresh** instead.
 
 **View binary** opens a readonly hex and ASCII dump. Its pages are read on
 demand at the original fingerprint; modified binaries offer **Old** and
@@ -28,6 +31,7 @@ demand at the original fingerprint; modified binaries offer **Old** and
 still preview for up to 10 MiB in at most 16 pages, with a maximum width
 and height of 4,096 pixels. **Show bytes** remains
 available; larger or unsupported images can be read as bytes page by page.
+Leaving or replacing a preview removes its texture from the window atlas.
 
 The shared unified and split lists keep their fixed-height virtual rows.
 **Read full line** opens a horizontally scrollable reader for a line from

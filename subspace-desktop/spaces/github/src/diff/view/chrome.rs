@@ -193,7 +193,7 @@ impl DiffView {
                         .child(format!("−{}", view.file.deletions)),
                 )
             })
-            .on_click(cx.listener(move |view, _, _, cx| view.go_to(file, cx)))
+            .on_click(cx.listener(move |view, _, window, cx| view.go_to(file, Some(window), cx)))
             .into_any_element()
     }
 }

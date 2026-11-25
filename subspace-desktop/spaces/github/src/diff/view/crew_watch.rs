@@ -1,6 +1,6 @@
 //! Watch the selected checkout through the shared fleet feed while visible.
 
-use gpui_kit::Context;
+use gpui_kit::{Context, Window};
 use subspace_client_fleet::{FleetApi, navigation::OpenCrewDiff};
 
 use super::{DiffSource, DiffView};
@@ -18,7 +18,8 @@ impl DiffView {
         };
         let target = source.target.clone();
         let follow = api.update(cx, |api, cx| api.follow(&target.fleet, cx));
-        self.fleet.live_fingerprint = fingerprint(api.read(cx), &target);
+        self.fleet
+            .observe_fingerprint(fingerprint(api.read(cx), &target));
         let observe = cx.observe(&api, move |view, api, cx| {
             let changed = view.fleet.changed();
             view.fleet
@@ -31,16 +32,20 @@ impl DiffView {
         cx.notify();
     }
 
-    pub(crate) fn unfollow_crew(&mut self) {
+    pub(crate) fn unfollow_crew(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.fleet.watch = None;
+        if self.close_binary(Some(window), cx) {
+            cx.notify();
+        }
     }
 
-    pub(super) fn seed_crew_fingerprint(&mut self, cx: &gpui_kit::App) {
+    pub(super) fn observe_current_crew(&mut self, cx: &gpui_kit::App) {
         let Some(api) = FleetApi::current(cx) else {
             return;
         };
         if let DiffSource::Fleet(source) = &self.source {
-            self.fleet.live_fingerprint = fingerprint(api.read(cx), &source.target);
+            self.fleet
+                .observe_fingerprint(fingerprint(api.read(cx), &source.target));
         }
     }
 }

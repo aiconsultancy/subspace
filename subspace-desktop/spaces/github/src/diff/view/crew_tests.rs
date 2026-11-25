@@ -19,6 +19,8 @@ const FLEET: &str = "example-fleet";
 const SHIP: &str = "example-ship";
 const CREW: &str = "example-crew";
 
+mod reads;
+
 fn fixture(cursor: bool) -> String {
     let text = "wide".repeat(2000);
     json!({ "ship": SHIP, "member": CREW, "mode": "branch", "fingerprint": "B", "computedAt": 1,
@@ -28,7 +30,7 @@ fn fixture(cursor: bool) -> String {
     }).to_string()
 }
 
-fn mount<'a>(
+pub(super) fn mount<'a>(
     cx: &'a mut TestAppContext,
     mock: &Mock,
 ) -> (Entity<DiffView>, &'a mut VisualTestContext) {
@@ -231,7 +233,7 @@ fn mode_changes_discard_old_file_pages_and_crew_marks_do_not_touch_prefs(cx: &mu
         assert!(!view.collapsed.contains(&0));
         let previous = view.fleet.generation;
         view.fleet.loading.insert(0);
-        view.set_mode(DiffMode::Working, cx);
+        view.set_mode(DiffMode::Working, None, cx);
         assert!(view.fleet.loading.is_empty());
         view.finish_page(
             previous,

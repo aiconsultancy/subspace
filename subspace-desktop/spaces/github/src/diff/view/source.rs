@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use gpui_kit::Subscription;
-use subspace_client_fleet::diff::{DiffMode, DiffStatus, DiffTarget, V1Diff, V1DiffFile};
+use subspace_client_fleet::diff::{DiffMode, DiffRead, DiffStatus, DiffTarget, V1Diff, V1DiffFile};
 use subspace_client_fleet::navigation::OpenCrewDiff;
 use subspace_client_fleet::{Error, FleetApi, FleetClient, FleetFollow};
 use subspace_framework::client_github::Client;
@@ -36,6 +36,7 @@ pub(super) struct FleetState {
     pub mode: DiffMode,
     pub fingerprint: Option<String>,
     pub live_fingerprint: Option<String>,
+    pub live_revision: u64,
     pub live_changed: bool,
     pub unstable: bool,
     pub busy: Option<String>,
@@ -43,6 +44,7 @@ pub(super) struct FleetState {
     pub stale_page: bool,
     pub loading: HashSet<usize>,
     pub generation: u64,
+    pub read: DiffRead,
     pub watch: Option<(FleetFollow, Subscription)>,
 }
 
@@ -59,7 +61,17 @@ impl FleetState {
         {
             self.live_changed = self.fingerprint.as_ref().is_some_and(|at| at != &live);
             self.live_fingerprint = Some(live);
+            self.live_revision += 1;
         }
+    }
+
+    pub fn accept_fingerprint(&mut self, at: String, baseline: u64) {
+        self.live_changed = self.live_revision != baseline
+            && self
+                .live_fingerprint
+                .as_ref()
+                .is_some_and(|live| live != &at);
+        self.fingerprint = Some(at);
     }
 
     pub fn banner(&self) -> Option<&'static str> {
@@ -104,13 +116,19 @@ impl FleetSource {
             .map_err(|state| state.help().unwrap_or_else(|| state.label()).to_owned())
     }
 
-    pub(super) fn load(&self, client: &FleetClient, mode: DiffMode) -> Result<Loaded, Error> {
+    pub(super) fn load(
+        &self,
+        client: &FleetClient,
+        mode: DiffMode,
+        read: &DiffRead,
+    ) -> Result<Loaded, Error> {
         let request = self.request(mode);
-        load_pages(|cursor| client.diff(request, cursor))
+        load_pages(read, |cursor| read.retry(|| client.diff(request, cursor)))
     }
 }
 
 fn load_pages(
+    cancel: &DiffRead,
     mut read: impl FnMut(Option<&str>) -> Result<Option<V1Diff>, Error>,
 ) -> Result<Loaded, Error> {
     let Some(mut diff) = read(None)? else {
@@ -118,6 +136,7 @@ fn load_pages(
     };
     let mut cursors = HashSet::new();
     while let Some(cursor) = diff.next_cursor.take() {
+        cancel.check()?;
         if diff.files.len() >= diff.total as usize || !cursors.insert(cursor.clone()) {
             return Err(Error::InvalidResponse);
         }
@@ -181,7 +200,13 @@ mod tests {
     use subspace_client_fleet::{Error, diff::V1Diff};
     use subspace_framework::client_github::model::GhFileStatus;
 
-    use super::{FleetState, Loaded, fleet_file, load_pages};
+    use super::{DiffRead, FleetState, Loaded, fleet_file};
+
+    fn load_pages(
+        read: impl FnMut(Option<&str>) -> Result<Option<V1Diff>, Error>,
+    ) -> Result<Loaded, Error> {
+        super::load_pages(&DiffRead::default(), read)
+    }
 
     fn page(path: &str, fingerprint: &str, cursor: Option<&str>) -> V1Diff {
         serde_json::from_value(json!({

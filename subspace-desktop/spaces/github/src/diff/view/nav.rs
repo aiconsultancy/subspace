@@ -14,12 +14,17 @@ use super::{
 impl DiffView {
     // ---- Navigation -----------------------------------------------------------------
 
-    pub(super) fn go_to(&mut self, file: usize, cx: &mut Context<Self>) {
+    pub(super) fn go_to(
+        &mut self,
+        file: usize,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
         if self.files.is_empty() {
             return;
         }
         let file = file.min(self.files.len() - 1);
-        self.binary = None;
+        self.close_binary(window, cx);
         self.full_line = None;
         self.current = file;
         if let Some(&row) = self.starts.get(file) {
@@ -51,25 +56,30 @@ impl DiffView {
             .collect()
     }
 
-    pub(super) fn next_file(&mut self, _: &NextFile, _: &mut Window, cx: &mut Context<Self>) {
-        self.go_to(self.current + 1, cx);
+    pub(super) fn next_file(&mut self, _: &NextFile, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to(self.current + 1, Some(window), cx);
     }
 
     pub(super) fn previous_file(
         &mut self,
         _: &PreviousFile,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.go_to(self.current.saturating_sub(1), cx);
+        self.go_to(self.current.saturating_sub(1), Some(window), cx);
     }
 
-    pub(super) fn first_file(&mut self, _: &FirstFile, _: &mut Window, cx: &mut Context<Self>) {
-        self.go_to(0, cx);
+    pub(super) fn first_file(
+        &mut self,
+        _: &FirstFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to(0, Some(window), cx);
     }
 
-    pub(super) fn last_file(&mut self, _: &LastFile, _: &mut Window, cx: &mut Context<Self>) {
-        self.go_to(self.files.len().saturating_sub(1), cx);
+    pub(super) fn last_file(&mut self, _: &LastFile, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to(self.files.len().saturating_sub(1), Some(window), cx);
     }
 
     pub(super) fn scroll_by(&mut self, lines: f32, cx: &mut Context<Self>) {
@@ -130,11 +140,11 @@ impl DiffView {
             let next = (file + 1..self.files.len())
                 .find(|&index| !self.viewed.contains(&self.files[index].file.path));
             match next {
-                Some(next) => self.go_to(next, cx),
-                None => self.go_to(file, cx),
+                Some(next) => self.go_to(next, None, cx),
+                None => self.go_to(file, None, cx),
             }
         } else {
-            self.go_to(file, cx);
+            self.go_to(file, None, cx);
         }
     }
 
@@ -208,9 +218,9 @@ impl DiffView {
         cx.emit(DiffEvent::Toast(Toast::info(format!("Copied {url}"))));
     }
 
-    pub(super) fn escape(&mut self, _: &DiffEscape, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn escape(&mut self, _: &DiffEscape, window: &mut Window, cx: &mut Context<Self>) {
         if self.full_line.take().is_some()
-            || self.binary.take().is_some()
+            || self.close_binary(Some(window), cx)
             || self.image.take().is_some()
         {
             cx.notify();
@@ -253,7 +263,7 @@ impl DiffView {
             .find_map(|row| row.file);
         self.close_search(&CloseSearch, window, cx);
         if let Some(file) = first {
-            self.go_to(file, cx);
+            self.go_to(file, Some(window), cx);
         }
     }
 }

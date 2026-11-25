@@ -7,8 +7,10 @@ use url::Url;
 use crate::{Error, FleetAddress, FleetClient};
 
 mod binary;
+mod read;
 
 pub use binary::{DiffContent, DiffSide};
+pub use read::DiffRead;
 
 // One list page can carry 1,000 × 64 KiB of patch text before JSON escaping;
 // allow six bytes per input byte plus metadata. File pages hold up to 1 MiB.
