@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { join, dirname } from "node:path";
 
 const runtime = await Bun.file("/etc/subspace-fleet/gateway.json").json();
-const { QuotaWatch, quotaWatchSchema } = await import(`${dirname(runtime.entrypoint)}/quota-watch.ts`);
+const source = dirname(runtime.entrypoint);
+const watcher = join(source, "backends/quota/quota-watch.ts");
+const { QuotaWatch, quotaWatchSchema } = await import(await Bun.file(watcher).exists() ? watcher : join(source, "quota-watch.ts"));
 const settings = await Bun.file(runtime.config).json();
 const stateFile = join(process.argv[2], "quota-fixture.json");
 // Older Stargate releases used zod schemas; current ones use Effect Schema.

@@ -1043,6 +1043,36 @@ def officer_names(officers, naming):
                     "officerNames to plain so that its account is its ID.")
 
 
+def require_usage_guard_source(cfg, installed_only=False):
+    if not cfg["usageGuard"]["enabled"]:
+        return
+
+    ref = cfg["stargate"]["ref"]
+    repo = cfg["stargate"]["repo"]
+    source = APP / "src" / f"stargate-{ref}"
+    message = "Usage guard requires a newer Stargate. Update stargate.ref or turn off usageGuard."
+
+    if installed_only or source.is_dir():
+        require((source / USAGE_GUARD_SOURCE).is_file(), message)
+        return
+
+    if (repo, ref) == (STARGATE_REPO, STARGATE_REF):
+        return  # The installer's published pin includes the guard.
+
+    with tempfile.TemporaryDirectory(prefix="subspace-stargate-check-") as work:
+        try:
+            subprocess.run(["git", "init", "--quiet", "--bare", work], check=True,
+                           capture_output=True, timeout=20)
+            subprocess.run(["git", "-C", work, "fetch", "--quiet", "--no-tags", "--depth", "1", repo, ref],
+                           check=True, capture_output=True, timeout=60)
+            check = subprocess.run(["git", "-C", work, "cat-file", "-e", f"FETCH_HEAD:{USAGE_GUARD_SOURCE}"],
+                                   capture_output=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            raise Invalid(f"Could not check usage guard support in Stargate {ref[:12]}. Check GitHub access "
+                          "or choose a known Stargate release.") from None
+        require(check.returncode == 0, message)
+
+
 def usage_guard_config(value):
     config = fields(value, "usageGuard", "enabled claude codex")
     result = {"enabled": boolean(config.get("enabled", True))}
@@ -3390,10 +3420,7 @@ def main(args):
         if not installed.exists() or os.access(installed, os.R_OK):
             check_new_crew_named(cfg, read_json(installed, private=True) if installed.exists() else {})
         prune = tail[-1] == "true"
-        source = APP / "src" / f"stargate-{cfg['stargate']['ref']}"
-        if cfg["usageGuard"]["enabled"] and (verb == "render" or source.is_dir()):
-            require((source / USAGE_GUARD_SOURCE).is_file(),
-                    "Usage guard requires a newer Stargate. Update stargate.ref or turn off usageGuard.")
+        require_usage_guard_source(cfg, installed_only=verb == "render")
         if verb == "render":
             # Say once per install which captains keep a root other than the workspace, and why.
             for root in captain_roots(cfg).values():

@@ -55,7 +55,7 @@ def fleet_installer(root, output=None):
     """subspace-setup's 'installer' as the fleet installer's checks, in this process, on a VM with nothing installed
     but what the test puts under root (etc, state, sessions): install.sh --dry-run runs 'runtime.py plan', and a
     real run's 'prepare' makes the same checks before it installs anything, which here it never does. Git's reading
-    of public repositories and the installed Stargate's crew rule are left out. Each run's (dry_run, quiet, plan
+    of public repositories and the fixture Stargate's feature checks are left out. Each run's (dry_run, quiet, plan
     text) goes to output."""
     def installer(config_path, dry_run=False, secrets_dir=None, quiet=False):
         if secrets_dir is None and (beside := Path(config_path).with_name("fleet.secrets")).is_dir():
@@ -64,6 +64,7 @@ def fleet_installer(root, output=None):
         with patch.object(runtime, "ETC", root / "etc"), patch.object(runtime, "STATE", root / "state"), \
                 patch.object(runtime, "SESSIONS", root / "sessions"), patch.object(runtime, "IRC_CERTS", root / "certs"), \
                 patch.object(runtime, "readable_without_credentials", return_value=True), \
+                patch.object(runtime, "require_usage_guard_source"), \
                 patch.object(runtime, "stargate_crew_names_free", return_value=True), contextlib.redirect_stdout(text):
             try:
                 runtime.main(["plan", str(config_path), str(Path(config_path).with_name("fleet.secrets.json")),

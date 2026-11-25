@@ -839,7 +839,7 @@ lives in its own home (mode `0700`), and crew share their captain's.
 
 **Working the list out from the repositories.** `subspace-setup` asks: derive
 the toolchains from the repositories, list them, or none ([INSTALL.md](../INSTALL.md#decide-with-the-user),
-question 20).
+question 21).
 
 - `--toolchains derive`: once the run has cloned the repositories, setup reads
   them on the VM, private ones included, from the rear admiral's reference

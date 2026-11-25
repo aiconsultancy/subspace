@@ -55,7 +55,9 @@ runuser -u ss-orion -- touch "$crew_checkout/worker-draft"
 
 # Upgrades restore an older install's modified watcher without disturbing dependencies.
 stargate=$(dirname "$(dirname "$(jq -r .entrypoint "$etc/gateway.json")")")
-printf '\n// Old installer quota extension\n' >> "$stargate/src/quota-watch.ts"
+watcher="$stargate/src/backends/quota/quota-watch.ts"
+[[ -f "$watcher" ]] || watcher="$stargate/src/quota-watch.ts"
+printf '\n// Old installer quota extension\n' >> "$watcher"
 "$installer" upgrade --no-systemd > "$work/repeat"
 git -C "$stargate" diff --exit-code HEAD
 if grep -Eq '(^Installed|bun install|apt-get)' "$work/repeat"; then

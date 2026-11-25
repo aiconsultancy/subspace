@@ -18,9 +18,5 @@ $completion
 
 ## Provider quota
 
-When the rear admiral addresses you with a usage guard notice in your ship
-channel, act on the named provider. At a warning, stand down extra crew
-at a safe point. At cutoff, have active crew finish or checkpoint, run the
-checks they can, and push safe commits. Preserve their task, claim and
-worktree. Resume saved work when the rear admiral reports verified capacity,
-within any remaining warning limit.
+Follow the usage guard guidance in your officer instructions when a ship
+notice names a provider.

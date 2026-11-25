@@ -1090,6 +1090,18 @@ class InstalledFleet(unittest.TestCase):
             runtime.render(cfg, extra)
         self.assertFalse((self.etc / "stargate.json").exists())
 
+    def test_usage_guard_rejects_an_unchecked_incompatible_stargate_pin(self):
+        config, private = crew_fleet("orion")
+        config["stargate"] = {"ref": "a" * 40}
+        cfg = runtime.validate(config, private)
+        runtime.subprocess.run.return_value.returncode = 1
+        with self.assertRaisesRegex(runtime.Invalid, "Usage guard requires a newer Stargate"):
+            runtime.require_usage_guard_source(cfg)
+        check = runtime.subprocess.run.call_args
+        self.assertEqual(check.args[0][-3:], ["cat-file", "-e", f"FETCH_HEAD:{runtime.USAGE_GUARD_SOURCE}"])
+        runtime.subprocess.run.return_value.returncode = 0
+        runtime.require_usage_guard_source(cfg)
+
     def test_usage_guard_defaults_route_all_captains_and_all_crew_engines_read_one_file(self):
         config, private = crew_fleet("orion", "vega")
         self.render(config, private)

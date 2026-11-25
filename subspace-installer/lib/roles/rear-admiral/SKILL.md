@@ -9,7 +9,5 @@ the resulting pull request or explain the outstanding blocker.
 
 ## Provider quota
 
-When the usage guard is enabled, Stargate sends quota notices from your
-IRC account to captains in their ship channels. Captains coordinate
-checkpoints and pushes for the named provider. Let the gateway send each
-notice once, and wait for verified recovery before advising resumptions.
+Follow the usage guard guidance in your officer instructions when a ship
+notice names a provider.
