@@ -456,7 +456,7 @@ if "$verify_toolchains"; then
     # Reports each repository's result; a failed check never fails the install.
     python3 "$app/lib/runtime.py" verify-toolchains || printf 'subspace-fleet: the toolchain check could not run.\n' >&2
 fi
-python3 "$app/lib/runtime.py" usage-guard-summary
+python3 "$app/lib/runtime.py" usage-guard-summary || printf 'subspace-fleet: the usage guard summary could not run.\n' >&2
 # The VM's memory, each engine's limits and why, limits set by hand, and swap: for the operator and their agent.
 summary=(memory-summary)
 if "$no_systemd"; then summary+=(no-systemd); fi

@@ -49,6 +49,9 @@ fleet_setup.agent_reader = lambda answers, members: (None, "the tests reach no S
 # OutboundTests checks the real lookup.
 latest_stargate = fleet_setup.latest_stargate
 fleet_setup.latest_stargate = lambda: ("v0.0.0", "d" * 40)
+# Guided setup preflights the explicit source before saving answers. Use the real check in its dedicated test.
+check_usage_guard_source = fleet_setup.check_usage_guard_source
+fleet_setup.check_usage_guard_source = lambda *_args: None
 
 
 def fleet_installer(root, output=None):
@@ -94,6 +97,22 @@ CREW = ["--crew-names", "Orion=Rigel,Deneb,Mira,Sirius"]
 
 
 class UsageGuardAnswersTests(unittest.TestCase):
+    def test_an_incompatible_pin_without_a_local_api_is_refused_before_saving(self):
+        with tempfile.TemporaryDirectory() as root:
+            args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
+                                           "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                                           "--captains", "Orion", "--no-api", "--stargate-ref", "a" * 40])
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "check_usage_guard_source", check_usage_guard_source), \
+                    patch.object(runtime, "require_usage_guard_source",
+                                 side_effect=runtime.Invalid("Usage guard requires a newer Stargate")) as check, \
+                    patch.object(fleet_setup, "run") as run, \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "requires a newer Stargate"):
+                fleet_setup.setup(args)
+            self.assertEqual(check.call_args.args[0]["stargate"]["ref"], "a" * 40)
+            run.assert_not_called()
+            self.assertEqual(list(Path(root).iterdir()), [])
+
     def test_default_custom_and_off_options(self):
         with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
             defaults = fleet_setup.usage_guard_answers(fleet_setup.parse_args([]), {})

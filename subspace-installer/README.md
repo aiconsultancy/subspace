@@ -1701,13 +1701,10 @@ the run ends.
   must be owned by root with mode `0600` and is never printed; setup keeps the
   token in `/root/fleet/fleet.secrets/subspace-enrolment-token` for the fleet
   installer, so later runs need no token.
-- **A Stargate that has it.** The mode needs Stargate's `subspaceAgents`
-  section, first in commit `5630a5c` and in no release yet, so this
-  installer's pinned v0.43.0 has not got it: pass `--stargate-ref` with that
-  commit or a later one. Setup checks every run by fetching that one commit
-  and looking for `src/subspace/bridge.ts`; the fleet installer refuses its
-  pinned release and stops before rendering unless the checked-out Stargate
-  has that file.
+- **Stargate compatibility.** The default release has both the
+  `subspaceAgents` section and the usage guard. If you supply a custom pin,
+  setup checks that it has the API bridge and, when enabled, the usage guard
+  before saving the configuration.
 - **Checks.** Before setup saves anything, every run, the dry run included,
   checks that the API answers `GET /health` and, when the run is given a
   token, checks it by posting an empty enrolment: the API refuses that for
@@ -1821,7 +1818,7 @@ A provider with no valid reading is reported in the gateway journal.
 The installer keeps the guard off for a Claude Agent SDK rear admiral
 because its tools run as the gateway user. An OpenCode rear admiral uses
 a separate gateway account.
-See [Stargate's usage guide](https://github.com/aiconsultancy/stargate/blob/main/docs/usage.md#fleet-usage-guard).
+See [Stargate's usage guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/usage.md#fleet-usage-guard).
 
 
 ## Agent dispatch
@@ -1831,7 +1828,7 @@ Subspace issues: it offers each unassigned issue flagged *Ready for agents*
 to the captains in fleet command, one at a time, and tells a captain in
 fleet command about an issue assigned to it. See the
 [repository README](../README.md#agent-dispatch) for what people see and
-[Stargate's guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/agent-dispatch.md)
+[Stargate's guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/agent-dispatch.md)
 for the details. It is off by default. `subspace-setup` asks whether to
 switch it on (`--agent-dispatch`); in `fleet.json` it is:
 
@@ -2252,7 +2249,7 @@ using the following limits.
 - Above 25% after a warning, Stargate posts “Quota restored.” and the rear
   admiral tells captains to resume normal staffing.
 
-[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/main/docs/usage.md#crew-quota-notices).
+[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/usage.md#crew-quota-notices).
 
 ## Memory limits and swap
 
@@ -2464,7 +2461,7 @@ whether at its cap or with the whole VM out of memory.
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
 | `usageGuard` | On by default. Configure `enabled` and the `claude` and `codex` warning and cutoff percentages. See [Usage guard](#usage-guard). |
-| `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released, and never older than v0.43.0, the first with [agent dispatch](#agent-dispatch). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
+| `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released. Keep v0.46.0 or newer when the usage guard is enabled. `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
 | `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |

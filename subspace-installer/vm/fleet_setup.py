@@ -1745,6 +1745,22 @@ def stargate_release(answers):
     return latest_stargate()
 
 
+def check_usage_guard_source(answers, rear, ref):
+    # Setup changes officer models and effort, while the saved harness types stay in effect.
+    previous = read_json(INPUTS / "fleet.json", {})
+    harness = previous.get("harness") or {}
+    officer = previous.get("rearAdmiral") or {}
+    role_type = (harness.get("rearAdmiral") or {}).get("type", harness.get("type", "opencode"))
+    officer_type = (officer.get("harness") or {}).get("type", role_type) if officer.get("id") == rear else role_type
+    if officer_type == "opencode":
+        try:
+            runtime.require_usage_guard_source({
+                "usageGuard": answers["usageGuard"], "stargate": {"repo": STARGATE_REPO, "ref": ref},
+            })
+        except runtime.Invalid as error:
+            raise SetupError(str(error)) from None
+
+
 def run_inputs(answers, members, secret_store, stargate_ref, irc_ref, api_block=None, stargate_api=False, token="",
                history=None, dispatch_token=""):
     """The fleet installer's inputs, fleet.json and its secrets, as a run writes them."""
@@ -3215,6 +3231,7 @@ def configure(args):
             "--database-url-file (installer README, 'An existing PostgreSQL').")
     stargate_tag, stargate_ref = stargate_release(answers)
     say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
+    check_usage_guard_source(answers, rear, stargate_ref)
     enrolment = None
     if answers.get("apiUrl"):
         # Every check of the hosted API comes before setup saves anything, so a refused run, a switch from an

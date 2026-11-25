@@ -279,6 +279,8 @@ def role_documents(cfg, person, references, home):
         "worktrees": f"{home}/worktrees",
     }
     values["dispatch"] = dispatch_guidance(cfg, person)
+    guard_status = "on" if (cfg.get("usageGuard") or {}).get("enabled") else "off"
+    values["guardStatus"] = f"The automated usage guard is {guard_status} for this fleet."
     values["completion"] = (
         "4. Have crew resolve overlaps, run the checks and push the reviewed branch.\n"
         "   Inspect their work and open the pull request with `subspace-github gh pr create`.\n"

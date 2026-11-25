@@ -379,9 +379,8 @@ answer it now.
     the fleet's enrolment token (`senr1.…`, `chmod 600`; never paste it into
     the chat), which one of that API's administrators issues for this fleet
     after creating it there. Pass `--api-url URL --api-enrolment-token-file
-    FILE`. It excludes question 16 and agent dispatch, and needs a Stargate
-    commit with its `subspaceAgents` section, at or after `5630a5c`, which no
-    release has yet: add `--stargate-ref <that commit or later>`. The VM must
+    FILE`. It excludes question 16 and agent dispatch. The default Stargate
+    release supports both `subspaceAgents` and the usage guard. The VM must
     reach the API over HTTPS. On a VM whose API already keeps a tracker,
     switching needs `--switch-to-hosted-api` and leaves that tracker behind:
     ask first. See
@@ -613,7 +612,7 @@ whichever ports sshd listens on), and
 `--access` out only for an existing VM you reach another private way.
 
 For a hosted API (question 17), add `--api-url URL --api-enrolment-token-file
-FILE --stargate-ref SHA` instead; the dry run checks that the API answers,
+FILE`; the dry run checks that the API answers,
 that the token is valid (without using it) and that the Stargate commit has
 `subspaceAgents`. Later runs need no token unless an officer is added or a key
 replaced; then ask the API's administrator for a fresh one.

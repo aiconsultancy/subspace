@@ -1121,11 +1121,17 @@ class InstalledFleet(unittest.TestCase):
         self.assertEqual(runtime.crew_options(cfg, cfg["members"][1], self.state, 4097, "ses_fixture")["usageGuardFile"],
                          guard["stateFile"])
         self.assertNotIn(MANAGEMENT_KEY["proxy-management-key"], json.dumps(settings))
+        rear, captain, *_ = cfg["members"]
+        self.assertIn("usage guard is on for this fleet", runtime.role_documents(cfg, rear, None, self.state)["instructions"])
+        self.assertIn("at most one of that provider",
+                      runtime.role_documents(cfg, captain, None, self.state)["instructions"])
 
         config["usageGuard"] = {"enabled": False}
         self.render(config, private)
         self.assertNotIn("usageGuard", json.loads((self.etc / "stargate.json").read_text()))
         cfg = runtime.validate(config, private)
+        self.assertIn("usage guard is off for this fleet",
+                      runtime.role_documents(cfg, cfg["members"][0], None, self.state)["instructions"])
         self.assertNotIn("usageGuardFile",
                          runtime.crew_options(cfg, cfg["members"][1], self.state, 4097, "ses_fixture"))
 

@@ -18,6 +18,8 @@ the responsible captain through normal delivery.
 
 ## Provider quota
 
+$guardStatus
+
 When the usage guard is enabled, Stargate sends quota notices from your
 IRC account to captains in their ship channels. Captains coordinate
 checkpoints and pushes for the named provider. Let the gateway send each
