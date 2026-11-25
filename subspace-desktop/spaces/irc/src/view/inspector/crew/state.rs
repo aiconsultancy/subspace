@@ -60,6 +60,7 @@ pub(super) struct DetailState {
     pub roster: Roster,
     directory: u64,
     generation: u64,
+    visible: bool,
     pending: bool,
     flight: Option<(u64, Box<CrewMember>)>,
     detail: Option<FullDetail>,
@@ -73,6 +74,7 @@ impl DetailState {
             roster,
             directory,
             generation: 0,
+            visible: true,
             pending: true,
             flight: None,
             detail: None,
@@ -115,6 +117,19 @@ impl DetailState {
         self.queue();
     }
 
+    /// Reports a transition so the owner can let go of obsolete work.
+    pub fn set_visible(&mut self, visible: bool) -> bool {
+        if self.visible == visible {
+            return false;
+        }
+        self.visible = visible;
+        self.flight = None;
+        if visible {
+            self.rearm();
+        }
+        true
+    }
+
     pub fn queue(&mut self) {
         if self.error != Some(Error::NotFound) {
             self.pending = true;
@@ -149,7 +164,7 @@ impl DetailState {
         let Roster::Present(roster) = &self.roster else {
             return None;
         };
-        if self.flight.is_some() || !self.pending {
+        if !self.visible || self.flight.is_some() || !self.pending {
             return None;
         }
         self.pending = false;

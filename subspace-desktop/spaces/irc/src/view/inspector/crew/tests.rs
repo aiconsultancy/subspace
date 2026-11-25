@@ -215,6 +215,29 @@ fn directory_revision_invalidates_a_held_detail_and_an_in_flight_read() {
 }
 
 #[test]
+fn each_show_requests_once_and_a_read_from_before_hiding_cannot_win() {
+    let mut state = DetailState::new(roster("first", "Working…", 1), 0);
+    let mut requests = vec![state.begin().unwrap()];
+    assert!(state.set_visible(false));
+    assert_eq!(state.begin(), None);
+    assert!(state.set_visible(true));
+    requests.push(state.begin().unwrap());
+    assert!(!state.set_visible(true));
+    assert_eq!(state.begin(), None);
+    state.finish(requests[1], Ok(member("first", "Reopened detail", 1)));
+    state.finish(requests[0], Ok(member("first", "Obsolete detail", 1)));
+    assert_progress(&state, "Reopened detail");
+
+    // Reopen after a completed read also makes exactly one new request.
+    assert!(state.set_visible(false));
+    assert_eq!(state.begin(), None);
+    assert!(state.set_visible(true));
+    requests.push(state.begin().unwrap());
+    assert_eq!(state.begin(), None);
+    assert_eq!(requests.len(), 3);
+}
+
+#[test]
 fn removal_and_unavailable_roster_win_after_a_change_even_if_a_read_succeeds() {
     let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
     let first = state.begin().unwrap();

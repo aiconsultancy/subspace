@@ -117,6 +117,11 @@ fn sync(board: &mut Irc, api: Entity<FleetApi>, cx: &mut Context<Irc>) {
     let Some(selection) = &mut board.inspector_crew else {
         return;
     };
+    let visibility_changed = selection.state.set_visible(visible);
+    if visibility_changed {
+        selection.request = None;
+        selection.retry_timer = None;
+    }
     let roster_changed = selection.update(api.read(cx));
     let client_changed = if visible {
         selection.refresh(&api, cx)
@@ -124,7 +129,7 @@ fn sync(board: &mut Irc, api: Entity<FleetApi>, cx: &mut Context<Irc>) {
         selection.retry_timer = None;
         false
     };
-    if roster_changed || client_changed {
+    if visibility_changed || roster_changed || client_changed {
         cx.notify();
     }
 }
