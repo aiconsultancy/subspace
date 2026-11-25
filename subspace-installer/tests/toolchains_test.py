@@ -970,7 +970,8 @@ class SetupRecordTests(unittest.TestCase):
             config["toolchains"], packages = fleet_setup.toolchain_settings(record, config)
             if packages:
                 config["systemPackages"] = packages
-            (self.inputs / "fleet.json").write_text(json.dumps(config))
+            fleet_setup.write_fleet(self.inputs / "fleet.json", config)
+            record = json.loads((self.inputs / "toolchains.json").read_text())
             if proposal := fleet_setup.propose_toolchains(config, record):
                 fleet_setup.show_proposal(proposal, True, record)
         return config, json.loads((self.inputs / "toolchains.json").read_text()), output.getvalue()
@@ -1040,6 +1041,32 @@ class SetupRecordTests(unittest.TestCase):
         _, record, output = self.run_setup()
         self.assertIn("recorded deno@2, which fleet.json lists", output)
         self.assertEqual(next(row for row in record["tools"] if row["tool"] == "deno")["sources"], [{"by": "fleet.json"}])
+
+    def test_a_run_that_stops_between_its_writes_is_not_undone_by_the_next(self):
+        self.run_setup("--toolchains", "pnpm@9.12.3,rust@1.99.0", "--system-packages", "zsh,nano")
+        # Setup removes pnpm and nano, records that, and stops before it writes fleet.json.
+        fleet_setup.update_toolchains(setup_args("--toolchains=-pnpm", "--system-packages=-nano"), {})
+        self.assertIn("pnpm", json.loads((self.inputs / "fleet.json").read_text())["toolchains"])
+        # The retry does not take fleet.json's stale pnpm and nano for hand additions.
+        config, record, output = self.run_setup()
+        self.assertNotIn("pnpm", config["toolchains"])
+        self.assertEqual(config["systemPackages"], ["zsh"])
+        self.assertNotIn("recorded", output)
+        # Stopping after fleet.json is written, before the record notes it, is harmless too.
+        fleet_setup.update_toolchains(setup_args("--toolchains=-rust"), {})
+        config = json.loads((self.inputs / "fleet.json").read_text())
+        config["toolchains"].pop("rust")
+        (self.inputs / "fleet.json").write_text(json.dumps(config))
+        config, record, output = self.run_setup()
+        self.assertNotIn("rust", config["toolchains"])
+        self.assertNotIn("recorded", output)
+        self.assertNotIn("kept", output)
+        # A real hand edit is still told apart from setup's writes.
+        (self.inputs / "fleet.json").write_text(json.dumps({**config, "toolchains": {**config["toolchains"],
+                                                                                      "deno": "2"}}))
+        config, _, output = self.run_setup()
+        self.assertIn("recorded deno@2, which fleet.json lists", output)
+        self.assertEqual(config["toolchains"]["deno"], "2")
 
     def test_items_are_validated_before_anything_is_recorded(self):
         for argv in (["--toolchains", "node"], ["--toolchains", "node@24;reboot"], ["--system-packages", "zsh;id"],

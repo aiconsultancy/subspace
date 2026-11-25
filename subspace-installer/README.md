@@ -842,7 +842,10 @@ each item with its source and date, and writes `toolchains` and
 installer records `fleet.json`'s toolchains as they are. Later runs:
 
 - keep every confirmed item; one taken out of `fleet.json` by hand is kept,
-  with a line saying how to remove it, and one added by hand is recorded;
+  with a line saying how to remove it, and one added by hand is recorded. A
+  hand edit is a difference from what setup last wrote into `fleet.json`,
+  which the record keeps, so a run that stopped between writing the record
+  and writing `fleet.json` is finished by the next, never undone by it;
 - propose only from repositories added since the last answered proposal;
 - record a proposal's unconfirmed items as declined once it is answered, and
   never propose them again unless `toolchains detect --all` asks. A proposal

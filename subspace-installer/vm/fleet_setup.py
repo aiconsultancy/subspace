@@ -1279,6 +1279,61 @@ def confirm_tool(record, tool, version, today):
     return line
 
 
+def hand_edits(record, rows, packages, previous, today):
+    """Record the operator's hand edits to fleet.json's toolchains and systemPackages, and return lines saying so.
+
+    A hand edit is a difference between fleet.json now and what setup last wrote into it (the record's
+    "generated", saved only once fleet.json is written: write_fleet). Comparing with the record instead would take
+    a run that stopped between writing the record and writing fleet.json for hand edits, and undo what that run
+    did, such as restoring a tool it had just removed."""
+    lines = []
+    baseline = record.get("generated")
+    if baseline is None:
+        # A record from before setup kept what it wrote: fleet.json as the record would have it written.
+        baseline = dict(zip(("toolchains", "systemPackages"), toolchain_settings(record, previous)))
+    before = {(row["tool"], row["version"]): row for row in configured_rows(baseline.get("toolchains", {}))}
+    before_packages = configured_packages(baseline.get("systemPackages"))
+    now = {(row["tool"], row["version"]): row for row in rows}
+    for key, row in now.items():
+        kept = next((item for item in record["tools"] if (item["tool"], item["version"]) == key), None)
+        if key not in before:
+            if kept is None:
+                record["tools"].append({**row, "sources": [{"by": "fleet.json"}], "confirmed": today})
+                lines.append(f"recorded {row['tool']}@{row['version']}, which fleet.json lists")
+        elif (before[key]["install"], before[key]["options"]) != (row["install"], row["options"]) \
+                and kept is not None and (kept["install"], kept["options"]) != (row["install"], row["options"]):
+            kept.update(install=row["install"], options=row["options"])
+            lines.append(f"recorded {row['tool']}@{row['version']}'s install and options from fleet.json")
+    for key in [key for key in before if key not in now]:
+        item = next((item for item in record["tools"] if (item["tool"], item["version"]) == key), None)
+        if item is not None:
+            lines.append(f"kept {item['tool']}@{item['version']} (confirmed {item['confirmed']}, from "
+                         f"{source_text(item['sources'])}), which fleet.json no longer lists; "
+                         f"'subspace-setup --toolchains=-{item['tool']}@{item['version']}' removes it")
+    recorded = {item["package"]: item for item in record["packages"]}
+    for name in packages:
+        if name not in before_packages and name not in recorded:
+            record["packages"].append({"package": name, "sources": [{"by": "fleet.json"}], "confirmed": today})
+            lines.append(f"recorded the system package {name}, which fleet.json lists")
+    for name in before_packages:
+        if name not in packages and name in recorded:
+            lines.append(f"kept the system package {name} (confirmed {recorded[name]['confirmed']}), which "
+                         f"fleet.json no longer lists; 'subspace-setup --system-packages=-{name}' removes it")
+    return lines
+
+
+def write_fleet(config_path, config):
+    """Write fleet.json, then note in the toolchains record the toolchains and systemPackages it was written with:
+    the baseline for the next run's hand edits (hand_edits). Each write is atomic; if setup stops between the two,
+    the next run sees the difference as setup's own, not the operator's."""
+    write_json(config_path, config)
+    record = read_json(INPUTS / TOOLCHAIN_RECORD)
+    if record is not None:
+        record["generated"] = {"toolchains": config.get("toolchains", {}),
+                               "systemPackages": config.get("systemPackages", [])}
+        write_json(INPUTS / TOOLCHAIN_RECORD, record)
+
+
 def update_toolchains(args, answers):
     """Bring the recorded toolchains up to date and return what changed, as lines for the operator.
 
@@ -1302,36 +1357,15 @@ def update_toolchains(args, answers):
             record["tools"].append({**row, "sources": [{"by": by}], "confirmed": today})
         record["packages"] = [{"package": name, "sources": [{"by": "fleet.json"}], "confirmed": today}
                               for name in packages]
+        # What fleet.json has now is the baseline for telling hand edits from setup's own writes.
+        record["generated"] = {"toolchains": previous.get("toolchains", {}),
+                               "systemPackages": previous.get("systemPackages", [])}
         if previous:
             lines.append("recorded the fleet's toolchains from fleet.json: " + (", ".join(
                 f"{row['tool']}@{row['version']}" for row in record["tools"]) or "none") + (
                 f"; system packages {', '.join(packages)}" if packages else ""))
     elif path.exists():
-        # Hand edits to fleet.json since setup wrote it from the record.
-        for row in rows:
-            kept = next((item for item in record["tools"] if (item["tool"], item["version"]) ==
-                         (row["tool"], row["version"])), None)
-            if kept is None:
-                record["tools"].append({**row, "sources": [{"by": "fleet.json"}], "confirmed": today})
-                lines.append(f"recorded {row['tool']}@{row['version']}, which fleet.json lists")
-            elif (kept["install"], kept["options"]) != (row["install"], row["options"]):
-                kept.update(install=row["install"], options=row["options"])
-                lines.append(f"recorded {row['tool']}@{row['version']}'s install and options from fleet.json")
-        present = {(row["tool"], row["version"]) for row in rows}
-        for item in record["tools"]:
-            if (item["tool"], item["version"]) not in present:
-                lines.append(f"kept {item['tool']}@{item['version']} (confirmed {item['confirmed']}, from "
-                             f"{source_text(item['sources'])}), which fleet.json no longer lists; "
-                             f"'subspace-setup --toolchains=-{item['tool']}@{item['version']}' removes it")
-        for name in packages:
-            if name not in [item["package"] for item in record["packages"]]:
-                record["packages"].append({"package": name, "sources": [{"by": "fleet.json"}], "confirmed": today})
-                lines.append(f"recorded the system package {name}, which fleet.json lists")
-        for item in record["packages"]:
-            if item["package"] not in packages:
-                lines.append(f"kept the system package {item['package']} (confirmed {item['confirmed']}), which "
-                             f"fleet.json no longer lists; 'subspace-setup --system-packages=-{item['package']}' "
-                             "removes it")
+        lines += hand_edits(record, rows, packages, previous, today)
     confirmed = set()
     if args.toolchains not in (None, "derive", "none"):
         for remove, tool, version in parse_toolchain_items(args.toolchains):
@@ -3114,7 +3148,7 @@ def configure(args):
 
     def write_inputs(*args):
         config, private = inputs(*args)
-        write_json(config_path, config)
+        write_fleet(config_path, config)
         write_json(secrets_path, private)
 
     certificates = operator = None
@@ -3145,14 +3179,14 @@ def configure(args):
         if external_database(answers):
             database_checks(answers, args.migrate)
         config, private = planned_inputs()
-        write_json(config_path, config)
+        write_fleet(config_path, config)
         write_json(secrets_path, private)
         if answers["agentDispatch"] and not config["agentDispatch"]["enabled"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
         ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
         if answers["toolchains"] == "derive":
-            propose_safely(read_json(config_path, {}), record, save=False)
+            propose_safely(read_json(config_path, {}), read_json(INPUTS / TOOLCHAIN_RECORD) or record, save=False)
         say("dry run complete; nothing on this VM changed")
         return
 
@@ -3245,7 +3279,8 @@ def configure(args):
     if answers["toolchains"] == "derive":
         # The repositories are cloned now. Nothing proposed is installed until the person confirms it, and nothing
         # in a repository stops setup before the lockdown below.
-        propose_safely(read_json(config_path, {}), record, save=True)
+        # The record as write_fleet left it, with what fleet.json was written with.
+        propose_safely(read_json(config_path, {}), read_json(INPUTS / TOOLCHAIN_RECORD) or record, save=True)
     if args.verify_toolchains:
         # Each repository's basic check as a crew member; a failure is reported, never fatal.
         run(FLEET_APP / "lib/runtime.py", "verify-toolchains", check=False)
