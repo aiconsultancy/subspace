@@ -67,8 +67,9 @@ Linux native captures use the fictional Aurora Fleet API. Wren’s six-file
 tree combines two successful file-list requests.
 
 - Wren: [first patch page](evidence/01-text-first.png),
-  [continued patch](evidence/02-text-complete.png) and
-  [full-line reader](evidence/03-full-line.png).
+  [continued patch](evidence/02-text-complete.png),
+  [full-line reader at its start](evidence/03-full-line.png) and
+  [scrolled to the line's closing `";`](evidence/03-full-line-end.png).
 - Wren: [new PNG preview](evidence/04-png-new.png) and
   [old PNG preview](evidence/05-png-old.png).
 - Wren: removed binary, [first hex page](evidence/06-hex-first.png) and
