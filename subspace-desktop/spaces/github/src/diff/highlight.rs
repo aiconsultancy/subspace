@@ -8,11 +8,11 @@ use gpui_kit::base::input::HighlightStyleResolver;
 use gpui_kit::{HighlightStyle, Hsla};
 pub use subspace_framework::dashboard::code::{Runs, language, line_runs as side_runs};
 
-use super::model::{DiffLine, LineKind};
+use super::model::{DiffLine, LineKind, code_without_cr};
 
 /// Tabs show as four spaces; highlights and word marks use the shown text.
 pub fn shown(text: &str) -> String {
-    text.replace('\t', "    ")
+    code_without_cr(text).replace('\t', "    ")
 }
 
 /// Style runs for every line of `lines` (a file's patch lines): the old

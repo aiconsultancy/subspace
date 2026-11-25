@@ -50,13 +50,18 @@ fn parse_header(line: &str) -> Option<(u32, u32, u32, u32)> {
 
 fn annotate_words(patch: &mut Patch) {
     for (del, add) in change_pairs(&patch.lines) {
-        if let Some((old_words, new_words)) =
-            word_ranges(&patch.lines[del].text, &patch.lines[add].text)
-        {
+        let old = code_without_cr(&patch.lines[del].text);
+        let new = code_without_cr(&patch.lines[add].text);
+        if let Some((old_words, new_words)) = word_ranges(old, new) {
             patch.lines[del].words = old_words;
             patch.lines[add].words = new_words;
         }
     }
+}
+
+/// The compact code rows lay out LF and CRLF endings the same way.
+pub(crate) fn code_without_cr(text: &str) -> &str {
+    text.strip_suffix('\r').unwrap_or(text)
 }
 
 pub fn parse_patch(patch: &str) -> Patch {
@@ -73,7 +78,9 @@ struct PatchParser {
 impl PatchParser {
     fn parse(patch: &str) -> Patch {
         let mut parser = Self::default();
-        patch.lines().for_each(|raw| parser.read_line(raw));
+        patch
+            .split_terminator('\n')
+            .for_each(|raw| parser.read_line(raw));
         parser.finish()
     }
 
@@ -84,7 +91,7 @@ impl PatchParser {
             }
             let line = self.out.lines.len();
             self.out.hunks.push(Hunk {
-                header: raw.to_string(),
+                header: code_without_cr(raw).to_string(),
                 old_start,
                 old_len,
                 new_start,
@@ -139,6 +146,29 @@ impl PatchParser {
         }
         annotate_words(&mut self.out);
         self.out
+    }
+}
+
+#[cfg(test)]
+mod raw_line_tests {
+    use super::parse_patch;
+
+    #[test]
+    fn a_crlf_only_change_preserves_the_carriage_return() {
+        let patch = parse_patch("@@ -1 +1 @@\n-return value;\r\n+return value;\n");
+        assert_eq!(patch.lines.len(), 2);
+        assert_eq!(patch.lines[0].text, "return value;\r");
+        assert_eq!(patch.lines[1].text, "return value;");
+        assert!(patch.lines.iter().all(|line| line.words.is_empty()));
+    }
+
+    #[test]
+    fn trailing_cr_does_not_shift_changed_word_ranges() {
+        let patch = parse_patch("@@ -1 +1 @@\n-return old value;\r\n+return new value;\r\n");
+        for line in patch.lines {
+            assert_eq!(line.words.len(), 1);
+            assert_eq!(line.words[0], 7..10);
+        }
     }
 }
 

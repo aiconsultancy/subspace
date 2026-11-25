@@ -41,7 +41,11 @@ impl DiffView {
             _ = view.update(cx, |view, cx| {
                 match result {
                     Ok(text) => {
-                        let lines: Vec<String> = text.text.lines().map(str::to_string).collect();
+                        let lines: Vec<String> = text
+                            .text
+                            .split_terminator('\n')
+                            .map(str::to_string)
+                            .collect();
                         view.texts.insert(file, Text::Ready(Arc::new(lines)));
                         view.expanded.insert((file, gap));
                         view.rebuild();

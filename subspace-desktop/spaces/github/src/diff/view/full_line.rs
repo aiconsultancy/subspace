@@ -10,7 +10,6 @@ use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::panel::IconName;
 
-use super::super::highlight::shown;
 use super::{CODE_FONT_PX, DiffView, Text};
 
 #[derive(Clone, Copy)]
@@ -34,7 +33,15 @@ impl FullLine {
 impl FullLine {
     fn new(text: &str) -> Self {
         Self {
-            text: shown(text).into(),
+            text: text
+                .chars()
+                .map(|ch| match ch {
+                    '\t' => '⇥',
+                    '\r' => '␍',
+                    ch => ch,
+                })
+                .collect::<String>()
+                .into(),
             scroll: ScrollHandle::new(),
         }
     }
@@ -86,6 +93,17 @@ impl FullLine {
             .text_size(tokens.mono_size(CODE_FONT_PX))
             .child(div().flex_shrink_0().child(self.text.clone()))
             .horizontal_scrollbar(&self.scroll)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FullLine;
+
+    #[gpui_kit::test]
+    fn full_line_renders_each_tab_and_carriage_return() {
+        let line = FullLine::new("\tfn main() {\t}\r");
+        assert_eq!(line.parts().0, "⇥fn main() {⇥}␍");
     }
 }
 
