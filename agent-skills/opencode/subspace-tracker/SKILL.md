@@ -260,9 +260,9 @@ the tracker when the choice applies to the whole work stream.
   `subspace_unarchive_document` and `subspace_list_document_revisions`.
 - **Reviews**: `subspace_get_review_requirements`, `subspace_record_review`,
   `subspace_list_reviews` and `subspace_get_review_status`.
-- **Media** (images and files on issues and comments) has no MCP tool: it is
-  uploaded through the REST API, so leave attachments to a person or a
-  harness that has the REST routes.
+- **Text pages**: use `subspace_read_text_page` when advertised to read an issue
+  document, text attachment or chat upload. Append `text` and pass `nextOffset`
+  and the returned document revision until `nextOffset` is null. Use REST to upload media.
 
 ## Fleets and IRC
 

@@ -3161,7 +3161,7 @@ SocketUser={user}
 SocketGroup={user}
 SocketMode=0600
 Accept=yes
-MaxConnections=1
+MaxConnections=32
 RemoveOnStop=yes
 [Install]
 WantedBy=sockets.target

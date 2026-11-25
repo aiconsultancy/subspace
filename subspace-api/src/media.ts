@@ -325,7 +325,7 @@ export const addImage = (member: Member, ref: string, file: Parameters<typeof ad
 export const addFile = (member: Member, ref: string, file: Parameters<typeof addIssueMedia>[3]) =>
   Effect.map(addIssueMedia(member, ref, "file", file), mediaDescriptor);
 
-export const issueBytes = (member: Member, id: string, kind: Kind) =>
+const readIssueMedia = (member: Member, id: string, kind: Kind) =>
   Effect.gen(function* () {
     const db = yield* Database;
     const [row] = yield* db
@@ -335,7 +335,38 @@ export const issueBytes = (member: Member, id: string, kind: Kind) =>
         and(scope(member), eq(uploads.id, id), eq(uploads.kind, kind), eq(uploads.state, "ready")),
       );
     if (!row) return yield* Effect.fail(problem(404, "Issue file not found."));
-    return yield* readBytes(row);
+    return row;
+  });
+
+export const issueBytes = (member: Member, id: string, kind: Kind) =>
+  Effect.flatMap(readIssueMedia(member, id, kind), readBytes);
+
+export const mediaTextRange = (
+  member: Member,
+  ref: string,
+  kind: "attachment" | "chatUpload",
+  offset: number,
+  limit: number,
+) =>
+  Effect.gen(function* () {
+    const row =
+      kind === "attachment"
+        ? yield* readIssueMedia(member, ref, "file")
+        : yield* readChat(yield* Database, member, isUuid(ref) ? reference(ref) : ref);
+    if (row.contentType !== "text/markdown" && row.contentType !== "text/plain")
+      return yield* Effect.fail(problem(400, "Choose a UTF-8 plain-text or Markdown file."));
+    const size = row.sizeBytes;
+    if (offset > size)
+      return yield* Effect.fail(problem(400, "The offset is beyond the end of the text."));
+    const length = Math.min(limit, size - offset);
+    const store = yield* Storage;
+    const bytes = length
+      ? yield* storageOperation(() => store.range(objectKey(row), offset, length)).pipe(
+          Effect.mapError(() => problem(503, "The file is temporarily unavailable.")),
+        )
+      : new Uint8Array();
+    if (bytes.length !== length) return yield* Effect.fail(problem(503, "The file is incomplete."));
+    return { bytes, size };
   });
 
 export const deleteMedia = (member: Member, id: string, kind: Kind) =>

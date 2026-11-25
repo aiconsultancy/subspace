@@ -1,4 +1,4 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Context, Effect } from "effect";
 import { required } from "./config";
@@ -6,6 +6,7 @@ import { required } from "./config";
 interface BlobStore {
   put: (key: string, bytes: Uint8Array) => Promise<void>;
   get: (key: string) => Promise<Uint8Array>;
+  range: (key: string, offset: number, length: number) => Promise<Uint8Array>;
   delete: (key: string) => Promise<void>;
 }
 
@@ -28,6 +29,12 @@ export function storage(env: NodeJS.ProcessEnv): BlobStore {
       async get(key) {
         return client.file(key).bytes();
       },
+      async range(key, offset, length) {
+        return client
+          .file(key)
+          .slice(offset, offset + length)
+          .bytes();
+      },
       async delete(key) {
         await client.delete(key);
       },
@@ -44,6 +51,21 @@ export function storage(env: NodeJS.ProcessEnv): BlobStore {
     },
     async get(key) {
       return readFile(join(directory, key));
+    },
+    async range(key, offset, length) {
+      const file = await open(join(directory, key), "r");
+      try {
+        const buffer = Buffer.alloc(length);
+        let count = 0;
+        while (count < length) {
+          const { bytesRead } = await file.read(buffer, count, length - count, offset + count);
+          if (!bytesRead) break;
+          count += bytesRead;
+        }
+        return buffer.subarray(0, count);
+      } finally {
+        await file.close();
+      }
     },
     async delete(key) {
       try {

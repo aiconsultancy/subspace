@@ -1,4 +1,7 @@
 """Refresh approved Git origin refs outside the engine's read-only mount."""
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import fcntl
 from fnmatch import fnmatchcase
 import json
 import os
@@ -9,6 +12,7 @@ import socket
 import struct
 import subprocess
 import sys
+from threading import Lock, Semaphore
 
 from workspaces import private_credentials
 
@@ -74,6 +78,17 @@ def read_origin_file(git, branch, path, start_line=1):
             'nextLine': following if following <= len(lines) else None}
 
 
+@contextmanager
+def refresh_lock(git_directory):
+    # Lock the stable directory inode without creating a file in the checkout.
+    fd = os.open(git_directory, os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
+
+
 def refresh_refs(git, origin, *, expected_origin=None):
     if git('remote', 'get-url', 'origin') != (expected_origin or origin):
         raise ValueError('The checkout origin does not match the configured repository')
@@ -129,8 +144,11 @@ def run_request(policy, tool, args):
 
     if git('rev-parse', '--absolute-git-dir') != str(git_dir):
         raise ValueError('The checkout does not own its Git metadata')
-    result = (refresh_refs(git, origin, expected_origin=expected_origin) if tool == REFRESH else
-              read_origin_file(git, args['branch'], args['path'], args.get('startLine', 1)))
+    if tool == REFRESH:
+        with refresh_lock(git_dir):
+            result = refresh_refs(git, origin, expected_origin=expected_origin)
+    else:
+        result = read_origin_file(git, args['branch'], args['path'], args.get('startLine', 1))
     return {'repository': repository, **result}
 
 
@@ -201,21 +219,34 @@ def message(request):
     raise ValueError('Unsupported request method')
 
 
-def mcp():
-    while line := sys.stdin.buffer.readline(32_769):
-        if len(line) > 32_768:
-            return
+def mcp(stream=None, output=None):
+    stream = sys.stdin.buffer if stream is None else stream
+    output = sys.stdout if output is None else output
+    write_lock = Lock()
+    slots = Semaphore(8)
+
+    def respond(line):
         request = None
         try:
-            request = json.loads(line)
-            if isinstance(request, dict) and 'id' not in request:
-                continue
-            result = message(request)
-            response = {'result': result}
-        except (AttributeError, TypeError, ValueError):
-            response = {'error': {'code': -32600, 'message': 'Invalid request'}}
-        print(json.dumps({'jsonrpc': '2.0', 'id': request.get('id') if isinstance(request, dict) else None,
-                          **response}), flush=True)
+            try:
+                request = json.loads(line)
+                if isinstance(request, dict) and 'id' not in request:
+                    return
+                response = {'result': message(request)}
+            except (AttributeError, TypeError, ValueError):
+                response = {'error': {'code': -32600, 'message': 'Invalid request'}}
+            response.update(jsonrpc='2.0', id=request.get('id') if isinstance(request, dict) else None)
+            with write_lock:
+                print(json.dumps(response), file=output, flush=True)
+        finally:
+            slots.release()
+
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        while line := stream.readline(32_769):
+            if len(line) > 32_768:
+                return
+            slots.acquire()
+            workers.submit(respond, line)
 
 
 if __name__ == '__main__':
