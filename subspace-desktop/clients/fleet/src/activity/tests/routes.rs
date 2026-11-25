@@ -64,7 +64,11 @@ fn the_routes_read_the_snapshot_and_a_paged_item_in_full() {
     let client = FleetClient::new(address, Secret::new("example-token"));
     let activity = client.activity(AGENT, None).unwrap();
     assert_eq!(activity.turns.len(), 2);
-    let ActivityItem::Text(whole) = client.activity_item(AGENT, "t-now", "i3").unwrap() else {
+    let ActivityItem::Text(whole) = client
+        .activity_item(AGENT, "t-now", "i3", &AtomicBool::new(false))
+        .unwrap()
+        .unwrap()
+    else {
         panic!("the text item");
     };
     assert_eq!(whole.text.len(), 100);

@@ -244,3 +244,32 @@ fn an_installed_service_is_the_shared_one_and_nothing_is_created_to_read_it(
         assert_eq!(FleetApi::shared(cx), installed);
     });
 }
+
+/// Once the last handle watching an officer goes, the next check tells
+/// the fleet's feed, which stops carrying the officer: its stream reopens
+/// without `?agent=`, while the fleet itself stays followed.
+#[gpui_kit::test]
+fn the_last_activity_watch_going_unsubscribes_the_officer(cx: &mut TestAppContext) {
+    let address = crate::tests::closed_address();
+    let service = service(Arc::new(TokenStore::memory()), aurora(address.as_str()), cx);
+    save(&service, "fixture-throwaway", cx).unwrap();
+    let _follow = service.update(cx, |service, cx| service.follow("aurora", cx));
+    let watch = service.update(cx, |service, cx| {
+        service.watch_activity("aurora", "aurora-lyra", cx)
+    });
+    cx.run_until_parked();
+    let watched = |cx: &mut TestAppContext| {
+        service.read_with(cx, |service, _| {
+            service.activity_news("aurora", "aurora-lyra", 0).is_some()
+        })
+    };
+    assert!(watched(cx), "the feed carries the officer");
+    drop(watch);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(!watched(cx), "and no longer once the view closed");
+    assert!(
+        service.read_with(cx, |service, _| service.feeds.contains_key("aurora")),
+        "the fleet is still followed"
+    );
+}

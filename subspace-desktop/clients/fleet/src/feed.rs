@@ -100,8 +100,10 @@ impl Feed {
         lock(&self.0.state).link
     }
 
-    /// Subscribes the stream to exactly these officers' turn activity (the
-    /// first eight), opening it again with the new query when that changes.
+    /// Watches exactly these officers' turn activity, subscribing the
+    /// stream to the first eight and telling readers of the rest that no
+    /// stream carries them, and opens the stream again with the new query
+    /// when that changes.
     pub(crate) fn set_agents(&self, agents: std::collections::BTreeSet<String>) {
         if lock(&self.0.agents).set(agents) {
             self.0.retarget.notify_one();

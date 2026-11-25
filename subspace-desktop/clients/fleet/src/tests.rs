@@ -273,3 +273,98 @@ fn a_stream_that_refuses_the_officer_opens_again_without_it() {
         Some("/api/v1/events")
     );
 }
+
+/// A loopback server whose streams that subscribe to an officer hold back
+/// their headers for a while and close soon after sending them, so the
+/// feed reconnects. It records, in order, each such stream's headers as
+/// they go out and each snapshot request.
+fn slow_officer_streams() -> (FleetAddress, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&log);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let seen = std::sync::Arc::clone(&seen);
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut first = String::new();
+                reader.read_line(&mut first).unwrap();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                }
+                let target = first.split(' ').nth(1).unwrap_or_default().to_owned();
+                let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
+                               event: heartbeat\ndata: {\"at\":1}\n\n";
+                if target.starts_with("/api/v1/agents/") {
+                    seen.lock().unwrap().push("snapshot".to_owned());
+                    let body = r#"{"agent":{"id":"example-lyra","role":"captain","backend":"opencode","collected":true},"turns":[],"cursor":{"generation":"g1","seq":0}}"#;
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                } else if target.contains("agent=") {
+                    std::thread::sleep(Duration::from_millis(300));
+                    seen.lock().unwrap().push("headers".to_owned());
+                    let _ = stream.write_all(headers.as_bytes());
+                    std::thread::sleep(Duration::from_millis(300));
+                } else {
+                    let _ = stream.write_all(headers.as_bytes());
+                    std::thread::sleep(Duration::from_secs(30));
+                }
+            });
+        }
+    });
+    let address = FleetAddress::parse(&format!("http://127.0.0.1:{port}")).unwrap();
+    (address, log)
+}
+
+#[test]
+fn the_snapshot_waits_for_the_officer_streams_headers_at_first_and_on_reconnect() {
+    use crate::FleetState;
+    use crate::activity::ActivityJoin;
+
+    let (address, log) = slow_officer_streams();
+    let client = FleetClient::new(address, Secret::new(TOKEN));
+    let feed = Feed::start_with(client.clone(), quick());
+    feed.set_agents(["example-lyra".to_owned()].into());
+    let mut join = ActivityJoin::new();
+    let mut fetches = 0;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    // The view's loop: the fleet's state and news, then any wanted fetch.
+    while fetches < 2 && std::time::Instant::now() < deadline {
+        join.set_fleet_state(&FleetState::Followed(feed.link()));
+        if let Some(news) = feed.activity_news("example-lyra", join.next()) {
+            join.absorb(news);
+        }
+        if join.start_fetch() {
+            fetches += 1;
+            join.finish_fetch(client.activity("example-lyra", None));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(fetches, 2, "a snapshot at first and after the reconnect");
+    let log = log.lock().unwrap().clone();
+    let mut headers = 0;
+    let mut snapshots = 0;
+    for entry in &log {
+        match entry.as_str() {
+            "headers" => headers += 1,
+            _ => {
+                snapshots += 1;
+                assert!(
+                    headers >= snapshots,
+                    "snapshot {snapshots} before its stream answered: {log:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(snapshots, 2, "{log:?}");
+}

@@ -9,13 +9,14 @@
 //! memory only. Its types deliberately do not implement `Debug`, so no
 //! log line or panic message can carry what a tool printed.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 mod join;
 mod read;
 
 pub use join::{ActivityJoin, ActivityNews, Fetch};
+pub(crate) use join::{MAX_HELD_BYTES, MAX_HELD_EVENTS};
 #[cfg(test)]
 use read::join_pages;
 
@@ -233,8 +234,7 @@ pub struct ToolItem {
     pub error: Option<ActivityError>,
 }
 
-#[derive(Clone, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Clone, PartialEq, Eq)]
 pub enum ActivityContent {
     Text {
         text: String,
@@ -245,9 +245,32 @@ pub enum ActivityContent {
         mime: String,
         name: Option<String>,
     },
-    /// A content type this version does not know.
-    #[serde(other)]
-    Other,
+    /// A content type this version does not know, or a known one in a
+    /// shape it does not know, kept whole so it can still be shown.
+    Other(Value),
+}
+
+impl<'de> Deserialize<'de> for ActivityContent {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "lowercase")]
+        enum Known {
+            Text {
+                text: String,
+            },
+            File {
+                uri: String,
+                mime: String,
+                name: Option<String>,
+            },
+        }
+        let raw = Value::deserialize(deserializer)?;
+        Ok(match Known::deserialize(&raw) {
+            Ok(Known::Text { text }) => Self::Text { text },
+            Ok(Known::File { uri, mime, name }) => Self::File { uri, mime, name },
+            Err(_) => Self::Other(raw),
+        })
+    }
 }
 
 /// A provider failure as the agent saw it.
@@ -284,13 +307,34 @@ pub struct Paging {
     pub bytes: u64,
 }
 
-/// An item of a kind this version does not know.
-#[derive(Clone, Deserialize, PartialEq, Eq)]
+/// An item of a kind this version does not know, or of a known kind in a
+/// shape it does not know, kept whole so it can still be shown.
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct UnknownItem {
-    #[serde(flatten)]
     pub base: ItemBase,
     pub kind: String,
+    /// The item's JSON as sent.
+    pub raw: Value,
+}
+
+impl<'de> Deserialize<'de> for UnknownItem {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Shape {
+            #[serde(flatten)]
+            base: ItemBase,
+            kind: String,
+        }
+        let raw = Value::deserialize(deserializer)?;
+        let shape = Shape::deserialize(&raw)
+            .map_err(|_| serde::de::Error::custom("an item without an ID, seq or kind"))?;
+        Ok(Self {
+            base: shape.base,
+            kind: shape.kind,
+            raw,
+        })
+    }
 }
 
 /// `V1ActivityItemPage`: one page of one item's complete JSON.
@@ -320,6 +364,10 @@ pub struct AgentActivityEvent {
     pub seq: u64,
     pub at: i64,
     pub change: ActivityChange,
+    /// The bytes of JSON the event was read from, which bound what is
+    /// held of an officer's events; 0 when not read off a stream.
+    #[serde(skip)]
+    pub(crate) bytes: usize,
 }
 
 /// Names only what identifies the change, never its content.

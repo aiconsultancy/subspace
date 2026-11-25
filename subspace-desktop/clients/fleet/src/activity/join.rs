@@ -7,9 +7,10 @@
 //!    before, fetch the snapshot: Stargate watches the officer only once
 //!    the events response has started, so a snapshot fetched alongside it
 //!    could miss changes with no `seq` to tell. Events that arrive
-//!    meanwhile wait. Without a stream (the fleet is polled, or the stream
-//!    refused the officer) the view fetches on a timer instead
-//!    ([`ActivityJoin::set_polling`]).
+//!    meanwhile wait. A stream still connecting or reconnecting is waited
+//!    for; only without one (the fleet is polled, or the stream refused
+//!    the officer) does the view fetch on a timer instead
+//!    ([`ActivityJoin::set_fleet_state`]).
 //! 3. Apply each waiting or later event whose `seq` is above the
 //!    snapshot's `cursor.seq`, as an upsert by ID; drop the rest.
 //! 4. Fetch again, one fetch at a time, when the stream reconnects or
@@ -17,16 +18,37 @@
 //!    fails to rise, when an item names a turn the snapshot lacks, or when
 //!    the reader fell so far behind that the feed dropped events for it.
 //!
+//! 5. When a fetch fails, keep showing the last snapshot with the error
+//!    ([`Fetch::Failed`]) and apply no event to it: events wait, up to
+//!    [`MAX_HELD_EVENTS`] or [`MAX_HELD_BYTES`], and are dropped past
+//!    that, since the next snapshot covers them. Fetch again after a
+//!    backoff of 1, 2, 4 … seconds up to 30, or Stargate's `Retry-After`
+//!    up to the same cap ([`ActivityJoin::retry_in`]), at once on the
+//!    next stream connection, or when the person asks
+//!    ([`ActivityJoin::retry`]). `NotFound` is not retried on a timer.
+//!
 //! `seq` skips values for coalesced changes, so a skipped value is not a
 //! gap: only a `seq` that does not rise is. `seq` counts per officer, so
 //! each join follows one officer, with its own cursor and last `seq`.
 
+use std::time::Duration;
+
 use super::{ActivityChange, ActivityEntry, ActivityTurn, AgentActivity, AgentActivityEvent};
 use super::{TurnStatus, TurnSummary};
-use crate::Error;
+use crate::{Error, FleetState, Link};
 
 /// The most turns Stargate keeps for an officer, and so the most kept here.
 const MAX_TURNS: usize = 16;
+/// The most events held for one officer, by the feed for its reader and
+/// by the join while it waits for a snapshot.
+pub(crate) const MAX_HELD_EVENTS: usize = 512;
+/// The most bytes of event JSON held for one officer, as for
+/// [`MAX_HELD_EVENTS`].
+pub(crate) const MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
+/// The wait before the first retry of a failed fetch, doubled each time.
+const FIRST_RETRY: Duration = Duration::from_secs(1);
+/// The longest wait before a retry, `Retry-After` included.
+const MAX_RETRY: Duration = Duration::from_secs(30);
 
 /// What the feed holds for a reader of one officer's events since it last
 /// read ([`crate::FleetApi::activity_news`]).
@@ -50,7 +72,7 @@ pub struct ActivityNews {
 /// Where the snapshot fetch stands. One runs at a time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fetch {
-    /// The snapshot is current, or the last fetch failed.
+    /// The snapshot is current.
     Idle,
     /// A fetch should start ([`ActivityJoin::start_fetch`]).
     Wanted,
@@ -60,6 +82,9 @@ pub enum Fetch {
         connection: Option<u64>,
         again: bool,
     },
+    /// The last fetch failed: the snapshot is stale, events wait, and the
+    /// next fetch waits for [`ActivityJoin::retry`] or a new connection.
+    Failed,
 }
 
 /// One officer's turns, kept current from the snapshot and the events.
@@ -73,9 +98,13 @@ pub struct ActivityJoin {
     next: u64,
     /// The last event's `seq` on this connection, which the next must pass.
     stream_seq: Option<u64>,
-    /// Events that wait for the fetch in flight.
+    /// Events that wait for the fetch in flight, or for one that succeeds.
     pending: Vec<AgentActivityEvent>,
+    /// The bytes of JSON the waiting events were read from.
+    pending_bytes: usize,
     fetch: Fetch,
+    /// Fetches that failed since the last that succeeded.
+    failures: u32,
 }
 
 impl Default for ActivityJoin {
@@ -109,11 +138,12 @@ impl ActivityJoin {
         self.next
     }
 
-    /// Whether the fleet is followed without a stream (polled), so a fetch
-    /// need not wait for one to answer.
-    // qual:allow(dry, boilerplate) reason: "Reads or sets one field without opening the join's state to writes that skip its rules."
-    pub fn set_polling(&mut self, polling: bool) {
-        self.polling = polling;
+    /// The fleet's state. Only a fleet polled without a stream
+    /// ([`Link::Polling`]) lets a fetch start without one: a stream that is
+    /// connecting or reconnecting is waited for, so the snapshot never
+    /// starts before the events it must join with.
+    pub fn set_fleet_state(&mut self, state: &FleetState) {
+        self.polling = *state == FleetState::Followed(Link::Polling);
     }
 }
 
@@ -129,7 +159,9 @@ impl ActivityJoin {
             next: 0,
             stream_seq: None,
             pending: Vec::new(),
+            pending_bytes: 0,
             fetch: Fetch::Wanted,
+            failures: 0,
         }
     }
 
@@ -143,9 +175,39 @@ impl ActivityJoin {
         self.connection.is_some()
     }
 
-    /// Asks for a fetch, as a refresh without a live stream does.
+    /// Asks for a fetch, as a refresh without a live stream does. A failed
+    /// fetch waits for its retry instead.
     pub fn refresh(&mut self) {
         self.want();
+    }
+
+    /// Fetches again after a failure, when the retry is due or the person
+    /// asks; whether a fetch is now wanted.
+    pub fn retry(&mut self) -> bool {
+        if self.fetch != Fetch::Failed {
+            return false;
+        }
+        self.fetch = Fetch::Wanted;
+        true
+    }
+
+    /// How long to wait before retrying the failed fetch: 1, 2, 4 …
+    /// seconds up to 30 by the failures so far, or longer when Stargate
+    /// asked to wait, up to the same cap. `None` when no fetch failed, or
+    /// when the gateway has no such route or officer (`NotFound`).
+    pub fn retry_in(&self) -> Option<Duration> {
+        if self.fetch != Fetch::Failed {
+            return None;
+        }
+        let doublings = self.failures.saturating_sub(1).min(5);
+        let backoff = FIRST_RETRY.saturating_mul(1 << doublings).min(MAX_RETRY);
+        match self.error? {
+            Error::NotFound => None,
+            Error::Busy(Some(seconds)) => {
+                Some(Duration::from_secs(seconds).max(backoff).min(MAX_RETRY))
+            }
+            _ => Some(backoff),
+        }
     }
 
     /// Whether a fetch may start now: a stream carries the officer and has
@@ -163,11 +225,11 @@ impl ActivityJoin {
         if news.connection != self.connection {
             self.connection = news.connection;
             self.stream_seq = None;
-            self.pending.clear();
-            self.want();
+            self.drop_held();
+            self.want_now();
         }
         if news.missed {
-            self.pending.clear();
+            self.drop_held();
             self.want();
         }
         let mut changed = false;
@@ -192,32 +254,45 @@ impl ActivityJoin {
 
     /// The fetch's answer. A snapshot taken under an older connection, or
     /// while another reason to fetch arrived, is shown but fetched again.
+    /// A failure keeps the last snapshot and the waiting events, and waits
+    /// for a retry, unless the connection changed meanwhile.
     pub fn finish_fetch(&mut self, result: Result<AgentActivity, Error>) {
         let Fetch::InFlight { connection, again } = self.fetch else {
             return;
         };
+        let moved = connection != self.connection;
         match result {
             Ok(snapshot) => {
                 self.snapshot = Some(snapshot);
                 self.error = None;
-                self.fetch = if again || connection != self.connection {
+                self.failures = 0;
+                self.fetch = if again || moved {
                     Fetch::Wanted
                 } else {
                     Fetch::Idle
                 };
+                self.pending_bytes = 0;
                 for event in std::mem::take(&mut self.pending) {
                     self.take_settled(event);
                 }
             }
             Err(error) => {
                 self.error = Some(error);
-                self.pending.clear();
-                self.fetch = Fetch::Idle;
+                self.failures = self.failures.saturating_add(1);
+                self.fetch = if moved { Fetch::Wanted } else { Fetch::Failed };
             }
         }
     }
 
+    /// Wants a fetch, except after a failure, whose retry covers it.
     fn want(&mut self) {
+        if self.fetch != Fetch::Failed {
+            self.want_now();
+        }
+    }
+
+    /// Wants a fetch, a failed one too.
+    fn want_now(&mut self) {
         self.fetch = match self.fetch {
             Fetch::InFlight { connection, .. } => Fetch::InFlight {
                 connection,
@@ -231,17 +306,18 @@ impl ActivityJoin {
     /// the fetch or applies it.
     fn take(&mut self, event: AgentActivityEvent) -> bool {
         if self.stream_seq.is_some_and(|last| event.seq <= last) {
-            self.pending.clear();
+            self.drop_held();
             self.want();
         }
         self.stream_seq = Some(event.seq);
         self.take_settled(event)
     }
 
-    /// Waits for the fetch while one is wanted or runs; else applies.
+    /// Waits for the fetch while one is wanted, runs or failed; else
+    /// applies.
     fn take_settled(&mut self, event: AgentActivityEvent) -> bool {
         if self.fetch != Fetch::Idle {
-            self.pending.push(event);
+            self.hold(event);
             return false;
         }
         match self
@@ -256,6 +332,30 @@ impl ActivityJoin {
             Some(Applied::Changed) => true,
             Some(Applied::Covered) | None => false,
         }
+    }
+
+    /// Keeps `event` for the next snapshot. Past the bounds every waiting
+    /// event goes: a snapshot fetched after them covers them all.
+    fn hold(&mut self, event: AgentActivityEvent) {
+        self.pending_bytes = self.pending_bytes.saturating_add(event.bytes);
+        self.pending.push(event);
+        if self.pending.len() > MAX_HELD_EVENTS || self.pending_bytes > MAX_HELD_BYTES {
+            self.drop_held();
+            self.want();
+        }
+    }
+
+    fn drop_held(&mut self) {
+        self.pending.clear();
+        self.pending_bytes = 0;
+    }
+}
+
+#[cfg(test)]
+impl ActivityJoin {
+    /// How many events wait for a snapshot.
+    pub(crate) fn held(&self) -> usize {
+        self.pending.len()
     }
 }
 

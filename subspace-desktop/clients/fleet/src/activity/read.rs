@@ -1,6 +1,8 @@
 //! Reading an officer's turns from the snapshot route, and an item too
 //! large to send inline page by page, joined in full.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use url::Url;
 
 use super::{ActivityItem, AgentActivity, ItemPage};
@@ -60,20 +62,31 @@ impl FleetClient {
 
     /// Every page of one item joined into its complete JSON, read again
     /// from page 0 whenever the item changed between pages. Run in the
-    /// background.
-    pub fn activity_item_json(&self, agent: &str, turn: &str, item: &str) -> Result<String, Error> {
-        join_pages(|page| self.activity_item_page(agent, turn, item, page))
+    /// background. `None` once `cancel` is set: it is checked before each
+    /// page is requested, so no page is requested after it.
+    pub fn activity_item_json(
+        &self,
+        agent: &str,
+        turn: &str,
+        item: &str,
+        cancel: &AtomicBool,
+    ) -> Option<Result<String, Error>> {
+        join_pages(cancel, |page| {
+            self.activity_item_page(agent, turn, item, page)
+        })
     }
 
-    /// The complete item, read page by page ([`Self::activity_item_json`]).
+    /// The complete item, read page by page ([`Self::activity_item_json`]);
+    /// `None` once `cancel` is set.
     pub fn activity_item(
         &self,
         agent: &str,
         turn: &str,
         item: &str,
-    ) -> Result<ActivityItem, Error> {
-        let json = self.activity_item_json(agent, turn, item)?;
-        serde_json::from_str(&json).map_err(|_| Error::InvalidResponse)
+        cancel: &AtomicBool,
+    ) -> Option<Result<ActivityItem, Error>> {
+        let json = self.activity_item_json(agent, turn, item, cancel)?;
+        Some(json.and_then(|json| serde_json::from_str(&json).map_err(|_| Error::InvalidResponse)))
     }
 
     fn activity_url(&self, agent: &str) -> Result<Url, Error> {
@@ -81,43 +94,81 @@ impl FleetClient {
     }
 }
 
+/// Why a join stopped short of the whole item.
+enum Stop {
+    Failed(Error),
+    Cancelled,
+}
+
 /// Joins the pages `read` gives into the item's complete JSON. A page of
 /// another `seq` or page count belongs to another version of the item:
 /// start again from page 0, at most [`PAGE_ATTEMPTS`] times. Nothing is
 /// ever cut: a joined length that is not the item's `bytes` is an invalid
-/// answer.
+/// answer. `None` once `cancel` is set, checked before every read.
 pub(crate) fn join_pages(
+    cancel: &AtomicBool,
     mut read: impl FnMut(u32) -> Result<ItemPage, Error>,
-) -> Result<String, Error> {
+) -> Option<Result<String, Error>> {
+    let mut read = |page| {
+        if cancel.load(Ordering::Acquire) {
+            Err(Stop::Cancelled)
+        } else {
+            read(page).map_err(Stop::Failed)
+        }
+    };
     for _ in 0..PAGE_ATTEMPTS {
-        let first = read(0)?;
-        if let Some(json) = rest_of(&first, &mut read)? {
-            return Ok(json);
+        match whole(&mut read) {
+            Ok(Some(json)) => return Some(Ok(json)),
+            Ok(None) => {}
+            Err(Stop::Failed(error)) => return Some(Err(error)),
+            Err(Stop::Cancelled) => return None,
         }
     }
-    Err(Error::Busy(None))
+    Some(Err(Error::Busy(None)))
+}
+
+/// One attempt at the whole item from page 0; `None` when it changed.
+fn whole(read: &mut impl FnMut(u32) -> Result<ItemPage, Stop>) -> Result<Option<String>, Stop> {
+    let first = read(0)?;
+    rest_of(&first, read)
+}
+
+/// Whether page 0 declares a size this client reads: at least one page,
+/// no more bytes than its pages hold or than [`MAX_ACTIVITY_BYTES`], and
+/// no more pages than bytes, since each page carries some.
+fn plausible(first: &ItemPage) -> bool {
+    let pages = u64::from(first.pages);
+    pages >= 1
+        && first.bytes <= pages.saturating_mul(PAGE_DATA_BYTES)
+        && first.bytes <= MAX_ACTIVITY_BYTES
+        && pages <= first.bytes.max(1)
 }
 
 /// The pages after `first` joined to it; `None` when the item changed.
+/// Nothing is reserved from the declared size: the JSON grows only as
+/// pages arrive, and never past `bytes`.
 fn rest_of(
     first: &ItemPage,
-    read: &mut impl FnMut(u32) -> Result<ItemPage, Error>,
-) -> Result<Option<String>, Error> {
-    if u64::from(first.pages) * PAGE_DATA_BYTES < first.bytes {
-        return Err(Error::InvalidResponse);
+    read: &mut impl FnMut(u32) -> Result<ItemPage, Stop>,
+) -> Result<Option<String>, Stop> {
+    let invalid = || Stop::Failed(Error::InvalidResponse);
+    if !plausible(first) || first.data.len() as u64 > first.bytes {
+        return Err(invalid());
     }
-    let mut json = String::with_capacity(usize::try_from(first.bytes).unwrap_or_default());
-    json.push_str(&first.data);
+    let mut json = first.data.clone();
     for page in 1..first.pages {
         let next = read(page)?;
         if next.seq != first.seq || next.pages != first.pages || next.bytes != first.bytes {
             return Ok(None);
+        }
+        if next.data.is_empty() || (json.len() + next.data.len()) as u64 > first.bytes {
+            return Err(invalid());
         }
         json.push_str(&next.data);
     }
     if json.len() as u64 == first.bytes {
         Ok(Some(json))
     } else {
-        Err(Error::InvalidResponse)
+        Err(invalid())
     }
 }

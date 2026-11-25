@@ -131,7 +131,10 @@ fn event(name: &str, data: &[u8]) -> Option<FleetEvent> {
         "host" => parse(data).map(|host| FleetEvent::Host(Box::new(host))),
         "activity" => parse(data).map(|activity| FleetEvent::Activity(Box::new(activity))),
         "heartbeat" => parse(data).map(|beat: Heartbeat| FleetEvent::Heartbeat { at: beat.at }),
-        "agent-activity" => parse(data).map(|event| FleetEvent::AgentActivity(Box::new(event))),
+        "agent-activity" => parse(data).map(|mut event: AgentActivityEvent| {
+            event.bytes = data.len();
+            FleetEvent::AgentActivity(Box::new(event))
+        }),
         _ => None,
     }
 }

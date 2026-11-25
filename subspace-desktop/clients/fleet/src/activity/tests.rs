@@ -3,6 +3,7 @@
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::TcpListener;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -131,7 +132,9 @@ fn the_snapshot_decodes_every_item_kind_and_keeps_newlines() {
     let content = tool.content.as_deref().unwrap();
     assert!(matches!(&content[0], ActivityContent::Text { text } if text == "a\nb"));
     assert!(matches!(&content[1], ActivityContent::File { mime, .. } if mime == "text/plain"));
-    assert!(matches!(content[2], ActivityContent::Other));
+    assert!(
+        matches!(&content[2], ActivityContent::Other(raw) if *raw == json!({"type": "hologram"}))
+    );
     let ActivityEntry::Paged(paged) = &now.items[2] else {
         panic!("a paged item");
     };
@@ -202,13 +205,14 @@ fn pages_join_into_the_whole_item_and_restart_when_it_changes() {
     let (a, b) = whole.split_at(5);
     let reads = Mutex::new(Vec::new());
     // Version 1 changes to version 2 after page 0 was read.
-    let joined = join_pages(|number| {
+    let joined = join_pages(&AtomicBool::new(false), |number| {
         let mut reads = reads.lock().unwrap();
         reads.push(number);
         let version = if reads.len() == 1 { 1 } else { 2 };
         let data = if number == 0 { a } else { b };
         Ok(page(version, number, 2, data, whole.len() as u64))
     })
+    .unwrap()
     .unwrap();
     assert_eq!(joined, whole);
     assert_eq!(*reads.lock().unwrap(), [0, 1, 0, 1]);
@@ -216,14 +220,94 @@ fn pages_join_into_the_whole_item_and_restart_when_it_changes() {
 
 #[test]
 fn a_join_never_cuts_and_gives_up_on_an_item_that_keeps_changing() {
-    let short = join_pages(|number| Ok(page(1, number, 1, "{}", 9)));
-    assert_eq!(short, Err(Error::InvalidResponse));
+    let go = AtomicBool::new(false);
+    let short = join_pages(&go, |number| Ok(page(1, number, 1, "{}", 9)));
+    assert_eq!(short, Some(Err(Error::InvalidResponse)));
     let mut version = 0;
-    let busy = join_pages(|number| {
+    let busy = join_pages(&go, |number| {
         version += 1;
         Ok(page(version, number, 2, "{", 2))
     });
-    assert_eq!(busy, Err(Error::Busy(None)));
+    assert_eq!(busy, Some(Err(Error::Busy(None))));
+}
+
+#[test]
+fn a_page_0_that_claims_more_than_an_item_can_hold_is_refused_before_any_other_read() {
+    let go = AtomicBool::new(false);
+    let reads = Mutex::new(0);
+    let huge = join_pages(&go, |number| {
+        *reads.lock().unwrap() += 1;
+        Ok(page(1, number, 1_000_000, "{", 60_000_000_000))
+    });
+    assert_eq!(huge, Some(Err(Error::InvalidResponse)));
+    assert_eq!(*reads.lock().unwrap(), 1, "no page after page 0");
+    // No pages, more bytes than the pages hold, more pages than bytes, a
+    // page past the declared size, or one with nothing in it.
+    let refused = [
+        vec![page(1, 0, 0, "", 0)],
+        vec![page(1, 0, 2, "{}", 2 * 64 * 1024 + 1)],
+        vec![page(1, 0, 5, "{", 2)],
+        vec![page(1, 0, 2, "{", 2), page(1, 1, 2, "}}", 2)],
+        vec![page(1, 0, 3, "{", 3), page(1, 1, 3, "", 3)],
+    ];
+    for pages in refused {
+        let joined = join_pages(&go, |number| {
+            Ok(pages
+                .get(number as usize)
+                .cloned()
+                .unwrap_or_else(|| page(1, number, 1, "", 0)))
+        });
+        assert_eq!(joined, Some(Err(Error::InvalidResponse)));
+    }
+}
+
+#[test]
+fn a_cancelled_join_reads_no_page_after_the_flag_is_set() {
+    let cancel = AtomicBool::new(false);
+    let reads = Mutex::new(Vec::new());
+    let joined = join_pages(&cancel, |number| {
+        reads.lock().unwrap().push(number);
+        // The view is closed while page 0 is being read.
+        cancel.store(true, Ordering::Release);
+        Ok(page(1, number, 3, "{", 3))
+    });
+    assert!(joined.is_none());
+    assert_eq!(*reads.lock().unwrap(), [0]);
+    assert!(join_pages(&cancel, |_| unreachable!("never read")).is_none());
+}
+
+#[test]
+fn an_unknown_item_and_content_keep_their_json() {
+    let turn: super::ActivityTurn = serde_json::from_value(turn(
+        "t-now",
+        9,
+        "running",
+        json!([
+            {"id": "i7", "seq": 7, "startedAt": 1, "updatedAt": 2, "kind": "tool",
+             "status": 7, "sentinel": "UNKNOWN-SHAPE"},
+            {"id": "i8", "seq": 8, "startedAt": 1, "updatedAt": 2, "kind": "tool",
+             "callId": "call-3", "name": "look", "status": "completed",
+             "content": [{"type": "image", "data": "IMAGE-SENTINEL"}],
+             "session": {"id": "s1", "parent": null}, "unavailable": false}
+        ]),
+    ))
+    .unwrap();
+    let ActivityEntry::Unknown(unknown) = &turn.items[0] else {
+        panic!("a tool item of an unknown shape");
+    };
+    assert_eq!(unknown.kind, "tool");
+    assert_eq!(unknown.raw["status"], json!(7));
+    assert_eq!(unknown.raw["sentinel"], json!("UNKNOWN-SHAPE"));
+    let ActivityEntry::Item(item) = &turn.items[1] else {
+        panic!("a tool item with unknown optional fields");
+    };
+    let ActivityItem::Tool(tool) = &**item else {
+        panic!("a tool call");
+    };
+    assert!(matches!(
+        tool.content.as_deref(),
+        Some([ActivityContent::Other(raw)]) if raw["data"] == json!("IMAGE-SENTINEL")
+    ));
 }
 
 mod join;

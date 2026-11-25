@@ -4,24 +4,30 @@
 //! The feed never opens a second stream for them: Stargate serves at most
 //! eight streams in all, so the fleet's one stream is opened again with the
 //! officers in its query whenever the set changes, and without them once
-//! nothing watches an officer.
+//! nothing watches an officer. Past eight, an officer is left out of the
+//! query and its reader is told it is refused, so its view reads the
+//! snapshot on a timer instead.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::Error;
-use crate::activity::{ActivityNews, AgentActivityEvent};
+use crate::activity::{ActivityNews, AgentActivityEvent, MAX_HELD_BYTES, MAX_HELD_EVENTS};
 
 /// Stargate takes at most eight `agent` parameters on one stream.
 pub(crate) const MAX_AGENTS: usize = 8;
 /// The most events kept for one officer that its reader has not taken: a
 /// reader that falls further behind is told it missed some and fetches
 /// the snapshot again.
-const MAX_EVENTS: usize = 512;
+const MAX_EVENTS: usize = MAX_HELD_EVENTS;
+/// The most bytes of event JSON kept for one officer, as for
+/// [`MAX_EVENTS`].
+const MAX_EVENT_BYTES: usize = MAX_HELD_BYTES;
 
 /// What a feed knows of its watched officers.
 #[derive(Default)]
 pub(crate) struct Agents {
-    /// The officers to subscribe to, at most [`MAX_AGENTS`].
+    /// The officers watched; the stream subscribes to the first
+    /// [`MAX_AGENTS`] it has not refused.
     wanted: BTreeSet<String>,
     /// Officers the stream refused to subscribe to, left out of its query.
     refused: BTreeSet<String>,
@@ -38,13 +44,13 @@ struct Log {
     /// The position of `events`' first.
     first: u64,
     events: VecDeque<AgentActivityEvent>,
+    /// The bytes of JSON `events` were read from.
+    bytes: usize,
 }
 
 impl Agents {
-    /// Watches exactly `agents`, the first [`MAX_AGENTS`] in order; whether
-    /// the stream's query changes.
-    pub(crate) fn set(&mut self, agents: BTreeSet<String>) -> bool {
-        let wanted: BTreeSet<String> = agents.into_iter().take(MAX_AGENTS).collect();
+    /// Watches exactly `agents`; whether the stream's query changes.
+    pub(crate) fn set(&mut self, wanted: BTreeSet<String>) -> bool {
         if wanted == self.wanted {
             return false;
         }
@@ -58,9 +64,25 @@ impl Agents {
         before != self.subscribed()
     }
 
-    /// The officers the next stream subscribes to.
+    /// The officers the next stream subscribes to: the first
+    /// [`MAX_AGENTS`] in order that it has not refused.
     pub(crate) fn subscribed(&self) -> Vec<String> {
-        self.wanted.difference(&self.refused).cloned().collect()
+        self.wanted
+            .difference(&self.refused)
+            .take(MAX_AGENTS)
+            .cloned()
+            .collect()
+    }
+
+    /// Whether no stream will carry `agent`: Stargate refused it, or it is
+    /// past the [`MAX_AGENTS`] a stream takes.
+    fn unsubscribed(&self, agent: &str) -> bool {
+        self.refused.contains(agent)
+            || !self
+                .wanted
+                .difference(&self.refused)
+                .take(MAX_AGENTS)
+                .any(|subscribed| subscribed == agent)
     }
 
     /// A stream opened subscribed to `subscribed`.
@@ -96,9 +118,13 @@ impl Agents {
         let Some(log) = self.logs.get_mut(&event.agent_id) else {
             return false;
         };
+        log.bytes = log.bytes.saturating_add(event.bytes);
         log.events.push_back(event);
-        while log.events.len() > MAX_EVENTS {
-            log.events.pop_front();
+        while log.events.len() > MAX_EVENTS || log.bytes > MAX_EVENT_BYTES {
+            let Some(oldest) = log.events.pop_front() else {
+                break;
+            };
+            log.bytes = log.bytes.saturating_sub(oldest.bytes);
             log.first = log.first.wrapping_add(1);
         }
         true
@@ -115,7 +141,7 @@ impl Agents {
             events: log.events.iter().skip(skip).cloned().collect(),
             next: end,
             missed: after < log.first,
-            refused: self.refused.contains(agent),
+            refused: self.unsubscribed(agent),
         })
     }
 }
@@ -124,9 +150,9 @@ impl Agents {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{Agents, MAX_AGENTS, MAX_EVENTS};
-    use crate::Error;
-    use crate::activity::AgentActivityEvent;
+    use super::{Agents, MAX_AGENTS, MAX_EVENT_BYTES, MAX_EVENTS};
+    use crate::activity::{ActivityJoin, AgentActivityEvent};
+    use crate::{Error, FleetState, Link};
 
     fn set(agents: &[&str]) -> BTreeSet<String> {
         agents.iter().map(|agent| (*agent).to_owned()).collect()
@@ -158,6 +184,7 @@ mod tests {
         let many: Vec<String> = (0..10).map(|n| format!("example-{n}")).collect();
         assert!(agents.set(many.iter().cloned().collect()));
         assert_eq!(agents.subscribed().len(), MAX_AGENTS);
+        assert!(agents.news("example-9", 0).is_some_and(|news| news.refused));
         assert!(agents.set(BTreeSet::new()));
         assert!(agents.news("example-0", 0).is_none());
     }
@@ -185,5 +212,53 @@ mod tests {
         assert!(news.missed);
         assert_eq!(news.events.len(), MAX_EVENTS);
         assert!(!agents.news("example-lyra", news.next).unwrap().missed);
+    }
+
+    #[test]
+    fn a_ninth_officer_is_left_out_of_the_query_and_read_without_a_stream() {
+        let mut agents = Agents::default();
+        let nine: Vec<String> = (1..=9).map(|n| format!("example-{n}")).collect();
+        assert!(agents.set(nine.iter().cloned().collect()));
+        let subscribed = agents.subscribed();
+        assert_eq!(subscribed.len(), MAX_AGENTS);
+        assert!(!subscribed.contains(&nine[8]), "{subscribed:?}");
+        agents.connected(&subscribed);
+        for agent in &nine[..8] {
+            let news = agents.news(agent, 0).unwrap();
+            assert!(!news.refused && news.connection.is_some());
+        }
+        let ninth = agents.news(&nine[8], 0).unwrap();
+        assert!(ninth.refused && ninth.connection.is_none());
+        // Its view fetches without waiting for a stream that will not
+        // come, though the fleet's stream is live.
+        let mut join = ActivityJoin::new();
+        join.set_fleet_state(&FleetState::Followed(Link::Live));
+        assert!(!join.start_fetch());
+        join.absorb(ninth);
+        assert!(join.start_fetch());
+        // Once one of the eight goes, the ninth is subscribed.
+        assert!(agents.set(nine[1..].iter().cloned().collect()));
+        assert!(agents.subscribed().contains(&nine[8]));
+        assert!(!agents.news(&nine[8], 0).unwrap().refused);
+    }
+
+    #[test]
+    fn an_officers_kept_events_are_bounded_by_bytes_too() {
+        let mut agents = Agents::default();
+        agents.set(set(&["example-lyra"]));
+        for seq in 0..MAX_EVENTS as u64 {
+            let mut big = event("example-lyra", seq);
+            big.bytes = 60 * 1024;
+            assert!(agents.push(big));
+        }
+        let news = agents.news("example-lyra", 0).unwrap();
+        let kept: usize = news.events.iter().map(|event| event.bytes).sum();
+        assert!(kept <= MAX_EVENT_BYTES, "{kept} bytes kept");
+        assert_eq!(news.events.len(), MAX_EVENT_BYTES / (60 * 1024));
+        assert!(news.missed, "the reader learns it fell behind");
+        assert_eq!(
+            news.events.last().map(|event| event.seq),
+            Some(MAX_EVENTS as u64 - 1)
+        );
     }
 }
