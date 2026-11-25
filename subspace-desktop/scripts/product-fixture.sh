@@ -7,6 +7,10 @@ setup_product_fixture() {
     local checksum temporary="${TMPDIR:-/tmp}"
     fixture_repo="$(mktemp -d "${temporary%/}/subspace-products.XXXXXX")"
     trap 'rm -rf "${fixture_repo:?}"' EXIT
+    # Resolve the fixture's own mise config: trust it, and drop the session
+    # variables of the project that started the tests.
+    while IFS= read -r name; do unset "$name"; done < <(compgen -v | grep -E '^(__)?MISE_' || true)
+    export MISE_TRUSTED_CONFIG_PATHS="$fixture_repo"
     fixture="$fixture_repo/subspace-desktop"
     mkdir -p "$fixture/scripts" "$fixture/bin" "$fixture/metadata" "$fixture/spaces/actions/assets"
     cp "$root/scripts/"{product.sh,prerelease-common.sh,run-app.sh,package-release.sh,package-macos.sh,package-macos-ci.sh,build-macos-app.sh,install-macos.sh,github-oauth-secret.sh,release-files.py,resolve-licence-notices.py} "$fixture/scripts/"
@@ -14,7 +18,7 @@ setup_product_fixture() {
     cp "$root/../"{LICENSE,NOTICE} "$fixture_repo/"
     cp -R "$root/licenses" "$fixture/licenses"
     cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$fixture/spaces/actions/assets/"
-    printf '[tools]\nrust = { version = "1.77.0", mr_boxington = true }\n' >"$fixture/mise.toml"
+    printf '[tools]\nrust = { version = "1.77.0", mr_boxington = true }\nmr-boxington = "1.19.0"\n' >"$fixture/mise.toml"
     local rust_docs="$fixture/fake sysroot/share/doc/rust"
     mkdir -p "$rust_docs/licenses"
     printf '<p>Fixture standard library copyright</p>\n' >"$rust_docs/COPYRIGHT-library.html"

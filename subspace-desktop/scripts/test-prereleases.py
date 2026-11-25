@@ -39,12 +39,15 @@ class PrereleaseTests(unittest.TestCase):
         # fixture key, and a developer's agent can prompt or never answer.
         (self.root / "gitconfig").write_text("")
         inherited = {name: value for name, value in os.environ.items()
-                     if not name.startswith(("GIT_", "SSH_"))}
+                     if not name.startswith(("GIT_", "SSH_", "MISE_", "__MISE_"))}
         self.env = inherited | {
             "GIT_CONFIG_GLOBAL": str(self.root / "gitconfig"),
             "GIT_CONFIG_NOSYSTEM": "1",
             "PATH": f"{self.root / 'bin'}{os.pathsep}{os.environ['PATH']}",
             "FIXTURE": str(self.root),
+            # Fixture repositories resolve their own mise config, which the
+            # outer project's session variables must not override.
+            "MISE_TRUSTED_CONFIG_PATHS": str(self.root),
             "GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main",
             "RELEASE_TYPE": "nightly", "RELEASE_FORCE": "false",
             "GITHUB_REPOSITORY": "fixture/repository", "GITHUB_RUN_ID": "1234",
