@@ -111,9 +111,11 @@ Fleet Console reads Stargate's read-only Fleet API v1 with a bearer token:
 | Route | Used for |
 | --- | --- |
 | `GET /api/v1/fleet` | The first view of a fleet; every 30 s for the fleets you are not inside while the Fleets tier is open; **Test connection** |
-| `GET /api/v1/events` | Live updates: `fleet`, `ship`, `host`, `activity` and `heartbeat` events |
+| `GET /api/v1/events` | Live updates: `fleet`, `ship`, `host`, `activity` and `heartbeat` events; with `?agent=<id>` while an Activity view is open, also `agent-activity` |
 | `GET /api/v1/ships/{id}` | Fresh detail when you warp into a ship |
 | `GET /api/v1/ships/{id}/crew/{member}` | Fresh detail when you warp into a crew member |
+| `GET /api/v1/agents/{id}/activity` | An officer's recent turns when its Activity view opens, and again whenever the view must catch up |
+| `GET /api/v1/agents/{id}/activity?turn=&item=&page=` | The pages of a large item, read when you ask for it |
 
 The event stream is read as a streamed `fetch` body, because `EventSource`
 cannot send an `Authorization` header. If it drops, Fleet Console reconnects
@@ -209,6 +211,44 @@ replaces the warp with a short crossfade and stops orbits, the radar sweep
 and blinking. **Frame-time readout** (Off by default) shows frame times over
 the map; see Performance.
 
+## Officer activity
+
+**Activity** in the rear admiral's and each captain's inspector section
+opens what that officer is doing: its recent turns, newest first, with the
+running turn expanded. Each turn shows its steps (model, settled tokens and
+cost), tool calls (name, full input, progress as it runs, full output and
+errors), reply text and reasoning text, updating live. **Back** or Escape
+closes it, as does moving to another tier; focus returns to the button.
+
+- **Nothing is cut.** Content is shown in full. Long text wraps, scrolls
+  inside its block and stays selectable. An item larger than 64 KiB arrives
+  paged: **Load in full** reads every page and shows it whole; if the item
+  changes between pages, the read starts again from page 0.
+- **Content is text.** Every value is set as text, never parsed as HTML.
+  Control characters (other than newline and tab) and bidi formatting
+  characters show as `⟨U+XXXX⟩` markers, so content cannot hide or reorder
+  itself. Activity stays in memory only: it is never stored or logged, and
+  closing the view drops it.
+- **One stream.** The gateway allows eight event-stream viewers in total, so
+  the view never opens a second stream: the fleet's stream re-opens with
+  `?agent=<registration ID>` while the view is open and without it after.
+  The re-open is quiet (no Connecting pill) and resumes from the last event
+  ID. A gateway that refuses the parameter (400 or 404) gets its plain stream
+  back.
+- **Joining.** The snapshot is read only after the stream has answered, as
+  the gateway registers the watch when the events response starts. Events
+  that arrive meanwhile are buffered; those at or below the snapshot's
+  cursor are dropped. A `seq` that fails to rise, a new `generation`, an
+  item for an unknown turn and every stream re-open read the snapshot
+  again, one read at a time. A skipped `seq` is not a gap.
+- **Messages.** "Some changes may be missing (the stream reconnected)" on a
+  turn the gateway saw its officer's stream reconnect in; "This officer's
+  backend isn't collected yet." when the gateway does not collect it; and
+  "Activity isn't available on this gateway." on a 404.
+
+The officer is identified by its registration ID: `fleet.admiral.id` for the
+rear admiral and `ship.captain.id` for a captain.
+
 ## Sample mode
 
 With no Subspace bridge (a plain browser), no address, or missing
@@ -216,9 +256,15 @@ permissions, Fleet Console shows clearly labelled sample fleets: two
 simulated fleets that keep changing and one that never answers, so the
 Fleets tier, the warp and the unavailable state are visible without setup.
 The samples use the same data shapes and event path as live fleets. The
-banner says what is missing.
+banner says what is missing. Each sample officer's **Activity** shows
+invented turns: a long, paged test log, a failed tool call whose output
+holds markup, a terminal escape and a bidi override, and a running turn that
+streams its tool progress and reply, then ends and starts another. Officers
+on a backend other than OpenCode, such as the sample rear admiral, show the
+not-collected message.
 
-To look at it in a browser, serve this folder and open it:
+To look at it in a browser, serve this folder and open
+`http://127.0.0.1:8765/`:
 
 ```sh
 python3 -m http.server --bind 127.0.0.1 8765
@@ -260,13 +306,17 @@ against the contract, alerts, the inspector's escaping, theme mapping, the
 quality governor, label dirty tracking, render batching, the fleet store
 and its failure modes, address validation, the source merge, per-fleet
 connections and poll timing, the Fleets layout, navigation and breadcrumb
-through L0, and the package rules.
+through L0, officer activity (decoding, page joins, the snapshot and event
+join, refetches, join order, the one stream's `agent` parameters, and
+rendering that never parses HTML and marks hidden characters), and the
+package rules.
 
 | Path | Purpose |
 | --- | --- |
 | `subspace-board.json`, `index.html`, `styles.css` | Manifest, page and styles |
 | `src/main.js` | Page wiring: mode, frame loop, navigation, inspector, bridge effects |
 | `src/api.js`, `src/live.js`, `src/sse.js`, `src/connection.js` | Fleet API client, event stream, SSE parser, connection states |
+| `src/activity.js`, `src/activity-view.js` | Officer activity: snapshot and event join, paged items; the Activity view |
 | `src/contract.js`, `src/reducer.js`, `src/model.js` | Payload checks, state reducer, derived views |
 | `src/sample.js`, `src/sample-source.js` | Sample fleets and their simulation |
 | `src/fleet-sources.js`, `src/fleet-store.js`, `src/fleet-manager.js` | Fleet sources and their merge, the page's fleet list, one connection per fleet |

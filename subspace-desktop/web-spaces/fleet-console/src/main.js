@@ -6,7 +6,9 @@
 import { connectBridge } from "./bridge.js";
 import { createApiClient, normalizeEndpoint } from "./api.js";
 import { createLiveSource } from "./live.js";
-import { createSampleSource } from "./sample-source.js";
+import { createSampleActivitySource, createSampleSource } from "./sample-source.js";
+import { createActivityWatcher } from "./activity.js";
+import { createActivityPanel } from "./activity-view.js";
 import { initialFleetState, livePackets } from "./reducer.js";
 import { describeConnection, initialConnection, tokenProblem } from "./connection.js";
 import { chain, createNavigator, fleetTier, LANDSCAPE, parentOf, sameSelection } from "./camera.js";
@@ -74,6 +76,9 @@ const app = {
   lastSel: fleetTier(null),
   freshActivity: false,
   confirmRemove: null,
+  /** The open Activity view: {agent, name, role, handle, watcher, panel}, or null. */
+  activity: null,
+  activityFrame: 0,
 };
 
 // Read once and kept current: the media query's getter is costly in a frame loop.
@@ -513,6 +518,7 @@ function onSelection() {
   }
   app.manager?.setLandscape(sel.level === -1);
   if (form.isOpen) form.close();
+  closeActivity(false);
   app.confirmRemove = null;
   const focus = inspectorView.captureFocus();
   // Pulling out: land on the row for the tier just left.
@@ -615,6 +621,11 @@ document.addEventListener("keydown", (event) => {
     form.close();
     return;
   }
+  if (app.activity && (chrome.el.inspector.contains(event.target) || event.target === document.body)) {
+    event.preventDefault();
+    closeActivity(true);
+    return;
+  }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
   const target = nav.target();
   const parent = parentOf(target, landscape());
@@ -625,6 +636,11 @@ document.addEventListener("keydown", (event) => {
 
 document.addEventListener("click", (event) => {
   if (fleetClick(event.target)) return;
+  const activity = event.target.closest("[data-activity]");
+  if (activity) {
+    openActivity(activity.dataset.activity, activity.dataset.activityName, activity.dataset.activityRole);
+    return;
+  }
   const goTarget = event.target.closest("[data-go]");
   if (goTarget && !goTarget.disabled) {
     go(selectionFrom(goTarget));
@@ -693,9 +709,85 @@ function renderInspector(navigated, focus) {
   inspectorTimer = 0;
   // The form owns the inspector while it is open; data updates wait.
   if (form.isOpen) return;
+  // So does the Activity view, which redraws itself.
+  if (app.activity) {
+    drawActivity();
+    return;
+  }
   const sel = nav.state.sel;
   const key = `${sel.level}:${sel.fleet}:${sel.ship}:${sel.crew}:${app.confirmRemove}`;
   if (inspectorView.show(panelHtml(sel), key, navigated, focus)) chrome.tickTimes(serverNow());
+}
+
+// ---------- officer activity ----------
+
+/**
+ * Open the Activity view for an officer (registration ID `agent`) of the
+ * fleet you are inside. Its events ride on that fleet's one stream, re-opened
+ * with `?agent=`; it is never a second stream. Content stays in memory.
+ */
+function openActivity(agent, name, role) {
+  if (!agent || !app.manager?.active) return;
+  closeActivity(false);
+  const view = { agent, name: name || agent, role, handle: null, watcher: null, panel: null };
+  view.handle = app.manager.watchActivity?.(app.manager.active, agent, {
+    onEvent: (data) => view.watcher?.event(data),
+    onOpen: () => view.watcher?.reopened(),
+    onRefused: () => view.watcher?.refused(),
+  });
+  if (!view.handle) {
+    chrome.toast("Activity needs the fleet's token.");
+    return;
+  }
+  view.watcher = createActivityWatcher({ client: view.handle.client, agent, onChange: () => markActivity() });
+  view.panel = createActivityPanel({
+    doc: document,
+    onClose: () => closeActivity(true),
+    onLoad: (turn, item) => view.watcher?.loadItem(turn, item),
+    onRetry: () => view.watcher?.retry(),
+  });
+  app.activity = view;
+  const inspector = chrome.el.inspector;
+  inspector.replaceChildren(view.panel.root);
+  inspector.scrollTop = 0;
+  view.watcher.start();
+  drawActivity();
+  inspector.querySelector("h2")?.focus({ preventScroll: true });
+  chrome.announce(`Activity for ${view.name}`);
+}
+
+function markActivity() {
+  if (!app.activityFrame) app.activityFrame = requestAnimationFrame(drawActivity);
+}
+
+function drawActivity() {
+  if (app.activityFrame) cancelAnimationFrame(app.activityFrame);
+  app.activityFrame = 0;
+  const view = app.activity;
+  if (!view) return;
+  const state = view.watcher.view;
+  // Nothing to follow on this gateway: give the stream back its plain form.
+  if (state.status === "unavailable" && view.handle) {
+    view.handle.stop();
+    view.handle = null;
+  }
+  const live = app.sample || (view.handle !== null && activeFleet()?.connection.status === "connected");
+  view.panel.update(state, { name: view.name, role: view.role, live });
+  chrome.tickTimes(serverNow());
+}
+
+/** Close the Activity view: the stream re-opens without the agent and the content is dropped. */
+function closeActivity(restore) {
+  const view = app.activity;
+  if (!view) return;
+  app.activity = null;
+  if (app.activityFrame) cancelAnimationFrame(app.activityFrame);
+  app.activityFrame = 0;
+  view.handle?.stop();
+  view.watcher?.stop();
+  if (!restore) return;
+  renderInspector(true);
+  [...chrome.el.inspector.querySelectorAll("[data-activity]")].find((button) => button.dataset.activity === view.agent)?.focus();
 }
 
 function markInspector() {
@@ -781,6 +873,7 @@ async function readConfig(retry = false) {
 }
 
 async function startManager(mode, fleets) {
+  closeActivity(false);
   app.manager?.stop();
   app.mode = mode;
   app.sample = mode === "sample";
@@ -794,7 +887,11 @@ async function startManager(mode, fleets) {
           createLive: (options) => createLiveSource(options),
           onChange: onFleetChange,
         })
-      : createSampleFleetManager({ createSource: ({ variant, onEvent }) => createSampleSource({ variant, onEvent }), onChange: onFleetChange });
+      : createSampleFleetManager({
+          createSource: ({ variant, onEvent }) => createSampleSource({ variant, onEvent }),
+          createActivity: (options) => createSampleActivitySource(options),
+          onChange: onFleetChange,
+        });
   if (app.sample) {
     setBadge(null);
     app.bridge.setContext(null);

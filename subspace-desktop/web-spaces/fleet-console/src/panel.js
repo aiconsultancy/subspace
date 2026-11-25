@@ -11,6 +11,7 @@ export const stripTimes = (html) => html.replace(/(<span data-(?:since|uptime)="
 export function focusSignature(element) {
   if (element?.dataset?.go) return `go|${element.dataset.go}|${element.dataset.ship ?? ""}|${element.dataset.crew ?? ""}|${element.dataset.fleet ?? ""}`;
   if (element?.dataset?.issue) return `issue|${element.dataset.issue}`;
+  if (element?.dataset?.activity) return `activity|${element.dataset.activity}`;
   return null;
 }
 
@@ -25,7 +26,12 @@ export function selectionSignature(selection) {
 function findBySignature(container, signature) {
   const [kind, a, b, c, d = ""] = signature.split("|");
   const fleetMatches = (node) => d === "*" || (node.dataset.fleet ?? "") === d;
-  for (const node of container.querySelectorAll(kind === "go" ? "[data-go]" : "[data-issue]")) {
+  const selector = { go: "[data-go]", issue: "[data-issue]", activity: "[data-activity]" }[kind];
+  for (const node of container.querySelectorAll(selector)) {
+    if (kind === "activity") {
+      if (node.dataset.activity === a) return node;
+      continue;
+    }
     if (kind === "issue" ? node.dataset.issue === a : node.dataset.go === a && (node.dataset.ship ?? "") === b && (node.dataset.crew ?? "") === c && fleetMatches(node)) return node;
   }
   return null;

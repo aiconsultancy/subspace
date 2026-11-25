@@ -1,4 +1,5 @@
-// The Fleet API v1 client: bearer-token reads and the event stream request.
+// The Fleet API v1 client: bearer-token reads, officer activity and the event
+// stream request.
 // The only module that calls fetch. Requests never follow redirects, so the
 // token only goes to the address it was given for.
 
@@ -56,13 +57,30 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
     return response.json();
   }
 
+  const activityPath = (agent, query) => {
+    const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== null).map(([key, value]) => [key, String(value)]));
+    const search = params.toString();
+    return `/agents/${encodeURIComponent(agent)}/activity${search ? `?${search}` : ""}`;
+  };
+
   return {
     fleet: (signal) => getJson("/fleet", signal),
+    /** An officer's recent turns (`V1AgentActivity`), or one turn's with `{turn}`. 404 when the gateway lacks the route or the agent or turn. */
+    activity: (agent, { turn } = {}, signal) => getJson(activityPath(agent, { turn }), signal),
+    /** One page (`V1ActivityItemPage`) of a paged item's complete JSON. */
+    activityItemPage: (agent, turn, item, page, signal) => getJson(activityPath(agent, { turn, item, page }), signal),
     ship: (id, signal) => getJson(`/ships/${encodeURIComponent(id)}`, signal),
     crew: (ship, member, signal) => getJson(`/ships/${encodeURIComponent(ship)}/crew/${encodeURIComponent(member)}`, signal),
-    /** Open the event stream; resolves to a Response with a readable body, or throws HttpError. */
-    async events(signal, lastEventId) {
-      const response = await fetchImpl(url("/events"), {
+    /**
+     * Open the event stream; resolves to a Response with a readable body, or
+     * throws HttpError. `agents` adds `agent-activity` events for those
+     * registration IDs, one repeated `agent` parameter each.
+     */
+    async events(signal, lastEventId, agents = []) {
+      const params = new URLSearchParams();
+      for (const agent of agents) params.append("agent", agent);
+      const search = params.toString();
+      const response = await fetchImpl(url(`/events${search ? `?${search}` : ""}`), {
         headers: { ...headers, Accept: "text/event-stream", ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}) },
         signal,
         cache: "no-store",
@@ -78,4 +96,42 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
       return response;
     },
   };
+}
+
+/** How many times reading a paged item starts again because it changed between pages. */
+export const PAGE_RESTARTS = 8;
+
+/**
+ * Read every page of a paged activity item and return its complete JSON,
+ * parsed. Pages with a different `seq` belong to another version of the item,
+ * so the read starts again from page 0. Nothing is cut: it either returns the
+ * whole item or throws.
+ *
+ * @param {(page: number) => Promise<{seq: number, page: number, pages: number, bytes: number, data: string}>} readPage
+ * @returns {Promise<{seq: number, item: object}>}
+ */
+export async function readPagedItem(readPage, restarts = PAGE_RESTARTS) {
+  for (let attempt = 0; attempt <= restarts; attempt += 1) {
+    const first = await readPage(0);
+    checkPage(first, 0);
+    const parts = [first.data];
+    let changed = false;
+    for (let page = 1; page < first.pages; page += 1) {
+      const next = await readPage(page);
+      checkPage(next, page);
+      if (next.seq !== first.seq || next.pages !== first.pages) {
+        changed = true;
+        break;
+      }
+      parts.push(next.data);
+    }
+    if (changed) continue;
+    return { seq: first.seq, item: JSON.parse(parts.join("")) };
+  }
+  throw new Error("The item kept changing while its pages were read.");
+}
+
+function checkPage(page, number) {
+  const ok = page && typeof page.data === "string" && Number.isInteger(page.pages) && page.pages >= 1 && page.page === number && Number.isFinite(page.seq);
+  if (!ok) throw new Error(`Page ${number} of the item is not a valid page.`);
 }

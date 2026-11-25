@@ -51,6 +51,8 @@ export function createFleetManager({ entries, createClient, createLive, onChange
   let hidden = false;
   let timer = null;
   let stopped = false;
+  /** The open activity view, if any: {fleet, agent, onEvent, onOpen}. One stream carries it. */
+  let watch = null;
 
   const apply = (id, event) => {
     const runtime = runtimes.get(id);
@@ -119,7 +121,17 @@ export function createFleetManager({ entries, createClient, createLive, onChange
     runtime.streaming = true;
     runtime.live = createLive({
       client: runtime.client,
-      onEvent: (event) => apply(id, event),
+      agents: watch?.fleet === id ? [watch.agent] : [],
+      onEvent: (event) => {
+        if (event.type !== "agent-activity") apply(id, event);
+        else if (watch?.fleet === id) watch.onEvent(event.data);
+      },
+      onOpen: (agents) => {
+        if (watch?.fleet === id && agents.includes(watch.agent)) watch.onOpen();
+      },
+      onAgentsRefused: (agents, status) => {
+        if (watch?.fleet === id && agents.includes(watch.agent)) watch.onRefused?.(status);
+      },
       onConnection: (connection) => {
         if (runtimes.get(id) !== runtime) return;
         runtime.connection = connection;
@@ -214,6 +226,31 @@ export function createFleetManager({ entries, createClient, createLive, onChange
     readCrew(id, ship, crew) {
       return runtimes.get(id)?.live?.readCrew(ship, crew) ?? Promise.resolve(false);
     },
+    /**
+     * Follow one officer's activity on fleet `id`: its stream re-opens with
+     * `?agent=<agent>` (never a second stream) and hands over that agent's
+     * events; `onOpen` runs each time the stream opens with it, `onRefused`
+     * when the gateway refuses the subscription (the stream carries on
+     * without it). Returns the
+     * client to read snapshots with and `stop()`, which re-opens the stream
+     * without the agent; or null when the fleet has no client.
+     */
+    watchActivity(id, agent, { onEvent, onOpen, onRefused }) {
+      const runtime = runtimes.get(id);
+      if (!runtime?.client) return null;
+      const own = { fleet: id, agent, onEvent, onOpen, onRefused };
+      if (watch && watch.fleet !== id) runtimes.get(watch.fleet)?.live?.setAgents([]);
+      watch = own;
+      runtime.live?.setAgents([agent]);
+      return {
+        client: runtime.client,
+        stop() {
+          if (watch !== own) return;
+          watch = null;
+          runtimes.get(id)?.live?.setAgents([]);
+        },
+      };
+    },
     /** New entries from the sources: keeps unchanged fleets, rebuilds changed ones, reads new ones once. */
     update(next) {
       reconcile(next);
@@ -234,7 +271,7 @@ export function createFleetManager({ entries, createClient, createLive, onChange
  * Sample mode's fleets: two simulations that keep changing and one fleet that
  * never answers, with the same interface as the live manager.
  */
-export function createSampleFleetManager({ createSource, onChange, now = Date.now }) {
+export function createSampleFleetManager({ createSource, createActivity, onChange, now = Date.now }) {
   const runtimes = new Map();
   const order = SAMPLE_FLEETS.map((fleet) => fleet.id);
   let active = order[0];
@@ -279,6 +316,15 @@ export function createSampleFleetManager({ createSource, onChange, now = Date.no
     retry() {},
     readShip: () => Promise.resolve(true),
     readCrew: () => Promise.resolve(true),
+    /** A simulated officer turn in place of the stream's activity events. */
+    watchActivity(id, agent, { onEvent, onOpen }) {
+      const fleet = runtimes.get(id)?.state.fleet;
+      const officer = fleet?.admiral?.id === agent ? fleet.admiral : fleet?.ships.find((ship) => ship.captain.id === agent)?.captain;
+      if (!createActivity || !officer) return null;
+      const source = createActivity({ agent, role: officer.role, backend: officer.backend, onEvent, onOpen });
+      source.start();
+      return { client: source.client, stop: () => source.stop() };
+    },
     update() {},
     stop() {
       for (const runtime of runtimes.values()) runtime.source?.stop();

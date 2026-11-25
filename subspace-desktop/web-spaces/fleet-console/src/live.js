@@ -2,6 +2,10 @@
 // open as a streamed fetch body, parsing it with the SSE parser. It reconnects
 // with jittered backoff, treats three missed heartbeats as a dead stream, and
 // reports every connection change. Timers, time and randomness are injected.
+//
+// It is the page's only stream for its fleet: the gateway allows few viewers.
+// Officer activity rides on it, by re-opening it with `?agent=<id>` while an
+// activity view is open and without once it closes (`setAgents`).
 
 import { initialConnection, nextConnection } from "./connection.js";
 import { createSseParser } from "./sse.js";
@@ -14,7 +18,7 @@ export const HEALTHY_MS = 20_000;
 export const CONNECT_TIMEOUT_MS = 15_000;
 export const DETAIL_TIMEOUT_MS = 10_000;
 
-export function createLiveSource({ client, onEvent, onConnection, now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout }) {
+export function createLiveSource({ client, onEvent, onConnection, onOpen, onAgentsRefused, agents: initialAgents = [], now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let connection = initialConnection();
   let controller = null;
   let retryTimer = null;
@@ -24,6 +28,8 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
   let stopped = false;
   let lastEventId = "";
   let haveFleet = false;
+  /** Registration IDs whose `agent-activity` events the stream asks for. */
+  let agents = [...initialAgents];
   /** How many `ship` events each ship has had, so a slow detail read can tell it is stale. */
   const shipEvents = new Map();
 
@@ -83,7 +89,8 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
     }
   }
 
-  async function connect() {
+  /** `quiet` re-opens a working stream without showing "Connecting". */
+  async function connect(quiet = false) {
     if (stopped) return;
     clearTimer(retryTimer);
     retryTimer = null;
@@ -91,7 +98,7 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
     const own = new AbortController();
     controller = own;
     watchdogFired = false;
-    update({ type: "connecting" });
+    if (!(quiet && connection.status === "connected")) update({ type: "connecting" });
     try {
       if (!haveFleet) {
         armWatchdog(CONNECT_TIMEOUT_MS);
@@ -101,9 +108,11 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
         haveFleet = true;
       }
       armWatchdog(CONNECT_TIMEOUT_MS);
-      const response = await client.events(own.signal, lastEventId);
+      const response = await client.events(own.signal, lastEventId, agents);
       if (own.signal.aborted) throw new Error("aborted");
       update({ type: "open" });
+      // Activity events have no replay: a viewer refetches its snapshot on every open.
+      onOpen?.([...agents]);
       clearTimer(healthy);
       healthy = setTimer(() => {
         healthy = null;
@@ -114,6 +123,15 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
     } catch (error) {
       if (controller !== own || stopped) return;
       if (own.signal.aborted && !watchdogFired) return;
+      // The gateway checks `agent` before the stream starts: 400 or 404 refuses
+      // the subscription, not the fleet. Drop it and carry on without it.
+      if (agents.length && (error?.status === 400 || error?.status === 404)) {
+        const refused = agents;
+        agents = [];
+        onAgentsRefused?.(refused, error.status);
+        if (!stopped) connect(true);
+        return;
+      }
       update({ type: "failed", status: error?.status, retryAfterMs: error?.retryAfterMs });
     } finally {
       if (controller === own) {
@@ -143,6 +161,16 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
     },
     start: () => connect(),
     retryNow: () => connect(),
+    get agents() {
+      return [...agents];
+    },
+    /** Ask for `agent-activity` events for these registration IDs (at most 8), re-opening the one stream if they changed. */
+    setAgents(next) {
+      const unique = [...new Set(next)].slice(0, 8);
+      if (unique.length === agents.length && unique.every((id, i) => id === agents[i])) return;
+      agents = unique;
+      if (!stopped && controller) connect(true);
+    },
     stop() {
       stopped = true;
       clearTimer(retryTimer);

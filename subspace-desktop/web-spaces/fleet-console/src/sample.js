@@ -519,3 +519,197 @@ export function createSampleSim({ now = Date.now, random = Math.random, variant 
     },
   };
 }
+
+// ---------- officer activity ----------
+
+/** Item JSON above this many UTF-8 bytes is paged, as the gateway does. */
+export const SAMPLE_PAGE_BYTES = 64 * 1024;
+const utf8 = (text) => new TextEncoder().encode(text).length;
+
+/** A long, invented test log: big enough to be paged. */
+function longLog() {
+  const lines = [];
+  for (let i = 1; i <= 1400; i += 1) lines.push(`ok ${i} - orbit layout keeps ship ${i % 37} clear of its neighbours (${(i * 0.37).toFixed(2)} ms)`);
+  return `TAP version 13\n${lines.join("\n")}\n1..1400\n# pass 1400\n# fail 0\n`;
+}
+
+const tokens = (input, output, reasoning = 0, cacheRead = 0, cacheWrite = 0) => ({ input, output, reasoning, cacheRead, cacheWrite });
+
+/**
+ * The running turn's script: each tick makes the next change, as the live
+ * stream would. `item` changes upsert an item; `end` ends the turn.
+ */
+function runningScript() {
+  const command = "node --test test/layout.test.js";
+  const output = ["▶ orbit layout", "  ✔ keeps ships apart (3.1 ms)", "  ✔ wraps long names (1.2 ms)", "  ✔ places crew on their rings (2.4 ms)", "✔ orbit layout (7.9 ms)", "ℹ tests 3", "ℹ pass 3", "ℹ fail 0"];
+  const reply = "The orbit layout tests pass. I kept ship labels clear of their neighbours by measuring each label once and caching the box, so the hit test no longer re-measures text on every frame.";
+  const steps = [
+    { id: "i1", kind: "step", status: "running", model: { provider: "example", id: "model-large", variant: null }, firstTokenAt: null, streamedAt: null, endedAt: null, finish: null, tokens: null, cost: null, error: null },
+    { id: "i2", kind: "reasoning", status: "streaming", text: "The labels overlap when two ships share an orbit." },
+    { id: "i2", kind: "reasoning", status: "completed", text: "The labels overlap when two ships share an orbit. Run the layout tests first, then read the hit test." },
+    { id: "i3", kind: "tool", callId: "call_sample_1", name: "bash", status: "input", rawInput: '{"command":"node --te', input: null, executed: null, metadata: null, content: null, error: null },
+    { id: "i3", kind: "tool", callId: "call_sample_1", name: "bash", status: "running", rawInput: `{"command":"${command}"}`, input: { command, description: "Run the layout tests" }, executed: true, metadata: { output: "" }, content: null, error: null },
+  ];
+  for (let n = 1; n <= output.length; n += 2) {
+    steps.push({ ...steps[4], metadata: { output: output.slice(0, n).join("\n") } });
+  }
+  steps.push({ ...steps[4], status: "completed", metadata: { output: output.join("\n"), exit: 0 }, content: [{ type: "text", text: output.join("\n") }] });
+  steps.push({ ...steps[0], status: "completed", firstTokenAt: "first", streamedAt: "now", endedAt: "now", finish: "tool-calls", tokens: tokens(18_420, 312, 140, 15_872, 0), cost: 0.0412 });
+  steps.push({ id: "i4", kind: "step", status: "running", model: steps[0].model, firstTokenAt: null, streamedAt: null, endedAt: null, finish: null, tokens: null, cost: null, error: null });
+  for (let n = 40; n < reply.length; n += 40) steps.push({ id: "i5", kind: "text", status: "streaming", text: reply.slice(0, n) });
+  steps.push({ id: "i5", kind: "text", status: "completed", text: reply });
+  steps.push({ id: "i4", kind: "step", status: "completed", model: steps[0].model, firstTokenAt: "first", streamedAt: "now", endedAt: "now", finish: "stop", tokens: tokens(19_104, 96, 0, 18_240, 0), cost: 0.0187, error: null });
+  steps.push({ end: "completed" });
+  return steps;
+}
+
+/**
+ * Sample activity for one officer: two settled turns (one with a paged log,
+ * one with a failed tool, a reconnect, and text holding markup, an escape
+ * sequence and a bidi override) and a running turn that a tick advances.
+ * `collected` follows the contract: only OpenCode officers are collected.
+ */
+export function createSampleActivitySim({ agent, role = "captain", backend = "opencode", now = Date.now } = {}) {
+  const generation = `sample-${agent}`;
+  let seq = 0;
+  const next = () => (seq += 1);
+  const collected = backend === "opencode";
+  const turns = [];
+  let running = null;
+  let script = [];
+  let started = 0;
+  let pause = 0;
+
+  const item = (fields, t) => ({ startedAt: t, updatedAt: t, ...fields, seq: next() });
+  if (collected) {
+    const t0 = now() - 42 * M;
+    const log = longLog();
+    turns.push({
+      id: `${agent}-turn-1`,
+      status: "completed",
+      startedAt: t0,
+      updatedAt: t0 + 3 * M,
+      endedAt: t0 + 3 * M,
+      reconnects: 0,
+      items: [
+        item({ id: "i1", kind: "step", status: "completed", model: { provider: "example", id: "model-large", variant: "high" }, firstTokenAt: t0 + 2000, streamedAt: t0 + 9000, endedAt: t0 + 9000, finish: "tool-calls", tokens: tokens(12_380, 220, 512, 0, 12_160), cost: 0.0611, error: null }, t0),
+        item({ id: "i2", kind: "reasoning", status: "completed", text: "Run the whole suite before changing the layout, so a failure afterwards is mine." }, t0 + 2000),
+        item({ id: "i3", kind: "tool", callId: "call_sample_0", name: "bash", status: "completed", rawInput: '{"command":"node --test --test-reporter=tap"}', input: { command: "node --test --test-reporter=tap", description: "Run every test" }, executed: true, metadata: { output: log, exit: 0 }, content: [{ type: "text", text: log }], error: null }, t0 + 9000),
+        item({ id: "i4", kind: "step", status: "completed", model: { provider: "example", id: "model-large", variant: "high" }, firstTokenAt: t0 + 95_000, streamedAt: t0 + 99_000, endedAt: t0 + 3 * M, finish: "stop", tokens: tokens(31_002, 88, 0, 12_160, 0), cost: 0.0298, error: null }, t0 + 94_000),
+        item({ id: "i5", kind: "text", status: "completed", text: "All 1400 tests pass on main. Starting on the label overlap next." }, t0 + 99_000),
+      ],
+    });
+    const t1 = now() - 18 * M;
+    turns.push({
+      id: `${agent}-turn-2`,
+      status: "failed",
+      startedAt: t1,
+      updatedAt: t1 + 2 * M,
+      endedAt: t1 + 2 * M,
+      reconnects: 1,
+      items: [
+        item({ id: "i1", kind: "step", status: "completed", model: { provider: "example", id: "model-large", variant: null }, firstTokenAt: t1 + 1500, streamedAt: t1 + 4000, endedAt: t1 + 4000, finish: "tool-calls", tokens: tokens(9_120, 140, 0, 8_960, 0), cost: 0.0154, error: null }, t1),
+        item(
+          {
+            id: "i2",
+            kind: "tool",
+            callId: "call_sample_2",
+            name: "webfetch",
+            status: "failed",
+            rawInput: '{"url":"https://docs.example.com/layout"}',
+            input: { url: "https://docs.example.com/layout", format: "markdown" },
+            executed: true,
+            metadata: null,
+            content: [{ type: "text", text: '<script>alert("not run")</script>\n\u001b[31mred text from a terminal\u001b[0m\nfile name: report\u202Efdp.exe' }],
+            error: { type: "ToolError", message: "The page answered 503.", status: 503, responseBody: "<html><body>Service unavailable</body></html>", retryAfterMs: 30_000 },
+          },
+          t1 + 4000,
+        ),
+        item({ id: "i3", kind: "step", status: "failed", model: { provider: "example", id: "model-large", variant: null }, firstTokenAt: null, streamedAt: null, endedAt: t1 + 2 * M, finish: null, tokens: null, cost: null, error: { type: "ProviderError", message: "The provider closed the stream.", status: null, responseBody: null, retryAfterMs: null } }, t1 + 6000),
+      ],
+    });
+    for (const turn of turns) {
+      turn.seq = next();
+      turn.usage = usageOf(turn.items);
+    }
+  }
+
+  function usageOf(items) {
+    const settled = items.filter((entry) => entry.kind === "step" && entry.tokens);
+    if (!settled.length) return null;
+    const sum = (key) => settled.reduce((total, entry) => total + entry.tokens[key], 0);
+    return { steps: settled.length, tokens: tokens(sum("input"), sum("output"), sum("reasoning"), sum("cacheRead"), sum("cacheWrite")), cost: settled.reduce((total, entry) => total + (entry.cost ?? 0), 0) };
+  }
+
+  /** The item as the gateway sends it: whole, or its identity and `paged` when its JSON is large. */
+  function present(entry) {
+    const bytes = utf8(JSON.stringify(entry));
+    if (bytes <= SAMPLE_PAGE_BYTES) return entry;
+    const pages = Math.ceil(JSON.stringify(entry).length / SAMPLE_PAGE_BYTES);
+    const out = { id: entry.id, seq: entry.seq, startedAt: entry.startedAt, updatedAt: entry.updatedAt, kind: entry.kind, status: entry.status, paged: { pages, bytes } };
+    if (entry.kind === "tool") Object.assign(out, { callId: entry.callId, name: entry.name });
+    return out;
+  }
+
+  const turnFields = (turn) => ({ id: turn.id, seq: turn.seq, status: turn.status, startedAt: turn.startedAt, updatedAt: turn.updatedAt, endedAt: turn.endedAt, reconnects: turn.reconnects, usage: turn.usage });
+  const event = (turn, change) => ({ agentId: agent, turnId: turn.id, generation, seq, at: now(), change });
+
+  function startTurn() {
+    const t = now();
+    started += 1;
+    running = { id: `${agent}-turn-${turns.length + 1}-${started}`, status: "running", startedAt: t, updatedAt: t, endedAt: null, reconnects: 0, usage: null, items: [], seq: next() };
+    turns.push(running);
+    while (turns.length > 16) turns.shift();
+    script = runningScript();
+    return event(running, { type: "turn-started", turn: turnFields(running) });
+  }
+
+  if (collected) startTurn();
+
+  return {
+    agent: { id: agent, role, backend, collected },
+    /** `V1AgentActivity`, or one turn's with `turn`; null for a turn that is gone. */
+    snapshot(turnId = null) {
+      const chosen = turnId ? turns.filter((turn) => turn.id === turnId) : turns;
+      if (turnId && !chosen.length) return null;
+      return structuredClone({ agent: this.agent, turns: chosen.map((turn) => ({ ...turnFields(turn), items: turn.items.map(present) })), cursor: { generation, seq } });
+    },
+    /** `V1ActivityItemPage`, or null when the turn or item is gone. */
+    page(turnId, itemId, page) {
+      const entry = turns.find((turn) => turn.id === turnId)?.items.find((candidate) => candidate.id === itemId);
+      if (!entry) return null;
+      const text = JSON.stringify(entry);
+      const pages = Math.max(1, Math.ceil(text.length / SAMPLE_PAGE_BYTES));
+      if (!(page >= 0 && page < pages)) return null;
+      return { agent, turn: turnId, item: itemId, seq: entry.seq, page, pages, bytes: utf8(text), data: text.slice(page * SAMPLE_PAGE_BYTES, (page + 1) * SAMPLE_PAGE_BYTES) };
+    },
+    /** The next change of the running turn, as `agent-activity` event data; [] when there is none. */
+    tick() {
+      if (!collected) return [];
+      if (!running) {
+        pause += 1;
+        return pause >= 4 ? ((pause = 0), [startTurn()]) : [];
+      }
+      const step = script.shift();
+      const t = now();
+      if (!step || step.end) {
+        running.status = step?.end ?? "completed";
+        running.endedAt = t;
+        running.updatedAt = t;
+        running.usage = usageOf(running.items);
+        running.seq = next();
+        const ended = event(running, { type: "turn-ended", turn: turnFields(running) });
+        running = null;
+        return [ended];
+      }
+      const existing = running.items.find((entry) => entry.id === step.id);
+      const fields = { ...step };
+      for (const key of ["firstTokenAt", "streamedAt", "endedAt"]) if (fields[key] === "now" || fields[key] === "first") fields[key] = fields[key] === "first" ? (existing?.startedAt ?? t) + 1200 : t;
+      const updated = { startedAt: existing?.startedAt ?? t, ...fields, updatedAt: t, seq: next() };
+      if (existing) running.items[running.items.indexOf(existing)] = updated;
+      else running.items.push(updated);
+      running.updatedAt = t;
+      return [event(running, { type: "item", item: present(updated) })];
+    },
+  };
+}

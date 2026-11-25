@@ -108,3 +108,17 @@ test("each tier has an accessible description", async () => {
   assert.match(describeTier(state.fleet, state.ships, { level: 2, ship: "galactica", crew: "helo" }), /uncertain/);
   assert.match(describeTier(null, {}, { level: 0 }), /Waiting/);
 });
+
+test("the admiral and captain sections open Activity by registration ID, escaped", async () => {
+  const state = await loadedState();
+  const fleetHtml = fleetPanel(model(state));
+  assert.match(fleetHtml, new RegExp(`data-activity="${state.fleet.admiral.id}"[^>]*data-activity-role="rear_admiral"`));
+  const ship = state.fleet.ships.find((entry) => entry.id === "galactica");
+  assert.match(shipPanel(model(state), "galactica"), new RegExp(`data-activity="${ship.captain.id}"[^>]*data-activity-role="captain"`));
+  assert.match(shipPanel(model(state), "resolute"), /data-activity=/, "an unreachable ship's captain still has its activity");
+  const hostile = structuredClone(state);
+  hostile.fleet.admiral = { ...hostile.fleet.admiral, id: EVIL, name: EVIL };
+  const html = fleetPanel(model(hostile));
+  assert.ok(!html.includes(EVIL));
+  assert.ok(html.includes(`data-activity="${esc(EVIL)}"`));
+});

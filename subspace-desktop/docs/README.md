@@ -252,6 +252,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Fleet Console built in](changes/fleet-console-built-in/README.md): Fleet
   Console in every macOS and Windows build without an install, and the
   fictional Stargate Fleet API that captures show it live against.
+- [Fleet Console officer activity](changes/fleet-console-officer-activity/README.md):
+  the rear admiral's and captains' turns, tool calls and replies in full,
+  live on the fleet's one event stream.
 - [Workspace shell review findings](changes/workspace-shell-review-findings/intent.md):
   the follow-up that takes every open review finding of the workspace shell,
   starting with Decisions dropping what it read when the account changes.

@@ -83,6 +83,11 @@ function systemSection(model) {
   );
 }
 
+/** The button that opens an officer's Activity view; `id` is its registration ID. */
+export function activityButton(officer, role) {
+  return `<button class="btn act-open" type="button" data-activity="${esc(officer.id)}" data-activity-name="${esc(officer.name)}" data-activity-role="${esc(role)}" aria-label="Activity of ${esc(officer.name)}: turns, tool calls and replies">Activity</button>`;
+}
+
 function admiralSection(model) {
   const admiral = model.fleet.admiral;
   if (!admiral) return section("Rear admiral", '<p class="prog">No registration has the rear admiral role.</p>');
@@ -90,7 +95,8 @@ function admiralSection(model) {
   return section(
     "Rear admiral",
     `<div class="who">${avatar(admiral.name, admiral.activity)}<span class="grow"><b>${esc(admiral.name)}</b><span class="sub mono">${esc(admiral.model ?? admiral.backend)} · ${esc(admiral.transport)}</span></span>${chip(admiral.activity, admiral.since, model.now)}</div>
-     <p class="prog">${esc(captainLine(admiral))}. Queue: ${(q.running ?? 0) + (q.responding ?? 0)} running · ${q.queued ?? 0} queued · ${q.done ?? 0} done${q.failed ? ` · ${q.failed} failed` : ""}.</p>`,
+     <p class="prog">${esc(captainLine(admiral))}. Queue: ${(q.running ?? 0) + (q.responding ?? 0)} running · ${q.queued ?? 0} queued · ${q.done ?? 0} done${q.failed ? ` · ${q.failed} failed` : ""}.</p>
+     <p class="act-entry">${activityButton(admiral, "rear_admiral")}</p>`,
   );
 }
 
@@ -130,7 +136,8 @@ export function shipPanel(model, shipId) {
   let html = header("Ship · L2 · containers", ship.name, `${ship.repository ?? "No GitHub repository"} · ${ship.captain.transport} · ${ship.captain.backend}`);
   html += section(
     "Captain",
-    `<div class="who">${avatar(ship.captain.name, state)}<span class="grow"><b>${esc(ship.captain.name)}</b><span class="sub">${esc(ship.available ? captainLine(ship.captain, counts.busy) : "No answer from the gateway")}</span></span>${chip(state, ship.available ? ship.captain.since : model.unavailableSince[ship.id], model.now)}</div>`,
+    `<div class="who">${avatar(ship.captain.name, state)}<span class="grow"><b>${esc(ship.captain.name)}</b><span class="sub">${esc(ship.available ? captainLine(ship.captain, counts.busy) : "No answer from the gateway")}</span></span>${chip(state, ship.available ? ship.captain.since : model.unavailableSince[ship.id], model.now)}</div>
+     <p class="act-entry">${activityButton(ship.captain, "captain")}</p>`,
   );
   if (!ship.available) {
     return `${html}<section class="sec warn"><p><b>Crew status unavailable.</b> ${esc(ship.error ?? "Stargate could not read this ship's crew.")} The console shows nothing it cannot read.</p></section>${section("Ship features", featureList(ship.features))}`;
