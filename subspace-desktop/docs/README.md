@@ -261,6 +261,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Fleet Console officer activity](changes/fleet-console-officer-activity/README.md):
   the rear admiral's and captains' turns, tool calls and replies in full,
   live on the fleet's one event stream.
+- [Fleet Console crew diffs](changes/fleet-console-crew-diff/README.md):
+  View diff on each crew project opens the worktree's changes in full, with
+  paged patches and a hex view of binary files.
 - [Workspace shell review findings](changes/workspace-shell-review-findings/intent.md):
   the follow-up that takes every open review finding of the workspace shell,
   starting with Decisions dropping what it read when the account changes.

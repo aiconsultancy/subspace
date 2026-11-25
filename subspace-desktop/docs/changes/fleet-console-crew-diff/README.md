@@ -1,0 +1,163 @@
+# Fleet Console: crew diffs
+
+## Intent
+
+People see everything agents see (SUB-70), including what a crew member has
+changed in its checkout but not pushed. Stargate now serves each crew
+member's worktree diff (STAR-5). This adds **View diff** to each project on
+a crew member's inspector card in Fleet Console. It opens a plain web viewer
+for that worktree, built against the STAR-5 contract with fictional
+fixtures and a sample checkout, so it works without a gateway. The desktop
+viewer in the PRs Space (#110) is separate work; this view shows what that
+one shows, and the differences are listed below with their reasons.
+
+## Spec
+
+- **Gate.** View diff shows on a project row only when the fleet gateway's
+  feature list has `api.crewDiffs` with `enabled: true`, and the project's
+  `git` is present with no `error`. An older gateway lists no such feature
+  and shows nothing new.
+- **Routes.** `src/api.js` adds `diff(ship, member, {project, mode,
+  cursor})` for `GET /api/v1/ships/{id}/crew/{member}/diff` and
+  `diffFile(ship, member, {project, mode, path, page, at, side})` for
+  `…/diff/file`. Only the parameters given are sent; the default project
+  sends no `project`. A list page body is capped at 400 MiB and a file page
+  body at 7 MiB before decoding, as #110. Error bodies are empty and never
+  read.
+- **Status codes.** 400: "Stargate refused the request as malformed (400)."
+  404 on the first list page: "Diff not available", as an older gateway and
+  a member with no checkout answer alike. 404 on a later list page, 409 and
+  a page at another fingerprint: "The checkout changed while loading.
+  Refresh to try again." 404 on a file page: "This file is no longer
+  available. Refresh the diff." 500: Git or the crew plugin failed. 503
+  retries the same request up to twice after `Retry-After` (one second
+  when it sends none); a wait over ten seconds, or a third 503, stops with
+  "Stargate is busy. Wait N seconds, then select Refresh." (or **Retry
+  page** for a page). A successful empty snapshot is "No changes.",
+  including on an unborn branch.
+- **List paging.** `src/diff.js` `loadDiffList` reads every page by
+  `nextCursor` before showing the list. Each later page must have the first
+  page's fingerprint (else stale) and the same ship, member, project, mode
+  and total, and add files; a repeated cursor, a cursor after `total` files
+  or a list that does not add up to `total` is an invalid response. Nothing
+  is cut.
+- **Patch paging.** A file whose patch carries `patchNextPage` offers
+  **Load next page**, which reads `…/diff/file?page=&at=<fingerprint>`. The
+  answer must be at `at`, for the same path, carry patch text and not point
+  back at the page asked for. A failed page offers **Retry page** for the
+  same page. Loaded continuation pages take at most 64 MiB per view; past
+  that the least recently read file's continuations are dropped and it says
+  so, offering Load next page again.
+- **Binary files.** **Old bytes** and **New bytes** (an added file only
+  New, a removed one only Old) open a hex and ASCII view: a 16-digit offset,
+  8 bytes a row and `.` for bytes outside printable ASCII, as #110, shown
+  4 KiB at a time with First, Previous and Next. Pages are read by `?side=`
+  from the cursor the last page gave, at the snapshot's fingerprint. Each
+  page must be for the side asked for, `encoding: "base64"`, start at the
+  offset the previous one ended at, give the same size, decode to at most
+  1 MiB and not run past the size. A page ending before the size must name
+  a next page and hold bytes; a page ending exactly at the size is the
+  last, even if it names a next page. An empty file is one page of size 0.
+  A failed page offers **Retry page**. PNG, JPEG, GIF and WebP paths also
+  offer **Preview image** for each side, which assembles the side in memory
+  (at most 10 MiB in 16 pages) and shows it through a `blob:` URL, refusing
+  images over 4,096 pixels a side; **Show bytes** stays available.
+  Submodules and symbolic links say what their patch shows; a link is never
+  followed.
+- **Banners.** `unstable: true` on any list page shows "Changed while
+  loading · Refresh". The `ship` event's
+  `crewMembers[].contexts[].git.fingerprint` is passed to the view on each
+  update: once the snapshot has loaded, a value other than its fingerprint
+  shows "Changed since loaded · Refresh", as does a stale page. As in #110,
+  a value seen before the load started is not a change, a repeat proves
+  nothing, and no fingerprint shows no banner.
+- **Cancellation.** All reads of one snapshot share one token. Refresh, a
+  mode change, closing the view (Back, Escape or a tier change), a source
+  change and a stale fingerprint (a moved live value, a 409 or another
+  fingerprint) cancel it: fetches abort, waits in busy backoff end at once,
+  and an answer that arrives anyway is dropped. Hide bytes cancels its
+  binary read.
+- **Source change.** `src/fleet-manager.js` `openDiff(fleet)` gives the view
+  a client that resolves the fleet's current client at each read. A change
+  of address or token drops what was read and reads again from the new
+  client; losing the token or the fleet closes the view.
+- **Rendering.** `src/diff-view.js` builds DOM nodes and text nodes only,
+  never `innerHTML`, through the Activity view's `h` and `mount`. Control
+  and bidi formatting characters show as the Activity view's `⟨U+XXXX⟩`
+  markers. Long lines wrap and stay selectable; the hex view scrolls
+  sideways. Large content is windowed, never hidden: the file list 200 files
+  at a time and a patch 1,000 lines at a time, each with First, Previous,
+  Next and Last.
+- **Memory only and chat-free.** Diffs are never stored or logged, never
+  reach chat or the page's `setContext` value, and are dropped when the
+  view closes. Image previews revoke their object URL when replaced.
+- **Sample mode.** `src/sample-diff.js` answers the same routes for every
+  sample checkout: eight files over two list pages, a patch in three pages,
+  a removal, a rename with no content change, an untracked note with a bidi
+  override, a bell and a long line without spaces, a PNG, a binary of
+  1 MiB + 4 KiB whose old side is empty, a submodule and a symbolic link.
+  The sample `ship` events carry a fingerprint that moves as the simulation
+  advances, so the Changed since loaded banner and the 409 on a stale `at`
+  show too.
+
+## Differences from desktop #110
+
+- **A web viewer, not the PRs Space.** Asked for by the captain for this
+  PR. SUB-DOC-1 §5 proposed opening the native viewer through a bridge call,
+  which waits on SUB-63.
+- **Unified only, with a flat file list.** No split layout or file tree: the
+  inspector column is narrow, and a flat list shows each path in full.
+- **Long lines wrap.** #110's virtual rows have a fixed height, so it opens
+  long lines in **Read full line**. Here rows are DOM and wrap, so every
+  line is reachable in place.
+- **Markers in text.** #110 shows patch text as written, expanding tabs;
+  here control and bidi characters show as markers (Trojan Source), as in
+  the Activity view. The hex ASCII column keeps `.` as #110.
+- **Windows of 200 files and 1,000 lines.** #110 virtualises its lists;
+  here windows keep the page small.
+- **A memory bound on patch continuations** (64 MiB, least recently read
+  first). #110 keeps every loaded page; a web view's memory is shared with
+  the map.
+- **No check when the Space becomes active.** The view follows each `ship`
+  event while open instead.
+- **File pages carry no `unstable`.** The contract gives a file page
+  `{fingerprint, file, content?}`, so only list pages set the banner.
+
+## Contract questions
+
+Each carries the assumption this change makes; none blocked the work.
+
+1. **Where `api.crewDiffs` is listed.** STAR-5 puts it next to `api`; the
+   console reads the fleet gateway's feature list (`fleet.gateway.features`),
+   where `api` is. Recommend that list, and the console could accept
+   `ship.features` too if a ship can lack the route.
+2. **A page ending exactly at `size` with a `nextPage`.** The contract says
+   it has none; the console treats such a page as the last rather than
+   refusing it. Recommend the gateway never sends one and the client
+   tolerates it.
+3. **The default project.** The console omits `project` for a context whose
+   `project` is null, and expects `project: null` back. Recommend the
+   gateway documents this.
+4. **`unstable` on file pages.** Not in the contract; ignored. Recommend
+   leaving file pages without it, as a stale `at` already answers 409.
+5. **Web viewer against SUB-DOC-1 §5.** Recommend keeping this viewer for
+   browsers and the Fleet Console web Space, and opening the native viewer
+   when SUB-63 lands, behind the same gate.
+
+## Checks
+
+`node --test` in `web-spaces/fleet-console`: `test/diff.test.js` covers the
+feature gate on the crew card (on, off, absent, Git error, no worktree), the
+fingerprint on `isGit`, the routes' query strings and unread error bodies,
+each status code of the first page, busy retries with `Retry-After`, the
+default wait and the ten-second cap, an empty snapshot, cursor paging,
+stale and invalid list pages, patch paging to the last page, **Retry page**
+for a patch and a binary page, busy and gone file pages, a self-pointing or
+wrong-path page, a 409 or another fingerprint for a stale `at` leading to
+Refresh, an empty binary file, binary paging by offset to a page ending
+exactly at the size, binary page checks, the fingerprint banner (moved,
+repeated, absent, moved during the load, unstable), cancellation of reads in
+backoff when the fingerprint goes stale, the view closes or Hide bytes is
+pressed, a late answer dropped after a stale fingerprint, Refresh and a mode
+change dropping the old snapshot, a token change while a read is held, and
+the sample checkout end to end with markers.
