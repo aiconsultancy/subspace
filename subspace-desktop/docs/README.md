@@ -241,6 +241,8 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels reactions](changes/channels-reactions/README.md): message
   reactions as pills in Channels, toggling yours, the stop reactions on a
   running request, and the client layer's review findings closed.
+- [Channels preview status colour](changes/irc-preview-status-colour/README.md)
+  keeps issue and pull request status in their badges.
 - [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
   pull request tile only under the first message that names it, and fuller
   two-line tiles of a fixed size for both.
