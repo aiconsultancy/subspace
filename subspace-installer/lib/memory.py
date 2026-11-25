@@ -673,7 +673,7 @@ def installed_swappiness(state):
 
 def swap_lines(setting, state, total, installed=False, managed=True):
     """The dry run's swap decision, or after an install (installed) the swap the VM has now and why. managed is
-    false after an install that left swap alone (--no-systemd)."""
+    false for a run that leaves swap alone (--no-systemd), dry or not."""
     if not managed:
         return [f"Swap: {current_swap(state)} With --no-systemd the installer leaves swap as it is."]
     decision = swap_plan(setting, state, total)

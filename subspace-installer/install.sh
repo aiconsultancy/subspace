@@ -88,7 +88,10 @@ if "$dry_run"; then
     if [[ $action == uninstall ]]; then
         printf 'Would disable fleet services and remove installed programs and units. Fleet state and system packages are retained.\n'
     else
-        python3 "$runtime" plan "$config" "$secrets" "$app_secrets" "$prune_secrets"
+        plan=(plan "$config" "$secrets" "$app_secrets" "$prune_secrets")
+        # The plan says what this run would do: with --no-systemd, leave swap as it is.
+        if "$no_systemd"; then plan+=(no-systemd); fi
+        python3 "$runtime" "${plan[@]}"
         printf 'Would install packages and pinned %s binaries, converge service files, and apply optional fleet registration.\n' "$arch"
         if "$no_systemd"; then
             printf 'Would skip systemd and container startup.\n'

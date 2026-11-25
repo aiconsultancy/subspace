@@ -269,6 +269,16 @@ class ReportTests(unittest.TestCase):
                       "4 GiB, at most 4096 tasks.", lines)
         swap = next(line for line in lines if line.startswith("Swap:"))
         self.assertIn("The installer will create a swap file of 8 GiB, /subspace-fleet.swap (memory.swap)", swap)
+        # A dry run with --no-systemd says what that run does: leave swap alone.
+        output = io.StringIO()
+        with patch.object(runtime, "ETC", root / "etc"), patch.object(runtime, "STATE", root / "state"), \
+                patch.object(runtime, "SESSIONS", root / "etc/sessions"), \
+                patch.object(memory, "total_memory", return_value=VMS[64]), \
+                patch.object(memory, "swap_state", return_value=state()), \
+                patch.object(memory, "DROPIN_DIRS", (root / "control",)), contextlib.redirect_stdout(output):
+            runtime.main(["plan", str(root / "fleet.json"), str(root / "fleet.secrets.json"), "", "false", "no-systemd"])
+        self.assertEqual([line for line in output.getvalue().splitlines() if line.startswith("Swap")],
+                         ["Swap: this VM has no swap. With --no-systemd the installer leaves swap as it is."])
         # The install summary reads the installed fleet: the swap it has now.
         etc = root / "etc"
         etc.mkdir()
@@ -292,6 +302,33 @@ class ReportTests(unittest.TestCase):
             runtime.main(["memory-summary", "no-systemd"])
         self.assertEqual(output.getvalue().splitlines()[-1],
                          "Swap: this VM has no swap. With --no-systemd the installer leaves swap as it is.")
+
+    def test_install_sh_tells_the_dry_run_about_no_systemd(self):
+        """install.sh --dry-run hands --no-systemd to runtime.py plan, so the plan says what that run does."""
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        root = Path(work.name)
+        installer = root / "subspace-installer"
+        (installer / "lib").mkdir(parents=True)
+        # install.sh as it is, on a VM it accepts (Ubuntu 24.04, amd64), with a runtime.py that prints its arguments.
+        release = root / "os-release"
+        release.write_text("ID=ubuntu\nVERSION_ID=24.04\n")
+        script = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
+        for old, new in (("/etc/os-release", str(release)), ("$(dpkg --print-architecture)", "amd64")):
+            self.assertEqual(script.count(old), 1, old)
+            script = script.replace(old, new)
+        (installer / "install.sh").write_text(script)
+        (installer / "lib/runtime.py").write_text("import sys\nprint(' '.join(sys.argv[1:]))\n")
+        config = json.loads(EXAMPLE.read_text())
+        config.pop("api", None)  # Its agent listener would need agent-skills/ beside the copy.
+        (root / "fleet.json").write_text(json.dumps(config))
+        for flags, last in (([], "false"), (["--no-systemd"], "no-systemd")):
+            with self.subTest(flags):
+                result = subprocess.run(["bash", str(installer / "install.sh"), "--config", str(root / "fleet.json"),
+                                         "--dry-run", *flags], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                plan = result.stdout.splitlines()[0].split()
+                self.assertEqual((plan[0], plan[-1]), ("plan", last))
 
     def test_which_unit_each_officer_runs_in(self):
         config = fleet(2)

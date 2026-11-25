@@ -3206,6 +3206,10 @@ def compose(args):
 
 def main(args):
     verb, *tail = args
+    # install.sh --dry-run --no-systemd: the plan says what a run that leaves systemd and swap alone would do.
+    managed = not (verb == "plan" and tail[-1:] == ["no-systemd"])
+    if not managed:
+        tail = tail[:-1]
     if verb in {"prepare", "plan", "render"}:
         config, private = read_json(tail[0]), read_json(tail[1], private=True)
         cache = ETC / "extra-secrets.json"
@@ -3327,7 +3331,7 @@ def main(args):
                 print(line)
             for line in policy_lines(cfg):
                 print(line)
-            for line in memory_lines(cfg):
+            for line in memory_lines(cfg, managed=managed):
                 print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":
