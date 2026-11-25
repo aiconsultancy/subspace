@@ -92,6 +92,34 @@ def answers_for(argv):
 CREW = ["--crew-names", "Orion=Rigel,Deneb,Mira,Sirius"]
 
 
+class UsageGuardAnswersTests(unittest.TestCase):
+    def test_default_custom_and_off_options(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
+            defaults = fleet_setup.usage_guard_answers(fleet_setup.parse_args([]), {})
+            self.assertEqual(defaults, {"enabled": True, "claude": {"warning": 25, "cutoff": 20},
+                                        "codex": {"warning": 25, "cutoff": 20}})
+            args = fleet_setup.parse_args(["--usage-guard-warning", "35", "--usage-guard-cutoff", "codex=15",
+                                           "--no-usage-guard"])
+            off = fleet_setup.usage_guard_answers(args, {})
+            self.assertEqual(off, {"enabled": False, "claude": {"warning": 35, "cutoff": 20},
+                                   "codex": {"warning": 35, "cutoff": 15}})
+            (Path(root) / "fleet.json").write_text(json.dumps({"usageGuard": off}))
+            on = fleet_setup.usage_guard_answers(fleet_setup.parse_args(["--usage-guard"]), {})
+            self.assertEqual(on, {**off, "enabled": True})
+            self.assertIn("Codex 35% warning / 15% cutoff", runtime.usage_guard_line(on, {"account": "atlas"}))
+
+    def test_bad_provider_range_and_order_are_rejected(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
+            for argument, value, message in (
+                ("--usage-guard-warning", "other=30", "expects"),
+                ("--usage-guard-warning", "100", "expects"),
+                ("--usage-guard-cutoff", "claude=25", "must be lower"),
+            ):
+                args = fleet_setup.parse_args([argument, value])
+                with self.subTest(value=value), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                    fleet_setup.usage_guard_answers(args, {})
+
+
 class SetupInputsTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

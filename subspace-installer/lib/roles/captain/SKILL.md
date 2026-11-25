@@ -15,3 +15,12 @@ description: Plan a change, delegate bounded parts to your crew through Stargate
    member's final answer is its result. Answer questions that arrive through
    `stargate_dm` and read `stargate_mail` when a notice points you there.
 $completion
+
+## Provider quota
+
+When the rear admiral addresses you with a usage guard notice in your ship
+channel, act on the named provider. At a warning, stand down extra crew
+at a safe point. At cutoff, have active crew finish or checkpoint, run the
+checks they can, and push safe commits. Preserve their task, claim and
+worktree. Resume saved work when the rear admiral reports verified capacity,
+within any remaining warning limit.

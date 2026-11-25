@@ -25,6 +25,8 @@ import fixture  # noqa: E402
 import runtime  # noqa: E402
 import sessions  # noqa: E402
 
+MANAGEMENT_KEY = {"proxy-management-key": "fixture-proxy-management-key"}
+
 GOLDEN = Path(__file__).resolve().parent / "golden" / "default-render.json"
 
 # Tests never reach the network (policy_test.py checks the anonymous repository check itself).
@@ -418,7 +420,7 @@ class InstalledFleet(unittest.TestCase):
 
     def render(self, config, secrets):
         self.events.clear()
-        runtime.render(runtime.validate(config, secrets), {"tokens": {}, "cloud": {}})
+        runtime.render(runtime.validate(config, secrets), {"tokens": MANAGEMENT_KEY, "cloud": {}})
 
     def pin(self, captain="orion"):
         server = FakeOpenCode()
@@ -578,13 +580,13 @@ class InstalledFleet(unittest.TestCase):
             with self.subTest(change=change):
                 self.events.clear()
                 with self.assertRaisesRegex(runtime.Invalid, "Captain orion: .*crew are fixed .*configured: none"):
-                    runtime.render(runtime.validate({**config, **change}, secrets), {"tokens": {}, "cloud": {}})
+                    runtime.render(runtime.validate({**config, **change}, secrets), {"tokens": MANAGEMENT_KEY, "cloud": {}})
                 self.assertEqual(self.events, [])
         self.assertTrue((self.etc / "sessions/orion.ready").exists())
 
     def installed(self, config, secrets):
         """The installed inputs commission reads, and a fake engine per officer on its allocated port."""
-        extra = {"tokens": {}, "cloud": {}}
+        extra = {"tokens": MANAGEMENT_KEY, "cloud": {}}
         for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
             (self.etc / name).write_text(json.dumps(value))
             (self.etc / name).chmod(0o600)
@@ -756,7 +758,7 @@ class InstalledFleet(unittest.TestCase):
         config["api"] = {"url": "https://subspace.example.com"}
         config["agentDispatch"] = {"enabled": True, "pollIntervalSeconds": 60}
         secrets.update(apiToken="aaa.bbb.admin", rearAdmiralApiToken="aaa.bbb.rear")
-        extra = {"tokens": {}, "cloud": {}}
+        extra = {"tokens": MANAGEMENT_KEY, "cloud": {}}
         for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
             (self.etc / name).write_text(json.dumps(value))
             (self.etc / name).chmod(0o600)
@@ -808,7 +810,7 @@ class InstalledFleet(unittest.TestCase):
         config, secrets = crew_fleet("orion")
         for person, app in ((config["rearAdmiral"], "AFIXTURE1"), (config["captains"][0], "AFIXTURE2")):
             person["slack"] = {"appId": app, "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
-        extra = {"tokens": {}, "cloud": {}, "slack": {
+        extra = {"tokens": MANAGEMENT_KEY, "cloud": {}, "slack": {
             agent: {"slack-app-token": f"xapp-1-fixture-{agent}", "slack-bot-token": f"xoxb-1-fixture-{agent}"}
             for agent in ("atlas", "orion")}}
         for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
@@ -873,7 +875,7 @@ class InstalledFleet(unittest.TestCase):
         config, secrets = crew_fleet("orion")
         config["repositories"] = []
         config["rearAdmiral"]["slack"] = {"appId": "AFIXTURE1", "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
-        extra = {"tokens": {}, "cloud": {}, "slack": {"atlas": {
+        extra = {"tokens": MANAGEMENT_KEY, "cloud": {}, "slack": {"atlas": {
             "slack-app-token": "xapp-1-fixture-atlas", "slack-bot-token": "xoxb-1-fixture-atlas"}}}
         for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
             (self.etc / name).write_text(json.dumps(value))
@@ -947,10 +949,10 @@ class InstalledFleet(unittest.TestCase):
                           side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]), \
                 patch.object(runtime.sessions, "new_session_id", side_effect=(f"ses_fixture{n}" for n in range(9))):
             for name, value in (("fleet.json", config), ("secrets.json", secrets),
-                                ("extra-secrets.json", {"tokens": {}, "cloud": {}})):
+                                ("extra-secrets.json", {"tokens": MANAGEMENT_KEY, "cloud": {}})):
                 (self.etc / name).write_text(json.dumps(value))
                 (self.etc / name).chmod(0o600)
-            runtime.render(runtime.validate(config, secrets), {"tokens": {}, "cloud": {}})
+            runtime.render(runtime.validate(config, secrets), {"tokens": MANAGEMENT_KEY, "cloud": {}})
             runtime.commission(False)
         calls = [[call.args[0], call.kwargs.get("input")] for call in runtime.subprocess.run.call_args_list]
         return {**self.snapshot(), "subprocess calls": json.dumps(calls, indent=1).replace(self.root.name, "<root>")}
@@ -964,7 +966,7 @@ class InstalledFleet(unittest.TestCase):
         config["api"] = {"url": "https://subspace.example.com", "enrolment": True}
         config["stargate"] = {"ref": runtime.SUBSPACE_AGENTS_COMMIT}
         token = "senr1." + "A" * 64
-        extra = {"tokens": {runtime.ENROLMENT_TOKEN: token}, "cloud": {}}
+        extra = {"tokens": {**MANAGEMENT_KEY, runtime.ENROLMENT_TOKEN: token}, "cloud": {}}
         for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
             (self.etc / name).write_text(json.dumps(value))
             (self.etc / name).chmod(0o600)
@@ -1063,7 +1065,7 @@ class InstalledFleet(unittest.TestCase):
             fleetctl.register(cfg)
         api.assert_not_called()
         # Back to an API on this VM, the tmpfiles entry and the REST command go.
-        runtime.render(runtime.validate(*self.fleets()["local-api"]), {"tokens": {}, "cloud": {}})
+        runtime.render(runtime.validate(*self.fleets()["local-api"]), {"tokens": MANAGEMENT_KEY, "cloud": {}})
         self.assertFalse(tmpfiles.exists())
         self.assertFalse(self.request.exists())
 
@@ -1087,6 +1089,37 @@ class InstalledFleet(unittest.TestCase):
                 self.assertRaisesRegex(runtime.Invalid, "has not got it"):
             runtime.render(cfg, extra)
         self.assertFalse((self.etc / "stargate.json").exists())
+
+    def test_usage_guard_defaults_route_all_captains_and_all_crew_engines_read_one_file(self):
+        config, private = crew_fleet("orion", "vega")
+        self.render(config, private)
+        settings = json.loads((self.etc / "stargate.json").read_text())
+        guard = settings["usageGuard"]
+        self.assertEqual(guard["sender"], "atlas")
+        self.assertEqual({target["account"] for target in guard["captains"]}, {"example-orion", "example-vega"})
+        self.assertEqual(guard["providers"]["claude"]["limits"], [
+            {"remainingPercent": 25, "action": "warn"}, {"remainingPercent": 20, "action": "pause"},
+        ])
+        cfg = runtime.validate(config, private)
+        self.assertEqual(runtime.crew_options(cfg, cfg["members"][1], self.state, 4097, "ses_fixture")["usageGuardFile"],
+                         guard["stateFile"])
+        self.assertNotIn(MANAGEMENT_KEY["proxy-management-key"], json.dumps(settings))
+
+        config["usageGuard"] = {"enabled": False}
+        self.render(config, private)
+        self.assertNotIn("usageGuard", json.loads((self.etc / "stargate.json").read_text()))
+        cfg = runtime.validate(config, private)
+        self.assertNotIn("usageGuardFile",
+                         runtime.crew_options(cfg, cfg["members"][1], self.state, 4097, "ses_fixture"))
+
+    def test_usage_guard_mints_a_management_key_once_and_keeps_it_on_upgrade(self):
+        config, private = crew_fleet("orion")
+        cfg = runtime.validate(config, private)
+        first = runtime.extra_snapshot(cfg, None, {}, False)
+        key = first["tokens"]["proxy-management-key"]
+        self.assertRegex(key, r"^[a-f0-9]{64}$")
+        self.assertNotEqual(key, private["proxyKey"])
+        self.assertEqual(runtime.extra_snapshot(cfg, None, first, False)["tokens"]["proxy-management-key"], key)
 
     def test_the_default_modes_render_byte_for_byte_as_before(self):
         """The modes that existed before the hosted API render exactly what they rendered then, and a fleet with
@@ -1131,7 +1164,7 @@ class InstalledFleet(unittest.TestCase):
         for person, app in ((config["rearAdmiral"], "AFIXTURE1"), (config["captains"][0], "AFIXTURE2")):
             person["slack"] = {"appId": app, "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
         secrets = {"proxyKey": "fixture-model-proxy-key", "apiToken": "aaa.bbb.admin"}
-        extra = {"tokens": {}, "cloud": {}, "slack": {
+        extra = {"tokens": MANAGEMENT_KEY, "cloud": {}, "slack": {
             agent: {"slack-app-token": f"xapp-1-fixture-{agent}", "slack-bot-token": f"xoxb-1-fixture-{agent}"}
             for agent in ("atlas", "orion")}}
         for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):

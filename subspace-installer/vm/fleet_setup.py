@@ -279,6 +279,12 @@ def parse_args(argv):
                         "PostgreSQL server, when the system trust store lacks it; '' removes it")
     parser.add_argument("--migrate", action="store_true", help="apply the API's database migrations to that existing "
                         "PostgreSQL on this run (never by default; see the installer README)")
+    parser.add_argument("--usage-guard", action=argparse.BooleanOptionalAction, default=None,
+                        help="enable Claude and Codex quota notices and crew cutoffs (default on)")
+    parser.add_argument("--usage-guard-warning", action="append", default=[], metavar="[PROVIDER=]PERCENT",
+                        help="quota warning for Claude and Codex, or one provider (default 25)")
+    parser.add_argument("--usage-guard-cutoff", action="append", default=[], metavar="[PROVIDER=]PERCENT",
+                        help="block crew starts and resumptions at this quota (default 20)")
     parser.add_argument("--stargate-api", choices=["auto", "on", "off"],
                         help="enable Stargate's Fleet API (default auto: when the pinned Stargate has it)")
     parser.add_argument("--fleet-api-url", help="the HTTPS address at which a desktop reaches Stargate's Fleet API, "
@@ -549,6 +555,7 @@ def gather(args, saved):
         # Off unless asked: an unattended run never switches it on.
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
+    answers["usageGuard"] = usage_guard_answers(args, answers)
     answers["stargateApi"] = args.stargate_api or answers.get("stargateApi", "auto")
     if args.fleet_api_url == "tunnel":
         answers.pop("fleetApiUrl", None)
@@ -1043,6 +1050,26 @@ def latest_stargate():
     return tag, releases[tag][1]
 
 
+def usage_guard_answers(args, answers):
+    try:
+        installed = read_json(INPUTS / "fleet.json", {}) or {}
+        guard = runtime.usage_guard_config(installed.get("usageGuard", answers.get("usageGuard", {})))
+        if args.usage_guard is not None:
+            guard["enabled"] = args.usage_guard
+        for key in ("warning", "cutoff"):
+            for value in getattr(args, f"usage_guard_{key}"):
+                provider, separator, number = value.partition("=")
+                if not separator:
+                    provider, number = "", provider
+                require((not provider or provider in runtime.PROVIDERS) and re.fullmatch(r"[0-9]{1,2}", number),
+                        f"--usage-guard-{key} expects [claude=|codex=]PERCENT from 0 to 99.")
+                for name in (provider,) if provider else runtime.PROVIDERS:
+                    guard[name][key] = int(number)
+        return runtime.usage_guard_config(guard)
+    except runtime.Invalid as error:
+        raise SetupError(str(error)) from None
+
+
 def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, stargate_ref=None, history=None):
     # The fleet installer names Starbase, the command channel and the ship channels itself (standard_channels).
     slug = answers["slug"]
@@ -1145,6 +1172,7 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
             person.setdefault(key, value)
     operators = previous.get("operatorUsers", [])
     config["operatorUsers"] = list(dict.fromkeys([answers["operator"], *operators]))
+    config["usageGuard"] = runtime.usage_guard_config(answers.get("usageGuard", {}))
     stargate = {}
     ref = stargate_ref or answers.get("stargateRef")
     if ref:
@@ -3201,6 +3229,8 @@ def configure(args):
     elif answers["api"] and (INPUTS / "api.env").is_file() and dev_auth_enabled() and api_healthy():
         problems += local_name_problems(answers, members, api_reader(answers))
     require_names(problems)
+    if answers["usageGuard"]["enabled"] and saved and "usageGuard" not in saved:
+        say("This upgrade enables the usage guard. Pass --no-usage-guard to keep it off.")
     if args.dry_run:
         if external_database(answers):
             database_checks(answers, args.migrate)
@@ -3331,6 +3361,7 @@ def configure(args):
     channels = values["SUBSPACE_CHANNELS"].split()
     print()
     say(f"fleet {values['SUBSPACE_FLEET_NAME']} ({values['SUBSPACE_FLEET_SLUG']}) is set up.")
+    say(runtime.usage_guard_line(answers["usageGuard"], members[0]))
     say(f"Starbase is {channels[0]}; fleet command is {channels[1]}; ship channels: {' '.join(channels[2:])}.")
     if api_block and stargate_api:
         address = answers.get("fleetApiUrl") or f"http://{LOOPBACK}:{STARGATE_API_PORT}"

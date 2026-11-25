@@ -1783,6 +1783,41 @@ and the token check against the merged API in a throwaway PostgreSQL. No
 hosted API was available, so enrolment, the signing proxy and a harness
 calling the tools through the bridge have not run against one.
 
+## Usage guard
+
+The installer enables the guard for Claude and Codex. It asks each captain
+in its own ship channel to stand down extra crew of the affected provider
+at **25% remaining**. At **20% remaining**, Stargate refuses new starts and
+resumptions of that kind. Active crew can finish or checkpoint and push.
+The rear admiral posts the notices and reports verified recovery.
+
+An existing fleet picks this up on upgrade. The dry run and final summary
+name the sender and both providers' limits. To change them, pass
+`--usage-guard-warning 30 --usage-guard-cutoff codex=18` when re-running
+setup. Use `--no-usage-guard` to turn it off and `--usage-guard` to turn it
+back on. Each limit is an integer from 0 to 99 and each cutoff must be
+below its warning.
+
+In a hand-written `fleet.json`, omit `usageGuard` for the defaults or set
+individual values:
+
+```json
+{
+  "usageGuard": {
+    "enabled": true,
+    "claude": { "warning": 25, "cutoff": 20 },
+    "codex": { "warning": 30, "cutoff": 20 }
+  }
+}
+```
+
+The guard uses the fleet's loopback CLIProxyAPI management route. The
+installer generates a separate private management key if it has none.
+The crew plugin reads the verified policy without access to that key.
+A provider with no valid reading is reported in the gateway journal.
+See [Stargate's usage guide](https://github.com/aiconsultancy/stargate/blob/main/docs/usage.md#fleet-usage-guard).
+
+
 ## Agent dispatch
 
 Stargate's dispatcher runs in the rear admiral's gateway and hands out
@@ -2228,6 +2263,7 @@ their crew's assignments through `stargate_crew`.
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<id>` for a captain (`#<slug>-<id>` with fleet-prefixed names). Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
+| `usageGuard` | On by default. Configure `enabled` and the `claude` and `codex` warning and cutoff percentages. See [Usage guard](#usage-guard). |
 | `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released, and never older than v0.43.0, the first with [agent dispatch](#agent-dispatch). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
 | `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |

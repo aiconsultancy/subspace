@@ -446,4 +446,5 @@ if "$verify_toolchains"; then
     # Reports each repository's result; a failed check never fails the install.
     python3 "$app/lib/runtime.py" verify-toolchains || printf 'subspace-fleet: the toolchain check could not run.\n' >&2
 fi
+python3 "$app/lib/runtime.py" usage-guard-summary
 printf 'Fleet installation complete.\n'

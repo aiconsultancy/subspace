@@ -122,6 +122,13 @@ EFFORTS = {
 }
 # OpenCode provider IDs per model family, as in Stargate's OpenCode template.
 PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
+USAGE_GUARD_DEFAULTS = {"warning": 25, "cutoff": 20}
+USAGE_GUARD_MODELS = {
+    "claude": ["claude/", "claude-proxy/", "anthropic/"],
+    "codex": ["codex/", "codex-proxy/", "openai-proxy/", "openai/gpt-", "openai/codex"],
+}
+USAGE_GUARD_SOURCE = "src/backends/quota/usage-guard.ts"
+
 MODEL = r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}"
 SESSIONS = ETC / "sessions"
 # Where each captain's sessions start: "workspace", the directory above its repositories (the default), or
@@ -1036,8 +1043,60 @@ def officer_names(officers, naming):
                     "officerNames to plain so that its account is its ID.")
 
 
+def usage_guard_config(value):
+    config = fields(value, "usageGuard", "enabled claude codex")
+    result = {"enabled": boolean(config.get("enabled", True))}
+    for provider in PROVIDERS:
+        limits = {**USAGE_GUARD_DEFAULTS, **fields(config.get(provider, {}), f"usageGuard.{provider}", "warning cutoff")}
+        for name, limit in limits.items():
+            require(type(limit) is int and 0 <= limit < 100,
+                    f"usageGuard.{provider}.{name} must be an integer from 0 to 99.")
+        require(limits["cutoff"] < limits["warning"],
+                f"usageGuard.{provider}.cutoff must be lower than its warning.")
+        result[provider] = limits
+    return result
+
+
+def usage_guard_line(guard, rear):
+    if not guard["enabled"]:
+        return "Usage guard is off."
+    limits = ", ".join(f"{provider.title()} {guard[provider]['warning']}% warning / {guard[provider]['cutoff']}% cutoff"
+                       for provider in PROVIDERS)
+    return f"Usage guard is on. {rear['account']} sends ship notices. {limits}."
+
+
+def usage_guard_file():
+    return STATE / "usage-guard" / "quota.json"
+
+
+def quota_proxy(cfg, home):
+    return {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}",
+            "managementKeyFile": str(home / "quota-management-key")}
+
+
+def usage_guard_settings(cfg, home):
+    rear, *captains = cfg["members"]
+    return {
+        "enabled": True,
+        "sender": rear["id"],
+        "captains": [{"account": person["account"], "channel": person["channel"]} for person in captains],
+        "stateFile": str(usage_guard_file()),
+        "proxy": quota_proxy(cfg, home),
+        "providers": {
+            provider: {
+                "modelPrefixes": model_prefixes,
+                "limits": [
+                    {"remainingPercent": cfg["usageGuard"][provider]["warning"], "action": "warn"},
+                    {"remainingPercent": cfg["usageGuard"][provider]["cutoff"], "action": "pause"},
+                ],
+            }
+            for provider, model_prefixes in USAGE_GUARD_MODELS.items()
+        },
+    }
+
+
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains systemPackages screenshots maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains systemPackages screenshots maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
     naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
@@ -1264,6 +1323,7 @@ def validate(config, credentials, check_files=True):
                               "Stargate source", STARGATE_REPO, STARGATE_REF), "api": stargate_api},
         "dashboard": dashboard, "agentsview": view, "api": api,
         "agentDispatch": dispatch and {**dispatch, "token": dispatch_token},
+        "usageGuard": usage_guard_config(cfg.get("usageGuard", {})),
         "proxy": {"port": proxy_port, "requestRetries": retries, "key": proxy_key},
         "passwords": passwords, "operatorPassword": operator_password, "token": token, "listeners": listeners,
         "historyPassword": history_password(irc, private),
@@ -1356,8 +1416,8 @@ def extra_sources(cfg, directory, partial=False):
                         contents = private_file(name, optional=partial, dir_fd=agent_dir)
                         if contents is not None:
                             files[agent, name] = contents
-        if quota:
-            contents = private_file("proxy-management-key", optional=partial, dir_fd=root)
+        if quota or cfg["usageGuard"]["enabled"]:
+            contents = private_file("proxy-management-key", optional=partial or not quota, dir_fd=root)
             if contents is not None:
                 files["proxy-management-key",] = contents
         if enrolled(cfg):
@@ -1416,6 +1476,9 @@ def extra_snapshot(cfg, directory, previous, prune):
         tokens.pop(ENROLMENT_TOKEN, None)
     if "reportChannel" in cfg["integrations"]["usage"]:
         require("proxy-management-key" in tokens, "Supply a proxy management key in the secrets directory.")
+    if cfg["usageGuard"]["enabled"] and "proxy-management-key" not in tokens:
+        tokens["proxy-management-key"] = secrets.token_hex(32)
+    if "proxy-management-key" in tokens:
         require(tokens["proxy-management-key"] != cfg["proxy"]["key"], "Use distinct proxy management and model client keys.")
     medical = {} if prune else previous.get("medical", {}).copy()
     if cfg["medical"]:
@@ -1769,6 +1832,8 @@ def crew_options(cfg, person, home, engine_port, session_id, captain_directory=N
         },
         "captainSessionID": session_id,
     }
+    if cfg["usageGuard"]["enabled"]:
+        options["usageGuardFile"] = str(usage_guard_file())
     if len(repos) > 1:
         options["projects"] = {repo: project(repo) for repo in repos[1:]}
     return options
@@ -2859,7 +2924,7 @@ def allocate_ports(cfg):
     return ports
 
 
-def stakeholder_settings(cfg, tokens, backend, user, data, environment):
+def stakeholder_settings(cfg, tokens, backend, _user, data, environment):
     integrations = cfg["integrations"]
     settings, writable = {}, []
     if slack := integrations["slack"]:
@@ -2880,12 +2945,8 @@ def stakeholder_settings(cfg, tokens, backend, user, data, environment):
         }]
     usage = integrations["usage"]
     if "reportChannel" in usage:
-        subprocess.run(
-            ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "gateway-key"],
-            input=tokens["proxy-management-key"], text=True, check=True,
-        )
         settings["quotaWatch"] = {
-            "proxy": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}", "managementKeyFile": str(data.parent / "quota-management-key")},
+            "proxy": quota_proxy(cfg, data.parent),
             "stateFile": str(data / "quota.json"), "providers": usage["providers"],
             # The rear admiral posts as its stakeholder bot, or as its own Slack bot when it has that instead.
             "report": {"bot": "fleet-stakeholder-slack" if slack else slack_bot_id(cfg["members"][0]["id"]),
@@ -2934,7 +2995,8 @@ def render(cfg, extra, prune=False):
     write(ETC / "session-roots.json",
           json_text({**recorded_roots(), **{agent_id: root["mode"] for agent_id, root in roots.items()}}))
     tokens = {**extra["tokens"], **extra.get("slack", {}).get(cfg["members"][0]["id"], {})}
-    if "reportChannel" not in cfg["integrations"]["usage"]:
+    guard_enabled = cfg["usageGuard"]["enabled"]
+    if not guard_enabled and "reportChannel" not in cfg["integrations"]["usage"]:
         tokens.pop("proxy-management-key", None)
     units = [render_proxy(cfg, tokens)]
     view_home = account(VIEW, STATE / "view")
@@ -3083,6 +3145,15 @@ def render(cfg, extra, prune=False):
             integrations, paths = stakeholder_settings(cfg, tokens, stakeholder_backend, user, data, environment)
             settings.update(integrations)
             writable.extend(paths)
+            if guard_enabled or "quotaWatch" in settings:
+                subprocess.run(
+                    ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "gateway-key"],
+                    input=tokens["proxy-management-key"], text=True, check=True,
+                )
+            if guard_enabled:
+                directory(usage_guard_file().parent, 0o755, user)
+                writable.append(usage_guard_file().parent)
+                settings["usageGuard"] = usage_guard_settings(cfg, home)
             dispatch, dispatch_env = agent_dispatch_settings(cfg)
             if dispatch:
                 settings["agentDispatch"] = dispatch
@@ -3296,6 +3367,12 @@ def compose(args):
 
 def main(args):
     verb, *tail = args
+    if verb == "usage-guard-summary":
+        config = read_json(ETC / "fleet.json", private=True)
+        rear = config["rearAdmiral"]
+        print(usage_guard_line(usage_guard_config(config.get("usageGuard", {})),
+                               {"account": rear.get("account", rear["id"])}))
+        return
     if verb in {"prepare", "plan", "render"}:
         config, private = read_json(tail[0]), read_json(tail[1], private=True)
         cache = ETC / "extra-secrets.json"
@@ -3313,6 +3390,10 @@ def main(args):
         if not installed.exists() or os.access(installed, os.R_OK):
             check_new_crew_named(cfg, read_json(installed, private=True) if installed.exists() else {})
         prune = tail[-1] == "true"
+        source = APP / "src" / f"stargate-{cfg['stargate']['ref']}"
+        if cfg["usageGuard"]["enabled"] and (verb == "render" or source.is_dir()):
+            require((source / USAGE_GUARD_SOURCE).is_file(),
+                    "Usage guard requires a newer Stargate. Update stargate.ref or turn off usageGuard.")
         if verb == "render":
             # Say once per install which captains keep a root other than the workspace, and why.
             for root in captain_roots(cfg).values():
@@ -3377,6 +3458,7 @@ def main(args):
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
             print(officer_models_line(cfg))
+            print(usage_guard_line(cfg["usageGuard"], cfg["members"][0]))
             for line in names_plan(cfg):
                 print(line)
             if (APP / "src" / f"stargate-{cfg['stargate']['ref']}").is_dir():
