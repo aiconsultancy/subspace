@@ -34,11 +34,12 @@ in. Nothing else changes.
 | Surface | With Copilot | Without |
 | --- | --- | --- |
 | Settings > Chat engine | Off, Copilot, Pi, ACP agent | Off, Pi, ACP agent |
-| Settings > Chat approve-all default and its warning | Shown | Hidden; `chat.approve-all-default` is kept |
+| Settings > Chat approve-all default and its warning | Shown; Save writes `chat.approve-all-default` | Hidden; Save neither creates nor changes it |
 | Settings > Notifications | **Copilot** heading and copy | **Chat** heading and copy |
 | GitHub account note | Names Copilot chat | Does not |
 | Chat pane for a saved Copilot choice | Starts Copilot | Chat off with `COPILOT_UNAVAILABLE`; no runtime, sign-in or Reconnect |
-| Copilot Agents **Open in chat** on a cloud task with Pi or ACP | Suggests choosing Copilot | Says the build does not include Copilot |
+| Copilot Agents **Open in chat** on a cloud task | With Pi or ACP, a toast suggests choosing Copilot | With Pi, ACP or Chat off, a toast says the build does not include Copilot |
+| Pi or ACP refusing interaction modes, custom agents or YOLO | Suggests choosing Copilot | Says the build does not include Copilot chat |
 | `AgentHandle::start` with Copilot selected | Starts it | Refuses with `COPILOT_UNAVAILABLE` |
 
 ### Saved settings
@@ -57,7 +58,9 @@ in. Nothing else changes.
 ### What it keeps
 
 - Pi, ACP, the chat pane, the transcript, approvals, exports and the agent
-  tools.
+  tools. A tool call's one-line summary keeps its arguments in the order the
+  agent sent them: `subspace-agent` turns on serde_json's `preserve_order`
+  itself, which the SDK used to turn on for it.
 - The Copilot Agents Space, which reads GitHub's agent task API, and its
   local session list, which the chat pane publishes for any engine.
 - The Copilot mark among the chat pane's engine marks, a small Octicons SVG.
@@ -70,6 +73,9 @@ in. Nothing else changes.
 - The Framework's `make check` runs the workspace without Copilot, then the
   agent runtime, the chat panel and the shell (and clippy on the facade) with
   it.
+- The desktop's licence check (`scripts/check-licences.sh`, in `make check`)
+  checks the default features with `terminal` and `copilot`, so the opt-in
+  build's crates stay covered.
 - `THIRD_PARTY_LICENSES` is generated from the build's own dependency tree,
   so a default build lists neither the SDK nor the crates only it links
   (`data-encoding`, `fnv`, `h2`, `sha1`, `tungstenite`,
