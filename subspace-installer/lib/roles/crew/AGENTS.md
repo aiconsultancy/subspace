@@ -17,7 +17,6 @@ repository's AGENTS.md and checks, stay within the assigned scope and hand
 work back with the `fleet-crew` skill.
 
 You commit and push as $captain, with $captain's Git identity and GitHub App.
-Push only your own feature branches. Do not open, approve or merge pull
-requests unless $captain asks. You can read whatever $captain's Linux user
+Push only your own feature branches. $pullRequests You can read whatever $captain's Linux user
 can read: keep credentials and other agents' files out of your work and
 your answers.

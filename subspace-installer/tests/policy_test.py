@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 import fleet_records  # noqa: E402
-from github_policy import PolicyError, check_push, cli_permissions
+import github_app
+from github_policy import PolicyError, check_push, cli_permissions, merge_repository
 from network import rules
 import roles
 from roles import default_permissions
@@ -96,6 +97,48 @@ class FleetPolicyTests(unittest.TestCase):
         ):
             with self.subTest(args=args), self.assertRaises(PolicyError):
                 cli_permissions(args)
+
+    def test_captain_merge_is_bound_to_the_checkout_and_full_reviewed_head(self):
+        checkout = Path("/fleet/agents/orion/workspace/project")
+        policy = {"enabled": True, "contents": "write", "captainMergeCheckouts": {str(checkout): "example/project"}}
+        args = ["pr", "merge", "4", "--squash", "--match-head-commit", "a" * 40]
+        self.assertEqual(merge_repository(args, policy, checkout), "example/project")
+        for directory in (checkout.parent / "other", checkout.parent.parent / "worktrees/crew/project"):
+            with self.subTest(directory=directory), self.assertRaises(PolicyError):
+                merge_repository(args, policy, directory)
+        for override in ({"contents": "read"}, {"captainMergeCheckouts": {}}):
+            with self.subTest(override=override), self.assertRaises(PolicyError):
+                merge_repository(args, {**policy, **override}, checkout)
+        for invalid in (args[:-2], args[:-1] + ["abc"], args + ["--repo", "other/project"],
+                        args + ["--admin"], args + ["--auto"], args + ["--delete-branch"]):
+            with self.subTest(args=invalid), self.assertRaises(PolicyError):
+                merge_repository(invalid, policy, checkout)
+        with patch.object(Path, "cwd", return_value=checkout), patch.object(github_app, "active_policy", return_value=policy), \
+                patch.object(github_app, "installation_token", return_value="fixture-token") as mint, \
+                patch.object(github_app.os, "execve") as gh:
+            github_app.main(["gh", *args])
+        self.assertEqual(mint.call_args.args[1:], ({"contents": "write"}, ["project"]))
+        self.assertEqual(gh.call_args.args[1], ["gh", "api", "--method", "PUT", "repos/example/project/pulls/4/merge",
+                                                "-f", "sha=" + "a" * 40, "-f", "merge_method=squash"])
+
+    def test_merge_repository_selection_only_grants_write_capable_captains(self):
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["githubPolicy"] = {"captainMergeRepositories": ["EXAMPLE/PROJECT"]}
+        app = {"appId": 1, "installationId": 2, "clientId": "fixture-client", "botLogin": "fixture[bot]", "botId": 3}
+        config["captains"][0]["githubApp"] = app
+        cfg = validate(config, officer_secrets(), check_files=False)
+        rear, captain = cfg["members"]
+        self.assertNotIn("mergeCheckouts", rear)
+        self.assertEqual(captain["mergeCheckouts"], {"project": "example/project"})
+        command = "subspace-github gh pr merge 4 --squash --match-head-commit " + "a" * 40
+        self.assertEqual(fixture.opencode_decision(runtime.harness_permissions(cfg, captain), "shell", [command]), "allow")
+        self.assertEqual(fixture.opencode_decision(runtime.harness_permissions(cfg, rear), "shell", [command]), "deny")
+        app["contents"] = "read"
+        self.assertNotIn("mergeCheckouts", validate(config, officer_secrets(), check_files=False)["members"][1])
+        config["githubPolicy"]["captainMergeRepositories"] = ["example/library"]
+        with self.assertRaisesRegex(Invalid, "must name configured GitHub repositories"):
+            validate(config, officer_secrets(), check_files=False)
 
     def test_only_fast_forward_updates_pass_for_protected_branches(self):
         url = "https://github.com/example/project.git"

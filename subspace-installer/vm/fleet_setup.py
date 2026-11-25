@@ -320,6 +320,9 @@ def parse_args(argv):
                         help="delegate (the default for a new fleet) leaves edits, commits and pushes to the crew and "
                         "gives captains an open shell without them; standard lets captains code. Kept on later runs; "
                         "a fleet set up before this option keeps standard")
+    parser.add_argument("--captain-merge-repositories",
+                        help="GitHub owner/repository names, comma-separated, where captains may squash-merge "
+                        "reviewed heads. Use 'none' to turn it off. Kept on later runs")
     parser.add_argument("--toolchains", help="the toolchains the repositories need: 'derive' (after cloning, setup "
                         "reads the repositories and proposes what they need, installing nothing until you confirm "
                         "it), 'none' (the default: Node 24 and the base tools), or tools as TOOL@VERSION, "
@@ -424,6 +427,14 @@ def gather(args, saved):
                         "requests) or standard (captains code too)", "delegate", interactive)
         require(policy in ("standard", "delegate"), "Choose standard or delegate for --captain-tools.")
         answers["captainTools"] = policy
+    merge_repos = args.captain_merge_repositories
+    if merge_repos is None and interactive and not saved and repositories and not (INPUTS / "fleet.json").exists():
+        merge_repos = prompt("May captains squash-merge pull requests? Enter the GitHub owner/repository names "
+                             "(comma-separated), or 'none'", "none")
+    if merge_repos is not None:
+        answers["captainMergeRepositories"] = (
+            [] if merge_repos.strip() in ("", "none") else [repo.strip() for repo in merge_repos.split(",")]
+        )
     if args.toolchains in ("derive", "none"):
         answers["toolchains"] = args.toolchains
     elif args.toolchains is not None:
@@ -947,8 +958,9 @@ def roster(answers, rear, captains):
 
 
 def save_answers(answers):
-    # Repositories are kept in fleet.json, where an operator may also add private ones by hand.
-    write_json(INPUTS / "answers.json", {key: value for key, value in answers.items() if key != "repositories"})
+    # The repository list and merge policy live in fleet.json, where the operator can edit them.
+    write_json(INPUTS / "answers.json", {key: value for key, value in answers.items()
+                                        if key not in {"repositories", "captainMergeRepositories"}})
 
 
 def demo_channels():
@@ -1116,6 +1128,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 "githubPolicy", "dashboard", "proxy", "agentsview", "screenshots", "memory"):
         if key in previous:
             config[key] = previous[key]
+    if "captainMergeRepositories" in answers:
+        config["githubPolicy"] = {**config.get("githubPolicy", {}),
+                                  "captainMergeRepositories": answers["captainMergeRepositories"]}
     # Each role's memory hard cap and the VM's swap: this or an earlier run's answer, over one set by hand. A role's
     # auto is written as auto, which the installer reads as its sizing over a fleet-wide memory.max (an officer's
     # own memory still wins); auto is swap's default, so it needs no entry.
