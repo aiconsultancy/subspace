@@ -420,6 +420,20 @@ class SetupInputsTests(unittest.TestCase):
         with patch.object(fleet_setup, "FLEET_ETC", etc):
             self.assertNotIn("captainTools", answers_for([*base, *repositories])[0])
 
+    def test_captain_merge_selection_survives_setup_and_can_be_cleared(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--repositories", "https://github.com/example/project.git",
+                "--captain-merge-repositories", "example/project", *CREW]
+        answers, members, config, _, _ = self.generate(argv)
+        self.assertEqual(config["githubPolicy"]["captainMergeRepositories"], ["example/project"])
+        config["githubPolicy"]["protectedBranches"] = ["main"]
+        kept = self.rerun(answers, config)
+        self.assertNotIn("captainMergeRepositories", kept)
+        self.assertEqual(fleet_setup.fleet_config(kept, members, "a" * 40)["githubPolicy"], config["githubPolicy"])
+        cleared = self.rerun(kept, config, "--captain-merge-repositories", "none")
+        self.assertEqual(fleet_setup.fleet_config(cleared, members, "a" * 40)["githubPolicy"],
+                         {"protectedBranches": ["main"], "captainMergeRepositories": []})
+
     def test_extra_permissions_written_by_hand_are_kept_on_a_rerun(self):
         args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
                 "--repositories", "https://github.com/example/project.git", *CREW]

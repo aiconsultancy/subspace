@@ -300,6 +300,15 @@ def role_documents(cfg, person, references, home):
     instructions = render(role, "AGENTS.md", values)
     if person.get("delegatesCoding"):
         instructions += DELEGATE_GUIDANCE
+    if checkouts := person.get("mergeCheckouts"):
+        repos = ", ".join(f"`{name}`" for name in checkouts)
+        instructions += (
+            f"\n## Merging pull requests\n\n"
+            f"You may squash-merge pull requests from the root of your own checkout of {repos}. "
+            "Check the repository's approval and CI requirements first. Run "
+            "`subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA` "
+            "with the head SHA you reviewed. Handle the merge yourself.\n"
+        )
     if person.get("slack"):
         # Stargate's pinned Slack turns carry a source line that the officer's definition explains once.
         instructions += SLACK_GUIDANCE
@@ -307,11 +316,18 @@ def role_documents(cfg, person, references, home):
     crew = {}
     if person.get("crew"):
         skills["fleet-crew"] = render("crew", "SKILL.md", values)
+        crew_prs = (
+            f"Do not open or approve pull requests unless {person['name']} asks. Always hand\n"
+            f"merges back to {person['name']} with the pull request number and reviewed head SHA."
+            if person.get("mergeCheckouts") else
+            f"Do not open, approve or merge pull\nrequests unless {person['name']} asks."
+        )
         for worker in person["crew"]:
             worktrees = "\n".join(f"- `{name}`: {home}/worktrees/{worker['id']}/{name}" for name in repositories)
             crew[worker["id"]] = render("crew", "AGENTS.md", {
                 **values, "agent": worker["name"], "id": worker["id"], "captain": person["name"],
                 "model": worker["model"], "family": worker["family"].title(), "worktrees": worktrees,
+                "pullRequests": crew_prs,
             })
     if (cfg.get("api") or {}).get("agentMcpUrl") or (cfg.get("api") or {}).get("enrolment"):
         # The officer reaches the API through its MCP server at the agent listener; its crew share the skill.

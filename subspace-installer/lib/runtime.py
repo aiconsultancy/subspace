@@ -1260,11 +1260,19 @@ def validate(config, credentials, check_files=True):
     require(isinstance(operators, list), "operatorUsers must be an array.")
     operators = [pattern(user, r"[a-z_][a-z0-9_-]{0,31}", "Linux operator username") for user in operators]
     require(all(not user.startswith("ss-") for user in operators), "Fleet service users cannot be operators.")
-    github_policy = fields(cfg.get("githubPolicy", {}), "githubPolicy", "protectedBranches")
+    github_policy = fields(cfg.get("githubPolicy", {}), "githubPolicy", "protectedBranches captainMergeRepositories")
     protected = github_policy.get("protectedBranches", ["main", "master", "release/*"])
     require(isinstance(protected, list) and all(isinstance(branch, str) for branch in protected),
             "githubPolicy.protectedBranches must be an array of branch patterns.")
     protected = [pattern(branch, r"[a-zA-Z0-9*?._/-]{1,120}", "GitHub protected branch pattern") for branch in protected]
+    merge_repos = github_policy.get("captainMergeRepositories", [])
+    require(isinstance(merge_repos, list) and all(isinstance(repo, str) for repo in merge_repos),
+            "githubPolicy.captainMergeRepositories must be an array of GitHub owner/repository names.")
+    merge_repos = {repo.lower() for repo in merge_repos}
+    merge_checkouts = {repo_id: name for repo_id, repo in repositories.items()
+                       if (name := github_repository(repo["url"])) and name.lower() in merge_repos}
+    require(merge_repos == {name.lower() for name in merge_checkouts.values()},
+            "githubPolicy.captainMergeRepositories must name configured GitHub repositories.")
 
     private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken rearAdmiralApiToken", ["proxyKey"])
     proxy_key = pattern(private["proxyKey"], r"[a-zA-Z0-9_=-]{20,256}", "proxy client key")
@@ -1331,6 +1339,9 @@ def validate(config, credentials, check_files=True):
     require(not any(repo["private"] for repo in repositories.values()) or len(applications) == len(agents),
             "Private repositories require a distinct GitHub App for the rear admiral and every captain.")
     for person in agents:
+        if (person["role"] == "captain" and merge_checkouts and (app := person.get("githubApp"))
+                and app.get("contents", "write") == "write"):
+            person["mergeCheckouts"] = merge_checkouts
         # With captainTools delegate, a captain with crew leaves coding to them, whatever its harness.permissions;
         # a captain without crew has no one to delegate to, so it keeps the standard policy.
         delegate = person["role"] == "captain" and captain_tools == "delegate" and bool(person["crew"])
@@ -1365,6 +1376,7 @@ def validate(config, credentials, check_files=True):
         "repositoryNotes": repository_notes(cfg.get("repositories", [])),
         "repositoryChecks": repository_checks(cfg.get("repositories", [])),
         "integrations": integrations, "operators": operators, "protectedBranches": protected,
+        "captainMergeRepositories": sorted(set(merge_checkouts.values())),
         "toolchains": toolchain_config(cfg.get("toolchains", {})),
         "systemPackages": toolchains.package_config(cfg.get("systemPackages", [])),
         # The base screenshot tools (lib/screenshots.py): on unless fleet.json says "screenshots": false.
@@ -1625,7 +1637,7 @@ def save_settings(name, settings, user):
     return path
 
 
-def configure_git(person, user, prune, protected):
+def configure_git(person, user, home, prune, protected):
     settings = {"user.name": person["name"]}
     git = person.get("git", {})
     if "email" in git:
@@ -1644,11 +1656,14 @@ def configure_git(person, user, prune, protected):
             "credential.https://github.com.useHttpPath": "true",
         })
     key = app_key(ETC / "github-apps" / person["id"] / "github-app.pem") if app else None
-    metadata = Path(pwd.getpwnam(user).pw_dir) / ".config/subspace/github-app.json"
+    metadata = home / ".config/subspace/github-app.json"
     if app or metadata.is_file():
+        policy = {"enabled": app is not None, "contents": contents, "protectedBranches": protected}
+        if checkouts := person.get("mergeCheckouts"):
+            policy["captainMergeCheckouts"] = {str(home / "workspace" / name): repo for name, repo in checkouts.items()}
         packet = {
             "metadata": app, "key": key, "prune": prune,
-            "policy": {"enabled": app is not None, "contents": contents, "protectedBranches": protected},
+            "policy": policy,
         }
         subprocess.run(
             ["runuser", "-u", user, "--", str(APP / "lib/github_app.py"), "provision"],
@@ -1826,10 +1841,15 @@ def harness_permissions(cfg, person):
     any operator rule that matches the command, such as a deny of `subspace-*`, decides.
     """
     permissions = person["harness"]["permissions"]
-    granted = permissions
+    commands = []
     if enrolled(cfg):
+        commands.append(SUBSPACE_REQUEST_GRANT)
+    if person.get("mergeCheckouts"):
+        commands.append({"action": "shell", "resource": "subspace-github gh pr merge *", "effect": "allow"})
+    granted = permissions
+    if commands:
         own = person["harness"].get("operatorRulesFrom", 0)
-        granted = [*permissions[:own], SUBSPACE_REQUEST_GRANT, *permissions[own:]]
+        granted = [*permissions[:own], *commands, *permissions[own:]]
     if (subspace_mcp_url(cfg) or enrolled(cfg)) and not any(
             str(rule.get("action", "")).startswith(f"{SUBSPACE_MCP}_") for rule in permissions):
         granted = [*granted, SUBSPACE_MCP_GRANT]
@@ -3125,7 +3145,7 @@ def render(cfg, extra, prune=False):
         user = f"ss-{agent_id}"
         home = homes[agent_id] = account(user, STATE / "agents" / agent_id)
         run("mkdir", "-p", "--", home / "workspace", user=user)
-        configure_git(person, user, prune, cfg["protectedBranches"])
+        configure_git(person, user, home, prune, cfg["protectedBranches"])
         references = STATE / "references" / agent_id if cfg["repositories"] else None
         documents[agent_id] = role_documents(cfg, person, references, home)
         if enrolled(cfg):
@@ -3603,6 +3623,9 @@ def main(args):
                 print(line)
             if line := captain_tools_line(cfg):
                 print(line)
+            if repos := cfg["captainMergeRepositories"]:
+                print(f"Captain squash merges enabled for {', '.join(repos)}. "
+                      "Each captain needs a GitHub App with Contents write.")
             for line in policy_lines(cfg):
                 print(line)
             for line in toolchain_plan(cfg):

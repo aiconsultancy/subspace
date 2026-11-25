@@ -405,6 +405,13 @@ answer it now.
     installed before this choice existed keeps captains that code until you
     pass `--captain-tools delegate`. See
     [Instructions, permissions and toolchains](subspace-installer/README.md#instructions-permissions-and-toolchains).
+    **Should captains be allowed to merge pull requests?** (**no**.) If yes,
+    ask which of the fleet's GitHub repositories to allow and include
+    `--captain-merge-repositories OWNER/REPO[,OWNER/REPO]` in the plan.
+    Captains with a write-capable GitHub App can squash-merge the exact
+    reviewed head from their own checkout. GitHub enforces each repository's
+    branch protections. Crew hand the merge back to their captain. See
+    [Captain pull request merges](subspace-installer/README.md#captain-pull-request-merges).
 20. **A deployment repository of their own?** When they deploy for
     themselves or their organisation, rather than trying Subspace out,
     recommend a new private repository that pins the Subspace and Stargate
