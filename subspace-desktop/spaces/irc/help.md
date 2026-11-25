@@ -516,11 +516,11 @@ messages and everyone else's. Other IRC clients show the characters as typed.
 - `Up` and `Down` move through the list, `Enter` or `Tab` inserts the
   highlighted choice, and `Esc` closes the list. You can also click a choice.
 
-While no list is open, `Up` and `Down` recall lines you sent from this input
-when the draft is empty or one line. They keep going through a recalled
-message of several lines until you edit it; in any other draft of several
-lines they move between its lines. `Tab` completes the nick before the cursor
-from the channel's members. At the start of the line it adds `: `.
+In a draft, `Up` moves the caret to the start and `Down` moves it to the
+end. Press `Up` in an empty input to recall a message you sent. The arrows
+keep moving through sent messages until you edit the recalled text or return
+to the empty draft. `Tab` completes the nick before the cursor from the
+channel's members. At the start of the line it adds `: `.
 
 ### Join channels from the list
 
@@ -951,7 +951,7 @@ the message input is ordinary text input.
 | `Enter` | Open the buffer, or fold or unfold a network |
 | `Enter` (`Return`) in the message input | Send, or insert the highlighted choice |
 | `Shift+Enter` (`Shift+Return`) or `Option+Enter` | New line in the message input |
-| `Up` / `Down` in the message input | Recall sent lines from an empty or one-line draft, move between a longer draft's lines, or move through the completion list |
+| `Up` / `Down` in the message input | Move to the start or end of a draft, recall sent messages from an empty input, or move through the completion list |
 | `Tab` in the message input | Complete a nick, or insert the highlighted choice |
 | `Esc` in the message input | Close the completion list, or leave reply mode |
 | `Esc` in **Join a channel** | Cancel |

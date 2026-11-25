@@ -11,8 +11,8 @@ mod target;
 mod text;
 pub(crate) mod view;
 
-use gpui_kit::component::input::{InputState, TextareaState};
-use gpui_kit::{App, Context, Entity, FocusHandle, Subscription, Window};
+use gpui_kit::component::input::{EditorState, InputState};
+use gpui_kit::{App, Context, Entity, FocusHandle, ScrollHandle, Subscription, Window};
 use std::collections::HashMap;
 use subspace_api_client::{
     hub::{HubSnapshot, IssueWriteScope},
@@ -25,8 +25,8 @@ use properties::Properties;
 use target::editable_detail;
 use text::{TextValues, input, input_changed};
 
-const DESCRIPTION_MIN_ROWS: usize = 4;
-const DESCRIPTION_MAX_ROWS: usize = 10;
+const DESCRIPTION_MARKDOWN: &str = "markdown";
+const DESCRIPTION_PLAIN: &str = "text";
 
 pub(crate) struct IssueEditor {
     inline: Option<EditTarget>,
@@ -38,7 +38,8 @@ pub(crate) struct IssueEditor {
     title: Entity<InputState>,
     summary: Entity<InputState>,
     summary_validation: bool,
-    description: Entity<TextareaState>,
+    description: Entity<EditorState>,
+    scroll: ScrollHandle,
     due: Entity<InputState>,
     parent: Entity<InputState>,
     phase: Phase,

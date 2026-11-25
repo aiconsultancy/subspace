@@ -10,7 +10,7 @@
 //! shared comment [`crate::composer::Composer`] is a different interface and
 //! stays unchanged.
 
-use gpui_kit::component::input::{InputEvent, TextareaState};
+use gpui_kit::component::input::{InputEvent, RopeExt as _, TextareaState};
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _,
     IntoElement, KeyBinding, KeyContext, OperatingSystem, ParentElement as _, Render, SharedString,
@@ -68,10 +68,8 @@ const CHAT_BLOCKED_SUBMIT_CONTEXT: &str = "SubspaceChatBlockedSubmit";
 /// Added to the key context of an input whose owner recalls sent lines with
 /// Up and Down and completes with Tab, such as an IRC composer.
 pub const CHAT_RECALL_CONTEXT: &str = "SubspaceChatRecall";
-/// Added beside [`CHAT_RECALL_CONTEXT`] while the draft is empty, one line
-/// or an unedited recalled line ([`ChatInput::set_recalled`]), so Up and
-/// Down recall sent lines; in a multi-line draft they move the cursor
-/// between its lines.
+/// Added beside [`CHAT_RECALL_CONTEXT`] for inputs that handle Up and Down
+/// as draft boundaries, message recall and completion navigation.
 pub const CHAT_LINE_RECALL_CONTEXT: &str = "SubspaceChatLineRecall";
 const MIN_ROWS: usize = 2;
 const MAX_ROWS: usize = 12;
@@ -333,8 +331,9 @@ impl ChatInput {
     /// Up and Down emit [`ChatInputEvent::Previous`] and
     /// [`ChatInputEvent::Next`], and Tab emits [`ChatInputEvent::Complete`],
     /// for an owner that recalls sent lines and completes names. The arrow
-    /// keys recall only while the draft is empty, one line or recalled; in
-    /// a multi-line draft they still move the cursor between lines.
+    /// keys recall while the draft is empty or recalled. In an edited draft
+    /// they jump to the start and end. When a completion list is open the
+    /// arrows continue to move through its choices.
     // qual:api
     pub fn set_recall_keys(&mut self, recall: bool, cx: &mut Context<Self>) {
         self.recall = recall;
@@ -405,9 +404,8 @@ impl ChatInput {
             .update(cx, |state, cx| state.insert("\n", window, cx));
     }
 
-    /// The completion-list keys match only while the list is open, and the
-    /// recall arrows only while the draft is `single_line` or recalled.
-    fn key_context(&self, os: OperatingSystem, single_line: bool) -> KeyContext {
+    /// Completion bindings match only while a list is open.
+    fn key_context(&self, os: OperatingSystem) -> KeyContext {
         let mut context = KeyContext::new_with_defaults(os);
         context.add(CHAT_INPUT_CONTEXT);
         if self
@@ -421,16 +419,27 @@ impl ChatInput {
         }
         if self.recall {
             context.add(CHAT_RECALL_CONTEXT);
-            if single_line || self.recalled {
-                context.add(CHAT_LINE_RECALL_CONTEXT);
-            }
+            context.add(CHAT_LINE_RECALL_CONTEXT);
         }
         context
     }
 
-    /// The draft has no line break.
-    fn single_line(&self, cx: &App) -> bool {
-        !self.state.read(cx).value().contains('\n')
+    fn vertical_arrow(&mut self, previous: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let end = self.state.read(cx).text().len();
+        if self.completing || self.recalled || end == 0 {
+            let event = if previous {
+                ChatInputEvent::Previous
+            } else {
+                ChatInputEvent::Next
+            };
+            cx.emit(event);
+        } else {
+            let offset = if previous { 0 } else { end };
+            self.state.update(cx, |state, cx| {
+                let position = state.text().offset_to_position(offset);
+                state.set_cursor_position(position, window, cx);
+            });
+        }
     }
 }
 
@@ -446,11 +455,17 @@ impl Render for ChatInput {
             .flex_shrink_0()
             .border_t_1()
             .border_color(tokens.line)
-            .key_context(self.key_context(cx.platform_info().os, self.single_line(cx)))
+            .key_context(self.key_context(cx.platform_info().os))
             .on_action(cx.listener(Self::newline))
             .on_action(|_: &ChatBlockedSubmit, _, _| {})
-            .on_action(cx.listener(|_, _: &ChatNext, _, cx| cx.emit(ChatInputEvent::Next)))
-            .on_action(cx.listener(|_, _: &ChatPrevious, _, cx| cx.emit(ChatInputEvent::Previous)))
+            .on_action(
+                cx.listener(|this, _: &ChatNext, window, cx| {
+                    this.vertical_arrow(false, window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &ChatPrevious, window, cx| {
+                this.vertical_arrow(true, window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ChatComplete, _, cx| {
                 this.complete(CompletionKey::Tab, cx);
             }))

@@ -37,7 +37,7 @@ fn the_hint_row_names_the_keys_under_the_composer(cx: &mut TestAppContext) {
         for (word, key) in [
             ("mention", "at sign"),
             ("commands", "slash"),
-            ("recall", "Up arrow"),
+            ("recall when empty", "Up arrow"),
             ("new line", "Shift+Return"),
         ] {
             let hint = row.find(format!("irc-hint:{word}"));
