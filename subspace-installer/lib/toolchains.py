@@ -430,6 +430,9 @@ VERSION_FILES = {".node-version": "node", ".nvmrc": "node", ".terraform-version"
 MISE_FILE = re.compile(r"(?:^|/)(?:\.?mise(?:\.([a-z0-9_-]+))?\.toml|\.?mise/config\.toml|\.config/mise\.toml"
                        r"|\.config/mise/config\.toml|\.?(?:config/)?mise/conf\.d/[^/]+\.toml)$")
 COMPOSE_FILES = {"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+SCANNED_FILES = {".tool-versions", "rust-toolchain", "rust-toolchain.toml", "global.json", "package.json", "go.mod",
+                 "pyproject.toml"}
+WORKFLOW_FILE = re.compile(r"(?:.*/)?\.github/(?:workflows/[^/]+|actions/.+/action)\.ya?ml")
 DOC_FILE = re.compile(r"(?:^|/)(?:README|INSTALL|INSTALLING|CONTRIBUTING|BUILDING|BUILD|DEVELOPMENT|HACKING)"
                       r"[^/]*\.md$|^docs?/.+\.md$", re.IGNORECASE)
 # GitHub set-up actions: the tool each installs and the with: keys that name its version. A version belongs to
@@ -492,10 +495,11 @@ def source_of(repository, rel, line, detail=""):
     return {"repository": repository, "file": rel, "line": line, "detail": detail[:160]}
 
 
-def read_text(path):
-    """A regular file's text, never through a symbolic link, at most MAX_FILE bytes; None otherwise."""
+def read_at(directory_fd, name):
+    """A regular file's text, opened relative to its directory's descriptor and never through a symbolic link, at
+    most MAX_FILE bytes; None otherwise."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
     except OSError:
         return None
     with os.fdopen(fd, "rb") as stream:
@@ -505,25 +509,36 @@ def read_text(path):
         return stream.read(MAX_FILE + 1)[:MAX_FILE].decode("utf-8", "replace")
 
 
-def repository_files(root):
-    """Relative paths of the files detection reads, without following symbolic links or entering dependency
-    and build directories."""
-    found = []
-    root = str(root)
+def real_directory(name, directory_fd):
+    try:
+        return stat.S_ISDIR(os.stat(name, dir_fd=directory_fd, follow_symlinks=False).st_mode)
+    except OSError:
+        return False
+
+
+def repository_files(root, wanted):
+    """(relative path, text) for each file wanted(path) selects, outside dependency and build directories; text is
+    None for one detection does not read (a symbolic link, not a regular file, or over MAX_FILE).
+
+    Nothing is opened by its path, so no symbolic link is followed at any component, even while the mirror service
+    refreshes the checkout: os.fwalk opens the checkout once and each directory relative to its parent's
+    descriptor, and skips one that is, or was swapped for, a symbolic link (it compares the directory it opened
+    with what it saw before opening it); each file is opened relative to its directory's descriptor with
+    O_NOFOLLOW."""
     count = 0
-    for directory, subdirectories, files in os.walk(root, followlinks=False):
+    for directory, subdirectories, files, directory_fd in os.fwalk(root, follow_symlinks=False):
         rel_dir = os.path.relpath(directory, root)
         depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
         subdirectories[:] = sorted(name for name in subdirectories
                                    if name not in SKIP_DIRS and depth < MAX_DEPTH
-                                   and not os.path.islink(os.path.join(directory, name)))
+                                   and real_directory(name, directory_fd))
         for name in sorted(files):
             count += 1
             if count > MAX_FILES:
-                return found
+                return
             rel = name if rel_dir == "." else f"{rel_dir}/{name}".replace(os.sep, "/")
-            found.append(rel)
-    return found
+            if wanted(rel):
+                yield rel, read_at(directory_fd, name)
 
 
 def line_of(text, pattern_text, start=0):
@@ -733,10 +748,11 @@ def carried_options(finder, source, spec, options):
     """The options detection proposes: those the installer passes on; the rest are reported."""
     kept = {}
     for key, option in options.items():
-        if key in LIST_OPTIONS and isinstance(option, (str, list)):
+        if key in LIST_OPTIONS and (isinstance(option, str) or isinstance(option, list)
+                                    and all(isinstance(part, str) for part in option)):
             # A list or a comma-separated string, in any order: one form, so equal requests are one item.
             parts = option if isinstance(option, list) else option.split(",")
-            option = ",".join(sorted({str(part).strip() for part in parts if str(part).strip()}))
+            option = ",".join(sorted({part.strip() for part in parts if part.strip()}))
         if key in OPTION_KEYS and option_valid(key, option):
             kept[key] = option
         elif key in ("postinstall", "install_env") or "env" in key or "hook" in key:
@@ -1311,46 +1327,57 @@ def scan_repository(finder, repository, root):
         finder.cannot(source_of(repository, "", 0), f"the repository is not cloned at {root} yet, or cannot be read")
         return
     docs = 0
-    for rel in repository_files(root):
+
+    def wanted(rel):
+        nonlocal docs
         name = rel.rsplit("/", 1)[-1]
-        mise = MISE_FILE.search(rel)
-        workflow = re.fullmatch(r"(?:.*/)?\.github/(?:workflows/[^/]+|actions/.+/action)\.ya?ml", rel)
-        doc = DOC_FILE.search(rel) and "/.github/" not in f"/{rel}"
-        if not (mise or workflow or doc or name in VERSION_FILES or name in COMPOSE_FILES or name in (
-                ".tool-versions", "rust-toolchain", "rust-toolchain.toml", "global.json", "package.json", "go.mod",
-                "pyproject.toml")):
-            continue
-        if doc:
+        if DOC_FILE.search(rel) and "/.github/" not in f"/{rel}":
             docs += 1
-            if docs > MAX_DOCS:
+            return docs <= MAX_DOCS
+        return bool(MISE_FILE.search(rel) or WORKFLOW_FILE.fullmatch(rel) or name in VERSION_FILES
+                    or name in COMPOSE_FILES or name in SCANNED_FILES)
+
+    try:
+        for rel, text in repository_files(root, wanted):
+            if text is None:
+                finder.cannot(source_of(repository, rel, 0), "not a regular file detection can read (a symbolic "
+                              "link, or larger than 1 MiB)")
                 continue
-        text = read_text(os.path.join(root, rel))
-        if text is None:
-            finder.cannot(source_of(repository, rel, 0), "not a regular file detection can read (a symbolic link, "
-                          "or larger than 1 MiB)")
-            continue
-        if mise:
-            scan_mise(finder, repository, rel, text, mise.group(1))
-        elif workflow:
-            scan_workflow(finder, repository, rel, text)
-        elif doc:
-            scan_docs(finder, repository, rel, text)
-        elif name == ".tool-versions":
-            scan_tool_versions(finder, repository, rel, text)
-        elif name in ("rust-toolchain", "rust-toolchain.toml"):
-            scan_rust_toolchain(finder, repository, rel, text)
-        elif name == "global.json":
-            scan_global_json(finder, repository, rel, text)
-        elif name == "package.json":
-            scan_package_json(finder, repository, rel, text)
-        elif name in VERSION_FILES:
-            scan_version_file(finder, repository, rel, text, VERSION_FILES[name])
-        elif name == "go.mod":
-            scan_go_mod(finder, repository, rel, text)
-        elif name == "pyproject.toml":
-            scan_pyproject(finder, repository, rel, text)
-        elif name in COMPOSE_FILES:
-            scan_compose(finder, repository, rel, text)
+            try:
+                scan_file(finder, repository, rel, text)
+            except Exception as error:  # A repository's file never stops detection, or setup.
+                finder.cannot(source_of(repository, rel, 0), f"detection could not read this file ({type(error).__name__}"
+                              "); check what it asks for yourself")
+    except OSError as error:
+        finder.cannot(source_of(repository, "", 0), f"detection could not read the repository at {root}: "
+                      f"{error.strerror or error}")
+
+
+def scan_file(finder, repository, rel, text):
+    """Read one file detection selected (scan_repository's wanted) with the scanner for its kind."""
+    name = rel.rsplit("/", 1)[-1]
+    if mise := MISE_FILE.search(rel):
+        scan_mise(finder, repository, rel, text, mise.group(1))
+    elif WORKFLOW_FILE.fullmatch(rel):
+        scan_workflow(finder, repository, rel, text)
+    elif DOC_FILE.search(rel) and "/.github/" not in f"/{rel}":
+        scan_docs(finder, repository, rel, text)
+    elif name == ".tool-versions":
+        scan_tool_versions(finder, repository, rel, text)
+    elif name in ("rust-toolchain", "rust-toolchain.toml"):
+        scan_rust_toolchain(finder, repository, rel, text)
+    elif name == "global.json":
+        scan_global_json(finder, repository, rel, text)
+    elif name == "package.json":
+        scan_package_json(finder, repository, rel, text)
+    elif name in VERSION_FILES:
+        scan_version_file(finder, repository, rel, text, VERSION_FILES[name])
+    elif name == "go.mod":
+        scan_go_mod(finder, repository, rel, text)
+    elif name == "pyproject.toml":
+        scan_pyproject(finder, repository, rel, text)
+    elif name in COMPOSE_FILES:
+        scan_compose(finder, repository, rel, text)
 
 
 def fold(items):
@@ -1383,7 +1410,11 @@ def detect(repositories):
     system packages (version None), each with a confidence, its sources (repository, file, line) and notes."""
     finder = Finder()
     for repository, root in repositories.items():
-        scan_repository(finder, repository, root)
+        try:
+            scan_repository(finder, repository, root)
+        except Exception as error:  # Nothing in a repository stops detection; the repository is reported.
+            finder.cannot(source_of(repository, "", 0), f"detection stopped reading the repository "
+                          f"({type(error).__name__}); it is proposed from again on the next run")
     items = fold(finder.items.values())
     for item in items:
         if item["confidence"] == "low":

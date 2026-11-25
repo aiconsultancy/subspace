@@ -789,9 +789,14 @@ question 20).
   detect` prints the same proposal.
 
 Detection reads files as data. It never runs mise, a package manager, Git or
-anything else from a repository, never follows a symbolic link, and skips
-dependency and build directories and files over 1 MiB. Its sources, most
-confident first:
+anything else from a repository, and skips dependency and build directories
+and files over 1 MiB. It never follows a symbolic link, at any component of a
+path, even while the mirror service refreshes the checkout: it opens each
+directory relative to the one it already holds open and each file relative to
+its directory. A repository's files are less trusted than the operator, so
+nothing in them can stop setup: a file detection cannot read is listed under
+"could not determine", and if detection fails altogether, setup says so and
+carries on to the lockdown. Its sources, most confident first:
 
 | Confidence | Source | Proposes |
 | --- | --- | --- |

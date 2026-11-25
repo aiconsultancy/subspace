@@ -1422,6 +1422,18 @@ def show_proposal(proposal, save, record=None):
         record_proposal(record, proposal)
 
 
+def propose_safely(config, record, save):
+    """Detect and show (with save, record) a proposal from the repositories not examined yet. Repositories are less
+    trusted than the operator, and detection reads them: whatever goes wrong here is reported, and setup carries on
+    to the lockdown."""
+    try:
+        if proposal := propose_toolchains(config, record):
+            show_proposal(proposal, save, record)
+    except Exception as error:  # Detection never stops setup, so it never leaves a fleet without its lockdown.
+        say(f"WARNING: the toolchain proposal failed ({type(error).__name__}: {error}); setup carries on without it. "
+            "Run 'sudo subspace-setup toolchains detect' to try again.")
+
+
 def record_lines(record):
     """'subspace-setup toolchains': the recorded toolchains, with their sources, and what waits for an answer."""
     lines = ["Toolchains, as confirmed:"]
@@ -3097,8 +3109,8 @@ def configure(args):
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
         ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
-        if answers["toolchains"] == "derive" and (proposal := propose_toolchains(read_json(config_path, {}), record)):
-            show_proposal(proposal, False)
+        if answers["toolchains"] == "derive":
+            propose_safely(read_json(config_path, {}), record, save=False)
         say("dry run complete; nothing on this VM changed")
         return
 
@@ -3188,9 +3200,10 @@ def configure(args):
     elif stargate_api:
         confirm_fleet_api(True, installed_stargate_source())
     ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
-    if answers["toolchains"] == "derive" and (proposal := propose_toolchains(read_json(config_path, {}), record)):
-        # The repositories are cloned now. Nothing proposed is installed until the person confirms it.
-        show_proposal(proposal, True, record)
+    if answers["toolchains"] == "derive":
+        # The repositories are cloned now. Nothing proposed is installed until the person confirms it, and nothing
+        # in a repository stops setup before the lockdown below.
+        propose_safely(read_json(config_path, {}), record, save=True)
     if args.verify_toolchains:
         # Each repository's basic check as a crew member; a failure is reported, never fatal.
         run(FLEET_APP / "lib/runtime.py", "verify-toolchains", check=False)

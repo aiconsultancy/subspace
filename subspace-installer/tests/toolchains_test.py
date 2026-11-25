@@ -304,6 +304,63 @@ class DetectionTests(unittest.TestCase):
         self.assertTrue(any(entry["file"] == "pyproject.toml" for entry in proposal["unknown"]))
         self.assertEqual(reasons(proposal, "missing")[0].split(" at ")[0], "the repository is not cloned")
 
+    def test_unusual_but_parseable_files_never_stop_detection(self):
+        repo = write_repositories(self.directory.name, {"odd": {
+            "pyproject.toml": 'tool = "a string"\n[project]\nrequires-python = ">=3.11"\n',
+            "global.json": '{"sdk": {"version": "8.0.404", "rollForward": ["latestPatch"]}}\n',
+            "rust-toolchain.toml": '[toolchain]\nchannel = "1.99.0"\ncomponents = ["rustfmt", 1]\n',
+            ".nvmrc": "22.11.0\n"}})["odd"]
+        proposal = toolchains.detect({"odd": repo})
+        unreadable = {entry["file"] for entry in proposal["unknown"] if "could not read this file" in entry["reason"]}
+        self.assertEqual(unreadable, {"pyproject.toml", "global.json"})
+        # The rest is read: Rust without the component it cannot carry over, and Node.
+        self.assertEqual(items_of(proposal, "rust")["1.99.0"]["options"], {})
+        self.assertTrue(any("components is not carried over" in reason for reason in reasons(proposal, "odd")))
+        self.assertEqual(list(items_of(proposal, "node")), ["22.11.0"])
+        # Any scanner that fails is contained the same way, and the next file is still read.
+        with patch.object(toolchains, "scan_version_file", side_effect=RecursionError):
+            proposal = toolchains.detect({"odd": repo})
+        self.assertIn((".nvmrc", "detection could not read this file (RecursionError); check what it asks for yourself"),
+                      [(entry["file"], entry["reason"]) for entry in proposal["unknown"]])
+        self.assertIn("rust", {item["name"] for item in proposal["items"]})
+        # Even a failure outside one file's scanner only reports the repository.
+        with patch.object(toolchains, "repository_files", side_effect=ValueError("odd")):
+            proposal = toolchains.detect({"odd": repo})
+        self.assertEqual(proposal["items"], [])
+        self.assertIn("detection stopped reading the repository (ValueError)", reasons(proposal, "odd")[0])
+
+    def test_no_symbolic_link_is_followed_even_when_a_directory_is_swapped_for_one(self):
+        # The mirror service refreshes checkouts while detection reads them: a directory may become a symbolic link
+        # between listing and reading. Detection opens everything relative to directories it already holds open.
+        root = Path(self.directory.name)
+        outside = root / "outside"
+        (outside / "b").mkdir(parents=True)
+        (outside / ".nvmrc").write_text("99.0.0\n")
+        (outside / "b" / ".nvmrc").write_text("99.0.0\n")
+        repo = root / "swapped"
+        for path in ("a/b", "c", "d/e"):
+            (repo / path).mkdir(parents=True)
+        (repo / "a" / "b" / ".nvmrc").write_text("22.11.0\n")
+        (repo / "c" / ".nvmrc").write_text("20.18.1\n")
+        (repo / "d" / "e" / ".nvmrc").write_text("24.11.0\n")
+        swapped = []
+
+        def wanted(rel):
+            if rel == "a/b/.nvmrc":
+                # A parent of the file being read, and a directory not entered yet, become links outside.
+                for name in ("a", "c"):
+                    (repo / name).rename(root / f"old-{name}")
+                    (repo / name).symlink_to(outside, target_is_directory=True)
+                    swapped.append(name)
+            return rel.endswith(".nvmrc")
+        read = dict(toolchains.repository_files(repo, wanted))
+        self.assertEqual(swapped, ["a", "c"])
+        # The file in the swapped parent is the original one; the swapped directory not yet entered is skipped.
+        self.assertEqual(read, {"a/b/.nvmrc": "22.11.0\n", "d/e/.nvmrc": "24.11.0\n"})
+        # A directory or file that is a symbolic link to begin with is never followed either.
+        proposal = toolchains.detect({"swapped": repo})
+        self.assertNotIn("99.0.0", {item["version"] for item in proposal["items"]})
+
     def test_version_files_go_mod_and_pyproject(self):
         repo = write_repositories(self.directory.name, {"misc": {
             ".nvmrc": "v20.18.1\n", ".python-version": "3.12.7\n", ".ruby-version": "ruby-3.3.6\n",
@@ -951,6 +1008,36 @@ class SetupRecordTests(unittest.TestCase):
         self.assertIn("Already configured: zsh.", output.getvalue())
         # Nothing the dry run did is kept.
         self.assertEqual(sorted(path.name for path in self.inputs.iterdir()), [])
+
+    def test_a_detection_failure_never_stops_setup_before_its_lockdown(self):
+        self.clone("harbour-api")
+        (self.inputs / "fleet.json").unlink()
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--crew-claude", "0", "--crew-codex", "0", "--inputs", str(self.inputs),
+                "--stargate-ref", "c" * 40, "--no-demo", "--no-api", "--repositories",
+                "harbour-api=https://github.com/example/harbour-api.git", "--toolchains", "derive"]
+        order, said = [], []
+
+        def run(*command, **_options):
+            order.append(" ".join(str(part).rsplit("/", 1)[-1] for part in command[:2]))
+            return ""
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                patch.object(fleet_setup, "say", side_effect=said.append), \
+                patch.object(fleet_setup, "installer", side_effect=lambda *a, dry_run=False, **k: order.append(
+                    "check" if dry_run else "install")), \
+                patch.object(fleet_setup, "run", side_effect=run), patch.object(fleet_setup, "api_down"), \
+                patch.object(fleet_setup, "check_outbound"), patch.object(fleet_setup, "ownership_check"), \
+                patch.object(fleet_setup, "irc_source", return_value="a" * 40), \
+                patch.object(fleet_setup, "confirm_fleet_api", return_value=False), \
+                patch.object(fleet_setup, "installed_stargate_source"), \
+                patch.object(fleet_setup, "summary", side_effect=fleet_setup.SetupError("stop here")), \
+                patch.object(toolchains, "detect", side_effect=RuntimeError("a repository's file")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "stop here"):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        self.assertIn("WARNING: the toolchain proposal failed (RuntimeError: a repository's file); setup carries on "
+                      "without it. Run 'sudo subspace-setup toolchains detect' to try again.", said)
+        # The lockdown is applied after the failed proposal, as on any run.
+        self.assertLess(order.index("install"), order.index("lockdown.sh apply"))
 
     def test_the_question_and_its_answers(self):
         args = setup_args("--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
