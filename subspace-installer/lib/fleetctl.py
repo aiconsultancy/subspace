@@ -10,7 +10,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import fleet_records
-from runtime import APP, ETC, UUID, Invalid, pattern, read_json, require, validate
+import memory
+from runtime import APP, ETC, UUID, Invalid, memory_plan, officer_unit, pattern, read_json, require, validate
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -112,6 +113,16 @@ def api_token():
     os.execvp("runuser", ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "gateway", settings, "api", "token"])
 
 
+def show_memory(cfg):
+    """Each engine's memory and task limits as systemd applies them now, its use, the VM's swap, every fleet process
+    the kernel has killed for memory since boot, and limits set by hand (lib/memory.py)."""
+    result = memory_plan(cfg)
+    officers = {person["id"]: officer_unit(cfg, person) for person in cfg["members"]}
+    for line in [*memory.live_lines(officers, result, memory.swap_state()), *memory.hand_made_lines(officers, result),
+                 *(f"Memory warning: {text}" for text in result["warnings"])]:
+        print(line)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -122,6 +133,8 @@ def main():
     tty = sub.add_parser("attach", help="open the rear admiral's or a captain's OpenCode tmux session (crew sessions are on the captain's server)")
     tty.add_argument("member")
     sub.add_parser("api-token", help="print the Stargate Fleet API token for an operator's client")
+    sub.add_parser("memory", help="show each engine's live memory limits and use, the VM's swap, and fleet processes "
+                   "killed for memory since boot")
     args = parser.parse_args()
     require(os.geteuid() == 0, "Run fleetctl as root.")
     os.umask(0o077)
@@ -134,6 +147,8 @@ def main():
     cfg = validate(read_json(ETC / "fleet.json"), read_json(private, private=True))
     if args.command == "register":
         register(cfg)
+    elif args.command == "memory":
+        show_memory(cfg)
     elif args.command == "assign":
         initiative = pattern(args.initiative, UUID, "initiative UUID")
         api = Api(cfg)

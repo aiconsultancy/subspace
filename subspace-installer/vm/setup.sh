@@ -4,7 +4,7 @@
 #   subspace-setup [setup] [options]   set up or update this fleet (see --help)
 #   subspace-setup irc-server ...      run a shared IRC server on this host instead
 #   subspace-setup providers [login P] model provider accounts (agents need one)
-#   subspace-setup status              summary and service state
+#   subspace-setup status              summary, service state and memory
 #   subspace-setup audit               check that the VM is private
 #   subspace-setup lockdown apply|confirm|rollback|status
 #   subspace-setup secret irc-admin    print your IRC password (local IRC)
@@ -64,6 +64,8 @@ case $command in
         if [[ -f /root/fleet/summary.env ]]; then cat /root/fleet/summary.env; fi
         if [[ -f /root/irc/summary.env ]]; then cat /root/irc/summary.env; fi
         systemctl --no-pager --plain list-units 'subspace-*' || true
+        # Each engine's live memory limits and use, swap, and fleet processes killed for memory since boot.
+        if [[ -x /usr/local/bin/subspace-fleetctl ]]; then /usr/local/bin/subspace-fleetctl memory || true; fi
         "$here/lockdown.sh" status || true
         ;;
     -h|--help|help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exec python3 -B "$here/fleet_setup.py" --help ;;
