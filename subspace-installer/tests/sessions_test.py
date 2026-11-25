@@ -1153,6 +1153,28 @@ class InstalledFleet(unittest.TestCase):
                                       "vm.swappiness is 10, the installer's setting "
                                       "(/etc/sysctl.d/60-subspace-fleet-swap.conf), so it swaps only under pressure.")
 
+    def test_a_claude_agent_sdk_rear_admirals_gateway_takes_its_limits_as_the_dry_run_says(self):
+        config, secrets = crew_fleet("orion")
+        config["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        config["rearAdmiral"]["harness"] = {"type": "claude-sdk", "family": "claude"}
+        self.render(config, secrets)
+        gateway = (self.systemd / "subspace-fleet-gateway.service").read_text().splitlines()
+        shared = (self.systemd / "subspace-fleet-gateway-opencode.service").read_text().splitlines()
+        self.assertIn("MemoryMax=4G", gateway)
+        self.assertNotIn("OOMScoreAdjust=-500", gateway)
+        self.assertIn("OOMScoreAdjust=-500", shared)
+        self.assertFalse([line for line in shared if line.startswith(("Memory", "TasksMax", "OOMPolicy"))])
+        with patch.object(runtime.memory, "swap_state", return_value={
+                "active": [], "configured": [], "agent": None, "filesystem": "ext4", "mount": "/", "free": 102400,
+                "swappiness": 60, "swappinessFiles": [], "own": False, "ownSettings": False}), \
+                patch.object(runtime.memory, "DROPIN_DIRS", ()):
+            lines = runtime.memory_lines(runtime.validate(config, secrets))
+        self.assertIn("  The rear admiral's work runs in the fleet's gateway, subspace-fleet-gateway.service, which "
+                      "takes the rear admiral's limits. The model proxy and the OpenCode officers' gateway, "
+                      "subspace-fleet-gateway-opencode.service, have no cap, so a leak there cannot take the fleet down "
+                      "by itself; OOMScoreAdjust=-500 has the kernel kill an agent's process before them if the whole "
+                      "VM runs out of memory.", lines)
+
     def test_the_default_modes_render_byte_for_byte_as_before(self):
         """The modes that existed before the hosted API render exactly what they rendered then, and a fleet with
         plain officer names and named crew renders as recorded.

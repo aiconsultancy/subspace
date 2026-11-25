@@ -320,6 +320,35 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(output.getvalue().splitlines()[-1],
                          "Swap: this VM has no swap. With --no-systemd the installer leaves swap as it is.")
 
+    def test_the_gateway_line_says_which_gateway_takes_the_rear_admirals_limits(self):
+        def plan(config):
+            cfg = runtime.validate(config, {"proxyKey": "fixture-model-proxy-key"})
+            with patch.object(memory, "total_memory", return_value=VMS[64]), \
+                    patch.object(memory, "swap_state", return_value=state()), patch.object(memory, "DROPIN_DIRS", ()):
+                return [line for line in runtime.memory_lines(cfg) if "no cap" in line]
+
+        config = fleet(2)
+        self.assertEqual(plan(config), ["  The gateway and the model proxy have no cap, so a leak in either cannot take "
+                                        "the fleet down by itself; OOMScoreAdjust=-500 has the kernel kill an agent's "
+                                        "process before them if the whole VM runs out of memory."])
+        # A Claude Agent SDK rear admiral's work runs in the fleet's own gateway, which takes its limits; the OpenCode
+        # captains share another gateway, which has no cap.
+        config["rearAdmiral"]["harness"] = {"type": "claude-sdk", "family": "claude"}
+        self.assertEqual(plan(config), [
+            "  The rear admiral's work runs in the fleet's gateway, subspace-fleet-gateway.service, which takes the "
+            "rear admiral's limits. The model proxy and the OpenCode officers' gateway, "
+            "subspace-fleet-gateway-opencode.service, have no cap, so a leak there cannot take the fleet down by "
+            "itself; OOMScoreAdjust=-500 has the kernel kill an agent's process before them if the whole VM runs out "
+            "of memory."])
+        for captain in config["captains"]:
+            captain.update(harness={"type": "claude-sdk", "family": "claude"},
+                           crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        self.assertEqual(plan(config), [
+            "  The rear admiral's work runs in the fleet's gateway, subspace-fleet-gateway.service, which takes the "
+            "rear admiral's limits. The model proxy has no cap, so a leak there cannot take the fleet down by itself; "
+            "OOMScoreAdjust=-500 has the kernel kill an agent's process before it if the whole VM runs out of "
+            "memory."])
+
     def test_install_sh_tells_the_dry_run_about_no_systemd(self):
         """install.sh --dry-run hands --no-systemd to runtime.py plan, so the plan says what that run does."""
         work = tempfile.TemporaryDirectory()

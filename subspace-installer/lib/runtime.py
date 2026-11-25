@@ -2121,7 +2121,14 @@ def memory_lines(cfg, installed=False, managed=True):
     and swap (left alone by an install with --no-systemd, which managed false says)."""
     result = memory_plan(cfg)
     officers = {person["id"]: officer_unit(cfg, person) for person in cfg["members"]}
-    return [*memory.plan_lines(result), *memory.hand_made_lines(officers, result),
+    rear, gateways = cfg["members"][0], {}
+    if rear["harness"]["type"] != "opencode":
+        # A Claude Agent SDK rear admiral's work runs in the fleet's own gateway, which takes its limits; the OpenCode
+        # officers, if any, share another, which has none (render's gateway groups).
+        opencode = any(person["harness"]["type"] == "opencode" for person in cfg["members"])
+        gateways = {"rear_gateway": officers[rear["id"]],
+                    "shared_gateway": f"{PREFIX}gateway-opencode.service" if opencode else None}
+    return [*memory.plan_lines(result, **gateways), *memory.hand_made_lines(officers, result),
             *memory.swap_lines(cfg["memory"]["swap"], memory.swap_state(), result["total"], installed, managed)]
 
 

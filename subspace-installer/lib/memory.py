@@ -340,8 +340,10 @@ FRACTIONS = {1: "all of", 2: "half", 3: "a third of"}
 WORDS = {1: "one", 2: "two", 3: "three"}
 
 
-def plan_lines(result):
-    """What the dry run and the install summary say about the engines' limits, and why."""
+def plan_lines(result, rear_gateway=None, shared_gateway=None):
+    """What the dry run and the install summary say about the engines' limits, and why. rear_gateway is the unit of
+    a Claude Agent SDK rear admiral's work, the fleet's own gateway, which takes its limits; shared_gateway then the
+    gateway the OpenCode officers share, if there are any."""
     total = result["total"]
     lines = []
     if total:
@@ -369,9 +371,17 @@ def plan_lines(result):
                  "and a captain's other crew, keep running.")
     if total:
         lines.append("  Why: " + why(result))
-    lines.append("  The gateway and the model proxy have no cap, so a leak in either cannot take the fleet down by "
-                 f"itself; {SHARED_OPTIONS[0]} has the kernel kill an agent's process before them if the whole VM runs "
-                 "out of memory.")
+    if rear_gateway is None:
+        lines.append("  The gateway and the model proxy have no cap, so a leak in either cannot take the fleet down by "
+                     f"itself; {SHARED_OPTIONS[0]} has the kernel kill an agent's process before them if the whole VM "
+                     "runs out of memory.")
+    else:
+        uncapped = (f"The model proxy and the OpenCode officers' gateway, {shared_gateway}, have" if shared_gateway
+                    else "The model proxy has")
+        lines.append(f"  The rear admiral's work runs in the fleet's gateway, {rear_gateway}, which takes the rear "
+                     f"admiral's limits. {uncapped} no cap, so a leak there cannot take the fleet down by itself; "
+                     f"{SHARED_OPTIONS[0]} has the kernel kill an agent's process before "
+                     f"{'them' if shared_gateway else 'it'} if the whole VM runs out of memory.")
     lines.extend(f"Memory warning: {text}" for text in result["warnings"])
     return lines
 
