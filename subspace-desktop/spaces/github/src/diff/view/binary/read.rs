@@ -7,7 +7,7 @@ use subspace_client_fleet::{
 };
 use subspace_framework::dashboard::Toast;
 
-use super::{DiffView, Move, Position};
+use super::{DiffView, Move, Position, Retry};
 use crate::diff::view::{DiffEvent, DiffSource, pages::validate_page};
 
 impl DiffView {
@@ -36,6 +36,8 @@ impl DiffView {
         let (side, mode) = (binary.side, self.fleet.mode);
         let destination = position.clone();
         let closed = binary.closed.clone();
+        let guard = closed.clone();
+        binary.retry = None;
         binary.read = Some(cx.spawn(async move |view, cx| {
             let result = cx
                 .background_spawn(async move {
@@ -48,7 +50,9 @@ impl DiffView {
                 })
                 .await;
             _ = view.update(cx, |view, cx| {
-                view.finish_binary(result, destination, direction, cx)
+                if guard.check().is_ok() {
+                    view.finish_binary(result, destination, direction, cx);
+                }
             });
         }));
         cx.notify();
@@ -69,7 +73,9 @@ impl DiffView {
             Ok((content, unstable)) => {
                 binary.show(content, position, direction);
                 self.fleet.unstable |= unstable;
-                self.fleet.busy = None;
+            }
+            Err(Error::Busy(wait)) => {
+                binary.retry = Some((Retry::Bytes(direction), wait));
             }
             Err(error) => self.fleet_page_error(error, cx),
         }
@@ -118,11 +124,10 @@ fn validate_content(
         || end > content.size
         || match &content.next_page {
             Some(_) => {
-                end == content.size
-                    || content.bytes.is_empty()
+                (end < content.size && content.bytes.is_empty())
                     || content.next_page == position.cursor
             }
-            None => end != content.size || (position.cursor.is_some() && content.bytes.is_empty()),
+            None => end != content.size,
         }
     {
         return Err(Error::InvalidResponse);
@@ -142,16 +147,44 @@ mod tests {
             cursor: Some("last".into()),
             offset: 2,
         };
-        for (size, data, expected) in [
-            (4, "QQ==", Err(Error::InvalidResponse)),
-            (2, "", Err(Error::InvalidResponse)),
-            (3, "QQ==", Ok(())),
+        for (size, data, next, expected) in [
+            (4, "QQ==", None, Err(Error::InvalidResponse)),
+            (3, "", None, Err(Error::InvalidResponse)),
+            (3, "", Some("no-progress"), Err(Error::InvalidResponse)),
+            (2, "QQ==", None, Err(Error::InvalidResponse)),
+            (3, "QQ==", None, Ok(())),
         ] {
             let page: DiffContent = serde_json::from_value(json!({
                 "side": "new", "encoding": "base64", "offset": 2, "size": size, "data": data,
+                "nextPage": next,
             }))
             .unwrap();
             assert_eq!(validate_content(&page, &position, DiffSide::New), expected);
+        }
+    }
+
+    #[test]
+    fn validates_empty_files_and_exact_mib_boundaries() {
+        const MIB: usize = 1024 * 1024;
+        let data = "AAAA".repeat(MIB / 3) + "AA==";
+        for (offset, size, cursor, data, next) in [
+            (0, 0, None, "", None),
+            (0, 2 * MIB, None, data.as_str(), Some("second")),
+            (MIB, 2 * MIB, Some("second"), data.as_str(), None),
+            (MIB, 2 * MIB, Some("second"), data.as_str(), Some("end")),
+            (2 * MIB, 2 * MIB, Some("end"), "", None),
+        ] {
+            let position = Position {
+                cursor: cursor.map(str::to_owned),
+                offset: offset as u64,
+            };
+            let page: DiffContent = serde_json::from_value(json!({
+                "side": "new", "encoding": "base64", "offset": offset, "size": size,
+                "data": data, "nextPage": next,
+            }))
+            .unwrap();
+            assert_eq!(page.bytes.len(), if data.is_empty() { 0 } else { MIB });
+            assert_eq!(validate_content(&page, &position, DiffSide::New), Ok(()));
         }
     }
 }

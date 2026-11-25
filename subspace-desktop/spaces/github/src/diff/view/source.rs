@@ -1,7 +1,7 @@
 //! The two sources produce the same files for the viewer. Fleet snapshots
 //! are never cached outside the open view or exposed as GitHub subjects.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui_kit::Subscription;
@@ -39,12 +39,13 @@ pub(super) struct FleetState {
     pub live_revision: u64,
     pub live_changed: bool,
     pub unstable: bool,
-    pub busy: Option<String>,
+    pub busy_pages: HashMap<usize, Option<u64>>,
     pub unavailable: bool,
     pub stale_page: bool,
     pub loading: HashSet<usize>,
     pub generation: u64,
-    pub read: DiffRead,
+    pub list_read: DiffRead,
+    pub page_read: DiffRead,
     pub watch: Option<(FleetFollow, Subscription)>,
 }
 

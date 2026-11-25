@@ -15,7 +15,7 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Toast, Tokens};
 
-use super::{DiffView, Position, read::Blob};
+use super::{DiffView, Position, Retry, read::Blob};
 use crate::diff::view::{DiffEvent, DiffSource, image::ready_image};
 
 const MAX_PREVIEW_BYTES: usize = 10 * 1024 * 1024;
@@ -54,13 +54,18 @@ impl Preview {
     }
 }
 
-enum PreviewError {
+pub(super) enum PreviewError {
     Fleet(Error),
     NotRenderable,
 }
 
 impl DiffView {
-    fn preview_binary(&mut self, format: ImageFormat, cx: &mut Context<Self>) {
+    pub(super) fn preview_binary(
+        &mut self,
+        format: ImageFormat,
+        mut progress: PreviewRead,
+        cx: &mut Context<Self>,
+    ) {
         let (DiffSource::Fleet(source), Some(at), Some(binary)) = (
             self.source.clone(),
             self.fleet.fingerprint.clone(),
@@ -81,32 +86,35 @@ impl DiffView {
         let path = self.files[binary.file].file.path.clone();
         let (mode, side) = (self.fleet.mode, binary.side);
         let closed = binary.closed.clone();
+        let guard = closed.clone();
         let task = cx.spawn(async move |view, cx| {
-            let (result, unstable) = cx
+            let (result, progress) = cx
                 .background_spawn(async move {
                     let blob = Blob {
                         path: &path,
                         at: &at,
                         side,
                     };
-                    let mut unstable = false;
-                    let result = read_preview(
-                        |position| {
+                    let result = progress
+                        .read(|position| {
                             blob.read(&client, source.request(mode), position, &closed)
                                 .map_err(PreviewError::Fleet)
-                        },
-                        &mut unstable,
-                    )
-                    .and_then(|bytes| {
-                        closed.check().map_err(PreviewError::Fleet)?;
-                        decode(format, &bytes).ok_or(PreviewError::NotRenderable)
-                    });
-                    (result, unstable)
+                        })
+                        .and_then(|()| {
+                            closed.check().map_err(PreviewError::Fleet)?;
+                            decode(format, &progress.bytes).ok_or(PreviewError::NotRenderable)
+                        });
+                    (result, progress)
                 })
                 .await;
-            _ = view.update(cx, |view, cx| view.finish_preview(result, unstable, cx));
+            _ = view.update(cx, |view, cx| {
+                if guard.check().is_ok() {
+                    view.finish_preview(result, format, progress, cx);
+                }
+            });
         });
         if let Some(binary) = self.binary.as_mut() {
+            binary.retry = None;
             binary.read = Some(task);
         }
         cx.notify();
@@ -115,18 +123,21 @@ impl DiffView {
     fn finish_preview(
         &mut self,
         result: Result<Preview, PreviewError>,
-        unstable: bool,
+        format: ImageFormat,
+        progress: PreviewRead,
         cx: &mut Context<Self>,
     ) {
         let Some(binary) = self.binary.as_mut() else {
             return;
         };
         binary.read = None;
-        self.fleet.unstable |= unstable;
+        self.fleet.unstable |= progress.unstable;
         match result {
             Ok(preview) => {
                 binary.replace_preview(Some(preview), None, cx);
-                self.fleet.busy = None;
+            }
+            Err(PreviewError::Fleet(Error::Busy(wait))) => {
+                binary.retry = Some((Retry::Preview(format, progress), wait));
             }
             Err(PreviewError::Fleet(error)) => self.fleet_page_error(error, cx),
             Err(PreviewError::NotRenderable) => cx.emit(DiffEvent::Toast(Toast::error(
@@ -154,7 +165,9 @@ pub(super) fn open_button(format: ImageFormat, cx: &Context<DiffView>) -> AnyEle
         Some(IconName::Image),
         "Preview image",
     )
-    .on_click(cx.listener(move |view, _, _, cx| view.preview_binary(format, cx)))
+    .on_click(
+        cx.listener(move |view, _, _, cx| view.preview_binary(format, PreviewRead::default(), cx)),
+    )
     .into_any_element()
 }
 
@@ -174,30 +187,41 @@ pub(super) fn bytes_button(cx: &Context<DiffView>) -> AnyElement {
     .into_any_element()
 }
 
-fn read_preview(
-    mut read: impl FnMut(&Position) -> Result<(DiffContent, bool), PreviewError>,
-    unstable: &mut bool,
-) -> Result<Vec<u8>, PreviewError> {
-    let mut bytes = Vec::new();
-    let mut position = Position::default();
-    for _ in 0..MAX_PREVIEW_PAGES {
-        let (page, changed) = read(&position)?;
-        *unstable |= changed;
-        if page.size > MAX_PREVIEW_BYTES as u64
-            || bytes.len() + page.bytes.len() > MAX_PREVIEW_BYTES
-        {
-            return Err(PreviewError::NotRenderable);
+/// A busy continuation retains its bounded prefix and exact pending cursor.
+#[derive(Default)]
+pub(super) struct PreviewRead {
+    bytes: Vec<u8>,
+    position: Position,
+    pages: usize,
+    unstable: bool,
+}
+
+impl PreviewRead {
+    pub(super) fn read(
+        &mut self,
+        mut read: impl FnMut(&Position) -> Result<(DiffContent, bool), PreviewError>,
+    ) -> Result<(), PreviewError> {
+        while self.pages < MAX_PREVIEW_PAGES {
+            let (page, changed) = read(&self.position)?;
+            self.unstable |= changed;
+            self.pages += 1;
+            if page.size > MAX_PREVIEW_BYTES as u64
+                || self.bytes.len() + page.bytes.len() > MAX_PREVIEW_BYTES
+            {
+                return Err(PreviewError::NotRenderable);
+            }
+            let empty = page.bytes.is_empty();
+            self.bytes.extend(page.bytes);
+            let Some(cursor) = page.next_page.filter(|_| !empty) else {
+                return Ok(());
+            };
+            self.position = Position {
+                cursor: Some(cursor),
+                offset: self.bytes.len() as u64,
+            };
         }
-        bytes.extend(page.bytes);
-        let Some(cursor) = page.next_page else {
-            return Ok(bytes);
-        };
-        position = Position {
-            cursor: Some(cursor),
-            offset: bytes.len() as u64,
-        };
+        Err(PreviewError::NotRenderable)
     }
-    Err(PreviewError::NotRenderable)
 }
 
 fn decode(format: ImageFormat, bytes: &[u8]) -> Option<Preview> {
@@ -226,12 +250,12 @@ mod tests {
     use image::ImageFormat;
     use serde_json::json;
 
-    use super::{DiffContent, decode, read_preview};
+    use super::{DiffContent, PreviewRead, decode};
 
     #[test]
     fn renders_the_pixels_of_an_image_assembled_from_multiple_pages() {
-        let mut unstable = false;
-        let bytes = read_preview(
+        let mut progress = PreviewRead::default();
+        progress.read(
             |position| {
                 let (data, next_page) = if position.offset == 0 {
                     ("iVBO", Some("next+1"))
@@ -247,13 +271,12 @@ mod tests {
                 .unwrap();
                 Ok((page, next_page.is_none()))
             },
-            &mut unstable,
         )
         .ok()
         .unwrap();
-        assert_eq!(bytes.len(), 70);
-        assert!(unstable);
-        let preview = decode(ImageFormat::Png, &bytes).unwrap();
+        assert_eq!(progress.bytes.len(), 70);
+        assert!(progress.unstable);
+        let preview = decode(ImageFormat::Png, &progress.bytes).unwrap();
         assert_eq!(preview.image.as_bytes(0), Some(&[3, 2, 1, 255][..]));
     }
 }

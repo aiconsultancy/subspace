@@ -276,7 +276,8 @@ impl DiffView {
             _load: None,
         };
         cx.on_release(|view, cx| {
-            view.fleet.read.cancel();
+            view.fleet.list_read.cancel();
+            view.fleet.page_read.cancel();
             view.close_binary(None, cx);
         })
         .detach();

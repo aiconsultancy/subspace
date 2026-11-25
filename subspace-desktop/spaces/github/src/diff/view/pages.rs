@@ -8,7 +8,7 @@ use subspace_client_fleet::{
 use subspace_framework::dashboard::Toast;
 
 use super::super::model::{FileView, parse_patch};
-use super::{DiffEvent, DiffSource, DiffView, load::diff_error};
+use super::{DiffEvent, DiffSource, DiffView};
 
 impl DiffView {
     pub(super) fn load_more(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -33,8 +33,10 @@ impl DiffView {
             }
         };
         self.fleet.loading.insert(index);
+        self.fleet.busy_pages.remove(&index);
         let (mode, generation) = (self.fleet.mode, self.fleet.generation);
-        let read = self.fleet.read.clone();
+        let read = self.fleet.page_read.clone();
+        let guard = read.clone();
         let path = file.file.path.clone();
         cx.spawn(async move |view, cx| {
             let result = cx
@@ -50,7 +52,9 @@ impl DiffView {
                 })
                 .await;
             _ = view.update(cx, |view, cx| {
-                view.finish_page(generation, index, result, cx);
+                if guard.check().is_ok() {
+                    view.finish_page(generation, index, result, cx);
+                }
             });
         })
         .detach();
@@ -70,27 +74,49 @@ impl DiffView {
         self.fleet.loading.remove(&index);
         match result {
             Ok(page) => {
-                self.fleet.busy = None;
                 self.fleet.unstable |= page.unstable;
                 apply_page(&mut self.files[index], page);
                 self.highlights.remove(&index);
                 self.rebuild();
+            }
+            Err(Error::Busy(wait)) => {
+                self.fleet.busy_pages.insert(index, wait);
             }
             Err(error) => self.fleet_page_error(error, cx),
         }
         cx.notify();
     }
 
+    pub(super) fn invalidate_pages(&mut self) {
+        self.fleet.page_read.cancel();
+        self.fleet.page_read = Default::default();
+        self.fleet.loading.clear();
+        self.fleet.busy_pages.clear();
+        self.cancel_binary_read();
+    }
+
     pub(super) fn fleet_page_error(&mut self, error: Error, cx: &mut Context<Self>) {
         match error {
             Error::DiffReadCancelled => {}
-            Error::StaleDiff => self.fleet.stale_page = true,
-            Error::Busy(_) => self.fleet.busy = Some(diff_error(error)),
+            Error::StaleDiff => {
+                self.fleet.stale_page = true;
+                self.invalidate_pages();
+            }
             Error::NotFound => cx.emit(DiffEvent::Toast(Toast::error(
                 "This file is no longer available. Refresh the diff.",
             ))),
             other => cx.emit(DiffEvent::Toast(Toast::error(other.to_string()))),
         }
+    }
+}
+
+pub(super) fn busy_message(wait: Option<u64>) -> String {
+    match wait {
+        Some(1) => "Stargate is busy. Wait 1 second before retrying.".to_owned(),
+        Some(seconds) if seconds > 1 => {
+            format!("Stargate is busy. Wait {seconds} seconds before retrying.")
+        }
+        _ => "Stargate is busy.".to_owned(),
     }
 }
 

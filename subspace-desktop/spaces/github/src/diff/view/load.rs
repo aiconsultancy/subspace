@@ -20,7 +20,8 @@ enum LoadError {
 
 impl DiffView {
     pub(crate) fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.fleet.read.cancel();
+        self.fleet.list_read.cancel();
+        self.fleet.page_read.cancel();
         self._load = None;
         self.close_binary(Some(window), cx);
     }
@@ -44,7 +45,7 @@ impl DiffView {
         };
         let generation = self.fleet.generation;
         let baseline = self.fleet.live_revision;
-        let read = self.fleet.read.clone();
+        let read = self.fleet.list_read.clone();
         self.error = None;
         self._load = Some(cx.spawn(async move |view, cx| {
             let result = cx
@@ -79,16 +80,15 @@ impl DiffView {
     }
 
     fn reset_fleet_load(&mut self, cx: &mut Context<Self>) {
-        self.fleet.read.cancel();
-        self.fleet.read = DiffRead::default();
+        self.fleet.list_read.cancel();
+        self.fleet.list_read = DiffRead::default();
+        self.invalidate_pages();
         self.fleet.generation += 1;
         self.fleet.fingerprint = None;
         self.fleet.unavailable = false;
         self.fleet.stale_page = false;
         self.fleet.unstable = false;
         self.fleet.live_changed = false;
-        self.fleet.busy = None;
-        self.fleet.loading.clear();
         self.close_binary(None, cx);
         self.full_line = None;
         self.loaded = false;
@@ -210,7 +210,7 @@ fn read_diff(
     }
 }
 
-pub(super) fn diff_error(error: Error) -> String {
+fn diff_error(error: Error) -> String {
     match error {
         Error::Busy(Some(1)) => "Stargate is busy. Wait 1 second, then select Refresh.".to_owned(),
         Error::Busy(Some(seconds)) => {

@@ -20,6 +20,8 @@ const SHIP: &str = "example-ship";
 const CREW: &str = "example-crew";
 
 mod reads;
+mod retry;
+pub(super) use retry::ReadGate;
 
 fn fixture(cursor: bool) -> String {
     let text = "wide".repeat(2000);
@@ -128,9 +130,9 @@ fn a_feed_catching_up_to_the_http_snapshot_keeps_paging_available(cx: &mut TestA
     view.update(window, |view, cx| {
         // The feed's baseline observed when the HTTP snapshot was applied.
         view.fleet.live_fingerprint = Some("A".to_owned());
-        view.fleet.observe_fingerprint(Some("A".to_owned()));
+        view.observe_crew_fingerprint(Some("A".to_owned()));
         assert!(!view.fleet.changed());
-        view.fleet.observe_fingerprint(Some("B".to_owned()));
+        view.observe_crew_fingerprint(Some("B".to_owned()));
         assert!(!view.fleet.changed());
         view.load_more(0, cx);
         assert!(view.fleet.loading.contains(&0));
@@ -149,14 +151,6 @@ fn a_feed_catching_up_to_the_http_snapshot_keeps_paging_available(cx: &mut TestA
                 .unwrap()
                 .contains("SECOND-PAGE")
         );
-    });
-    view.update(window, |view, cx| {
-        view.fleet_page_error(subspace_client_fleet::Error::Busy(Some(7)), cx);
-        assert_eq!(
-            view.fleet.busy.as_deref(),
-            Some("Stargate is busy. Wait 7 seconds, then select Refresh.")
-        );
-        cx.notify();
     });
     window.update(|window, cx| window.draw(cx).clear(cx));
     window.update(|window, _| {

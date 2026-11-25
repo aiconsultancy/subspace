@@ -21,11 +21,11 @@ fn a_feed_change_during_a_list_load_is_compared_with_its_result(cx: &mut TestApp
     });
     let (view, window) = mount(cx, &mock);
     view.update(window, |view, cx| {
-        view.fleet.observe_fingerprint(Some("A".into()));
+        view.observe_crew_fingerprint(Some("A".into()));
         view.load(cx);
         assert!(view.fleet.fingerprint.is_none());
         // Deliver the feed event before the newly scheduled HTTP read can apply.
-        view.fleet.observe_fingerprint(Some("C".into()));
+        view.observe_crew_fingerprint(Some("C".into()));
     });
     window.run_until_parked();
     view.read_with(window, |view, _| {
@@ -59,7 +59,7 @@ fn retries_a_real_503_without_changing_the_pinned_file_request(cx: &mut TestAppC
     view.update(window, |view, cx| view.load_more(0, cx));
     window.run_until_parked();
     view.read_with(window, |view, _| {
-        assert!(view.fleet.busy.is_none());
+        assert!(view.fleet.busy_pages.is_empty());
         assert!(view.files[0].next_page.is_none());
         assert!(
             view.files[0]
@@ -116,7 +116,7 @@ fn releasing_the_view_during_a_continuation_stops_the_next_request(cx: &mut Test
             source.clone(),
             source.client(cx).unwrap(),
             view.fleet.mode,
-            view.fleet.read.clone(),
+            view.fleet.list_read.clone(),
         )
     });
     paging.store(true, Ordering::Release);

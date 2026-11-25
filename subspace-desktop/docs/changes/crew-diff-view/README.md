@@ -20,9 +20,12 @@ The viewer checks for changes again when the Space becomes active. A conflict
 or missing list continuation also asks for **Refresh**. If a list or file
 page reports an unstable read, the viewer still displays the content and
 shows **Changed while loading · Refresh**. Closing or refreshing cancels the
-old load before it requests another page. Busy requests retry the same page
-up to twice, respecting a numeric `Retry-After`. If the wait is over ten
-seconds or the retries run out, the viewer offers manual **Refresh** instead.
+old load before it requests another page. A stale snapshot cancels file and
+preview reads but leaves already loaded content visible. Busy requests retry
+the same page up to twice, respecting a numeric `Retry-After`. If the wait is
+over ten seconds or the retries run out, **Retry page** repeats the failed
+request without reloading the file list or discarding loaded pages. For a
+stale snapshot or a failed file-list load, use **Refresh** instead.
 
 **View binary** opens a readonly hex and ASCII dump. Its pages are read on
 demand at the original fingerprint; modified binaries offer **Old** and

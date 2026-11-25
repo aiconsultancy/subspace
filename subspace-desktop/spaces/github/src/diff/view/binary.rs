@@ -2,27 +2,26 @@
 //! switching sides or closing the viewer drops its bytes and pending read.
 
 use gpui_kit::component::{h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Context, Div, IntoElement, ParentElement as _, Styled as _, Task,
+    AnyElement, Context, IntoElement, ParentElement as _, Styled as _, Task,
     UniformListScrollHandle, Window, div,
 };
 use subspace_client_fleet::diff::{DiffContent, DiffRead, DiffSide};
 use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
-use subspace_framework::dashboard::segmented::{self, Segment};
 use subspace_framework::dashboard::{Tokens, truncated};
 
 use super::DiffView;
 
+mod controls;
 mod hex;
 mod preview;
 mod read;
 #[cfg(test)]
 mod tests;
 
-use preview::Preview;
+use preview::{Preview, PreviewRead};
 
 #[derive(Clone, Default)]
 struct Position {
@@ -30,49 +29,16 @@ struct Position {
     offset: u64,
 }
 
-fn side_control(
-    binary: &BinaryView,
-    status: GhFileStatus,
-    changed: bool,
-    tokens: &Tokens,
-    cx: &Context<DiffView>,
-) -> AnyElement {
-    side_label(binary.side, status, changed).map_or_else(
-        || side_selector(binary, tokens, cx),
-        IntoElement::into_any_element,
-    )
-}
-
-fn side_label(side: DiffSide, status: GhFileStatus, changed: bool) -> Option<&'static str> {
-    (changed || matches!(status, GhFileStatus::Added | GhFileStatus::Removed)).then_some(match side
-    {
-        DiffSide::Old => "Old bytes",
-        DiffSide::New => "New bytes",
-    })
-}
-
-fn side_selector(binary: &BinaryView, tokens: &Tokens, cx: &Context<DiffView>) -> AnyElement {
-    let file = binary.file;
-    let weak = cx.entity().downgrade();
-    segmented::control(
-        "crew-binary-side",
-        [Segment::new("Old"), Segment::new("New")],
-        Some(binary.side_index()),
-        tokens,
-        move |index, _, window, cx| {
-            _ = weak.update(cx, |view, cx| {
-                view.select_binary_side(file, index, window, cx)
-            });
-        },
-    )
-    .into_any_element()
-}
-
 #[derive(Clone, Copy)]
 enum Move {
     Start,
     Next,
     Previous,
+}
+
+enum Retry {
+    Bytes(Move),
+    Preview(image::ImageFormat, PreviewRead),
 }
 
 pub(super) struct BinaryView {
@@ -83,6 +49,7 @@ pub(super) struct BinaryView {
     page: Option<DiffContent>,
     scroll: UniformListScrollHandle,
     read: Option<Task<()>>,
+    retry: Option<(Retry, Option<u64>)>,
     preview: Option<Preview>,
     closed: DiffRead,
 }
@@ -104,6 +71,7 @@ impl BinaryView {
             page: None,
             scroll: UniformListScrollHandle::new(),
             read: None,
+            retry: None,
             preview: None,
             closed: DiffRead::default(),
         }
@@ -123,7 +91,19 @@ impl BinaryView {
         }
     }
 
-    fn show(&mut self, page: DiffContent, position: Position, direction: Move) {
+    fn show(&mut self, mut page: DiffContent, position: Position, direction: Move) {
+        // An older gateway can send an empty terminator at EOF. Leave the
+        // last real bytes visible and remove their now-consumed cursor.
+        if matches!(direction, Move::Next)
+            && page.bytes.is_empty()
+            && let Some(previous) = self.page.as_mut()
+        {
+            previous.next_page = None;
+            return;
+        }
+        if page.bytes.is_empty() {
+            page.next_page = None;
+        }
         match direction {
             Move::Start => self.history.clear(),
             Move::Next => self.history.push(self.position.clone()),
@@ -155,6 +135,15 @@ impl Drop for BinaryView {
 }
 
 impl DiffView {
+    pub(super) fn cancel_binary_read(&mut self) {
+        if let Some(binary) = self.binary.as_mut() {
+            binary.closed.cancel();
+            binary.closed = DiffRead::default();
+            binary.read = None;
+            binary.retry = None;
+        }
+    }
+
     fn select_binary_side(
         &mut self,
         file: usize,
@@ -249,23 +238,6 @@ impl DiffView {
             .into_any_element()
     }
 
-    fn binary_controls(&self, binary: &BinaryView, tokens: &Tokens, cx: &Context<Self>) -> Div {
-        let changed = self.fleet.changed();
-        let status = self.files[binary.file].file.status;
-        h_flex()
-            .px_3()
-            .gap_2()
-            .flex_wrap()
-            .child(side_control(binary, status, changed, tokens, cx))
-            .child(paging_controls(
-                binary,
-                changed,
-                self.binary_path(binary),
-                tokens,
-                cx,
-            ))
-    }
-
     fn binary_path<'a>(&'a self, binary: &BinaryView) -> &'a str {
         let file = &self.files[binary.file].file;
         if binary.side == DiffSide::Old {
@@ -276,33 +248,19 @@ impl DiffView {
     }
 }
 
-fn paging_controls(
-    binary: &BinaryView,
-    changed: bool,
-    path: &str,
-    tokens: &Tokens,
-    cx: &Context<DiffView>,
-) -> Div {
-    let row = h_flex().gap_2().flex_wrap();
-    match (changed, binary.read.is_some(), binary.preview.is_some()) {
-        (true, _, preview) => row
-            .child(
-                action_button(
-                    "crew-binary-refresh",
-                    Intent::Quiet,
-                    Some(IconName::RefreshCw),
-                    "Refresh diff",
-                )
-                .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
-            )
-            .when(preview, |row| row.child(preview::bytes_button(cx))),
-        (false, true, _) => row.child(div().text_color(tokens.muted).child("Loading…")),
-        (false, false, true) => row.child(preview::bytes_button(cx)),
-        (false, false, false) => row
-            .children(binary_actions(binary, cx))
-            .when_some(preview::format(path), |row, format| {
-                row.child(preview::open_button(format, cx))
-            }),
+impl DiffView {
+    fn retry_binary(&mut self, cx: &mut Context<Self>) {
+        if self.fleet.changed() {
+            return;
+        }
+        let Some((retry, _)) = self.binary.as_mut().and_then(|binary| binary.retry.take()) else {
+            return;
+        };
+        match retry {
+            Retry::Bytes(direction) => self.read_binary(direction, cx),
+            Retry::Preview(format, progress) => self.preview_binary(format, progress, cx),
+        }
+        cx.notify();
     }
 }
 
@@ -320,43 +278,4 @@ fn binary_body(
     } else {
         hex::list(binary, page, tokens, cx).into_any_element()
     })
-}
-
-fn binary_actions(binary: &BinaryView, cx: &Context<DiffView>) -> Vec<AnyElement> {
-    [
-        (
-            Move::Start,
-            binary.page.is_none(),
-            "crew-binary-load",
-            IconName::RefreshCw,
-            "Load bytes",
-        ),
-        (
-            Move::Previous,
-            !binary.history.is_empty(),
-            "crew-binary-previous",
-            IconName::ChevronUp,
-            "Previous page",
-        ),
-        (
-            Move::Next,
-            binary
-                .page
-                .as_ref()
-                .is_some_and(|page| page.next_page.is_some()),
-            "crew-binary-next",
-            IconName::ChevronDown,
-            "Next page",
-        ),
-    ]
-    .into_iter()
-    .filter(|(_, show, _, _, _)| *show)
-    .map(|(direction, _, id, icon, label)| {
-        action_button(id, Intent::Quiet, Some(icon), label)
-            .on_click(cx.listener(move |view, _, _, cx| {
-                view.read_binary(direction, cx);
-            }))
-            .into_any_element()
-    })
-    .collect()
 }

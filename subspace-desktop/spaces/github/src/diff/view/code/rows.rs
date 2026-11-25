@@ -168,16 +168,22 @@ impl DiffView {
                 .child("Loading…")
                 .into_any_element();
         }
-        row.child(
-            action_button(
-                ("crew-diff-more", file),
-                Intent::Quiet,
-                Some(IconName::ChevronDown),
-                "Load next page",
+        let busy = self.fleet.busy_pages.get(&file).copied();
+        let (id, icon, label) = if busy.is_some() {
+            ("crew-diff-retry-page", IconName::RefreshCw, "Retry page")
+        } else {
+            ("crew-diff-more", IconName::ChevronDown, "Load next page")
+        };
+        row.gap_2()
+            .child(
+                action_button((id, file), Intent::Quiet, Some(icon), label)
+                    .on_click(cx.listener(move |view, _, _, cx| view.load_more(file, cx))),
             )
-            .on_click(cx.listener(move |view, _, _, cx| view.load_more(file, cx))),
-        )
-        .into_any_element()
+            .when_some(busy, |row, wait| {
+                row.text_color(tokens.muted)
+                    .child(crate::diff::view::pages::busy_message(wait))
+            })
+            .into_any_element()
     }
 
     pub(super) fn gap_row(

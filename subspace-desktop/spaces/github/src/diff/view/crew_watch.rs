@@ -18,13 +18,9 @@ impl DiffView {
         };
         let target = source.target.clone();
         let follow = api.update(cx, |api, cx| api.follow(&target.fleet, cx));
-        self.fleet
-            .observe_fingerprint(fingerprint(api.read(cx), &target));
+        self.observe_crew_fingerprint(fingerprint(api.read(cx), &target));
         let observe = cx.observe(&api, move |view, api, cx| {
-            let changed = view.fleet.changed();
-            view.fleet
-                .observe_fingerprint(fingerprint(api.read(cx), &target));
-            if changed != view.fleet.changed() {
+            if view.observe_crew_fingerprint(fingerprint(api.read(cx), &target)) {
                 cx.notify();
             }
         });
@@ -44,9 +40,19 @@ impl DiffView {
             return;
         };
         if let DiffSource::Fleet(source) = &self.source {
-            self.fleet
-                .observe_fingerprint(fingerprint(api.read(cx), &source.target));
+            let live = fingerprint(api.read(cx), &source.target);
+            self.observe_crew_fingerprint(live);
         }
+    }
+
+    pub(super) fn observe_crew_fingerprint(&mut self, live: Option<String>) -> bool {
+        let changed = self.fleet.changed();
+        self.fleet.observe_fingerprint(live);
+        let now_changed = self.fleet.changed();
+        if !changed && now_changed {
+            self.invalidate_pages();
+        }
+        changed != now_changed
     }
 }
 

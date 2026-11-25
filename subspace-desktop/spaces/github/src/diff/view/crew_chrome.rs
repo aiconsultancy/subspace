@@ -1,7 +1,6 @@
 //! Toolbar controls specific to a crew checkout.
 
 use gpui_kit::component::{h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{Context, Div, Entity, ParentElement as _, Styled as _, Window, px};
 use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::dashboard::action::{Intent, action_button};
@@ -75,14 +74,14 @@ impl DiffView {
     }
 
     fn fleet_notice(&self, tokens: &Tokens, cx: &Context<Self>) -> Option<Div> {
-        let (message, detail) = notice(self.fleet.banner(), self.fleet.busy.as_deref())?;
+        let message = self.fleet.banner()?;
         Some(
             h_flex()
                 .gap_2()
                 .flex_wrap()
                 .px(px(BAR_PAD_PX))
                 .text_color(tokens.muted)
-                .child(message)
+                .child(format!("{message} ·"))
                 .child(
                     action_button(
                         "crew-diff-banner-refresh",
@@ -91,8 +90,7 @@ impl DiffView {
                         "Refresh",
                     )
                     .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
-                )
-                .when_some(detail, |row, busy| row.child(busy.to_owned())),
+                ),
         )
     }
 
@@ -124,24 +122,5 @@ impl DiffView {
             self.fleet.mode = mode;
             self.load(cx);
         }
-    }
-}
-
-fn notice<'a>(banner: Option<&str>, busy: Option<&'a str>) -> Option<(String, Option<&'a str>)> {
-    banner.map_or_else(
-        || busy.map(|busy| (busy.to_owned(), None)),
-        |message| Some((format!("{message} ·"), busy)),
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn an_instability_banner_does_not_hide_retry_after() {
-        let busy = "Stargate is busy. Wait 7 seconds, then select Refresh.";
-        assert_eq!(
-            super::notice(Some("Changed while loading"), Some(busy)),
-            Some(("Changed while loading ·".to_owned(), Some(busy)))
-        );
     }
 }

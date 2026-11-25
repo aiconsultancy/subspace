@@ -14,6 +14,8 @@ const PATH: &str = "icon.png";
 const PNG_TAIL: &str =
     "Rw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgZGL+DwABFAEG1rmmRQAAAABJRU5ErkJggg==";
 
+mod retries;
+
 #[gpui_kit::test]
 fn pages_both_binary_sides_and_evicts_the_preview_on_close(cx: &mut TestAppContext) {
     let mock = Mock::new(binary_response);
@@ -22,6 +24,8 @@ fn pages_both_binary_sides_and_evicts_the_preview_on_close(cx: &mut TestAppConte
     assert_page(&view, window, DiffSide::New, 0);
     click(window, "crew-binary-next");
     assert_page(&view, window, DiffSide::New, 3);
+    click(window, "crew-binary-previous");
+    assert_page(&view, window, DiffSide::New, 0);
     click(window, ("crew-binary-side", 0usize));
     assert_page(&view, window, DiffSide::Old, 0);
     click(window, "crew-binary-next");
@@ -32,6 +36,12 @@ fn pages_both_binary_sides_and_evicts_the_preview_on_close(cx: &mut TestAppConte
     assert_page(&view, window, DiffSide::Old, 3);
     window.update(|window, _| assert!(!window.has_image_atlas_entry(&image)));
 
+    let image = open_preview(&view, window);
+    click(window, "crew-binary-close");
+    view.read_with(window, |view, _| assert!(view.binary.is_none()));
+    window.update(|window, _| assert!(!window.has_image_atlas_entry(&image)));
+
+    click(window, ("crew-diff-bytes", 0usize));
     let image = open_preview(&view, window);
     click(window, ("crew-binary-side", 1usize));
     assert_page(&view, window, DiffSide::New, 0);
@@ -45,6 +55,55 @@ fn pages_both_binary_sides_and_evicts_the_preview_on_close(cx: &mut TestAppConte
     window.update(|window, cx| window.draw(cx).clear(cx));
     window.run_until_parked();
     window.update(|window, _| assert!(!window.has_image_atlas_entry(&image)));
+}
+
+#[gpui_kit::test]
+fn a_binary_page_conflict_keeps_the_displayed_bytes_and_offers_refresh(cx: &mut TestAppContext) {
+    let mock = Mock::new(|request| {
+        if request.path.contains("&page=png-tail") {
+            (409, String::new())
+        } else {
+            binary_response(request)
+        }
+    });
+    let (view, window) = mount(cx, &mock);
+    click(window, ("crew-diff-bytes", 0usize));
+    click(window, "crew-binary-next");
+    assert_page(&view, window, DiffSide::New, 0);
+    window.update(|window, _| assert!(window.find("crew-binary-refresh").visible()));
+}
+
+#[gpui_kit::test]
+fn a_binary_eof_terminator_keeps_the_last_nonempty_page_visible(cx: &mut TestAppContext) {
+    let mock = Mock::new(|request| {
+        let (status, body) = binary_response(request);
+        if request.path.contains("&page=png-tail") || request.path.contains("&page=eof") {
+            let mut page: serde_json::Value = serde_json::from_str(&body).unwrap();
+            if request.path.contains("&page=png-tail") {
+                page["content"]["nextPage"] = json!("eof");
+            } else {
+                page["content"]["offset"] = json!(70);
+                page["content"]["data"] = json!("");
+                page["content"]["nextPage"] = serde_json::Value::Null;
+            }
+            (status, page.to_string())
+        } else {
+            (status, body)
+        }
+    });
+    let (view, window) = mount(cx, &mock);
+    click(window, ("crew-diff-bytes", 0usize));
+    click(window, "crew-binary-next");
+    click(window, "crew-binary-next");
+    assert_page(&view, window, DiffSide::New, 3);
+    assert!(
+        mock.requests()
+            .iter()
+            .any(|request| request.path.contains("&page=eof"))
+    );
+    window.update(|window, _| assert!(window.try_find("crew-binary-next").is_none()));
+    click(window, "crew-binary-previous");
+    assert_page(&view, window, DiffSide::New, 0);
 }
 
 fn click(window: &mut VisualTestContext, id: impl Into<ElementId>) {
