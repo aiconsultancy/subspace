@@ -8,7 +8,7 @@ use subspace_client_fleet::model::{CrewContext, CrewMember};
 
 mod retry;
 mod roster;
-use retry::{retry_delay, retry_wait};
+use retry::retry_delay;
 pub(super) use roster::Roster;
 use roster::{current_in, same_task_facts};
 
@@ -117,10 +117,17 @@ impl DetailState {
     }
 
     pub fn retry_delay(&self) -> Option<Duration> {
-        if !self.can_retry() || !matches!(self.roster, Roster::Present(_)) {
+        if !self.can_retry() {
             return None;
         }
-        retry_delay(self.error?, self.retries)
+        self.automatic_retry_delay(self.error?)
+    }
+
+    fn automatic_retry_delay(&self, error: Error) -> Option<Duration> {
+        if !matches!(self.roster, Roster::Present(_)) {
+            return None;
+        }
+        retry_delay(error, self.retries)
     }
 
     pub fn retry_elapsed(&mut self) {
@@ -162,7 +169,7 @@ impl DetailState {
             }
             Err(error) => {
                 self.error = Some(error);
-                self.waiting_to_retry = retry_wait(error).is_some();
+                self.waiting_to_retry = self.automatic_retry_delay(error).is_some();
             }
         }
     }

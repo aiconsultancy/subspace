@@ -8,7 +8,7 @@ const MAX_RETRIES: u32 = 5;
 const MAX_RETRY_WAIT_SECS: u64 = 30;
 const SERVER_ERRORS: std::ops::RangeInclusive<u16> = 500..=599;
 
-pub(super) fn retry_wait(error: Error) -> Option<u64> {
+fn retry_wait(error: Error) -> Option<u64> {
     match error {
         Error::Busy(wait) => Some(wait.unwrap_or_default()),
         Error::Unreachable => Some(0),

@@ -120,11 +120,15 @@ fn a_missing_member_gets_one_probe_when_it_returns() {
 fn read_with_queued_task_revision() -> (DetailState, u64) {
     let mut state = DetailState::new(roster("first", "Working…", 1), 0);
     let flight = state.begin().unwrap();
-    let mut newer = member("first", "Working…", 1);
-    newer.contexts[0].current.as_mut().unwrap().updated_at = Some(2);
-    assert!(state.update(Roster::Present(Box::new(newer)), 0));
+    assert!(state.update(revised_task(), 0));
     assert_eq!(state.begin(), None);
     (state, flight)
+}
+
+fn revised_task() -> Roster {
+    let mut newer = member("first", "Working…", 1);
+    newer.contexts[0].current.as_mut().unwrap().updated_at = Some(2);
+    Roster::Present(Box::new(newer))
 }
 
 #[test]
@@ -162,4 +166,37 @@ fn a_missing_route_discards_the_queued_task_revision() {
     state.finish(flight, Err(Error::NotFound));
     assert_eq!(state.begin(), None);
     assert_eq!(state.retry_delay(), None);
+}
+
+#[test]
+fn a_later_task_revision_reads_after_the_retry_budget_is_spent() {
+    let mut state = DetailState::new(roster("first", "Working…", 1), 0);
+    for delay in [1, 2, 4, 8, 16] {
+        let flight = state.begin().unwrap();
+        state.finish(flight, Err(Error::Unreachable));
+        assert_eq!(
+            state.retry_delay(),
+            Some(std::time::Duration::from_secs(delay))
+        );
+        state.retry_elapsed();
+    }
+    let last = state.begin().unwrap();
+    state.finish(last, Err(Error::Unreachable));
+    assert_eq!(state.retry_delay(), None);
+    assert_eq!(state.begin(), None, "no automatic retry without demand");
+    assert!(state.update(revised_task(), 0));
+    assert!(state.begin().is_some(), "the later revision starts a read");
+}
+
+#[test]
+fn a_queued_task_revision_reads_when_retry_after_exceeds_the_limit() {
+    let (mut state, flight) = read_with_queued_task_revision();
+    state.finish(flight, Err(Error::Busy(Some(31))));
+    assert_eq!(state.retry_delay(), None);
+    let follow_up = state
+        .begin()
+        .expect("no scheduled retry holds the revision");
+    state.finish(follow_up, Ok(member("first", "Latest detail", 1)));
+    assert_progress(&state, "Latest detail");
+    assert_eq!(state.begin(), None);
 }
