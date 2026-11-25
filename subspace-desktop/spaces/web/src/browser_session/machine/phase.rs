@@ -69,6 +69,14 @@ impl Base {
             Self::Fresh { .. } => None,
         }
     }
+
+    /// A new view starts at the start, not where an earlier one was.
+    fn restarted(self) -> Self {
+        match self {
+            Self::Fresh { .. } => Self::Fresh { resume: None },
+            renewal => renewal,
+        }
+    }
 }
 
 impl Live {
@@ -117,6 +125,50 @@ impl Live {
 }
 
 impl Phase {
+    /// The same phase once the start moved: a new view, or Retry after the
+    /// session ended, opens the start rather than where the view was.
+    pub(super) fn restarted(self) -> Self {
+        match self {
+            Self::Ended { message, .. } => Self::Ended {
+                message,
+                resume: None,
+            },
+            Self::Acquiring { attempt, base } => Self::Acquiring {
+                attempt,
+                base: base.restarted(),
+            },
+            Self::Installing {
+                attempt,
+                grant,
+                base,
+            } => Self::Installing {
+                attempt,
+                grant,
+                base: base.restarted(),
+            },
+            phase => phase,
+        }
+    }
+
+    /// Whether the site refused the session and the view waits for a
+    /// renewal to return it to its page: the signal's renewal is under way,
+    /// or the signal waits for a failed renewal to be tried again.
+    pub(super) fn refused(&self) -> bool {
+        match self {
+            Self::Live(live) => live.signal_waiting,
+            Self::Acquiring { base, .. } | Self::Installing { base, .. } => {
+                matches!(
+                    base,
+                    Base::Renewal {
+                        signalled: true,
+                        ..
+                    }
+                )
+            }
+            _ => false,
+        }
+    }
+
     /// The live session an attempt in flight renews.
     pub(super) fn renewing(&self) -> Option<&Live> {
         match self {

@@ -63,7 +63,7 @@ fn account(signed_in: &Rc<Cell<u64>>) -> impl Fn(&gpui_kit::App) -> Option<Accou
 }
 
 /// A session whose adapter fails, counting its attempts.
-fn refusing(signed_in: &Rc<Cell<u64>>, attempts: &Arc<AtomicUsize>) -> NativeSession {
+pub(super) fn refusing(signed_in: &Rc<Cell<u64>>, attempts: &Arc<AtomicUsize>) -> NativeSession {
     let attempts = attempts.clone();
     NativeSession::new(scope(), account(signed_in), move |_: &Account| {
         attempts.fetch_add(1, Ordering::SeqCst);
@@ -84,7 +84,7 @@ fn activated(
 }
 
 /// The board with `session`, shown, once its first attempt has settled.
-fn shown(
+pub(super) fn shown(
     cx: &mut TestAppContext,
     session: NativeSession,
 ) -> (Entity<WebBoard>, &mut VisualTestContext) {
