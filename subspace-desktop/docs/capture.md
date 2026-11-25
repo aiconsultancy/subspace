@@ -116,14 +116,19 @@ notice. Themes that name no font still use the machine's own fonts. See
 ## Fleet fixture
 
 To capture the native crew diff without using the Channels drill-in, start
-in Fleet Console so it starts the shared Fleet API service. Let the fixture
-fleet load before opening Wren's checkout in PRs:
+in Fleet Console on macOS so it starts the shared Fleet API service. Let the
+fixture fleet load before opening Wren's checkout in PRs:
 
 ```bash
 CAPTURE_THEME="Twilight Two" CAPTURE_FLEET_API=1 CAPTURE_FLEET=1 \
   CAPTURE_STATE='{"app.dashboard":"fleet-console"}' \
   make capture OUT=dist/capture STEPS='wait:9000;link:github,subspace-crew-diff://open?fleet=aurora&ship=aurora-lyra&member=wren&project=navigation-console;wait:1000;shot:crew-diff'
 ```
+
+Linux does not ship Fleet Console. Open **Settings › Fleets** to start the
+same service, wait for Aurora, then close Settings before the `link:` step.
+The [crew diff evidence](changes/crew-diff-view/README.md#screenshot-evidence)
+uses this path.
 
 `CAPTURE_FLEET_API=1` runs `scripts/fleet_api_test_server.py` on loopback: a
 fictional Stargate Fleet API v1 serving the demo world's `aurora` fleet (host

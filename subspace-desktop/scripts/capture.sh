@@ -202,15 +202,16 @@ chmod 755 "$fixture/bin/gh"
 # A first run has neither file: the app records a new install's theme.
 if [ -z "${CAPTURE_FIRST_RUN:-}" ]; then
 python3 - "$state_dir" "$config_dir" "${CAPTURE_THEME:-}" "${CAPTURE_STATE:-}" "${CAPTURE_CONFIG:-}" "$fleet_api" \
-    "${CAPTURE_FLEET_TOKEN:-saved}" <<'EOF'
+    "${CAPTURE_FLEET_TOKEN:-saved}" "$platform" <<'EOF'
 import json, os, sys
-state_dir, config_dir, theme, state_extra, config_extra, fleet_api, fleet_token = sys.argv[1:]
+state_dir, config_dir, theme, state_extra, config_extra, fleet_api, fleet_token, platform = sys.argv[1:]
 state = {"appearance.theme": theme} if theme else {}
 state.update(json.loads(state_extra or "{}"))
 config = {"repos": ["acme/web", "acme/api", "acme/design-system"]}
 boards = {}
-if fleet_api:
-    # The app adds its built-in Fleet Console to this entry at start.
+if fleet_api and platform == "Darwin":
+    # Only macOS capture installs the built-in Fleet Console at start. On
+    # Linux a source-less entry would make the whole Settings file invalid.
     boards["fleet-console"] = {"settings": {"endpoint": fleet_api}, "secrets": {"token": "fixture-fleet"}}
 extra = json.loads(config_extra or "{}")
 # CAPTURE_CONFIG's web Spaces join these by ID; its own fleet-console entry replaces the one above.
