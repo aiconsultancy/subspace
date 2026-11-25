@@ -1,10 +1,13 @@
 """Offline checks for the fleet's toolchains: the toolchains and systemPackages settings, the officers' tool
-environment, the dry run's plan, detection from small fixture repositories and checking a repository's tools.
+environment, the dry run's plan, detection from small fixture repositories, and subspace-setup's recorded
+toolchains across runs.
 
 Run with Python 3.11 or later (detection reads TOML): python3 -B subspace-installer/tests/toolchains_test.py
 """
 
 import argparse
+import contextlib
+import io
 import json
 from pathlib import Path
 import sys
@@ -14,6 +17,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
+import fleet_setup  # noqa: E402
 import runtime  # noqa: E402
 import toolchains  # noqa: E402
 from toolchains import Invalid  # noqa: E402
@@ -617,6 +621,204 @@ class PlanTests(unittest.TestCase):
         # Documentation-only packages are proposed, but left out of the suggested command.
         self.assertIn("--system-packages libssl-dev,libwebkit2gtk-4.1-dev,pkg-config", command)
         self.assertNotIn("clang", command)
+
+
+def setup_args(*argv):
+    return fleet_setup.parse_args(["--non-interactive", *argv])
+
+
+class SetupRecordTests(unittest.TestCase):
+    """subspace-setup's recorded toolchains: confirmed choices keep their sources across runs, later runs propose
+    only what repositories added since need, nothing confirmed is dropped and nothing is added unasked."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        self.inputs = root / "inputs"
+        self.inputs.mkdir()
+        self.references = root / "references"
+        for name, value in (("INPUTS", self.inputs), ("REFERENCES", self.references), ("AGENT_HOMES", root / "agents")):
+            patcher = patch.object(fleet_setup, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(toolchains, "package_state", return_value="available")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.config = {"slug": "example-fleet", "rearAdmiral": {"id": "atlas"}, "captains": [{"id": "orion"}],
+                       "repositories": [{"id": "harbour-api", "url": "https://github.com/example/harbour-api.git"}],
+                       "toolchains": {"node": "24", "go": "1.26"}}
+        (self.inputs / "fleet.json").write_text(json.dumps(self.config))
+
+    def clone(self, *names):
+        write_repositories(self.references / "atlas", {name: REPOSITORIES[name] for name in names})
+
+    def run_setup(self, *argv):
+        """What one setup run does with the toolchains: update the record, write fleet.json, propose."""
+        args = setup_args(*argv)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            record, changes = fleet_setup.update_toolchains(args, {})
+            for line in changes:
+                fleet_setup.say(line)
+            config = dict(self.config)
+            config["toolchains"], packages = fleet_setup.toolchain_settings(record, config)
+            if packages:
+                config["systemPackages"] = packages
+            (self.inputs / "fleet.json").write_text(json.dumps(config))
+            if proposal := fleet_setup.propose_toolchains(config, record):
+                fleet_setup.show_proposal(proposal, True, record)
+        return config, json.loads((self.inputs / "toolchains.json").read_text()), output.getvalue()
+
+    def test_an_existing_fleet_keeps_its_toolchains_and_records_them(self):
+        config, record, output = self.run_setup()
+        self.assertEqual(config["toolchains"], {"node": "24", "go": "1.26"})
+        self.assertEqual([(row["tool"], row["version"], row["sources"]) for row in record["tools"]],
+                         [("node", "24", [{"by": "fleet.json"}]), ("go", "1.26", [{"by": "fleet.json"}])])
+        self.assertIn("recorded the fleet's toolchains from fleet.json: node@24, go@1.26", output)
+        # No detection unless the fleet derives its toolchains.
+        self.assertNotIn("proposal", output)
+
+    def test_derive_proposes_after_cloning_and_confirming_records_the_sources(self):
+        _, _, output = self.run_setup("--toolchains", "derive")
+        self.assertIn("not cloned on this VM yet", output)
+        self.clone("harbour-api")
+        config, record, output = self.run_setup("--toolchains", "derive")
+        # Proposed, recorded as waiting, and nothing installed: fleet.json is unchanged.
+        self.assertIn("Toolchain proposal from harbour-api.", output)
+        self.assertEqual(config["toolchains"], {"node": "24", "go": "1.26"})
+        self.assertEqual(record["proposal"]["repositories"], ["harbour-api"])
+        self.assertEqual(record["examined"], [])
+        # The person confirms some of it; the rest is recorded as declined.
+        config, record, output = self.run_setup("--toolchains", "dotnet@8.0.404,node@22.11.0",
+                                                "--system-packages", "zsh")
+        self.assertEqual(config["toolchains"], {"node": ["24", "22.11.0"], "go": "1.26", "dotnet": "8.0.404"})
+        self.assertEqual(config["systemPackages"], ["zsh"])
+        dotnet = next(row for row in record["tools"] if row["tool"] == "dotnet")
+        self.assertEqual(dotnet["sources"][0]["file"], "global.json")
+        self.assertEqual(dotnet["install"], "shared")
+        self.assertEqual(record["packages"][0]["sources"][0]["file"], ".github/workflows/ci.yml")
+        self.assertEqual(record["examined"], ["harbour-api"])
+        self.assertEqual([row["name"] for row in record["declined"]["tools"]], ["pnpm"])
+        self.assertIsNone(record["proposal"])
+        self.assertIn("not confirmed, so recorded as declined: pnpm@9.12.3", output)
+        # A later run keeps every choice and proposes nothing from repositories already examined.
+        again, record_again, output = self.run_setup()
+        self.assertEqual(again["toolchains"], config["toolchains"])
+        self.assertEqual(record_again["tools"], record["tools"])
+        self.assertNotIn("proposal", output)
+        # A repository added since is examined on its own.
+        self.config["repositories"].append({"id": "orbit-platform", "url": "https://github.com/example/orbit.git"})
+        self.clone("orbit-platform")
+        _, record, output = self.run_setup()
+        self.assertIn("Toolchain proposal from orbit-platform.", output)
+        self.assertNotIn("dotnet@8.0.404", output.split("Toolchain proposal", 1)[1])
+        self.assertEqual(record["proposal"]["repositories"], ["orbit-platform"])
+
+    def test_nothing_confirmed_is_dropped_silently(self):
+        self.run_setup("--toolchains", "pnpm@9.12.3,rust@1.99.0")
+        # Taken out of fleet.json by hand, a confirmed tool stays, and setup says how to remove it.
+        edited = dict(self.config, toolchains={"node": "24", "go": "1.26", "rust": "1.99.0"})
+        (self.inputs / "fleet.json").write_text(json.dumps(edited))
+        config, _, output = self.run_setup()
+        self.assertEqual(config["toolchains"]["pnpm"], "9.12.3")
+        self.assertIn("kept pnpm@9.12.3 (confirmed", output)
+        self.assertIn("'subspace-setup --toolchains=-pnpm@9.12.3' removes it", output)
+        # Removing it by name does remove it, and says it stays installed.
+        config, _, output = self.run_setup("--toolchains=-pnpm,-node@24")
+        self.assertNotIn("pnpm", config["toolchains"])
+        self.assertIs(config["toolchains"]["node"], False)
+        self.assertIn("removed pnpm@9.12.3 from the toolchains (it stays installed)", output)
+        # Added to fleet.json by hand, a tool is recorded, with fleet.json as its source.
+        edited = dict(self.config, toolchains={**config["toolchains"], "deno": "2"})
+        (self.inputs / "fleet.json").write_text(json.dumps(edited))
+        _, record, output = self.run_setup()
+        self.assertIn("recorded deno@2, which fleet.json lists", output)
+        self.assertEqual(next(row for row in record["tools"] if row["tool"] == "deno")["sources"], [{"by": "fleet.json"}])
+
+    def test_items_are_validated_before_anything_is_recorded(self):
+        for argv in (["--toolchains", "node"], ["--toolchains", "node@24;reboot"], ["--system-packages", "zsh;id"],
+                     ["--toolchains", "postinstall:x@1"]):
+            with self.subTest(argv=argv), self.assertRaises(fleet_setup.SetupError):
+                fleet_setup.update_toolchains(setup_args(*argv), {})
+        self.assertFalse((self.inputs / "toolchains.json").exists())
+        self.assertEqual(fleet_setup.parse_toolchain_items("npm:@example/cli@1.2.0,-node,cargo:cargo-nextest@0.9.100"),
+                         [(False, "npm:@example/cli", "1.2.0"), (True, "node", None),
+                          (False, "cargo:cargo-nextest", "0.9.100")])
+
+    def test_a_proposal_with_nothing_new_is_settled_at_once(self):
+        self.config["toolchains"] = {"bun": "1.3.2", "prek": "0.2.10", "gitleaks": "8.28.0", "shellcheck": "0.11.0",
+                                     "github:example/relay-cli": "0.7.1"}
+        self.config["repositories"] = [{"id": "relay-gateway", "url": "https://github.com/example/relay.git"}]
+        (self.inputs / "fleet.json").write_text(json.dumps(self.config))
+        self.clone("relay-gateway")
+        _, record, output = self.run_setup("--toolchains", "derive")
+        self.assertIn("Nothing new to confirm.", output)
+        self.assertEqual(record["examined"], ["relay-gateway"])
+        self.assertIsNone(record["proposal"])
+
+    def test_the_show_and_detect_commands(self):
+        self.clone("harbour-api")
+        self.run_setup()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            fleet_setup.toolchains_command([])
+        self.assertIn("  go@1.26: shared (/opt/subspace-fleet/toolchains); confirmed", output.getvalue())
+        self.assertIn("Repositories examined: none", output.getvalue())
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), patch.object(fleet_setup.os, "geteuid", return_value=0):
+            fleet_setup.toolchains_command(["detect", "--json"])
+        proposal = json.loads(output.getvalue())
+        self.assertEqual(proposal["repositories"], ["harbour-api"])
+        record = json.loads((self.inputs / "toolchains.json").read_text())
+        self.assertEqual(record["proposal"]["repositories"], ["harbour-api"])
+        with patch.object(fleet_setup.os, "geteuid", return_value=1000), self.assertRaises(fleet_setup.SetupError):
+            fleet_setup.toolchains_command(["detect"])
+
+    def test_setups_dry_run_shows_the_proposal_and_records_nothing(self):
+        self.clone("harbour-api")
+        (self.inputs / "fleet.json").unlink()
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--crew-claude", "0", "--crew-codex", "0", "--inputs", str(self.inputs),
+                "--stargate-ref", "c" * 40, "--no-demo", "--no-api", "--repositories",
+                "harbour-api=https://github.com/example/harbour-api.git", "--toolchains", "derive",
+                "--system-packages", "zsh", "--dry-run"]
+        planned, said = [], []
+
+        def installer(config_path, dry_run=False, secrets_dir=None):
+            self.assertTrue(dry_run)
+            planned.append(json.loads(Path(config_path).read_text()))
+
+        output = io.StringIO()
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "say", side_effect=said.append), \
+                patch.object(fleet_setup, "installer", side_effect=installer), \
+                patch.object(fleet_setup, "check_outbound"), patch.object(fleet_setup, "ownership_check"), \
+                contextlib.redirect_stdout(output):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        # The fleet installer's dry run gets the toolchains the real run would install, and setup proposes.
+        self.assertEqual(planned[-1]["toolchains"], {"node": "24"})
+        self.assertEqual(planned[-1]["systemPackages"], ["zsh"])
+        self.assertIn("toolchain proposal (dry run: not recorded):", said)
+        self.assertIn("  [high] dotnet@8.0.404: shared", output.getvalue())
+        self.assertIn("Already configured: zsh.", output.getvalue())
+        # Nothing the dry run did is kept.
+        self.assertEqual(sorted(path.name for path in self.inputs.iterdir()), [])
+
+    def test_the_question_and_its_answers(self):
+        args = setup_args("--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                          "--operator", "operator")
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            self.assertEqual(fleet_setup.gather(args, {})["toolchains"], "none")
+            for value, mode in (("derive", "derive"), ("none", "none"), ("node@24,pnpm@9.12.3", "list")):
+                args = setup_args("--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                                  "--operator", "operator", "--toolchains", value)
+                self.assertEqual(fleet_setup.gather(args, {})["toolchains"], mode)
+            # A fleet that derives keeps deriving when tools are confirmed by name.
+            args = setup_args("--toolchains", "pnpm@9.12.3")
+            saved = {"name": "Example Fleet", "slug": "example-fleet", "rearAdmiral": "Atlas", "captains": ["Orion"],
+                     "toolchains": "derive", "crew": {"claude": 0, "codex": 0}, "operator": "operator",
+                     "officerModels": {}}
+            self.assertEqual(fleet_setup.gather(args, saved)["toolchains"], "derive")
 
 
 if __name__ == "__main__":

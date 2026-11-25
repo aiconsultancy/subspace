@@ -57,6 +57,7 @@ import irc_accounts  # noqa: E402
 import postgres_check  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
+import toolchains  # noqa: E402
 INPUTS = Path("/root/fleet")
 API_DIR = Path("/opt/subspace/api")
 FLEET_APP = Path("/opt/subspace-fleet")
@@ -122,6 +123,14 @@ SECRET_OWNER = 0  # root
 DATABASE_CA = "/etc/subspace/database-ca.pem"
 # The exit code of the API's `scripts/migrate.ts --check` when the database lacks migrations the API needs.
 MIGRATIONS_PENDING = 3
+# The fleet's toolchains as the person confirmed them, each with where it came from, beside answers.json: what
+# fleet.json's toolchains and systemPackages are written from, the repositories detection has proposed from, what
+# was declined, and a proposal waiting for an answer.
+TOOLCHAIN_RECORD = "toolchains.json"
+# Where detection reads the repositories: the rear admiral's reference checkouts, which hold every repository,
+# private ones included, as the mirror service refreshes them. Officers' homes hold their per-user tools.
+REFERENCES = Path("/var/lib/subspace-fleet/references")
+AGENT_HOMES = Path("/var/lib/subspace-fleet/agents")
 
 
 class SetupError(Exception):
@@ -302,6 +311,17 @@ def parse_args(argv):
                         help="delegate (the default for a new fleet) leaves edits, commits and pushes to the crew and "
                         "gives captains an open shell without them; standard lets captains code. Kept on later runs; "
                         "a fleet set up before this option keeps standard")
+    parser.add_argument("--toolchains", help="the toolchains the repositories need: 'derive' (after cloning, setup "
+                        "reads the repositories and proposes what they need, installing nothing until you confirm "
+                        "it), 'none' (the default: Node 24 and the base tools), or tools as TOOL@VERSION, "
+                        "comma-separated, such as node@22.11.0,pnpm@9.12.3,cargo:cargo-nextest@0.9.100, which "
+                        "confirms them; --toolchains=-TOOL or =-TOOL@VERSION removes one. Kept on later runs")
+    parser.add_argument("--system-packages", help="Debian packages the repositories need, installed with apt, "
+                        "comma-separated, such as zsh,clang,libssl-dev; --system-packages=-PACKAGE takes one off the "
+                        "list (it stays installed). Kept on later runs")
+    parser.add_argument("--verify-toolchains", action="store_true", help="after installing, run each repository's "
+                        "basic check as a crew member would and report pass or fail per repository; never stops the "
+                        "install")
     return parser.parse_args(argv)
 
 
@@ -395,6 +415,23 @@ def gather(args, saved):
                         "requests) or standard (captains code too)", "delegate", interactive)
         require(policy in ("standard", "delegate"), "Choose standard or delegate for --captain-tools.")
         answers["captainTools"] = policy
+    if args.toolchains in ("derive", "none"):
+        answers["toolchains"] = args.toolchains
+    elif args.toolchains is not None:
+        # Tools listed by hand: a fleet that derives keeps deriving for repositories added later.
+        if answers.get("toolchains") != "derive":
+            answers["toolchains"] = "list"
+    elif "toolchains" not in answers:
+        if interactive and not saved and repositories:
+            choice = prompt("Toolchains the repositories need: derive (setup reads them after cloning and proposes "
+                            "what they need, for you to confirm), none, or tools as TOOL@VERSION,...", "derive",
+                            interactive) or "derive"
+            if choice not in ("derive", "none"):
+                args.toolchains, choice = choice, "list"
+            answers["toolchains"] = choice
+        else:
+            # Unattended, and fleets set up before the question: no detection; Node 24 and the base tools.
+            answers["toolchains"] = "none"
     if args.initiative == "":
         answers.pop("initiativeId", None)
     elif args.initiative is not None:
@@ -1011,7 +1048,6 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         "captains": members[1:],
         "crew": {family: {"count": count} for family, count in answers["crew"].items()},
         "operatorUsers": [answers["operator"]],
-        "toolchains": {"node": "24"},
         "irc": {
             "mode": "local",
             "allowedAccounts": [answers["admin"]],
@@ -1034,6 +1070,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     previous = read_json(INPUTS / "fleet.json", {})
     if policy := answers.get("captainTools", previous.get("captainTools")):
         config["captainTools"] = policy
+    config["toolchains"], packages = toolchain_settings(read_json(INPUTS / TOOLCHAIN_RECORD), previous)
+    if packages:
+        config["systemPackages"] = packages
     # Each crew family's model: this or an earlier run's answer, else one set in fleet.json by hand.
     for family, crew in config["crew"].items():
         chosen = answers.get("crewModels", {})
@@ -1041,7 +1080,7 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         if model:
             crew["model"] = model
     # Keep anything the operator added by hand, such as private repositories, GitHub Apps or stakeholders.
-    for key in ("harness", "stakeholders", "usage", "medical", "toolchains", "maintenance",
+    for key in ("harness", "stakeholders", "usage", "medical", "maintenance",
                 "githubPolicy", "dashboard", "proxy", "agentsview"):
         if key in previous:
             config[key] = previous[key]
@@ -1124,6 +1163,316 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
 
 # fleet.json's harness block for each officer role, and who it is.
 OFFICER_ROLES = {"captain": "the captains", "rearAdmiral": "the rear admiral"}
+
+
+# Toolchains ------------------------------------------------------------------
+
+def blank_record():
+    return {"tools": [], "packages": [], "declined": {"tools": [], "packages": []}, "examined": [], "proposal": None}
+
+
+def configured_rows(value):
+    """fleet.json's toolchains as one row per tool version, Node 24 included unless node is false."""
+    try:
+        tools = runtime.toolchain_config(value if isinstance(value, dict) else {})
+    except runtime.Invalid as error:
+        raise SetupError(f"fleet.json's toolchains: {error}") from None
+    return [{"tool": spec, "version": version, "install": entry["install"], "options": entry["options"]}
+            for spec, entry in tools.items() for version in entry["versions"]]
+
+
+def configured_packages(value):
+    try:
+        return runtime.toolchains.package_config(value if value is not None else [])
+    except runtime.Invalid as error:
+        raise SetupError(f"fleet.json's systemPackages: {error}") from None
+
+
+def source_text(sources):
+    """Where a confirmed item came from, in a few words."""
+    if not sources:
+        return "no recorded source"
+    first = sources[0]
+    if "by" in first:
+        return {"default": "the installer's default", "fleet.json": "fleet.json", "listed": "listed by hand"}.get(
+            first["by"], first["by"])
+    more = f" and {len(sources) - 1} more" if len(sources) > 1 else ""
+    return f"{toolchains.source_label(first)}{more}"
+
+
+def parse_toolchain_items(value):
+    """--toolchains TOOL@VERSION,-TOOL,-TOOL@VERSION as (remove, tool, version or None) triples."""
+    items = []
+    for raw in (part.strip() for part in value.split(",")):
+        if not raw:
+            continue
+        remove, text = raw.startswith("-"), raw.removeprefix("-")
+        tool, version = text, None
+        match = re.fullmatch(r"(.+)@([A-Za-z0-9][A-Za-z0-9._+-]*)", text)
+        if match and not match.group(1).endswith(":"):
+            tool, version = match.groups()
+        try:
+            runtime.toolchains.tool_name(tool)
+            if version is not None:
+                runtime.toolchains.tool_version(version, tool)
+        except runtime.Invalid as error:
+            raise SetupError(f"--toolchains: {error}") from None
+        require(remove or version, f"--toolchains: name {tool}'s version, as {tool}@VERSION (such as node@24).")
+        items.append((remove, tool, version))
+    return items
+
+
+def parse_package_items(value):
+    items = []
+    for raw in (part.strip() for part in value.split(",")):
+        if not raw:
+            continue
+        remove, name = raw.startswith("-"), raw.removeprefix("-")
+        require(re.fullmatch(toolchains.PACKAGE, name), f"--system-packages: {name!r} is not a Debian package name, "
+                "such as libssl-dev.")
+        items.append((remove, name))
+    return items
+
+
+def proposed_item(record, kind, name, version=None):
+    proposal = record.get("proposal") or {}
+    return next((item for item in proposal.get("items", []) if item["kind"] == kind and item["name"] == name
+                 and item["version"] == version), None)
+
+
+def update_toolchains(args, answers):
+    """Bring the recorded toolchains up to date and return what changed, as lines for the operator.
+
+    The record starts from fleet.json (or the installer's default, Node 24), so an existing fleet's toolchains keep
+    working; later hand edits to fleet.json are recorded too. --toolchains and --system-packages confirm or remove
+    items, a confirmed item taking its sources from the pending proposal. Answering a proposal settles it: its
+    repositories count as examined and what was not confirmed is recorded as declined. Nothing confirmed is dropped
+    unless this run removes it by name, and nothing is added that nobody named."""
+    lines = []
+    path = INPUTS / "fleet.json"
+    previous = read_json(path, {}) or {}
+    rows = configured_rows(previous.get("toolchains", {}))
+    packages = configured_packages(previous.get("systemPackages"))
+    listed = previous.get("toolchains") if isinstance(previous.get("toolchains"), dict) else {}
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    record = read_json(INPUTS / TOOLCHAIN_RECORD)
+    if record is None:
+        record = blank_record()
+        for row in rows:
+            by = "fleet.json" if row["tool"] in listed else "default"
+            record["tools"].append({**row, "sources": [{"by": by}], "confirmed": today})
+        record["packages"] = [{"package": name, "sources": [{"by": "fleet.json"}], "confirmed": today}
+                              for name in packages]
+        if previous:
+            lines.append("recorded the fleet's toolchains from fleet.json: " + (", ".join(
+                f"{row['tool']}@{row['version']}" for row in record["tools"]) or "none") + (
+                f"; system packages {', '.join(packages)}" if packages else ""))
+    elif path.exists():
+        # Hand edits to fleet.json since setup wrote it from the record.
+        for row in rows:
+            kept = next((item for item in record["tools"] if (item["tool"], item["version"]) ==
+                         (row["tool"], row["version"])), None)
+            if kept is None:
+                record["tools"].append({**row, "sources": [{"by": "fleet.json"}], "confirmed": today})
+                lines.append(f"recorded {row['tool']}@{row['version']}, which fleet.json lists")
+            elif (kept["install"], kept["options"]) != (row["install"], row["options"]):
+                kept.update(install=row["install"], options=row["options"])
+                lines.append(f"recorded {row['tool']}@{row['version']}'s install and options from fleet.json")
+        present = {(row["tool"], row["version"]) for row in rows}
+        for item in record["tools"]:
+            if (item["tool"], item["version"]) not in present:
+                lines.append(f"kept {item['tool']}@{item['version']} (confirmed {item['confirmed']}, from "
+                             f"{source_text(item['sources'])}), which fleet.json no longer lists; "
+                             f"'subspace-setup --toolchains=-{item['tool']}@{item['version']}' removes it")
+        for name in packages:
+            if name not in [item["package"] for item in record["packages"]]:
+                record["packages"].append({"package": name, "sources": [{"by": "fleet.json"}], "confirmed": today})
+                lines.append(f"recorded the system package {name}, which fleet.json lists")
+        for item in record["packages"]:
+            if item["package"] not in packages:
+                lines.append(f"kept the system package {item['package']} (confirmed {item['confirmed']}), which "
+                             f"fleet.json no longer lists; 'subspace-setup --system-packages=-{item['package']}' "
+                             "removes it")
+    confirmed = set()
+    if args.toolchains not in (None, "derive", "none"):
+        for remove, tool, version in parse_toolchain_items(args.toolchains):
+            matching = [item for item in record["tools"] if item["tool"] == tool and version in (None, item["version"])]
+            if remove:
+                for item in matching:
+                    record["tools"].remove(item)
+                    lines.append(f"removed {tool}@{item['version']} from the toolchains (it stays installed)")
+                if not matching:
+                    lines.append(f"{tool}{'@' + version if version else ''} is not in the toolchains")
+                continue
+            confirmed.add(("tool", tool, version))
+            if matching:
+                lines.append(f"{tool}@{version} is already in the toolchains")
+                continue
+            proposed = proposed_item(record, "tool", tool, version)
+            record["tools"].append({
+                "tool": tool, "version": version,
+                "install": proposed["where"] if proposed and proposed.get("where") in ("shared", "user")
+                else toolchains.default_install(tool),
+                "options": proposed["options"] if proposed else {},
+                "sources": proposed["sources"] if proposed else [{"by": "listed"}], "confirmed": today})
+            lines.append(f"confirmed {tool}@{version}" + (f", from {source_text(proposed['sources'])}" if proposed
+                                                          else ", listed by hand"))
+    if args.system_packages is not None:
+        for remove, name in parse_package_items(args.system_packages):
+            matching = [item for item in record["packages"] if item["package"] == name]
+            if remove:
+                for item in matching:
+                    record["packages"].remove(item)
+                    lines.append(f"took the system package {name} off the list (it stays installed)")
+                continue
+            confirmed.add(("package", name, None))
+            if not matching:
+                proposed = proposed_item(record, "package", name)
+                record["packages"].append({"package": name, "sources": proposed["sources"] if proposed
+                                           else [{"by": "listed"}], "confirmed": today})
+                lines.append(f"confirmed the system package {name}" + (
+                    f", from {source_text(proposed['sources'])}" if proposed else ", listed by hand"))
+    proposal = record.get("proposal")
+    if proposal and (args.toolchains not in (None, "derive") or args.system_packages is not None):
+        if args.toolchains == "none":
+            lines.append(f"dropped the unanswered toolchain proposal from {', '.join(proposal['repositories'])}")
+        else:
+            declined = [item for item in proposal["items"] if not item.get("configured")
+                        and (item["kind"], item["name"], item["version"]) not in confirmed]
+            for item in declined:
+                kind = "tools" if item["kind"] == "tool" else "packages"
+                record["declined"][kind].append({"name": item["name"], "version": item["version"],
+                                                 "sources": item["sources"], "declined": today})
+            record["examined"] = list(dict.fromkeys([*record["examined"], *proposal["repositories"]]))
+            lines.append(f"answered the toolchain proposal from {', '.join(proposal['repositories'])}"
+                         + (f"; not confirmed, so recorded as declined: "
+                            f"{', '.join(toolchains.item_label(item) for item in declined)}" if declined else ""))
+        record["proposal"] = None
+    write_json(INPUTS / TOOLCHAIN_RECORD, record)
+    return record, lines
+
+
+def toolchain_settings(record, previous):
+    """fleet.json's toolchains and systemPackages, from the record (before one exists, as fleet.json has them)."""
+    if record is None:
+        return previous.get("toolchains", dict(toolchains.DEFAULT_TOOLS)), list(previous.get("systemPackages", []))
+    tools = {}
+    for row in record["tools"]:
+        entry = tools.setdefault(row["tool"], {"versions": [], "install": row["install"], "options": {}})
+        entry["versions"].append(row["version"])
+        entry["options"].update(row["options"])
+    result = {} if "node" in tools else {"node": False}
+    for spec, entry in tools.items():
+        versions = entry["versions"][0] if len(entry["versions"]) == 1 else entry["versions"]
+        if entry["install"] == toolchains.default_install(spec) and not entry["options"]:
+            result[spec] = versions
+        else:
+            result[spec] = {"version": versions,
+                            **({"install": entry["install"]} if entry["install"] != toolchains.default_install(spec)
+                               else {}),
+                            **({"options": entry["options"]} if entry["options"] else {})}
+    return result, [row["package"] for row in record["packages"]]
+
+
+def propose_toolchains(config, record, everything=False):
+    """Detect what the repositories need, from those not examined yet (every one with everything), as an annotated
+    proposal; None when there is no such repository."""
+    repositories = [row["id"] for row in config.get("repositories", []) if isinstance(row, dict) and "id" in row]
+    examined = set() if everything else set(record.get("examined", []))
+    new = [repository for repository in repositories if repository not in examined]
+    if not new:
+        return None
+    rear = config["rearAdmiral"]["id"]
+    proposal = toolchains.detect({repository: REFERENCES / rear / repository for repository in new})
+    try:
+        tools = runtime.toolchain_config(config.get("toolchains", {}))
+    except runtime.Invalid as error:
+        raise SetupError(f"fleet.json's toolchains: {error}") from None
+    homes = [AGENT_HOMES / person["id"] for person in [config["rearAdmiral"], *config.get("captains", [])]]
+    return toolchains.annotate(proposal, tools, config.get("systemPackages", []), homes)
+
+
+def uncloned(proposal):
+    """The proposal's repositories that are not cloned on this VM yet."""
+    return [entry["repository"] for entry in proposal["unknown"] if not entry["file"]]
+
+
+def record_proposal(record, proposal):
+    """Keep a proposal for the person to answer; one with nothing to confirm is settled at once."""
+    cloned = [repository for repository in proposal["repositories"] if repository not in uncloned(proposal)]
+    proposal = {**proposal, "repositories": cloned}
+    if any(not item.get("configured") for item in proposal["items"]):
+        record["proposal"] = proposal
+    else:
+        record["examined"] = list(dict.fromkeys([*record["examined"], *cloned]))
+        record["proposal"] = None
+    write_json(INPUTS / TOOLCHAIN_RECORD, record)
+
+
+def show_proposal(proposal, save, record=None):
+    """Print a proposal; with save, record it for the person to answer."""
+    if uncloned(proposal) == proposal["repositories"]:
+        say("the repositories are not cloned on this VM yet: setup proposes their toolchains after the install "
+            "clones them")
+        return
+    say("toolchain proposal" + ("" if save else " (dry run: not recorded)") + ":")
+    print("\n".join(toolchains.proposal_lines(proposal)), flush=True)
+    if save:
+        record_proposal(record, proposal)
+
+
+def record_lines(record):
+    """'subspace-setup toolchains': the recorded toolchains, with their sources, and what waits for an answer."""
+    lines = ["Toolchains, as confirmed:"]
+    lines += [f"  {row['tool']}@{row['version']}: {toolchains.where_label(row['install'])}"
+              + (f", options {row['options']}" if row["options"] else "")
+              + f"; confirmed {row['confirmed']}, from {source_text(row['sources'])}" for row in record["tools"]] \
+        or ["  none"]
+    if record["packages"]:
+        lines.append("System packages, as confirmed:")
+        lines += [f"  {row['package']}: confirmed {row['confirmed']}, from {source_text(row['sources'])}"
+                  for row in record["packages"]]
+    declined = [*record["declined"]["tools"], *record["declined"]["packages"]]
+    if declined:
+        lines.append("Declined (not proposed again; 'subspace-setup toolchains detect --all' proposes them again): "
+                     + ", ".join(f"{row['name']}" + (f"@{row['version']}" if row["version"] else "")
+                                 for row in declined))
+    lines.append("Repositories examined: " + (", ".join(record["examined"]) or "none"))
+    if record.get("proposal"):
+        lines.append("Waiting for an answer:")
+        lines += toolchains.proposal_lines(record["proposal"])
+    return lines
+
+
+def toolchains_command(argv):
+    """subspace-setup toolchains [detect [--all]] [--json]"""
+    parser = argparse.ArgumentParser(prog="subspace-setup toolchains", description="Show the fleet's recorded "
+                                     "toolchains, or propose what its repositories need (detect).")
+    parser.add_argument("action", nargs="?", choices=["show", "detect"], default="show")
+    parser.add_argument("--all", action="store_true", help="detect: read every repository again, not only those "
+                        "added since the last answered proposal, and propose again what was declined")
+    parser.add_argument("--json", action="store_true", help="print JSON")
+    args = parser.parse_args(argv)
+    config = read_json(INPUTS / "fleet.json")
+    require(config, "Set the fleet up first: subspace-setup has no fleet.json on this VM.")
+    record = read_json(INPUTS / TOOLCHAIN_RECORD)
+    if args.action == "show":
+        require(record is not None, "No toolchains are recorded yet: the next 'subspace-setup' run records "
+                "fleet.json's.")
+        print(json.dumps(record, indent=2) if args.json else "\n".join(record_lines(record)))
+        return
+    require(os.geteuid() == 0, "Run 'subspace-setup toolchains detect' as root: it reads the repositories the rear "
+            "admiral's reference checkouts hold.")
+    record = record or blank_record()
+    proposal = propose_toolchains(config, record, args.all)
+    if proposal is None:
+        say("every repository has been examined: nothing new to propose ('--all' reads them all again)")
+        return
+    if args.json:
+        print(json.dumps(proposal, indent=2))
+        record_proposal(record, proposal)
+        return
+    show_proposal(proposal, True, record)
 
 
 def resolved_officer(harness, role):
@@ -2681,6 +3030,10 @@ def configure(args):
     # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
     secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
     members = roster(answers, rear, captains)
+    # The toolchains as confirmed, with this run's choices: fleet.json's toolchains and systemPackages come from it.
+    record, changes = update_toolchains(args, answers)
+    for line in changes:
+        say(line)
     local_irc = answers["irc"] == "local"
     config_path = INPUTS / "fleet.json"
     secrets_path = INPUTS / "fleet.secrets.json"
@@ -2743,6 +3096,8 @@ def configure(args):
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
         ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
+        if answers["toolchains"] == "derive" and (proposal := propose_toolchains(read_json(config_path, {}), record)):
+            show_proposal(proposal, False)
         say("dry run complete; nothing on this VM changed")
         return
 
@@ -2832,6 +3187,12 @@ def configure(args):
     elif stargate_api:
         confirm_fleet_api(True, installed_stargate_source())
     ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
+    if answers["toolchains"] == "derive" and (proposal := propose_toolchains(read_json(config_path, {}), record)):
+        # The repositories are cloned now. Nothing proposed is installed until the person confirms it.
+        show_proposal(proposal, True, record)
+    if args.verify_toolchains:
+        # Each repository's basic check as a crew member; a failure is reported, never fatal.
+        run(FLEET_APP / "lib/runtime.py", "verify-toolchains", check=False)
 
     lockdown_id = ""
     if answers["lockdown"]:
@@ -3380,6 +3741,8 @@ def main(argv):
         register_fleet(registration)
     elif argv and argv[0] == "rename-officers":
         rename_officers(argv[1:])
+    elif argv and argv[0] == "toolchains":
+        toolchains_command(argv[1:])
     elif argv and argv[0] == "demo":
         answers = read_json(INPUTS / "answers.json", {})
         require(answers.get("api"), "The Subspace API is not set up on this VM.")
