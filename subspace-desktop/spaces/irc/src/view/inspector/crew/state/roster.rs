@@ -1,6 +1,6 @@
 //! The bounded member from the ship feed and the facts that drive a reread.
 
-use subspace_client_fleet::model::{CrewContext, CrewMember, ShipDetail, Task, TaskStatus};
+use subspace_client_fleet::model::{CrewContext, CrewMember, Git, ShipDetail, Task, TaskStatus};
 
 #[derive(PartialEq, Eq)]
 pub(in super::super) enum Roster {
@@ -65,6 +65,11 @@ pub(super) fn current_in<'a>(member: &'a CrewMember, key: Option<&str>) -> Optio
 
 fn task_revision(task: Option<&Task>) -> Option<(&str, TaskStatus, Option<i64>)> {
     task.map(|task| (task.id.as_str(), task.status, task.updated_at))
+}
+
+pub(super) fn same_checkout(left: &Git, right: &Git) -> bool {
+    // Do not infer identity from a prefix of a branch name or head.
+    left.repository == right.repository && left.branch == right.branch && left.head == right.head
 }
 
 pub(super) fn same_task_facts(old: Option<&Task>, new: Option<&Task>) -> bool {

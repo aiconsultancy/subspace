@@ -10,7 +10,7 @@ mod retry;
 mod roster;
 use retry::ReadWait;
 pub(super) use roster::Roster;
-use roster::{current_in, same_task_facts};
+use roster::{current_in, same_checkout, same_task_facts};
 
 pub(super) struct DetailState {
     pub roster: Roster,
@@ -288,8 +288,10 @@ fn overlay_facts(shown: &mut Cow<'_, CrewMember>, previous: &CrewContext, next: 
     };
     if git_changed {
         match (&mut context.git, &previous.git, &next.git) {
-            (Some(shown), Some(old), Some(new)) => {
-                overlay!(shown, old, new; repository, head, base, branch, ahead, behind, changed_files, error)
+            (Some(shown), Some(old), Some(new))
+                if same_checkout(shown, new) && same_checkout(old, new) =>
+            {
+                overlay!(shown, old, new; base, ahead, behind, changed_files, error)
             }
             (shown, _, new) => shown.clone_from(new),
         }
@@ -300,7 +302,9 @@ fn overlay_facts(shown: &mut Cow<'_, CrewMember>, previous: &CrewContext, next: 
             &previous.pull_request,
             &next.pull_request,
         ) {
-            (Some(shown), Some(old), Some(new)) if old.number == new.number => {
+            (Some(shown), Some(old), Some(new))
+                if shown.number == new.number && old.number == new.number =>
+            {
                 overlay!(shown, old, new; title, url, state, checks)
             }
             (shown, _, new) => shown.clone_from(new),

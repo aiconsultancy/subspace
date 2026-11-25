@@ -4,6 +4,7 @@ use subspace_client_fleet::model::CrewMember;
 
 use super::{DetailState, Roster};
 
+mod record_identity;
 mod recovery;
 
 fn member(id: &str, progress: &str, checked: u64) -> CrewMember {
@@ -147,11 +148,13 @@ fn a_response_merges_task_text_changed_during_the_read() {
 #[test]
 fn a_routine_git_change_keeps_unchanged_full_fields() {
     let mut bounded = member("first", "Checking…", 1);
-    bounded.contexts[0].git.as_mut().unwrap().branch = Some("Short…".into());
+    let git = bounded.contexts[0].git.as_mut().unwrap();
+    git.branch = Some("chart-the-coast".into());
+    git.base = Some("main".into());
     let mut state = DetailState::new(Roster::Present(Box::new(bounded.clone())), 0);
     let read = state.begin().unwrap();
     let mut full = bounded.clone();
-    full.contexts[0].git.as_mut().unwrap().branch = Some("The complete branch name".into());
+    full.contexts[0].git.as_mut().unwrap().base = Some("origin/main".into());
     let git = bounded.contexts[0].git.as_mut().unwrap();
     git.ahead = Some(2);
     git.checked_at = 3;
@@ -159,7 +162,7 @@ fn a_routine_git_change_keeps_unchanged_full_fields() {
     state.finish(read, Ok(full));
     let shown = state.shown(true).0.unwrap();
     let git = shown.contexts[0].git.as_ref().unwrap();
-    assert_eq!(git.branch.as_deref(), Some("The complete branch name"));
+    assert_eq!(git.base.as_deref(), Some("origin/main"));
     assert_eq!(git.ahead, Some(2));
     assert_eq!(state.begin(), None);
 }
