@@ -15,13 +15,17 @@ app_secrets=
 prune_secrets=false
 dry_run=false
 no_systemd=false
+verify_toolchains=false
 
 usage() {
     cat <<'USAGE'
 Usage: install.sh [install|upgrade|uninstall] [--config FILE] [--secrets FILE]
                   [--secrets-dir DIR] [--prune-secrets] [--dry-run] [--no-systemd]
+                  [--verify-toolchains]
 Config is required for the first install. Upgrade reuses the saved inputs by
 default. Uninstall stops the fleet and retains its accounts and persistent data.
+--verify-toolchains runs each repository's basic check as a crew member would
+after installing, and reports pass or fail per repository without failing.
 USAGE
 }
 
@@ -36,6 +40,7 @@ while (( $# )); do
         --prune-secrets) prune_secrets=true; shift ;;
         --dry-run) dry_run=true; shift ;;
         --no-systemd) no_systemd=true; shift ;;
+        --verify-toolchains) verify_toolchains=true; shift ;;
         --help|-h) usage; exit ;;
         *) die "Unknown argument $1" ;;
     esac
@@ -88,7 +93,10 @@ if "$dry_run"; then
     if [[ $action == uninstall ]]; then
         printf 'Would disable fleet services and remove installed programs and units. Fleet state and system packages are retained.\n'
     else
-        python3 "$runtime" plan "$config" "$secrets" "$app_secrets" "$prune_secrets"
+        plan=(plan "$config" "$secrets" "$app_secrets" "$prune_secrets")
+        # The plan says what this run would do: with --no-systemd, leave swap as it is.
+        if "$no_systemd"; then plan+=(no-systemd); fi
+        python3 "$runtime" "${plan[@]}"
         printf 'Would install packages and pinned %s binaries, converge service files, and apply optional fleet registration.\n' "$arch"
         if "$no_systemd"; then
             printf 'Would skip systemd and container startup.\n'
@@ -149,17 +157,53 @@ if [[ $action == uninstall ]]; then
     exit
 fi
 
+# apt and dpkg run from /, never from the caller's working directory.
+apt_get() { (cd / && DEBIAN_FRONTEND=noninteractive apt-get "$@"); }
+package_installed() { [[ $(cd / && dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null) == installed ]]; }
+
 ensure_packages() {
     local package
     local -a missing=()
     for package in "$@"; do
-        if [[ $(dpkg-query -W -f '${db:Status-Status}' "$package" 2>/dev/null) != installed ]]; then
-            missing+=("$package")
-        fi
+        package_installed "$package" || missing+=("$package")
     done
     if (( ${#missing[@]} )); then
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+        apt_get update -qq
+        apt_get install -y --no-install-recommends "${missing[@]}"
+    fi
+}
+
+# Packages named in fleet.json (systemPackages) or by the installer's screenshot list, installed and never
+# removed. apt-get install reads a name ending in "-" as "remove this package" and a name it does not know as a
+# pattern, so each name must be a plain package name that apt knows exactly, and --no-remove stops apt rather
+# than remove anything to make room. With "optional", a package no apt source offers, or that apt cannot install,
+# is reported and left out instead of stopping the install.
+ensure_listed_packages() {
+    local mode=$1 package names
+    local -a missing=() offered=()
+    shift
+    for package in "$@"; do
+        [[ $package =~ ^[a-z0-9][a-z0-9+.-]*[a-z0-9+.]$ ]] || die "Invalid system package name $package."
+        package_installed "$package" || missing+=("$package")
+    done
+    (( ${#missing[@]} )) || return 0
+    apt_get update -qq
+    for package in "${missing[@]}"; do
+        names=$(cd / && apt-cache pkgnames "$package") || names=
+        if grep -qxF -- "$package" <<< "$names"; then
+            offered+=("$package")
+        elif [[ $mode == optional ]]; then
+            printf 'subspace-fleet: no apt source on this VM offers %s; left out.\n' "$package" >&2
+        else
+            die "No apt source on this VM offers the package $package."
+        fi
+    done
+    (( ${#offered[@]} )) || return 0
+    if [[ $mode == optional ]]; then
+        apt_get install -y --no-install-recommends --no-remove "${offered[@]}" ||
+            printf 'subspace-fleet: apt could not install %s; left out.\n' "${offered[*]}" >&2
+    else
+        apt_get install -y --no-install-recommends --no-remove "${offered[@]}"
     fi
 }
 
@@ -281,6 +325,9 @@ start_services() {
 if ! command -v python3 >/dev/null; then
     ensure_packages python3
 fi
+if ! command -v git >/dev/null; then
+    ensure_packages git
+fi
 python3 "$runtime" prepare "$config" "$secrets" "$scratch" "$app_secrets" "$prune_secrets"
 install -d -m 0755 "$app" "$app/bin" "$app/src" "$app/lib" "$state"
 install -d -m 0711 "$etc"
@@ -290,6 +337,17 @@ install_file "$scratch/secrets.json" "$etc/secrets.json" 0600
 install_file "$scratch/extra-secrets.json" "$etc/extra-secrets.json" 0600
 mapfile -t source < "$scratch/sources"
 ensure_packages ca-certificates curl git openssh-client tmux unzip xz-utils build-essential jq ripgrep rsync nftables python3-venv
+# fleet.json's systemPackages, which runtime.py prepare checked are Debian package names. Never removed.
+mapfile -t system_packages < "$scratch/system-packages"
+if (( ${#system_packages[@]} )); then
+    ensure_listed_packages required "${system_packages[@]}"
+fi
+# The base screenshot tools' packages (lib/screenshots/package.json): a virtual display with keyboard maps, fonts
+# and the browser's libraries. Unless fleet.json turns screenshots off; one apt cannot install is reported.
+mapfile -t screenshot_packages < "$scratch/screenshot-packages"
+if (( ${#screenshot_packages[@]} )); then
+    ensure_listed_packages optional "${screenshot_packages[@]}"
+fi
 if [[ ${source[2]} == local ]]; then
     install_docker
 fi
@@ -327,8 +385,13 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
+done
+# The screenshot tools' pinned versions, which runtime.py render installs from.
+install -d -m 0755 "$app/lib/screenshots"
+for pins in package.json package-lock.json; do
+    install_file "$here/lib/screenshots/$pins" "$app/lib/screenshots/$pins" 0644
 done
 install -d -m 0755 "$app/lib/git-hooks"
 install_file "$here/lib/git-hooks/pre-push" "$app/lib/git-hooks/pre-push" 0755
@@ -351,6 +414,10 @@ if [[ $(readlink "$app/bin/subspace-github") != "$app/lib/github_app.py" ]]; the
 fi
 python3 "$app/lib/runtime.py" render "$etc/fleet.json" "$etc/secrets.json" "$prune_secrets"
 python3 "$app/lib/runtime.py" check
+if ! "$no_systemd"; then
+    # Swap for the engines' swap allowances, before they start (lib/memory.py). A problem is reported, never fatal.
+    python3 "$app/lib/runtime.py" swap || printf 'subspace-fleet: swap could not be checked; the install carries on.\n' >&2
+fi
 if [[ ${source[2]} == local ]]; then
     "$app/lib/runtime.py" irc config --quiet
 fi
@@ -383,4 +450,15 @@ if ! "$no_systemd"; then
 fi
 # With certificates, the fingerprints an IRC operator binds to the officers' accounts. No key material.
 python3 "$app/lib/runtime.py" irc-fingerprints
+# A crew member takes one screenshot of a local page; a failure is reported, never fatal.
+python3 "$app/lib/runtime.py" check-screenshots || printf 'subspace-fleet: the screenshot check could not run.\n' >&2
+if "$verify_toolchains"; then
+    # Reports each repository's result; a failed check never fails the install.
+    python3 "$app/lib/runtime.py" verify-toolchains || printf 'subspace-fleet: the toolchain check could not run.\n' >&2
+fi
+python3 "$app/lib/runtime.py" usage-guard-summary || printf 'subspace-fleet: the usage guard summary could not run.\n' >&2
+# The VM's memory, each engine's limits and why, limits set by hand, and swap: for the operator and their agent.
+summary=(memory-summary)
+if "$no_systemd"; then summary+=(no-systemd); fi
+python3 "$app/lib/runtime.py" "${summary[@]}" || printf 'subspace-fleet: the memory summary could not run.\n' >&2
 printf 'Fleet installation complete.\n'

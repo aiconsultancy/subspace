@@ -50,10 +50,12 @@ mod tests {
     use std::time::Duration;
 
     use super::{Work, stop_pair, supervised};
+    #[cfg(feature = "copilot")]
     use crate::runtime::Client;
 
     /// The actor waits on a call to a runtime that never answers. Dropping
     /// the handle's stop still ends it once the grace has passed.
+    #[cfg(feature = "copilot")]
     #[tokio::test]
     async fn dropping_the_handle_ends_an_actor_stuck_on_a_call() {
         let directory = tempfile::tempdir().unwrap();

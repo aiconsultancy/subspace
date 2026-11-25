@@ -4,7 +4,7 @@ use super::{
     SESSION_ID_LIMIT, THINKING_LEVELS, ToolStatus, TranscriptEntry, Usage, Value, fs,
 };
 use crate::ToolCall;
-use crate::runtime::transcript;
+use crate::runtime::summary;
 pub(in crate::runtime) fn command_chat(command: &Command) -> Option<ChatId> {
     match command {
         Command::Chat { chat, .. }
@@ -117,7 +117,7 @@ pub(super) fn tool_entry(record: &Value) -> TranscriptEntry {
         entry: Entry::Tool(ToolCall {
             call_id: call_id.to_owned(),
             title: record["toolName"].as_str().unwrap_or("Tool").to_owned(),
-            detail: transcript::argument_summary(&record["args"]),
+            detail: summary::argument_summary(&record["args"]),
             status: if !done {
                 ToolStatus::Running
             } else if failed {
@@ -244,7 +244,7 @@ pub(super) fn history_tool(
         entry: Entry::Tool(ToolCall {
             call_id: id.to_owned(),
             title: name,
-            detail: transcript::argument_summary(&arguments),
+            detail: summary::argument_summary(&arguments),
             status: if message["isError"].as_bool().unwrap_or(false) {
                 ToolStatus::Failed
             } else {

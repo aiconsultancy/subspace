@@ -1,9 +1,13 @@
 {
   "slug": "example-fleet",
   "name": "Example Fleet",
-  "rearAdmiral": { "id": "atlas", "name": "Atlas", "account": "example-atlas" },
+  "officerNames": "plain",
+  "rearAdmiral": { "id": "atlas", "name": "Atlas" },
   "captains": [
-    { "id": "orion", "name": "Orion", "account": "example-orion" }
+    {
+      "id": "orion", "name": "Orion",
+      "crewNames": { "claude-1": "Rigel", "claude-2": "Deneb", "codex-1": "Mira", "codex-2": "Sirius" }
+    }
   ],
   "harness": {
     "type": "opencode",
@@ -14,6 +18,7 @@
     "claude": { "count": 2, "model": "claude-sonnet-5-5" },
     "codex": { "count": 2, "model": "gpt-5.4" }
   },
+  "captainTools": "delegate",
   "repositories": [],
   "operatorUsers": [],
   "toolchains": { "node": "24" },

@@ -1,93 +1,115 @@
-//! One SDK client on a dedicated runtime. The UI never waits for SDK startup.
+//! One chat engine on a dedicated runtime. The UI never waits for its startup.
+//!
+//! Pi and ACP are always built. The Copilot engine, everything that talks to
+//! the Copilot SDK, is built only with the `copilot` feature; without it a
+//! saved Copilot choice is refused with [`COPILOT_UNAVAILABLE`].
+// What every engine shares.
 #[path = "runtime/acp.rs"]
 mod acp;
 #[path = "runtime/child.rs"]
 mod child;
-#[path = "config.rs"]
-mod config;
-#[path = "runtime/persistence.rs"]
-mod persistence;
-#[path = "runtime/pi.rs"]
-mod pi;
-#[path = "runtime/selection.rs"]
-mod selection;
-#[path = "runtime/startup.rs"]
-mod startup;
-use crate::ChatPreferences;
-use persistence::parse_session_id;
 #[path = "runtime/export.rs"]
 mod export;
-#[path = "runtime/library.rs"]
-mod library;
-pub use export::export_file_name;
-#[path = "runtime/display.rs"]
-mod display;
 #[path = "runtime/names.rs"]
 mod names;
+#[path = "runtime/pi.rs"]
+mod pi;
+#[path = "runtime/prompts.rs"]
+mod prompts;
+#[path = "runtime/refusal.rs"]
+mod refusal;
+#[path = "runtime/summary.rs"]
+mod summary;
 #[path = "runtime/supervisor.rs"]
 mod supervisor;
 #[path = "runtime/tabs.rs"]
 mod tabs;
-#[path = "runtime/watchdog.rs"]
-mod watchdog;
-use display::{bridge_event, history_entries, prompt, publish_sessions, refresh};
+use crate::ChatPreferences;
+pub use export::export_file_name;
 
-mod transcript;
-use transcript::Transcript;
+// The Copilot engine, which talks to the Copilot SDK.
+#[cfg(feature = "copilot")]
 #[path = "runtime/builtins.rs"]
 mod builtins;
+#[cfg(feature = "copilot")]
 #[path = "runtime/canvas.rs"]
 mod canvas;
+#[cfg(feature = "copilot")]
 #[path = "runtime/canvas_negotiation.rs"]
 mod canvas_negotiation;
+#[cfg(feature = "copilot")]
 #[path = "runtime/catalog.rs"]
 mod catalog;
+#[cfg(feature = "copilot")]
 #[path = "runtime/chat.rs"]
 mod chat;
+#[cfg(feature = "copilot")]
 #[path = "runtime/chat_session.rs"]
 mod chat_session;
+#[cfg(feature = "copilot")]
 #[path = "runtime/choices.rs"]
 mod choices;
+#[cfg(feature = "copilot")]
 #[path = "runtime/commands.rs"]
 mod commands;
+#[cfg(feature = "copilot")]
+#[path = "config.rs"]
+mod config;
+#[cfg(feature = "copilot")]
+#[path = "runtime/display.rs"]
+mod display;
+#[cfg(feature = "copilot")]
 #[path = "runtime/evidence.rs"]
 mod evidence;
-#[path = "runtime/refusal.rs"]
-mod refusal;
+#[cfg(feature = "copilot")]
+#[path = "runtime/library.rs"]
+mod library;
+#[cfg(feature = "copilot")]
+#[path = "runtime/persistence.rs"]
+mod persistence;
+#[cfg(feature = "copilot")]
 #[path = "runtime/remote.rs"]
 mod remote;
-use catalog::load_agents;
+#[cfg(feature = "copilot")]
 #[path = "runtime/sdk_tools.rs"]
 mod sdk_tools;
+#[cfg(feature = "copilot")]
+#[path = "runtime/selection.rs"]
+mod selection;
+#[cfg(feature = "copilot")]
 #[path = "runtime/session.rs"]
 mod session;
+#[cfg(feature = "copilot")]
 #[path = "runtime/setup.rs"]
 mod setup;
-use session::{
-    configure_sandbox, ensure_managed_policy, reset_permissions, verify_identity,
-    verify_local_session,
+#[cfg(feature = "copilot")]
+#[path = "runtime/startup.rs"]
+mod startup;
+#[cfg(feature = "copilot")]
+mod transcript;
+#[cfg(feature = "copilot")]
+#[path = "runtime/watchdog.rs"]
+mod watchdog;
+#[cfg(feature = "copilot")]
+use {
+    catalog::load_agents,
+    display::{bridge_event, history_entries, publish_sessions, refresh},
+    persistence::parse_session_id,
+    session::{
+        configure_sandbox, ensure_managed_policy, reset_permissions, verify_identity,
+        verify_local_session,
+    },
+    startup::validate_command,
+    transcript::Transcript,
 };
-use startup::validate_command;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use github_copilot_sdk::rpc::{
-    AgentSelectRequest, AgentsDiscoverRequest, EventLogReadRequest, EventsReadDirection,
-    ModeSetRequest, NameSetAutoRequest, NameSetRequest, PermissionMode, PermissionsSetModeRequest,
-    SandboxConfig, SandboxConfigAuth, SandboxConfigSource, SessionUpdateOptionsParams,
-    SessionsReadPersistedEventsRequest, ToolsListRequest,
-};
-use github_copilot_sdk::session::Session;
-use github_copilot_sdk::types::{
-    CustomAgentConfig, ResumeSessionConfig, SessionConfig, SessionEvent, SessionId,
-};
-use github_copilot_sdk::{Client, ClientMode, ClientOptions, Transport};
-use serde_json::Value;
 use subspace_core::{
     Secret,
     config::{ChatEngine, Config},
@@ -98,18 +120,34 @@ use subspace_core::{
 use tokio::sync::mpsc;
 
 use crate::{
-    ATTACHMENT_MARKER, ChatCommand, ChatEvent, ChatId, ChatMode, Choice, Command, ContextRef,
-    Entry, EntryKind, Event, MAX_CHATS, ModelChoice, SessionSummary, SlashCommand, ToolStatus,
-    TranscriptEntry, Usage,
+    ChatCommand, ChatEvent, ChatId, Command, ContextRef, Entry, EntryKind, Event, MAX_CHATS,
+    ModelChoice, SlashCommand, ToolStatus, TranscriptEntry, Usage,
 };
-use actor::run;
-use decisions::Decisions;
 #[cfg(test)]
 use files::copy_attachment;
 use files::{contains_secret, copy_attachment_checked, private_directory, read_regular_file};
 use interaction::EventQueue;
-use setup::SessionSetup;
 use subspace_agent_tools::{Catalog, ChatToolServer};
+
+#[cfg(feature = "copilot")]
+use {
+    crate::{ChatMode, Choice},
+    actor::run,
+    decisions::Decisions,
+    github_copilot_sdk::rpc::{
+        AgentSelectRequest, AgentsDiscoverRequest, EventLogReadRequest, EventsReadDirection,
+        ModeSetRequest, NameSetAutoRequest, NameSetRequest, PermissionMode,
+        PermissionsSetModeRequest, SandboxConfig, SandboxConfigAuth, SandboxConfigSource,
+        SessionUpdateOptionsParams, SessionsReadPersistedEventsRequest, ToolsListRequest,
+    },
+    github_copilot_sdk::session::Session,
+    github_copilot_sdk::types::{
+        CustomAgentConfig, ResumeSessionConfig, SessionConfig, SessionEvent, SessionId,
+    },
+    github_copilot_sdk::{Client, ClientMode, ClientOptions, Transport},
+    serde_json::Value,
+    setup::SessionSetup,
+};
 
 const EVENT_LIMIT: usize = 256;
 const DELTA_LIMIT: usize = 64 * 1024;
@@ -118,6 +156,7 @@ const WORKSPACE_LIMIT: u64 = 20 * 1024 * 1024;
 const PROMPT_LIMIT: usize = 256 * 1024;
 const APPROVAL_LIMIT: usize = 16;
 const COMMAND_LIMIT: usize = 64;
+#[cfg(feature = "copilot")]
 const MAX_AGENT_FILES: usize = 64;
 const SESSION_ID_LIMIT: usize = 128;
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
@@ -125,11 +164,30 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 const CHAT_OFF: &str = "Chat is off. Choose an engine in Settings > Chat.";
 
+/// Whether this build has the Copilot engine, the crate's `copilot` feature.
+pub const COPILOT_BUILT_IN: bool = cfg!(feature = "copilot");
+
+/// What a build without Copilot says when the config file selects it. The
+/// file keeps the choice, so a build with Copilot starts it again.
+pub const COPILOT_UNAVAILABLE: &str = concat!(
+    "Copilot chat is not part of this build of Subspace. Your Copilot choice is kept ",
+    "for a build that includes it. To chat here, choose another engine in Settings > Chat."
+);
+
 /// Offline runtime boundary for consumer tests. No thread, process or service starts.
 #[cfg(any(test, feature = "test-support"))]
 impl AgentHandle {
     // qual:test_helper
     pub fn test_offline(
+        workspace: PathBuf,
+        events: Vec<Event>,
+    ) -> (AgentHandle, mpsc::Receiver<Command>) {
+        Self::test_offline_engine(ChatEngine::Copilot, workspace, events)
+    }
+
+    /// The same, as a runtime of another engine, such as Pi.
+    pub fn test_offline_engine(
+        engine: ChatEngine,
         workspace: PathBuf,
         events: Vec<Event>,
     ) -> (AgentHandle, mpsc::Receiver<Command>) {
@@ -142,7 +200,7 @@ impl AgentHandle {
                 events: Arc::new(queue),
                 workspace,
                 attachment_lock: Mutex::new(()),
-                engine: ChatEngine::Copilot,
+                engine,
                 _stop: supervisor::stop_pair().0,
             }),
         };
@@ -201,6 +259,10 @@ impl AgentHandle {
         }
         if config.chat.engine == ChatEngine::Acp && !config.feature_enabled(&ACP_CHAT) {
             return Err(acp_disabled_message(ACP_CHAT.stage));
+        }
+        #[cfg(not(feature = "copilot"))]
+        if config.chat.engine == ChatEngine::Copilot {
+            return Err(COPILOT_UNAVAILABLE.into());
         }
         let engine = config.chat.engine;
         let workspace_name = match engine {
@@ -382,6 +444,7 @@ struct RuntimeLaunch {
     stopped: supervisor::Stopped,
 }
 
+#[cfg(feature = "copilot")]
 struct RuntimeContext {
     commands: mpsc::Receiver<Command>,
     events: Arc<EventQueue>,
@@ -438,8 +501,13 @@ fn engine_work(launch: RuntimeLaunch) -> Result<(supervisor::Work, supervisor::S
         preferences,
         stopped,
     } = launch;
+    #[cfg(not(feature = "copilot"))]
+    let _ = credentials;
     let work: supervisor::Work = match engine {
         ChatEngine::Off => return Err(CHAT_OFF.into()),
+        #[cfg(not(feature = "copilot"))]
+        ChatEngine::Copilot => return Err(COPILOT_UNAVAILABLE.into()),
+        #[cfg(feature = "copilot")]
         ChatEngine::Copilot => Box::pin(run(
             credentials,
             tools,
@@ -469,6 +537,7 @@ fn engine_work(launch: RuntimeLaunch) -> Result<(supervisor::Work, supervisor::S
 mod decisions;
 #[path = "runtime/interaction.rs"]
 mod interaction;
+#[cfg(feature = "copilot")]
 #[path = "runtime/permissions.rs"]
 mod permissions;
 
@@ -476,12 +545,15 @@ fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+#[cfg(feature = "copilot")]
 #[path = "runtime/actor.rs"]
 mod actor;
+#[cfg(feature = "copilot")]
 mod attachments;
 #[cfg(test)]
 mod batch_fixture;
 #[cfg(test)]
+#[cfg(feature = "copilot")]
 mod replay_fixture;
 
 #[path = "runtime/files.rs"]
@@ -502,10 +574,10 @@ pub(crate) fn redact(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AgentHandle, EventQueue, contains_secret, copy_attachment, pi_disabled_message, prompt,
-        verify_identity,
-    };
+    use super::prompts::prompt;
+    #[cfg(feature = "copilot")]
+    use super::verify_identity;
+    use super::{AgentHandle, EventQueue, contains_secret, copy_attachment, pi_disabled_message};
     use crate::{ChatEvent, ContextRef, EntryKind, Event};
     use std::fs;
     use std::sync::{Arc, Mutex};
@@ -521,8 +593,8 @@ mod tests {
         super::AgentHandle::test_offline(workspace, Vec::new()).0
     }
 
-    fn decisions(events: Arc<EventQueue>) -> super::Decisions {
-        super::Decisions {
+    fn decisions(events: Arc<EventQueue>) -> super::decisions::Decisions {
+        super::decisions::Decisions {
             events,
             pending: Mutex::new(Default::default()),
             chats: Mutex::new(Default::default()),
@@ -578,6 +650,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "copilot")]
     #[test]
     fn authentication_does_not_fall_back_to_another_identity() {
         assert!(verify_identity(true, Some("work"), "WORK").is_ok());
@@ -595,6 +668,18 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(error, "Chat is off. Choose an engine in Settings > Chat.");
+    }
+
+    #[cfg(not(feature = "copilot"))]
+    #[test]
+    fn a_build_without_copilot_refuses_a_saved_copilot_choice_before_startup() {
+        let mut config = Config::default();
+        config.chat.engine = ChatEngine::Copilot;
+        let credentials = test_support::credentials(&config);
+        let error = AgentHandle::start(Arc::new(config), credentials, Catalog::default())
+            .err()
+            .unwrap();
+        assert_eq!(error, super::COPILOT_UNAVAILABLE);
     }
 
     #[test]

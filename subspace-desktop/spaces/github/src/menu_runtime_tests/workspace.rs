@@ -142,6 +142,8 @@ fn load_detail(board: &mut Github, cx: &mut Context<Github>) {
         viewer_can_review: true,
         viewer_can_comment: true,
         changed_files: Some(0),
+        merge_target: None,
+        viewer_approved: false,
     };
     let mut account = Account::default();
     account.sections.insert(

@@ -10,7 +10,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import fleet_records
-from runtime import APP, ETC, UUID, Invalid, pattern, read_json, require, validate
+import memory
+from runtime import APP, ETC, UUID, Invalid, memory_plan, officer_unit, pattern, read_json, require, validate
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -19,9 +20,10 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class ApiError(Invalid):
-    def __init__(self, method, status):
+    def __init__(self, method, status, detail=""):
         self.status = status
-        super().__init__(f"Subspace API returned HTTP {status} for {method}.")
+        self.detail = detail
+        super().__init__(f"Subspace API returned HTTP {status} for {method}." + (f" {detail}" if detail else ""))
 
 
 class Api:
@@ -40,8 +42,14 @@ class Api:
             with self.opener.open(request, timeout=20) as response:
                 value = json.load(response)
         except HTTPError as error:
+            try:
+                detail = json.load(error).get("detail")
+            except (ValueError, AttributeError, OSError):
+                detail = None
             error.close()
-            raise ApiError(method, error.code) from None
+            # The API's reason, such as which agent and fleet hold a name, on one line.
+            raise ApiError(method, error.code, " ".join(detail.split())[:400] if isinstance(detail, str) else "") \
+                from None
         except (URLError, OSError, ValueError):
             raise Invalid(f"Could not read the Subspace API response for {method}.") from None
         require(isinstance(value, (dict, list)), "Unexpected Subspace API response.")
@@ -73,9 +81,14 @@ def register(cfg):
     if fields["fleetApiUrl"]:
         print(f"Desktops reach its Stargate Fleet API at {fields['fleetApiUrl']}; the desktop app asks for its token once.")
     for initiative in cfg["api"]["initiatives"]:
-        current = api.request("GET", f"/initiatives/{initiative}")
-        if current.get("fleetId") != fleet_id:
+        # An initiative of no fleet becomes this one's. One that belongs to another fleet stays there: a routine
+        # run never moves work between fleets, which 'assign' (or subspace-setup --initiative) does when asked.
+        owner = api.request("GET", f"/initiatives/{initiative}").get("fleetId")
+        if owner is None:
             api.assign(initiative, fleet_id)
+        elif owner != fleet_id:
+            print(f"Initiative {initiative} belongs to another fleet ({owner}), so it was left there. To move it to "
+                  f"{cfg['slug']}, run 'subspace-fleetctl assign {initiative} {cfg['slug']}'.")
 
 
 def attach(member):
@@ -100,6 +113,16 @@ def api_token():
     os.execvp("runuser", ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "gateway", settings, "api", "token"])
 
 
+def show_memory(cfg):
+    """Each engine's memory and task limits as systemd applies them now, its use, the VM's swap, every fleet process
+    the kernel has killed for memory since boot, and limits set by hand (lib/memory.py)."""
+    result = memory_plan(cfg)
+    officers = {person["id"]: officer_unit(cfg, person) for person in cfg["members"]}
+    for line in [*memory.live_lines(officers, result, memory.swap_state()), *memory.hand_made_lines(officers, result),
+                 *(f"Memory warning: {text}" for text in result["warnings"])]:
+        print(line)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -110,6 +133,8 @@ def main():
     tty = sub.add_parser("attach", help="open the rear admiral's or a captain's OpenCode tmux session (crew sessions are on the captain's server)")
     tty.add_argument("member")
     sub.add_parser("api-token", help="print the Stargate Fleet API token for an operator's client")
+    sub.add_parser("memory", help="show each engine's live memory limits and use, the VM's swap, and fleet processes "
+                   "killed for memory since boot")
     args = parser.parse_args()
     require(os.geteuid() == 0, "Run fleetctl as root.")
     os.umask(0o077)
@@ -122,6 +147,8 @@ def main():
     cfg = validate(read_json(ETC / "fleet.json"), read_json(private, private=True))
     if args.command == "register":
         register(cfg)
+    elif args.command == "memory":
+        show_memory(cfg)
     elif args.command == "assign":
         initiative = pattern(args.initiative, UUID, "initiative UUID")
         api = Api(cfg)

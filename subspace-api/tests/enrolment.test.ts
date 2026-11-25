@@ -366,7 +366,9 @@ describe.skipIf(!testDatabase)("fleet enrolment over HTTP", () => {
     expect(held.status).toBe(201);
     const taken = await enrol(alpha.token, captain("shearwater", "Gull", agentKey()));
     expect(taken.status).toBe(409);
-    expect(taken.body.detail).toBe("An agent named 'Shearwater' belongs to another fleet.");
+    expect(taken.body.detail).toBe(
+      "The name shearwater is taken: agent Shearwater of fleet beta has it, and agent names are unique in an organisation, ignoring case. Choose another name.",
+    );
     // The body cannot name a fleet: the token's fleet is the only one.
     for (const extra of [{ fleet: "beta" }, { fleetId: crypto.randomUUID() }, { role: "admin" }]) {
       const response = await enrol(alpha.token, captain("Auk", "Puffin", agentKey(), extra));
@@ -554,6 +556,180 @@ describe.skipIf(!testDatabase)("fleet enrolment over HTTP", () => {
       version: agent.version,
     });
     expect(edit.status).toBe(400);
+  });
+
+  test("an agent has one name: names, nicks and usernames are one namespace, and a refusal names the holder", async () => {
+    const alpha = await issue("alpha");
+    const beta = await issue("beta");
+    // An agent registered the old way, with a nick that differs from its name.
+    expect(
+      (await enrol(beta.token, captain("Prion", "Storm", agentKey(), { ircNick: "beta-prion" })))
+        .status,
+    ).toBe(201);
+    const asNick = await enrol(alpha.token, captain("beta-prion", "Squall", agentKey()));
+    expect(asNick.status).toBe(409);
+    expect(asNick.body.detail).toStartWith(
+      "The name beta-prion is taken: agent Prion of fleet beta has it as its IRC nick.",
+    );
+    const nickAsName = await enrol(
+      alpha.token,
+      captain("Gannet", "Squall", agentKey(), { ircNick: "PRION" }),
+    );
+    expect(nickAsName.status).toBe(409);
+    expect(nickAsName.body.detail).toStartWith(
+      "The IRC nick PRION is taken: agent Prion of fleet beta has it as its name.",
+    );
+    const person = await (await api.call("/api/v1/me", member)).json();
+    const username = await enrol(
+      alpha.token,
+      captain(person.username, "Squall", agentKey(), { ircNick: "gannet-x" }),
+    );
+    expect(username.status).toBe(409);
+    // A person is never named to a fleet's gateway.
+    expect(username.body.detail).toStartWith(
+      `The name ${person.username} is taken: a person in this organisation has it as their username.`,
+    );
+    const free = await enrol(alpha.token, captain("Gannet", "Squall", agentKey()));
+    expect([free.status, free.body.detail]).toEqual([201, undefined]);
+  });
+
+  test("an installer checks names with the enrolment token without changing anything", async () => {
+    const issued = await issue("alpha", { maxUses: 4 });
+    const beta = await issue("beta");
+    expect((await enrol(issued.token, captain("Skua", "Bonxie", agentKey()))).status).toBe(201);
+    expect((await enrol(beta.token, captain("Fulmar", "Cliff", agentKey()))).status).toBe(201);
+    const check = (token: string, agents: unknown) =>
+      api.call("/api/v1/agents/enrol/check", token, "POST", { agents });
+    const response = await check(issued.token, [
+      { name: "skua", rank: "captain", ship: "Bonxie", ircNick: "skua" },
+      { name: "Eider", rank: "captain", ship: "Down", ircNick: "eider" },
+      { name: "fulmar", rank: "captain", ship: "Ledge", ircNick: "fulmar" },
+      { name: "Skua", rank: "rearAdmiral", ircNick: "Skua" },
+      { name: "Shag", rank: "captain" },
+    ]);
+    expect(response.status).toBe(200);
+    const { items } = await response.json();
+    expect(items.map((item: { outcome: string }) => item.outcome)).toEqual([
+      "existing",
+      "new",
+      "refused",
+      "refused",
+      "refused",
+    ]);
+    expect(items[0].detail).toBeNull();
+    expect(items[2].detail).toStartWith(
+      "The name fulmar is taken: agent Fulmar of fleet beta has it",
+    );
+    expect(items[3].detail).toBe("Agent 'Skua' is registered with the rank captain.");
+    expect(items[4].detail).toContain("A captain needs a ship.");
+    // Nothing was registered and no use was taken.
+    const listed = await (await api.call("/api/v1/fleets/alpha/enrolment-tokens", admin)).json();
+    expect(listed.items.find((item: { id: string }) => item.id === issued.id).uses).toBe(1);
+    const fleet = await (await api.call("/api/v1/fleets/alpha", admin)).json();
+    expect(fleet.captainNames).not.toContain("Eider");
+    // Only a live enrolment token may ask, and its refusal says why.
+    expect((await check(admin, [{ name: "Eider", rank: "captain", ship: "Down" }])).status).toBe(
+      401,
+    );
+    await api.call(`/api/v1/fleets/alpha/enrolment-tokens/${issued.id}`, admin, "DELETE");
+    const revoked = await check(issued.token, [{ name: "Eider", rank: "captain", ship: "Down" }]);
+    expect(revoked.status).toBe(401);
+    expect((await revoked.json()).detail).toBe("This enrolment token was revoked.");
+    expect((await check(beta.token, [])).status).toBe(400);
+  });
+
+  test("an administrator renames an enrolled agent in place, keeping its ID, key and history", async () => {
+    const issued = await issue("alpha");
+    const key = agentKey();
+    const enrolled = await enrol(
+      issued.token,
+      captain("alpha-tern", "Arctic", key, { ircNick: "alpha-tern" }),
+    );
+    expect(enrolled.status).toBe(201);
+    const path = `/api/v1/agents/${enrolled.body.agentId}`;
+    const before = await (await api.call(path, admin)).json();
+    const rename = (body: Record<string, unknown>) =>
+      api.call(path, admin, "PUT", {
+        name: before.name,
+        rank: before.rank,
+        fleetId: before.fleetId,
+        shipId: before.shipId,
+        defaultModel: before.defaultModel,
+        serviceTokenClientId: before.serviceTokenClientId,
+        ircNick: before.ircNick,
+        ...body,
+      });
+    const renamed = await rename({ name: "tern", ircNick: "tern", version: before.version });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({
+      userId: before.userId,
+      name: "tern",
+      ircNick: "tern",
+      serviceTokenClientId: before.serviceTokenClientId,
+    });
+    // The same key signs in as the same agent, now under its new name, on the API and on IRC.
+    expect((await me(key)).body).toMatchObject({ userId: before.userId, username: "tern" });
+    expect(
+      await (
+        await api.call("/api/v1/irc/authenticate", hookToken, "POST", { certfp: key.fingerprint })
+      ).json(),
+    ).toEqual({ success: true, accountName: "tern" });
+    // Its old name is retired for it alone: no other agent may take it, and it may take it back.
+    const other = await enrol(
+      issued.token,
+      captain("Noddy", "Brown", agentKey(), { ircNick: "Alpha-Tern" }),
+    );
+    expect(other.status).toBe(409);
+    expect(other.body.detail).toStartWith(
+      "The IRC nick Alpha-Tern was used before in this organisation, by agent tern of fleet alpha,",
+    );
+    const current = await (await api.call(path, admin)).json();
+    const back = await rename({
+      name: "alpha-tern",
+      ircNick: "alpha-tern",
+      version: current.version,
+    });
+    expect(back.status).toBe(200);
+  });
+
+  test("names an organisation already shares stay as they are until one of them changes", async () => {
+    const issued = await issue("alpha");
+    const first = await enrol(
+      issued.token,
+      captain("Dunlin", "Mud", agentKey(), { ircNick: "alpha-dunlin" }),
+    );
+    const second = await enrol(
+      issued.token,
+      captain("Sanderling", "Sand", agentKey(), { ircNick: "sanderling" }),
+    );
+    expect([first.status, second.status]).toEqual([201, 201]);
+    // A clash made before the rule: the second agent's nick is the first agent's name.
+    await database.client.query("UPDATE users SET agent_irc_nick = 'dunlin' WHERE id = $1", [
+      second.body.agentId,
+    ]);
+    const path = `/api/v1/agents/${second.body.agentId}`;
+    const agent = await (await api.call(path, admin)).json();
+    expect(agent.ircNick).toBe("dunlin");
+    const edit = (body: Record<string, unknown>) =>
+      api.call(path, admin, "PUT", {
+        name: agent.name,
+        rank: agent.rank,
+        fleetId: agent.fleetId,
+        shipId: agent.shipId,
+        defaultModel: agent.defaultModel,
+        serviceTokenClientId: agent.serviceTokenClientId,
+        ircNick: agent.ircNick,
+        ...body,
+      });
+    // An edit that keeps the names is not refused for the old clash.
+    const kept = await edit({ defaultModel: "another-model", version: agent.version });
+    expect(kept.status).toBe(200);
+    // Changing the name to one that clashes is.
+    const clash = await edit({ name: "Dunlin", version: agent.version + 1 });
+    expect(clash.status).toBe(409);
+    expect((await clash.json()).detail).toStartWith(
+      "The name Dunlin is taken: agent Dunlin of fleet alpha has it as its name.",
+    );
   });
 
   test("tokens are managed by administrators only, within bounds", async () => {

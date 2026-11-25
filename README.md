@@ -505,13 +505,13 @@ configurable.
   projects for unresolved errors and fatal issues and posts links to fleet
   IRC. It can address a captain or the rear admiral for read-only triage.
   Operators can opt in to an HTTP 5xx filter for a server-side status tag.
-- **Usage-aware wind-down.** Stargate posts quota notices through the rear
-  admiral's Slack bot. An admiral relays them to the rear admiral in Slack or
-  Starbase. At 25% remaining, the rear admiral asks captains to keep at most
-  one worker from the affected family per captain and hold extra work. At 15%,
-  captains pause launches and resumes, checkpoint active work at its next
-  safe point and keep task claims. When Stargate posts “Quota restored.” above
-  25%, the rear admiral tells captains to resume normal staffing.
+- **Usage-aware wind-down.** The rear admiral's
+  [usage guard](subspace-installer/README.md#usage-guard) asks captains to keep
+  at most one worker of the affected provider at 20% remaining. At 10%,
+  Stargate blocks new starts and resumptions of that kind. Active crew can
+  finish or checkpoint and push. Verified recovery lifts the cutoff. The
+  [legacy Slack quota watcher](subspace-installer/README.md#crew-quota)
+  also supports fleets that relay notices through an admiral.
 
 ### The fleet at work
 

@@ -301,6 +301,38 @@ Board selection is defined by each product's package dependencies, descriptor
 and entrypoint registrations. A different board combination uses another thin
 product crate; disabling boards in Settings does not remove them from a binary.
 
+### Copilot chat
+
+The default build has no Copilot chat. Copilot comes from the Copilot SDK,
+whose build script downloads the Copilot CLI and its runtime, and the app
+embeds both: about 240 MB more on macOS ARM64, and about 230 MB more to
+download. The product's `copilot` feature builds it in, through the
+Framework's `copilot` feature:
+
+```sh
+make run FEATURES="terminal copilot"
+make install-macos FEATURES="terminal copilot"
+SUBSPACE_BUILD_FEATURES=copilot bash scripts/build-macos-app.sh dist aarch64-apple-darwin
+```
+
+`make package`, `make package-macos` and `make release-macos` read
+`SUBSPACE_BUILD_FEATURES` from the environment; release archives are built
+without it.
+
+Without Copilot, **Settings > Chat** offers Off, Pi and ACP agent, with no
+approve-all default; the Notifications page names chat rather than Copilot;
+and nothing offers a Copilot sign-in. Pi and ACP work as before. A config
+file that selects Copilot keeps it: Chat stays off and says that the build
+does not include Copilot, Save in Settings writes the choice back unless
+another engine is picked, and a build with Copilot starts it again. With
+Pi or ACP selected, a cloud task's **Open in chat** in Copilot Agents, which
+replays the session through Copilot, says the build does not include
+Copilot. The Copilot Agents
+Space itself reads GitHub and works in either build. The release's
+`THIRD_PARTY_LICENSES` follows the build, so it lists the SDK and its
+dependencies only when they are linked. See the
+[change record](docs/changes/optional-copilot/README.md).
+
 ## The Framework
 
 The app is built on the [Subspace Framework](../subspace-framework/README.md),
@@ -584,7 +616,7 @@ keeps the collapse control.
 | \` | Theme designer |
 | ? | Show or hide the Help dock panel |
 | Cmd+Shift+/ (Ctrl+Shift+/ on Windows and Linux) | Show or hide Keyboard Shortcuts. Type to filter by key or action; Esc closes it and restores focus |
-| F1 to F12 | Dashboard switch keys with Secondary+1 to Secondary+9. Enabled product order. With every Subspace board on: F1 GitHub, F2 Copilot Agents, F3 Channels, F4 Issues, F5 Decisions, F6 Actions. A build with the unreleased Spaces adds the Component gallery after Actions and, on macOS ARM64, Space Lab after Decisions. Disabled boards take no slot. Unused positions do nothing. |
+| F1 to F12 | Dashboard switch keys with Secondary+1 to Secondary+9. Enabled product order. With every Subspace board on: F1 GitHub, F2 Copilot Agents, F3 Channels, F4 Issues, F5 Projects, F6 Decisions, F7 Actions. A build with the unreleased Spaces adds the Component gallery after Actions and, on macOS ARM64, Space Lab after Decisions. Disabled boards take no slot. Unused positions do nothing. |
 | Secondary+1 to Secondary+9 | Product dashboard order; unused positions do nothing. |
 | Cmd+Shift+L (Ctrl+Shift+L elsewhere) | Show the log viewer |
 | Cmd+Shift+C (Super+Shift+C on Linux, Ctrl+Shift+C on Windows) | Show or hide chat |
@@ -654,13 +686,15 @@ Non-interactive shells must use `mise exec -- cargo ...` or mise shims so
 Cargo goes through Mr Boxington. `prek install` installs the format and
 clippy hooks from `prek.toml`. `make check`'s lint step also runs
 `cargo shear` to catch unused dependencies before clippy. Clippy and the
-tests run on the workspace with the unreleased Spaces built in
-(`--features subspace/unreleased-spaces`), then again on the app and its
-descriptor alone in the release configuration, so neither rots.
+tests run on the workspace with the unreleased Spaces and Copilot chat built
+in (`--features subspace/unreleased-spaces,subspace/copilot`), then again on
+the app and its descriptor alone in the release configuration, without
+either, so neither rots.
 
 `make update-deps` refreshes `Cargo.lock` within the existing version ranges.
-The Copilot SDK is pinned to `1.0.34` to keep the experimental canvas API and
-its bundled CLI together and remove its dependency on vulnerable `zip` 7.
+The Copilot SDK, built only with the `copilot` feature, is pinned to
+`1.0.34` to keep the experimental canvas API and its bundled CLI together and
+remove its dependency on vulnerable `zip` 7.
 Direct `zip` dependencies require at least `9.5.1`. Keep the lockfiles for
 reproducible builds and run `make check build` after an update.
 GPUI Kit's matching asset pin remains deliberate.

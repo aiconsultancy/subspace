@@ -8,6 +8,8 @@
 //! are identifiers, counts and times.
 
 mod category;
+// Copilot turn records; Pi and ACP log nothing of their own here.
+#[cfg(feature = "copilot")]
 mod log;
 mod turn;
 
@@ -18,6 +20,7 @@ use std::time::Duration;
 use chrono::{DateTime, Local};
 use serde_json::Value;
 
+#[cfg(feature = "copilot")]
 pub(crate) use log::{log_failure, log_turn_done, log_turn_started};
 pub use turn::TurnContext;
 

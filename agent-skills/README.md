@@ -7,12 +7,12 @@ the fleet's IRC channels.
 
 | Path | What it is |
 | --- | --- |
-| [`subspace-irc/`](subspace-irc/SKILL.md) | Read and post in Starbase and the ship channels. The same skill works in every agent. |
+| [`subspace-irc/`](subspace-irc/SKILL.md) | Read and post in Starbase, fleet command and the ship channels, in threads, and wait for an officer's reply. The same skill works in every agent. |
 | [`claude/subspace-tracker/`](claude/subspace-tracker/SKILL.md) | The tracker through MCP, for Claude Code (`mcp__subspace__*` tools; tokens refresh through `headersHelper`). |
 | [`codex/subspace-tracker/`](codex/subspace-tracker/SKILL.md) | The tracker through MCP, for Codex (`codex mcp`). |
 | [`opencode/subspace-tracker/`](opencode/subspace-tracker/SKILL.md) | The tracker through MCP, for OpenCode (`opencode.json`). |
 | [`bin/subspace_token.py`](bin/subspace_token.py) | Signs in to WorkOS or mints a development API token through the fleet's tunnel. |
-| [`bin/subspace_irc.py`](bin/subspace_irc.py) | A small IRC client that signs in as you and marks every line as from your agent. |
+| [`bin/subspace_irc.py`](bin/subspace_irc.py) | A small IRC client that signs in as you and marks every message as from your agent. With a hosted API it signs in with a short-lived IRC password the API issues to your account. |
 
 ## The fleet's own agents
 
@@ -39,8 +39,8 @@ the server's instructions agree with them
 
 Local agents use **your** login: your API account and your IRC account. They
 must always say that they are an agent acting for you, with their model and
-version. The skills require it, and the IRC helper adds the marker to every
-line and refuses to post without `--as`:
+version. The skills require it, and the IRC helper starts every message with
+the marker and refuses to post without `--as`:
 
 ```text
 [on behalf of George (Claude Opus 5.5)] Atlas, please ask Orion to pick up NAV-12 next.
@@ -113,6 +113,24 @@ OpenCode run the helper as a local stdio MCP server that forwards requests
 to the same hosted URL with a current access token. All three reuse the
 same session and refresh it when needed. If sign-in expires, run `--login`
 again. Re-run the skills installer when you change the Subspace API URL.
+
+The IRC helper uses the same session. It reads your fleets' channels and IRC
+server from the API and asks the API for a short-lived IRC password for your
+account (`POST /api/v1/me/irc-credential`), so there are no IRC settings to
+enter. That needs an IRC server that checks sign-ins with the API, as the
+desktop's Channels does (see "IRC sign-in" in the
+[API guide](../subspace-api/README.md#irc-sign-in)). The helper sends the
+password only over TLS, or to IRC on this computer.
+
+### In a deployment repository
+
+If you keep your deployment's configuration in a repository of your own, put
+the skills and the MCP registration in it too, so everyone who clones it has
+them for that folder: see [Your deployment repository](../docs/deployment-repository.md).
+There the helpers run with `--config agent-kit/agent.json`, the repository's
+own settings, which the environment does not override; each API keeps its
+own session, so sign in there with
+`python3 agent-kit/bin/subspace_token.py --config agent-kit/agent.json --login`.
 
 ### Development sign-in
 

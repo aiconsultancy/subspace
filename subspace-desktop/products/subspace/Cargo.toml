@@ -15,6 +15,7 @@ subspace-github-copilot-agents-board = { path = "../../spaces/github-copilot-age
 subspace-actions-board = { path = "../../spaces/actions" }
 subspace-irc-board = { path = "../../spaces/irc" }
 subspace-issues-board = { path = "../../spaces/issues" }
+subspace-projects-board = { path = "../../spaces/projects" }
 subspace-decisions-board = { path = "../../spaces/decisions" }
 subspace-web-board = { path = "../../spaces/web" }
 subspace-descriptor.workspace = true
@@ -31,6 +32,12 @@ default = ["report-issue"]
 # Report issue, filing into the repository `build/config.rs` names.
 report-issue = ["subspace-framework/report-issue"]
 terminal = ["dep:subspace-terminal-panel"]
+# The Copilot chat engine. Not in `default`: the Copilot SDK's build script
+# downloads the Copilot CLI and its runtime and the app embeds them (about
+# 240 MB on macOS ARM64). Without it, Settings offers no Copilot engine and a
+# saved Copilot choice is kept but not started. Build with
+# `SUBSPACE_BUILD_FEATURES=copilot` (or `FEATURES="terminal copilot"`).
+copilot = ["subspace-framework/copilot"]
 # Spaces that are not ready to ship. Neither is in `default`, so release and
 # packaging builds leave them out. Each also turns on the descriptor's
 # feature of the same name, so the descriptor lists exactly the Spaces this

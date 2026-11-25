@@ -1,0 +1,5 @@
+{
+  "identity_provider": "workos",
+  "api_url": "@@API_URL@@",
+  "workos_client_id": "@@WORKOS_CLIENT_ID@@"
+}

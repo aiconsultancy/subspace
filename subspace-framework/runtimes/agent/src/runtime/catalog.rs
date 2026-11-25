@@ -94,7 +94,7 @@ pub(super) fn stage_agent_catalog(
 
 pub(super) fn stage_agent_file(file: &Path, stage: &Path) -> Result<(), String> {
     let content = read_agent_prompt(file)?;
-    super::startup::reject_secret_context(contains_secret(&content))?;
+    super::prompts::reject_secret_context(contains_secret(&content))?;
     let name = file
         .file_name()
         .ok_or_else(|| "Agent prompt needs a filename.".to_string())?;

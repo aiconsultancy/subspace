@@ -166,6 +166,46 @@ fn disabling_selected_pi_saves_chat_off_and_the_shared_false_flag(cx: &mut TestA
     assert_eq!(config.features.get(PI_CHAT.id), Some(&false));
 }
 
+/// A build without Copilot shows a saved Copilot choice as Off and writes it
+/// back when Save writes anything else; choosing Pi replaces it. Save writes
+/// Copilot's approve-all default only in a build that includes Copilot.
+#[gpui_kit::test]
+fn a_saved_copilot_choice_survives_save_whether_or_not_the_build_has_copilot(
+    cx: &mut TestAppContext,
+) {
+    use subspace_core::config::{ChatEngine, load};
+    let root = tempfile::tempdir().unwrap();
+    let settings = open_settings_with_config(root.path(), r#"{"chat":{"engine":"copilot"}}"#, cx);
+    let built_in = subspace_chat::COPILOT_BUILT_IN;
+    let shown = if built_in { "Copilot" } else { "Off" };
+    settings
+        .update(cx, |settings, window, cx| {
+            let selected = settings.chat_engine.read(cx).selected_value().cloned();
+            assert_eq!(selected.as_deref(), Some(shown));
+            assert_eq!(settings.copilot_kept(cx), !built_in);
+            settings.auto_refresh = false;
+            settings.save(window, cx).unwrap();
+            settings.chat_engine.update(cx, |engine, cx| {
+                engine.set_selected_value(&"Pi (Experimental)".to_owned(), window, cx);
+            });
+            settings.toggle_feature(&PI_CHAT, true, window, cx);
+        })
+        .unwrap();
+    let config = load(&root.path().join("config.json")).0;
+    assert_eq!(config.chat.engine, ChatEngine::Copilot);
+    assert!(!config.auto_refresh, "the other edit was saved");
+    let state = State::load(&root.path().join("state.json"));
+    let approve_all = state.get("chat.approve-all-default");
+    assert_eq!(approve_all, built_in.then_some("0"), "{approve_all:?}");
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.save(window, cx).unwrap()
+        })
+        .unwrap();
+    let config = load(&root.path().join("config.json")).0;
+    assert_eq!(config.chat.engine, ChatEngine::Pi);
+}
+
 #[gpui_kit::test]
 fn pi_engine_save_requires_the_shared_experiment_draft(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();

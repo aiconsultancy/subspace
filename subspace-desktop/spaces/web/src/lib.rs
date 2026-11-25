@@ -168,10 +168,21 @@ impl WebBoard {
         if dropped {
             self.state.resync(current);
         }
+        self.page_events(events, cx);
+        cx.notify();
+    }
+
+    /// Applies a batch of the page's events in order, until one closes the
+    /// page, such as a native session's signal that ends the session: the
+    /// rest came from a page that is gone, and must not show its title or
+    /// notices.
+    fn page_events(&mut self, events: Vec<page::PageEvent>, cx: &mut Context<Self>) {
         for event in events {
+            if self.page.is_none() {
+                return;
+            }
             self.page_event(event, cx);
         }
-        cx.notify();
     }
 
     fn page_event(&mut self, event: page::PageEvent, cx: &mut Context<Self>) {

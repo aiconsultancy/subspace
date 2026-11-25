@@ -9,6 +9,10 @@ Your crew run on this server, as your Linux user:
 
 $roster
 
+Address a crew member by its ID (in backticks) with the crew tools, and call
+it by its name when you talk about it. When you record a crew member's work
+in the tracker, add `relayedCrew` with its name as listed here and its model.
+
 Each crew member has one permanent worktree per repository ($repositories),
 under `$worktrees/<crew ID>/<repository ID>`. `$first` is your crew's default
 repository. To assign work in another repository, pass its repository ID as

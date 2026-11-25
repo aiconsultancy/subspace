@@ -1,4 +1,5 @@
 use super::attention::TabUpdate;
+use super::copilot_only::{self, CopilotOnly};
 use super::logic::{agent_options, mode_option, model_options};
 use super::sign_in::SignIn;
 use super::tabs::{LastTurn, Queued, Tab, TabState};
@@ -127,9 +128,8 @@ impl ChatPanel {
                 if self.capabilities().copilot_controls {
                     self.tab_mut().confirm_yolo = true;
                 } else {
-                    self.tab_mut().set_error(
-                        "YOLO is unavailable with Pi. Choose Copilot in Settings to use it.".into(),
-                    );
+                    self.tab_mut()
+                        .set_error(copilot_only::unavailable(CopilotOnly::Yolo).into());
                     submission.clear = false;
                 }
             }
@@ -138,9 +138,8 @@ impl ChatPanel {
                     self.tab_mut().confirm_yolo = false;
                     submission.command = Some(self.chat_command(ChatCommand::SetYolo(false)));
                 } else {
-                    self.tab_mut().set_error(
-                        "YOLO is unavailable with Pi. Choose Copilot in Settings to use it.".into(),
-                    );
+                    self.tab_mut()
+                        .set_error(copilot_only::unavailable(CopilotOnly::Yolo).into());
                     submission.clear = false;
                 }
             }

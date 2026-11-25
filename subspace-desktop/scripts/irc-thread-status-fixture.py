@@ -24,7 +24,7 @@ server's `account` tag:
 4. When `subspace` joins again (the capture build), `astra` reports after
    --stale-after seconds that its event stream was lost on the first
    request; after --final-after seconds it starts the second request's reply
-   and sends it to the main room without a reply tag, which ends nothing;
+   and sends it with the original request's reply tag;
    after --finish-after seconds it marks the second request `completed`. The
    first and third stay in progress.
 
@@ -221,7 +221,7 @@ def connect(host, port, nick, channel, account=False):
 def requests(requester, agent, channel):
     """The three requests; the second's question, asked and answered."""
     first = requester.say("PRIVMSG", channel, "astra: summarise the open pull requests for the release")
-    second = requester.say("PRIVMSG", channel, "astra: check whether last night's build passed")
+    second = requester.say("PRIVMSG", channel, "Thanks, @astra. Did last night's build pass?")
     third = requester.say(
         "PRIVMSG", channel, "astra: also list who reviewed each one", {"+draft/reply": first}
     )
@@ -266,8 +266,8 @@ def after_join(agent, channel, ids, args):
     print("thread-status fixture: first request stale", flush=True)
     agent.idle(max(0, args.final_after - args.stale_after))
     progress(agent, channel, second, "reply", "OpenCode started writing a reply.")
-    agent.say("PRIVMSG", channel, "Last night's build on main passed.")
-    print("thread-status fixture: main-room final reply sent", flush=True)
+    reply(agent, "PRIVMSG", channel, second, "Last night's build on main passed.")
+    print("thread-status fixture: threaded final reply sent", flush=True)
     agent.idle(max(0, args.finish_after - args.final_after))
     progress(agent, channel, second, "completed", "OpenCode finished this request.")
     print("thread-status fixture: second request completed", flush=True)

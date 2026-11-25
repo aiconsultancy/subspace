@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from agent_files import agent_directory
-from github_policy import PolicyError, check_push, cli_permissions, repository_name
+from github_policy import PolicyError, check_push, cli_permissions, merge_repository, repository_name
 
 
 class GitHubAppError(ValueError):
@@ -159,11 +159,22 @@ def main(args):
     elif command == "pre-push" and len(rest) == 2:
         check_push(rest[1], active_policy(directory)["protectedBranches"], sys.stdin)
     elif command == "gh" and rest:
-        active_policy(directory)
-        permissions = cli_permissions(rest)
+        policy = active_policy(directory)
+        repositories = None
+        if rest[:2] == ["pr", "merge"]:
+            repository = merge_repository(rest, policy, Path.cwd())
+            repositories = [repository_name(repository)]
+            permissions = {"contents": "write"}
+            # gh pr merge can set up a future merge on queued branches. Submit the reviewed SHA
+            # directly with the immediate REST merge so this request cannot enable auto-merge.
+            rest = ["api", "--method", "PUT", f"repos/{repository}/pulls/{rest[2]}/merge",
+                    "-f", f"sha={rest[5]}", "-f", "merge_method=squash"]
+        else:
+            permissions = cli_permissions(rest)
         env = {key: value for key, value in os.environ.items() if key not in
                {"GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}}
-        env.update(GH_TOKEN=installation_token(directory, permissions), GH_HOST="github.com", GH_PROMPT_DISABLED="1")
+        env.update(GH_TOKEN=installation_token(directory, permissions, repositories),
+                   GH_HOST="github.com", GH_PROMPT_DISABLED="1")
         os.execve("/usr/bin/gh", ["gh", *rest], env)
     else:
         raise GitHubAppError("Usage: subspace-github gh <command> [args].")

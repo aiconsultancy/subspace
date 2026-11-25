@@ -1,5 +1,5 @@
 //! One retained composer per buffer: Enter sends the text (or `/command`)
-//! to the runtime, typing notices are throttled, Up and Down recall sent
+//! to the runtime, typing notices are throttled, arrows jump within drafts or recall sent
 //! lines, a list above the input completes `@members`, `/commands`, their
 //! arguments and `#channels`, and Tab completes a bare nick. A fleet
 //! channel answers `/ask` itself, and a slim row under the input names the

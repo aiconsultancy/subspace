@@ -1,10 +1,10 @@
-//! Keeps a keyboard-focused control inside the decision panel's viewport.
+//! Keeps a keyboard-focused control inside its scrollable viewport.
 //!
-//! Tab moves focus between the panel's Kit buttons and links, which own
+//! Tab moves focus between Kit controls, which own
 //! their focus handles, but GPUI does not scroll a newly focused control
 //! into view. This layout-only element (it draws nothing) gives each control
 //! a scope with its own focus handle, which is not a tab stop. When focus
-//! first enters a scope, the panel body scrolls just far enough to show it.
+//! first enters a scope, the scrollable body moves just far enough to show it.
 use gpui_kit::component::v_flex;
 use gpui_kit::{
     AnyElement, App, Bounds, Element, ElementId, FocusHandle, GlobalElementId, InspectorElementId,
@@ -15,7 +15,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 /// `child` in a reveal scope. Tests find the scope as `<key>:scope`.
-pub(super) fn scope(
+pub(crate) fn scope(
     key: impl Into<SharedString>,
     scroll: &ScrollHandle,
     child: impl IntoElement,
@@ -29,7 +29,7 @@ pub(super) fn scope(
     }
 }
 
-pub(super) struct RevealOnFocus {
+pub(crate) struct RevealOnFocus {
     id: ElementId,
     scope: ElementId,
     scroll: ScrollHandle,
@@ -37,7 +37,7 @@ pub(super) struct RevealOnFocus {
 }
 
 #[derive(Clone)]
-pub(super) struct Tracked {
+pub(crate) struct Tracked {
     focus: FocusHandle,
     focused: Rc<Cell<bool>>,
 }
@@ -66,7 +66,7 @@ fn tracked(id: Option<&GlobalElementId>, window: &mut Window, cx: &mut App) -> T
 
 /// Scrolls `scroll` the least distance that shows `target`, its top first
 /// when it is taller than the viewport.
-fn reveal(scroll: &ScrollHandle, target: Bounds<Pixels>, window: &mut Window) {
+fn reveal(scroll: &ScrollHandle, target: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let viewport = scroll.bounds();
     let delta = if target.top() < viewport.top() || target.size.height > viewport.size.height {
         viewport.top() - target.top()
@@ -77,8 +77,12 @@ fn reveal(scroll: &ScrollHandle, target: Bounds<Pixels>, window: &mut Window) {
     };
     let mut offset = scroll.offset();
     offset.y += delta;
-    scroll.set_offset(offset);
-    window.refresh();
+    // The parent has already positioned its children for this frame.
+    let scroll = scroll.clone();
+    window.defer(cx, move |window, _| {
+        scroll.set_offset(offset);
+        window.refresh();
+    });
 }
 
 impl IntoElement for RevealOnFocus {
@@ -130,7 +134,7 @@ impl Element for RevealOnFocus {
     ) {
         inner.prepaint(window, cx);
         if tracked.entered(window, cx) {
-            reveal(&self.scroll, bounds, window);
+            reveal(&self.scroll, bounds, window, cx);
         }
     }
 

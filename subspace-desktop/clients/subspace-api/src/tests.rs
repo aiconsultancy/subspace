@@ -22,6 +22,7 @@ mod media;
 mod nett;
 mod paging;
 mod privacy;
+mod projects;
 pub(crate) mod pull_requests;
 mod recovery;
 mod summary;

@@ -19,7 +19,7 @@ impl AcpChat {
         if !images.is_empty() && !self.capabilities.images {
             return Err(format!("{} does not accept images.", self.agent));
         }
-        let message = crate::runtime::startup::prepare_prompt(text, context, events)?;
+        let message = crate::runtime::prompts::prepare_prompt(text, context, events)?;
         let blocks = prompt_blocks(self.pending_context(), &message, images);
         let outputs = self.transcript.user(&message);
         self.emit(outputs, events).await;

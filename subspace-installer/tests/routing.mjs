@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 const runtime = await Bun.file("/etc/subspace-fleet/gateway.json").json();
 const source = dirname(runtime.entrypoint);
 const { ircSchema } = await import(`${source}/config.ts`);
-const { fold, parseMessage } = await import(`${source}/irc/protocol.ts`);
-const { routeIrcMessage } = await import(`${source}/irc/routing.ts`);
+const transport = join(source, "transports/irc");
+const irc = await Bun.file(join(transport, "routing.ts")).exists() ? transport : join(source, "irc");
+const { fold, parseMessage } = await import(join(irc, "protocol.ts"));
+const { routeIrcMessage } = await import(join(irc, "routing.ts"));
 const raw = await Bun.file(runtime.config).json();
 // Older Stargate releases used zod schemas; current ones use Effect Schema.
 const parse = typeof ircSchema.parse === "function"

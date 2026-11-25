@@ -214,6 +214,7 @@ pub(crate) enum ItemAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Allowed {
     pub(crate) review: bool,
+    pub(crate) approved: bool,
     pub(crate) comment: bool,
     pub(crate) files: bool,
     pub(crate) close: bool,
@@ -221,12 +222,18 @@ pub(crate) struct Allowed {
 
 impl Allowed {
     pub(crate) fn of(item: &GhItem, detail: Option<&GhItemDetail>) -> Self {
+        let approved = detail.is_some_and(|detail| detail.viewer_approved);
         Self {
             review: can_review(item, detail),
+            approved,
             comment: can_comment(detail),
             files: item.kind == ItemKind::Pr,
             close: is_closable(item),
         }
+    }
+
+    pub(crate) fn merge_is_primary(self) -> bool {
+        !self.review || self.approved
     }
 }
 
@@ -269,8 +276,8 @@ pub(crate) struct ActionLook {
     pub(crate) action: PanelAction,
 }
 
-/// Approve is the one primary action; the rest are neutral.
-pub(crate) fn look(action: ItemAction) -> ActionLook {
+/// Approve is primary until the selected account has approved the PR.
+pub(crate) fn look(action: ItemAction, approved: bool) -> ActionLook {
     let (id, label, name, icon, panel) = match action {
         ItemAction::Approve => (
             "gh-approve",
@@ -316,7 +323,7 @@ pub(crate) fn look(action: ItemAction) -> ActionLook {
         ),
     };
     let intent = match action {
-        ItemAction::Approve => Intent::Primary,
+        ItemAction::Approve if !approved => Intent::Primary,
         _ => Intent::Neutral,
     };
     ActionLook {
@@ -354,6 +361,8 @@ mod tests {
             viewer_can_review: true,
             viewer_can_comment: true,
             changed_files: Some(3),
+            merge_target: None,
+            viewer_approved: false,
         }
     }
 
@@ -471,6 +480,7 @@ mod tests {
     fn the_footer_offers_what_the_account_may_do() {
         let all = Allowed {
             review: true,
+            approved: false,
             comment: true,
             files: true,
             close: true,
@@ -480,6 +490,7 @@ mod tests {
         assert_eq!(footer_actions(all), every);
         let read_only = Allowed {
             review: false,
+            approved: false,
             comment: false,
             files: true,
             close: false,
@@ -492,15 +503,15 @@ mod tests {
         };
         assert_eq!(footer_actions(merged), [Comment, Assign, Files]);
         assert_eq!(review_actions(all), [Approve, RequestChanges, Comment]);
-        assert_eq!(look(Approve).intent, Intent::Primary);
+        assert_eq!(look(Approve, false).intent, Intent::Primary);
         let others = [RequestChanges, Comment, Assign, Files, Close];
         assert!(
             others
                 .iter()
-                .all(|action| look(*action).intent == Intent::Neutral)
+                .all(|action| look(*action, false).intent == Intent::Neutral)
         );
-        assert_eq!(look(Close).name, "Close pull request…");
-        assert_eq!(look(Assign).id, "gh-assign");
+        assert_eq!(look(Close, false).name, "Close pull request…");
+        assert_eq!(look(Assign, false).id, "gh-assign");
     }
 
     #[test]
@@ -514,5 +525,23 @@ mod tests {
         assert!(allowed.close, "an open pull request can be closed");
         let before = Allowed::of(&detail.item, None);
         assert!(before.comment, "comment until the details say otherwise");
+    }
+
+    #[test]
+    fn the_primary_action_follows_the_selected_accounts_approval() {
+        let mut detail = detail();
+        let unapproved = Allowed::of(&detail.item, Some(&detail));
+        assert!(!unapproved.merge_is_primary());
+        assert_eq!(
+            look(ItemAction::Approve, unapproved.approved).intent,
+            Intent::Primary
+        );
+        detail.viewer_approved = true;
+        let approved = Allowed::of(&detail.item, Some(&detail));
+        assert!(approved.merge_is_primary());
+        assert_eq!(
+            look(ItemAction::Approve, approved.approved).intent,
+            Intent::Neutral
+        );
     }
 }

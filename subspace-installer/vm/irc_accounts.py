@@ -77,6 +77,9 @@ class Connection:
     def close(self):
         try:
             self.send("QUIT :subspace-setup")
+        except OSError:
+            pass  # The server closed it first.
+        try:
             self.sock.close()
         except OSError:
             pass
@@ -103,13 +106,17 @@ def sign_in(connection, host, account, password):
         raise IrcError(f"The IRC server {host} refused the sign-in of the account {account}.")
 
 
-def register(host, port, ca_file, operator, password, fingerprints, account=None):
+def register(host, port, ca_file, operator, password, fingerprints, account=None, registered=(), created=None):
     """As the IRC operator, register each account with no password and bind its certificate fingerprint.
 
     fingerprints: {account: SHA-256 hex}, for accounts whose certificate does not sign in yet. account: an IRC
     account and its password to sign in to first, for a server that admits only signed-in connections (Ergo's
     require-sasl). Returns NickServ's replies by account. An account SAREGISTER does not create (it exists, or
     NickServ refuses it) gets no CERT ADD, and stops the run once every other account is done.
+
+    registered: accounts an earlier run created for these fingerprints (created() recorded them) and that stopped
+    before binding them, which are only bound now. created(account, fingerprint) is called as soon as SAREGISTER
+    creates an account, before its CERT ADD, so a run that stops between the two can finish the binding.
     """
     connection = Connection(host, port, ca_file)
     replies = {}
@@ -135,14 +142,19 @@ def register(host, port, ca_file, operator, password, fingerprints, account=None
         if command != "381":
             raise IrcError(f"The IRC server {host} refused the operator credential for {operator}.")
         refused = []
-        for account, fingerprint in fingerprints.items():
-            replies[account] = [nickserv(connection, f"SAREGISTER {account}")]
-            # Bind a certificate only to an account this run created: an existing account's certificates are
-            # never changed, whoever registered it.
-            if not CREATED.search(replies[account][0]):
-                refused.append(f"{account} (NickServ: {replies[account][0]})")
+        for target, fingerprint in fingerprints.items():
+            if target in registered:
+                replies[target] = [nickserv(connection, f"CERT ADD {target} {fingerprint}")]
                 continue
-            replies[account].append(nickserv(connection, f"CERT ADD {account} {fingerprint}"))
+            replies[target] = [nickserv(connection, f"SAREGISTER {target}")]
+            # Bind a certificate only to an account this run (or an earlier one, recorded) created: an existing
+            # account's certificates are never changed, whoever registered it.
+            if not CREATED.search(replies[target][0]):
+                refused.append(f"{target} (NickServ: {replies[target][0]})")
+                continue
+            if created:
+                created(target, fingerprint)
+            replies[target].append(nickserv(connection, f"CERT ADD {target} {fingerprint}"))
     finally:
         connection.close()
     if refused:
@@ -160,6 +172,87 @@ def nickserv(connection, request):
     while source.lower() != "nickserv":
         source, _, params = connection.until("NOTICE")
     return params[-1]
+
+
+# NickServ INFO's first line for a registered account (Ergo: "Account: NAME"); any other first line means the
+# name is not registered, or not known as an account or a reserved nick.
+INFO_ACCOUNT = re.compile(r"Account: (\S+)")
+
+
+def nickserv_lines(connection, request):
+    """Send NickServ a request and return every line of its reply: the lines before the PONG to a PING sent
+    after it, as the server answers in order."""
+    token = f"ss-{secrets.token_hex(4)}"
+    connection.send(f"PRIVMSG NickServ :{request}")
+    connection.send(f"PING :{token}")
+    lines = []
+    while True:
+        source, command, params = connection.receive()
+        if command == "PONG" and params and params[-1] == token:
+            return lines
+        if command == "NOTICE" and source.lower() == "nickserv" and params:
+            lines.append(params[-1])
+
+
+def accounts_taken(host, port, ca_file, names, client_pem=None, account=None):
+    """Which of names NickServ knows as a registered account or a nick reserved by one, as {name: account}.
+
+    Signs in first, when given, with a client certificate (SASL EXTERNAL) or an account and its password (SASL
+    PLAIN), for a server that admits only signed-in connections. Read-only: NickServ INFO.
+    """
+    connection = Connection(host, port, ca_file, client_pem)
+    try:
+        name = nick()
+        if client_pem or account:
+            connection.send("CAP REQ :sasl")
+        connection.send(f"NICK {name}")
+        connection.send(f"USER {name} 0 * :subspace-setup")
+        if client_pem or account:
+            _, _, params = connection.until("CAP")
+            if len(params) < 2 or params[1].upper() != "ACK":
+                raise IrcError(f"The IRC server {host} does not offer SASL.")
+            if account:
+                sign_in(connection, host, *account)
+            else:
+                connection.send("AUTHENTICATE EXTERNAL")
+                _, command, _ = connection.until("AUTHENTICATE", "904", "908")
+                if command == "AUTHENTICATE":
+                    connection.send("AUTHENTICATE +")
+                    connection.until("900", "902", "903", "904", "905", "906")
+            connection.send("CAP END")
+        _, command, params = connection.until("001", "FAIL")
+        if command == "FAIL":
+            if "ACCOUNT_REQUIRED" in params:
+                raise IrcError(ACCOUNT_REQUIRED.format(host=host))
+            raise IrcError(f"The IRC server {host} refused the connection: {params[-1] if params else ''}")
+        taken = {}
+        for wanted in names:
+            lines = nickserv_lines(connection, f"INFO {wanted}")
+            match = INFO_ACCOUNT.match(lines[0]) if lines else None
+            if match:
+                taken[wanted] = match.group(1)
+        return taken
+    finally:
+        connection.close()
+
+
+def check_password(host, port, ca_file, account, password):
+    """Whether an account signs in with its password (SASL PLAIN)."""
+    connection = Connection(host, port, ca_file)
+    try:
+        connection.send("CAP REQ :sasl")
+        connection.send(f"NICK {nick()}")
+        connection.send("USER subspace-setup 0 * :subspace-setup")
+        _, _, params = connection.until("CAP")
+        if len(params) < 2 or params[1].upper() != "ACK":
+            raise IrcError(f"The IRC server {host} does not offer SASL.")
+        try:
+            sign_in(connection, host, account, password)
+        except IrcError:
+            return False
+        return True
+    finally:
+        connection.close()
 
 
 def check_login(host, port, ca_file, client_pem):

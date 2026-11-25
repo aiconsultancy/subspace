@@ -1,0 +1,44 @@
+# Never commit a secret. Keep them in your cloud's secret store or a password
+# manager, and on the fleet VM, which generates its own.
+.env
+.env.*
+!.env.example
+*.env
+!*.example.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.token
+*-token
+*.password
+*-password
+*.secrets/
+secrets.json
+*secrets.json
+secrets.*.json
+*.tfstate*
+*.tfvars
+!*.example.tfvars
+.terraform/
+# What the Subspace installer writes with secrets in it, should a copy of the
+# fleet VM's /root/fleet or /root/irc, or of ~/.subspace, land here:
+fleet.secrets.json
+fleet.secrets/
+generated-secrets.json
+extra-secrets.json
+irc-bundle.json
+api.env
+compose.env
+enrolment-token
+*enrolment-token*
+*admin-token*
+api-token
+api-token.json
+database-url
+operator-password
+irc.password
+/workos/
+# Fetched upstream checkouts and caches.
+/.cache/
+.DS_Store

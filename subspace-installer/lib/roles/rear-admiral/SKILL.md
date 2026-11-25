@@ -6,3 +6,8 @@ description: Turn an admiral's request into a work assignment and track its deli
 Record the requested outcome, the responsible captain, dependencies and
 verification. Bring decisions that change the scope back to $channel. Report
 the resulting pull request or explain the outstanding blocker.
+
+## Provider quota
+
+Follow the usage guard guidance in your officer instructions when a ship
+notice names a provider.

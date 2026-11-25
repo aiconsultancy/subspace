@@ -66,7 +66,7 @@ use std::sync::Arc;
 
 use chat_engine::{
     acp_agent_choice, acp_agent_from_label, chat_engine_choice, chat_engine_from_label,
-    validate_acp_feature, validate_chat_feature,
+    kept_engine, validate_acp_feature, validate_chat_feature,
 };
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::select::{SearchableVec, SelectDelegate, SelectEvent, SelectItem};
@@ -615,11 +615,7 @@ impl Settings {
             CHECK_UPDATES_KEY,
             check_updates_preference(self.check_updates),
         );
-        prefs::set(
-            cx,
-            "chat.approve-all-default",
-            if self.approve_all_default { "1" } else { "0" },
-        );
+        self.save_approve_all_default(cx);
         self.toolbar.save(&self.initial_toolbar, cx);
         self.initial_toolbar = self.toolbar;
         self.board_navigation.save(cx);
@@ -627,6 +623,17 @@ impl Settings {
             terminal.save(cx);
         }
         self.save_developer_mode(cx);
+    }
+
+    /// Writes Copilot's approve-all default. A build without Copilot neither
+    /// shows nor writes it: Save creates no Copilot preference there and
+    /// leaves a saved one for a build that includes Copilot.
+    fn save_approve_all_default(&self, cx: &mut Context<Self>) {
+        if !subspace_chat::COPILOT_BUILT_IN {
+            return;
+        }
+        let value = if self.approve_all_default { "1" } else { "0" };
+        prefs::set(cx, APPROVE_ALL_DEFAULT_KEY, value);
     }
 
     /// Writes a changed Developer mode and shows or hides the Developer menu.
@@ -763,11 +770,25 @@ impl Settings {
     }
 
     fn selected_chat_engine(&self, cx: &App) -> ChatEngine {
-        chat_engine_from_label(
+        let selected = chat_engine_from_label(
             self.chat_engine
                 .read(cx)
                 .selected_value()
                 .map(String::as_str),
+        );
+        kept_engine(
+            selected,
+            self.file.values().chat_engine,
+            subspace_chat::COPILOT_BUILT_IN,
+        )
+    }
+
+    /// Whether Save keeps a Copilot choice this build cannot run.
+    fn copilot_kept(&self, cx: &App) -> bool {
+        chat_engine::copilot_kept(
+            self.file.values().chat_engine,
+            self.selected_chat_engine(cx),
+            subspace_chat::COPILOT_BUILT_IN,
         )
     }
 

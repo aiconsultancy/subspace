@@ -124,7 +124,7 @@ fn plain_recall_input_hides_markdown_and_routes_arrows_and_tab(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
-fn a_multi_line_draft_keeps_its_arrows_unless_it_was_recalled(cx: &mut TestAppContext) {
+fn multiline_draft_arrows_move_to_boundaries_until_history_is_active(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     cx.update(crate::bind_keys);
     let (input, cx) = cx.add_window_view(ChatInput::message);
@@ -138,14 +138,16 @@ fn a_multi_line_draft_keeps_its_arrows_unless_it_was_recalled(cx: &mut TestAppCo
         });
         window.render_frame(cx);
         window.press("up", cx);
+        assert_eq!(input.read(cx).cursor(cx), 0);
         window.press("down", cx);
+        assert_eq!(input.read(cx).cursor(cx), "one\ntwo".len());
         window.press("tab", cx);
     });
     cx.run_until_parked();
     assert_eq!(
         &*events.borrow(),
         &["complete"],
-        "in a multi-line draft the arrows move between lines; Tab still completes"
+        "the arrows move the caret and Tab still completes"
     );
     cx.update(|window, cx| {
         input.update(cx, |input, cx| input.set_recalled(true, cx));

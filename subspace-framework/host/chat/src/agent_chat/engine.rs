@@ -80,6 +80,7 @@ impl ChatPanel {
 
     pub(super) fn guidance(&self) -> &'static str {
         match self.engine {
+            ChatEngine::Off if self.copilot_kept => subspace_agent::COPILOT_UNAVAILABLE,
             ChatEngine::Off => {
                 "Choose an engine in Settings > Chat, then save and restart Subspace."
             }
@@ -90,6 +91,17 @@ impl ChatPanel {
             ChatEngine::Pi => PI_GUIDANCE,
             ChatEngine::Acp => ACP_GUIDANCE,
         }
+    }
+}
+
+/// The engine the panel runs for the configured one, and whether that keeps
+/// a Copilot choice this build cannot run. A build without Copilot runs none
+/// for it: the panel is off, as with no engine, and nothing starts, signs in
+/// or shows Copilot.
+pub(super) fn runnable(configured: ChatEngine, copilot_built_in: bool) -> (ChatEngine, bool) {
+    match configured {
+        ChatEngine::Copilot if !copilot_built_in => (ChatEngine::Off, true),
+        engine => (engine, false),
     }
 }
 
@@ -136,7 +148,7 @@ pub(super) fn error_guidance(engine: ChatEngine, reconnect: bool) -> Option<&'st
 mod tests {
     use super::{
         AcpAgent, CLAUDE_MARK, COPILOT_MARK, ChatEngine, EngineCapabilities, GEMINI_MARK,
-        OPENAI_MARK, OPENCODE_MARK, engine_icon, engine_label, error_guidance, pi_label,
+        OPENAI_MARK, OPENCODE_MARK, engine_icon, engine_label, error_guidance, pi_label, runnable,
     };
     use gpui_kit::{DevicePixels, SvgSize, TestAppContext, size};
     use subspace_core::features::{FeatureSpec, FeatureStage, PI_CHAT};
@@ -221,6 +233,22 @@ mod tests {
         assert!(copilot.copilot_controls);
         assert!(copilot.cloud_replay());
         assert!(copilot.ai_units());
+    }
+
+    #[test]
+    fn a_build_without_copilot_runs_no_engine_for_a_saved_copilot_choice() {
+        assert_eq!(
+            runnable(ChatEngine::Copilot, false),
+            (ChatEngine::Off, true)
+        );
+        assert_eq!(
+            runnable(ChatEngine::Copilot, true),
+            (ChatEngine::Copilot, false)
+        );
+        for engine in [ChatEngine::Off, ChatEngine::Pi, ChatEngine::Acp] {
+            assert_eq!(runnable(engine, false), (engine, false));
+            assert_eq!(runnable(engine, true), (engine, false));
+        }
     }
 
     #[test]

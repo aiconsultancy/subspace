@@ -133,7 +133,8 @@ class FrameworkEdgeTests(Fixture):
     def test_host_features_are_for_products_only(self) -> None:
         for source, feature, kind in product(("spaces/irc", "spaces/irc/crates/support",
                                               "clients/nett", "terminal/panel"),
-                                             ("host", "capture", "gpui-kit-text-patch"), KINDS):
+                                             ("host", "capture", "copilot",
+                                              "gpui-kit-text-patch"), KINDS):
             with self.subTest(source=source, feature=feature, kind=kind):
                 self.framework_edge(source, kind, features=[feature])
                 failures = self.failures()
@@ -141,7 +142,7 @@ class FrameworkEdgeTests(Fixture):
                 self.assertIn(f"only products may enable {feature}", failures[0])
                 self.packages[self.root / source]["dependencies"] = []
         self.framework_edge("products/subspace",
-                            features=["host", "capture", "gpui-kit-text-patch"])
+                            features=["host", "capture", "copilot", "gpui-kit-text-patch"])
         self.assertEqual(self.failures(), [])
 
     def test_test_support_is_for_dev_dependencies_only(self) -> None:

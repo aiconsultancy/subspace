@@ -235,8 +235,7 @@ pub enum Event {
         buffer: BufferKey,
         time: DateTime<Utc>,
     },
-    /// The answer to [`Command::SendAll`]: whether its lines were written
-    /// to the connection, refused or perhaps partly written.
+    /// The answer to [`Command::SendAll`] or [`Command::SendAllTogether`].
     Sent {
         buffer: BufferKey,
         id: u64,
@@ -286,6 +285,13 @@ pub enum Command {
     /// any other command is refused. Answered with [`Event::Sent`] carrying
     /// `id` once the write ended; local echoes follow only a full write.
     SendAll {
+        buffer: BufferKey,
+        id: u64,
+        lines: Vec<String>,
+    },
+    /// Like [`Command::SendAll`], but send the text and references as one
+    /// logical message. Refuse the whole send if the server cannot carry it.
+    SendAllTogether {
         buffer: BufferKey,
         id: u64,
         lines: Vec<String>,
