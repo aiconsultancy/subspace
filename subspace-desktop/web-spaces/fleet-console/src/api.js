@@ -163,24 +163,26 @@ export const PAGE_RESTARTS = 8;
  * Read every page of a paged activity item and return its complete JSON,
  * parsed. Each page is checked as it arrives, before more is held: it must be
  * the page asked for (agent, turn, item and index), hold at most 64 KiB, and
- * the item's `bytes` must fit its page count and this console's limit; the
- * data joined so far may never pass `bytes`, and the whole must equal it.
+ * make progress for a multi-page item. The item's `bytes` must fit its page
+ * count and this console's whole-item limit. The data joined so far may
+ * never pass `bytes`, and the whole must equal it.
  * Anything else is an invalid response and the read stops. Pages with a
  * different `seq` or page count belong to another version of the item, so
  * the read starts again from page 0. Nothing is cut: it either returns the
  * whole item or throws.
  *
  * @param {(page: number) => Promise<object>} readPage  one `V1ActivityItemPage`
- * @param {{agent?: string, turn?: string, item?: string, restarts?: number, maxBytes?: number}} [expect]
+ * @param {{agent?: string, turn?: string, item?: string, restarts?: number}} [expect]
  * @returns {Promise<{seq: number, bytes: number, item: object}>}
  */
-export async function readPagedItem(readPage, { agent, turn, item, restarts = PAGE_RESTARTS, maxBytes = MAX_ITEM_BYTES } = {}) {
+export async function readPagedItem(readPage, { agent, turn, item, restarts = PAGE_RESTARTS } = {}) {
   const expect = { agent, turn, item };
   for (let attempt = 0; attempt <= restarts; attempt += 1) {
     const first = await readPage(0);
     checkPage(first, 0, expect);
     if (first.bytes > first.pages * PAGE_DATA_BYTES) throw new InvalidResponseError(`The item claims ${first.bytes} bytes in ${first.pages} pages.`);
-    if (first.bytes > maxBytes) throw new InvalidResponseError(`The item is ${first.bytes} bytes, over this console's ${maxBytes}-byte limit.`);
+    if (first.bytes > MAX_ITEM_BYTES) throw new InvalidResponseError(`The item is ${first.bytes} bytes, over this console's ${MAX_ITEM_BYTES}-byte limit.`);
+    if (first.pages > Math.max(1, first.bytes)) throw new InvalidResponseError(`The item claims ${first.pages} pages for ${first.bytes} bytes.`);
     let total = pageBytes(first, first.bytes);
     const parts = [first.data];
     let changed = false;
@@ -208,10 +210,11 @@ export async function readPagedItem(readPage, { agent, turn, item, restarts = PA
   throw new Error("The item kept changing while its pages were read.");
 }
 
-/** A page's data length, refused when it passes 64 KiB or what is left of the item. */
+/** A page must fit in 64 KiB and within the remaining item, and must make progress. */
 function pageBytes(page, left) {
   const bytes = utf8Length(page.data);
   if (bytes > PAGE_DATA_BYTES) throw new InvalidResponseError(`Page ${page.page} of the item holds more than 64 KiB.`);
+  if (page.pages > 1 && bytes === 0) throw new InvalidResponseError(`Page ${page.page} of the item is empty.`);
   if (bytes > left) throw new InvalidResponseError(`Page ${page.page} of the item runs past its length.`);
   return bytes;
 }

@@ -18,13 +18,16 @@ the desktop side are separate work.
   repeated `agent` query parameter. `readPagedItem` joins an item's pages
   in full and checks each page as it arrives, before holding more: it must
   be the agent, turn, item and page asked for, `pages` at least 1, data at
-  most 64 KiB of UTF-8, `bytes` at most `pages × 64 KiB` and at most the
-  console's 64 MiB item limit, and the data joined so far never past
-  `bytes`, with the whole equal to it. Anything else is an invalid response
-  and the read stops. It starts again from page 0 when `seq` or the page
+  most 64 KiB of UTF-8 and non-empty for a multi-page item, and `bytes`
+  between the minimum needed for its pages and the smaller of
+  `pages × 64 KiB` and the console's 64 MiB item limit. The data joined so
+  far must fit within `bytes`, with the whole equal to it. Invalid responses
+  stop the read. It starts again from page 0 when `seq` or the page
   count changes between pages; after eight restarts it reports that the
   item kept changing. A snapshot body is capped at 128 MiB and a page body
   at 512 KiB before either is decoded. Nothing is ever truncated.
+  The oversized-item test stops at an unexpected second read so a
+  regression cannot build and diff a million-entry array in the test runner.
 - **One stream.** The gateway allows eight event-stream viewers in total.
   `src/live.js` `setAgents(ids)` re-opens the fleet's one stream with
   `?agent=` (quietly, keeping `Last-Event-ID`) and `onOpen(agents)` runs
