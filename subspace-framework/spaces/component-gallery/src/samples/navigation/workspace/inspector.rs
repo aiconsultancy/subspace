@@ -3,7 +3,7 @@
 //! the one approved exception, in place of the title.
 
 use gpui_kit::component::h_flex;
-use gpui_kit::{App, Context, Div, ParentElement as _, Stateful, Styled as _, Window};
+use gpui_kit::{App, Context, Div, FocusHandle, ParentElement as _, Stateful, Styled as _, Window};
 use subspace_dashboard::Tokens;
 use subspace_dashboard::action::{self, Intent};
 use subspace_dashboard::workspace::{self, Inspector, InspectorTab};
@@ -42,14 +42,14 @@ pub(in crate::samples) fn inspector_tabs(
     _: &mut Window,
     cx: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
-    let cx = &*cx;
+    let focus = cx.focus_handle().tab_stop(true);
     vec![
         sample(
             "Three tabs, one with a count, the second open, and Close",
             bounded(
                 TABBED_INSPECTOR_BOX,
                 tokens,
-                tabbed_inspector("gallery-sample:inspector-tabs", cx),
+                tabbed_inspector("gallery-sample:inspector-tabs", Some(focus), cx),
             ),
         ),
         sample(
@@ -57,27 +57,39 @@ pub(in crate::samples) fn inspector_tabs(
             bounded(
                 NARROW_INSPECTOR_BOX,
                 tokens,
-                tabbed_inspector("gallery-sample:inspector-tabs-narrow", cx),
+                tabbed_inspector("gallery-sample:inspector-tabs-narrow", None, cx),
             ),
         ),
     ]
 }
 
 /// A channel's inspector: its ship, its thread and its people.
-fn tabbed_inspector(id: &'static str, cx: &App) -> Inspector {
+fn tabbed_inspector(id: &'static str, focus: Option<FocusHandle>, cx: &App) -> Inspector {
     let tabs = [
         InspectorTab::new("Ship"),
         InspectorTab::new("Thread"),
         InspectorTab::new("People").count("5"),
     ];
-    Inspector::new(id, "Channel details")
+    let inspector = Inspector::new(id, "Channel details")
         .tabs(tabs, 1, ignore_index)
         .on_close("Close inspector", ignore_click)
         .child(
             workspace::section("Thread", cx)
                 .child(workspace::fact("Started by", "Ada Example", cx))
                 .child(workspace::fact("Replies", "12", cx)),
-        )
+        );
+    match focus {
+        Some(focus) => inspector.track_selected_tab(&focus).footer(
+            action::action_button(
+                "gallery-focus-thread",
+                Intent::Quiet,
+                None,
+                "Focus Thread tab",
+            )
+            .on_click(move |_, window, cx| focus.focus(window, cx)),
+        ),
+        None => inspector,
+    }
 }
 
 pub(in crate::samples) fn inspectors(

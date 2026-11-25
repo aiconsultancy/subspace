@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
-    Context, ElementId, IntoElement, ParentElement as _, Render, Role, Styled as _, TestAppContext,
-    VisualTestContext, Window, div, px,
+    Context, ElementId, FocusHandle, IntoElement, ParentElement as _, Render, Role, Styled as _,
+    TestAppContext, VisualTestContext, Window, div, px,
 };
 
 use super::tabs::{TAB_ID, TAB_LIST_ID, kept};
@@ -33,6 +33,7 @@ fn channel_tabs() -> Vec<InspectorTab> {
 struct Dock {
     tabbed: bool,
     chosen: Chosen,
+    selected_focus: FocusHandle,
 }
 
 impl Render for Dock {
@@ -42,9 +43,11 @@ impl Render for Dock {
             .child(div().child("Body"));
         let chosen = self.chosen.clone();
         let inspector = if self.tabbed {
-            inspector.tabs(channel_tabs(), 1, move |index, _, _, _| {
-                chosen.borrow_mut().push(index);
-            })
+            inspector
+                .tabs(channel_tabs(), 1, move |index, _, _, _| {
+                    chosen.borrow_mut().push(index);
+                })
+                .track_selected_tab(&self.selected_focus)
         } else {
             inspector
         };
@@ -56,9 +59,10 @@ fn mount(tabbed: bool, cx: &mut TestAppContext) -> (Chosen, &mut VisualTestConte
     cx.update(gpui_kit::init);
     let chosen = Chosen::default();
     let recorded = chosen.clone();
-    let (_, cx) = cx.add_window_view(move |_, _| Dock {
+    let (_, cx) = cx.add_window_view(move |_, cx| Dock {
         tabbed,
         chosen: recorded,
+        selected_focus: cx.focus_handle().tab_stop(true),
     });
     cx.update(|window, cx| window.render_frame(cx));
     (chosen, cx)
@@ -124,6 +128,25 @@ fn a_click_or_the_keyboard_chooses_a_tab(cx: &mut TestAppContext) {
         assert_eq!(window.find(tab_id(1)).focused(), Some(true));
         window.press("enter", cx);
         assert_eq!(*chosen.borrow(), vec![2, 0, 1]);
+    });
+}
+
+#[gpui_kit::test]
+fn an_owner_can_focus_the_selected_tab(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let (dock, cx) = cx.add_window_view(|_, cx| Dock {
+        tabbed: true,
+        chosen: Chosen::default(),
+        selected_focus: cx.focus_handle().tab_stop(true),
+    });
+    cx.update(|window, cx| {
+        let focus = dock.read(cx).selected_focus.clone();
+        focus.focus(window, cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(tab_id(1)).focused(), Some(true));
+        window.focus_next(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(tab_id(2)).focused(), Some(true));
     });
 }
 

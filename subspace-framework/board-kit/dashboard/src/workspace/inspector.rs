@@ -6,8 +6,8 @@ use std::rc::Rc;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement, RenderOnce, Role, ScrollHandle, SharedString, Stateful,
+    AnyElement, App, ClickEvent, Div, ElementId, FocusHandle, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement, RenderOnce, Role, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div, px,
 };
 use subspace_lucide::IconName;
@@ -77,7 +77,17 @@ impl Inspector {
             tabs,
             selected,
             on_select: Rc::new(on_select),
+            focus: None,
         });
+        self
+    }
+
+    /// Track an owner-provided, tab-stoppable handle on the selected tab.
+    /// Set after [`Self::tabs`] when a drill-in needs a focus fallback.
+    pub fn track_selected_tab(mut self, focus: &FocusHandle) -> Self {
+        if let Some(tabs) = &mut self.tabs {
+            tabs.focus = Some(focus.clone());
+        }
         self
     }
 

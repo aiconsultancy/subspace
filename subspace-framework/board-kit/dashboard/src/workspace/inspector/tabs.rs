@@ -6,9 +6,11 @@ use std::rc::Rc;
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::button::Button;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    Role, SharedString, StatefulInteractiveElement as _, TestSupportExt as _, Window,
+    AnyElement, App, ClickEvent, FocusHandle, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, TestSupportExt as _,
+    Window,
 };
 
 use super::super::row_parts::count_mark;
@@ -61,6 +63,7 @@ pub(super) struct InspectorTabs {
     pub(super) tabs: Vec<InspectorTab>,
     pub(super) selected: usize,
     pub(super) on_select: SelectHandler,
+    pub(super) focus: Option<FocusHandle>,
 }
 
 /// The tabs kept: the first [`INSPECTOR_MAX_TABS`], and the selected index
@@ -93,6 +96,9 @@ pub(super) fn tab_list(
             let template = Button::new((TAB_ID, index)).role(Role::Tab);
             let name = tab.accessible_label();
             segmented::segment(template, tab.label, chosen, tokens)
+                .when_some(tabs.focus.as_ref().filter(|_| chosen), |button, focus| {
+                    button.track_focus(focus)
+                })
                 .accessibility_label(name)
                 .aria_selected(chosen)
                 .children(
