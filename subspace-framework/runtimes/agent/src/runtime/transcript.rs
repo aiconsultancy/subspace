@@ -11,14 +11,11 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use super::evidence::hosted_evidence;
+use super::summary::{argument_summary, one_line};
 use crate::{Entry, ToolCall, ToolStatus, TranscriptEntry, repeats};
 
-/// The longest argument summary a tool row shows before it is cut.
-const DETAIL_LIMIT: usize = 120;
 /// The longest title a tool row shows, on one line.
 const TITLE_LIMIT: usize = 80;
-/// The argument rendered without its key, because it names what the call does.
-const LEAD_ARGUMENT: &str = "action";
 /// Milliseconds in a second, for the reasoning duration.
 const MILLISECONDS: i64 = 1000;
 
@@ -50,54 +47,6 @@ pub(super) struct Transcript {
     started: HashSet<String>,
 }
 
-/// A scalar argument as display text. Objects and arrays are left out: a tool
-/// row is one line, and their contents belong in the expanded result.
-fn scalar(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => Some(text.clone()),
-        Value::Number(number) => Some(number.to_string()),
-        Value::Bool(flag) => Some(flag.to_string()),
-        _ => None,
-    }
-}
-
-fn truncate(text: String, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return text;
-    }
-    let kept: String = text.chars().take(limit).collect();
-    format!("{kept}…")
-}
-
-/// A one-line argument summary: the `action` value alone, then every other
-/// scalar as `key=value`, in the order the SDK sent them.
-///
-/// `{"action":"github_search","query":"is:open"}` reads as
-/// `github_search query=is:open`.
-pub(super) fn argument_summary(arguments: &Value) -> String {
-    if arguments.get("canvasId").is_some()
-        && let Some(id) = arguments.get("instanceId").and_then(Value::as_str)
-    {
-        return format!("canvasInstanceId={id}");
-    }
-    let Some(fields) = arguments.as_object() else {
-        return String::new();
-    };
-    let mut parts = Vec::new();
-    if let Some(lead) = fields.get(LEAD_ARGUMENT).and_then(scalar) {
-        parts.push(lead);
-    }
-    for (key, value) in fields {
-        if key == LEAD_ARGUMENT {
-            continue;
-        }
-        if let Some(value) = scalar(value) {
-            parts.push(format!("{key}={value}"));
-        }
-    }
-    truncate(parts.join(" "), DETAIL_LIMIT)
-}
-
 /// The most specific name the SDK offered for a call that does not simply
 /// repeat its arguments. A tool whose intention summary is the query it runs
 /// would otherwise show the same text twice, so the plain tool title is used
@@ -121,11 +70,6 @@ pub(super) fn request_title(request: &Value, detail: &str) -> String {
         .or_else(|| request["name"].as_str())
         .unwrap_or("Tool");
     one_line(fallback, TITLE_LIMIT)
-}
-
-/// One line of at most `limit` characters, with an ellipsis when it is cut.
-pub(super) fn one_line(text: &str, limit: usize) -> String {
-    truncate(text.split_whitespace().collect::<Vec<_>>().join(" "), limit)
 }
 
 /// Milliseconds for an event timestamp, whether the SDK sent a number or an

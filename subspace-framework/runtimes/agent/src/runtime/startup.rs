@@ -5,10 +5,10 @@ pub(super) use identity::{Identity, resolve_identity};
 
 use super::export::open_session_events;
 use super::{
-    ChatCommand, ChatEvent, ChatId, Client, ClientMode, ClientOptions, ContextRef, Event,
-    EventQueue, MAX_CHATS, Path, Secret, Session, Transport, config, configure_sandbox,
-    ensure_managed_policy, history_entries, prompt, reset_permissions, session::config_directory,
-    verify_identity, verify_local_session,
+    ChatCommand, ChatEvent, ChatId, Client, ClientMode, ClientOptions, Event, EventQueue,
+    MAX_CHATS, Path, Secret, Session, Transport, config, configure_sandbox, ensure_managed_policy,
+    history_entries, reset_permissions, session::config_directory, verify_identity,
+    verify_local_session,
 };
 use github_copilot_sdk::types::DeliveryMode;
 pub(super) fn validate_startup(
@@ -161,28 +161,6 @@ pub(super) async fn publish_ready(session: &Session, chat: ChatId, events: &Even
             },
         ))
         .await;
-}
-
-pub(super) fn prepare_prompt(
-    text: &str,
-    context: &[ContextRef],
-    events: &EventQueue,
-) -> Result<String, String> {
-    let unsafe_content = events.has_secret(text)
-        || context
-            .iter()
-            .any(|item| events.has_secret(&item.content) || events.has_secret(&item.label));
-    reject_secret_context(unsafe_content)?;
-    prompt(text, context)
-}
-
-pub(super) fn reject_secret_context(unsafe_content: bool) -> Result<(), String> {
-    if unsafe_content {
-        return Err(
-            "Message or context contains credential-like data. Remove it before sending.".into(),
-        );
-    }
-    Ok(())
 }
 
 #[cfg(test)]

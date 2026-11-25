@@ -9,6 +9,8 @@ mod config;
 mod persistence;
 #[path = "runtime/pi.rs"]
 mod pi;
+#[path = "runtime/prompts.rs"]
+mod prompts;
 #[path = "runtime/selection.rs"]
 mod selection;
 #[path = "runtime/startup.rs"]
@@ -30,8 +32,10 @@ mod supervisor;
 mod tabs;
 #[path = "runtime/watchdog.rs"]
 mod watchdog;
-use display::{bridge_event, history_entries, prompt, publish_sessions, refresh};
+use display::{bridge_event, history_entries, publish_sessions, refresh};
 
+#[path = "runtime/summary.rs"]
+mod summary;
 mod transcript;
 use transcript::Transcript;
 #[path = "runtime/builtins.rs"]
@@ -69,7 +73,7 @@ use session::{
 };
 use startup::validate_command;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -502,8 +506,9 @@ pub(crate) fn redact(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::prompts::prompt;
     use super::{
-        AgentHandle, EventQueue, contains_secret, copy_attachment, pi_disabled_message, prompt,
+        AgentHandle, EventQueue, contains_secret, copy_attachment, pi_disabled_message,
         verify_identity,
     };
     use crate::{ChatEvent, ContextRef, EntryKind, Event};
