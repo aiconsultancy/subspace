@@ -60,6 +60,42 @@ fn token(service: &Entity<FleetApi>, cx: &mut TestAppContext) -> Option<String> 
 }
 
 #[gpui_kit::test]
+fn connection_revision_tracks_only_its_own_record_and_token(cx: &mut TestAppContext) {
+    let mut fleets = aurora(HOME);
+    fleets.push(FleetRecord::new("cygnus", "Cygnus", Some(HOME.into())));
+    let service = service(Arc::new(TokenStore::memory()), fleets.clone(), cx);
+    let revisions = |cx: &mut TestAppContext| {
+        service.read_with(cx, |service, _| {
+            [
+                service.connection_revision("aurora"),
+                service.connection_revision("cygnus"),
+            ]
+        })
+    };
+    let [a, b] = revisions(cx);
+    save(&service, "fixture-token", cx).unwrap();
+    let [new_a, same_b] = revisions(cx);
+    assert_ne!(a, new_a);
+    assert_eq!(b, same_b);
+
+    fleets.reverse();
+    service.update(cx, |service, cx| service.set_fleets(fleets.clone(), cx));
+    assert_eq!(revisions(cx), [new_a, b]);
+    fleets[0].address = Some("https://elsewhere.example.com".into());
+    service.update(cx, |service, cx| service.set_fleets(fleets.clone(), cx));
+    let [same_a, new_b] = revisions(cx);
+    assert_eq!(new_a, same_a);
+    assert_ne!(b, new_b);
+
+    service.update(cx, |service, cx| {
+        service.set_fleets(vec![fleets[0].clone()], cx)
+    });
+    assert_eq!(revisions(cx), [0, new_b]);
+    service.update(cx, |service, cx| service.set_fleets(fleets, cx));
+    assert_ne!(revisions(cx)[0], new_a);
+}
+
+#[gpui_kit::test]
 fn a_token_is_saved_replaced_and_cleared(cx: &mut TestAppContext) {
     let store = Arc::new(TokenStore::memory());
     let service = service(store.clone(), aurora(HOME), cx);

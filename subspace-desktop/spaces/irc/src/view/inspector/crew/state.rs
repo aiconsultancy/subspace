@@ -16,7 +16,7 @@ const SERVER_ERRORS: std::ops::RangeInclusive<u16> = 500..=599;
 
 pub(super) struct DetailState {
     pub roster: Roster,
-    directory: u64,
+    connection: u64,
     generation: u64,
     visible: bool,
     pending: bool,
@@ -27,10 +27,10 @@ pub(super) struct DetailState {
 }
 
 impl DetailState {
-    pub fn new(roster: Roster, directory: u64) -> Self {
+    pub fn new(roster: Roster, connection: u64) -> Self {
         Self {
             roster,
-            directory,
+            connection,
             generation: 0,
             visible: true,
             pending: true,
@@ -41,23 +41,23 @@ impl DetailState {
         }
     }
 
-    pub fn update(&mut self, roster: Roster, directory: u64) -> bool {
-        let directory_changed = self.directory_changed(directory);
-        if !directory_changed && self.roster == roster {
+    pub fn update(&mut self, roster: Roster, connection: u64) -> bool {
+        let connection_changed = self.connection_changed(connection);
+        if !connection_changed && self.roster == roster {
             return false;
         }
-        let invalidated = directory_changed || !self.roster.same_assignment(&roster);
+        let invalidated = connection_changed || !self.roster.same_assignment(&roster);
         let task_changed = !self.roster.same_task_revision(&roster);
         let returned = self.roster.member_returned(&roster);
         if invalidated {
             self.detail = None;
             self.generation = self.generation.wrapping_add(1);
         }
-        if directory_changed {
+        if connection_changed {
             self.flight = None;
             self.error = None;
         }
-        self.directory = directory;
+        self.connection = connection;
         self.roster = roster;
         if returned {
             self.probe();
@@ -69,8 +69,8 @@ impl DetailState {
         true
     }
 
-    pub fn directory_changed(&self, directory: u64) -> bool {
-        self.directory != directory
+    pub fn connection_changed(&self, connection: u64) -> bool {
+        self.connection != connection
     }
 
     pub fn rearm(&mut self) {

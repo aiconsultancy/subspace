@@ -69,7 +69,7 @@ pub(super) fn open(
     let service = api.read(cx);
     let state = DetailState::new(
         roster_of(service, fleet, ship, member),
-        service.directory_revision(),
+        service.connection_revision(fleet),
     );
     let live = service.state(fleet).is_live();
     let back = cx.focus_handle().tab_stop(true);
@@ -152,13 +152,13 @@ pub(crate) fn visible(board: &Irc, cx: &gpui_kit::App) -> bool {
 
 impl Selection {
     fn update(&mut self, api: &FleetApi) -> bool {
-        let directory = api.directory_revision();
+        let connection = api.connection_revision(&self.fleet);
         let next = roster_of(api, &self.fleet, &self.ship, &self.member);
-        if self.state.directory_changed(directory) || self.state.roster.member_returned(&next) {
+        if self.state.connection_changed(connection) || self.state.roster.member_returned(&next) {
             self.retry_timer = None;
             self.request = None;
         }
-        let changed = self.state.update(next, directory);
+        let changed = self.state.update(next, connection);
         let live = api.state(&self.fleet).is_live();
         if live && !self.live {
             self.retry_timer = None;

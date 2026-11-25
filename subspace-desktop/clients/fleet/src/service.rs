@@ -119,6 +119,7 @@ pub struct FleetApi {
     feeds: BTreeMap<String, Followed>,
     revision: u64,
     directory_revision: u64,
+    connection_revisions: BTreeMap<String, u64>,
     /// Whether the timer that checks followed fleets runs.
     ticking: bool,
     _catalog: Option<Subscription>,
@@ -186,6 +187,7 @@ impl FleetApi {
             feeds: BTreeMap::new(),
             revision: 0,
             directory_revision: 0,
+            connection_revisions: BTreeMap::new(),
             ticking: false,
             _catalog: None,
         }
@@ -197,6 +199,7 @@ impl FleetApi {
         if fleets == self.fleets {
             return;
         }
+        self.update_connection_records(&fleets);
         for gone in directory::removed(&self.fleets, &fleets) {
             self.supersede(&gone);
         }
@@ -217,6 +220,24 @@ impl FleetApi {
     /// changes, but not with a followed fleet's news.
     pub fn directory_revision(&self) -> u64 {
         self.directory_revision
+    }
+
+    /// Changes when this fleet's directory record or saved token state
+    /// changes, not on news from its feed or on another fleet's changes.
+    pub fn connection_revision(&self, fleet: &str) -> u64 {
+        self.connection_revisions
+            .get(fleet)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn update_connection_records(&mut self, fleets: &[FleetRecord]) {
+        self.connection_revisions
+            .retain(|id, _| fleets.iter().any(|fleet| &fleet.id == id));
+        for fleet in fleets.iter().filter(|fleet| !self.fleets.contains(fleet)) {
+            self.connection_revisions
+                .insert(fleet.id.clone(), self.directory_revision.wrapping_add(1));
+        }
     }
 
     /// Every fleet, in the initiatives' order.
@@ -337,6 +358,8 @@ impl FleetApi {
             return;
         }
         self.tokens.insert(fleet.to_owned(), token);
+        self.connection_revisions
+            .insert(fleet.to_owned(), self.directory_revision.wrapping_add(1));
         self.changed(cx);
     }
 

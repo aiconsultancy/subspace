@@ -2,6 +2,46 @@ use subspace_client_fleet::{Error, model::ShipDetail};
 
 use super::{DetailState, Roster, assert_progress, member, roster};
 
+#[gpui_kit::test]
+fn only_the_selected_fleets_token_change_reprobes_a_missing_route(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use subspace_client_fleet::{FleetApi, FleetRecord, TokenStore};
+    use subspace_framework::core::Secret;
+
+    let fleets = vec![
+        FleetRecord::new(
+            "aurora",
+            "Aurora",
+            Some("https://aurora.example.com".into()),
+        ),
+        FleetRecord::new(
+            "cygnus",
+            "Cygnus",
+            Some("https://cygnus.example.com".into()),
+        ),
+    ];
+    let api = cx.update(|cx| FleetApi::install_new(TokenStore::memory(), fleets, cx));
+    cx.run_until_parked();
+    let revision = |cx: &mut gpui_kit::TestAppContext| {
+        api.read_with(cx, |api, _| api.connection_revision("aurora"))
+    };
+    let initial = revision(cx);
+    let current = || roster("first", "Working…", 1);
+    let mut state = DetailState::new(current(), initial);
+    let flight = state.begin().unwrap();
+    state.finish(flight, Err(Error::NotFound));
+
+    for (id, changed) in [("cygnus", false), ("aurora", true)] {
+        let save = api.update(cx, |api, cx| {
+            api.save_token(id, Secret::new("fixture-token"), cx)
+        });
+        cx.foreground_executor().block_test(save).unwrap();
+        assert_eq!(state.update(current(), revision(cx)), changed);
+        assert_eq!(state.begin().is_some(), changed);
+    }
+}
+
 #[test]
 fn each_show_requests_once_and_a_read_from_before_hiding_cannot_win() {
     let mut state = DetailState::new(roster("first", "Working…", 1), 0);
