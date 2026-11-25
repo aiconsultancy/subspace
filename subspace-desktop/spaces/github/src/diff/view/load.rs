@@ -19,11 +19,13 @@ enum LoadError {
 }
 
 impl DiffView {
-    pub(crate) fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         self.fleet.list_read.cancel();
         self.fleet.page_read.cancel();
+        self.fleet.busy_pages.clear();
+        self.fleet.watch = None;
         self._load = None;
-        self.close_binary(Some(window), cx);
+        self.close_binary(window, cx);
     }
 
     pub(crate) fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -37,7 +37,7 @@ pub(super) fn open(board: &mut Github, url: &str, cx: &mut Context<Github>) -> b
     let key = loaded_key(board, &link.key()).unwrap_or_else(|| link.key());
     board.navigation = Some(Target { link, key });
     board.composer = None;
-    board.diff = None;
+    board.diff.discard(None, cx);
     board._detail_task = None;
     board.detail_key = None;
     reveal(board, cx);

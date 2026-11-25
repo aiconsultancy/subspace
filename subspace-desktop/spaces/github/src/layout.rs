@@ -255,7 +255,7 @@ impl Github {
     /// The docks the status bar's switches show: both, as they show now,
     /// while the workspace is on show; none while a diff fills the Space.
     pub(crate) fn space_docks(&self) -> SpaceDocks {
-        match self.diff {
+        match self.diff.view() {
             Some(_) => SpaceDocks::NONE,
             None => SpaceDocks::both(self.navigator_open, self.inspector_open),
         }

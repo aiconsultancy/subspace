@@ -47,7 +47,7 @@ fn apply_closed(board: &mut Github, fresh: Option<GhItemDetail>, cx: &mut Contex
     if let Some(account) = board.data.get_mut(&pending.login.to_lowercase()) {
         account.apply_written_state(&item, fresh);
     }
-    if let Some((diff, _)) = &board.diff {
+    if let Some(diff) = board.diff.view() {
         diff.update(cx, |diff, cx| diff.update_item(&item, cx));
     }
     emit_toast(Toast::info(format!("Closed #{}", item.number)), cx);

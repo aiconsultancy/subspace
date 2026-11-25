@@ -92,7 +92,7 @@ pub(crate) fn open(
         .insert(key.clone(), detail);
     board.retained_key = Some(key.clone());
     board.detail_key = Some(key.clone());
-    board.diff = None;
+    board.diff.discard(Some(window), cx);
     show_retained_item(board, &key, window, cx);
 }
 
