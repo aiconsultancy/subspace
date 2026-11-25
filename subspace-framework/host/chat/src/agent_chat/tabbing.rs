@@ -1,5 +1,6 @@
 //! Opening, choosing and closing chat tabs, and the saved chats they show.
 
+use super::copilot_only::{self, CopilotOnly};
 use super::interaction::chat_preferences;
 use super::tabs::{
     SessionChoice, Tab, can_open, choose_session, index_after_close, stepped_index, tab_index,
@@ -81,7 +82,7 @@ impl ChatPanel {
         }
         if !self.capabilities().cloud_replay() {
             self.tab_mut()
-                .set_error(replay_unavailable(subspace_agent::COPILOT_BUILT_IN).into());
+                .set_error(copilot_only::unavailable(CopilotOnly::Replay).into());
             self.log_accepted_errors(cx);
             cx.notify();
             return;
@@ -166,16 +167,6 @@ impl ChatPanel {
     }
 }
 
-/// Why a cloud session does not open: only Copilot replays one, and a build
-/// without Copilot cannot switch to it.
-fn replay_unavailable(copilot_built_in: bool) -> &'static str {
-    if copilot_built_in {
-        "Cloud-session replay is unavailable with Pi. Choose Copilot in Settings and restart Subspace to open this session."
-    } else {
-        "Cloud-session replay needs Copilot chat, which this build of Subspace does not include. Open the task on GitHub instead."
-    }
-}
-
 fn new_chat_command(chat: ChatId, cx: &super::App) -> Command {
     Command::OpenChat {
         chat,
@@ -186,17 +177,9 @@ fn new_chat_command(chat: ChatId, cx: &super::App) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{new_chat_command, replay_unavailable};
+    use super::new_chat_command;
     use crate::prefs;
     use subspace_agent::Command;
-
-    #[test]
-    fn a_build_without_copilot_does_not_suggest_choosing_it_for_a_replay() {
-        assert!(replay_unavailable(true).contains("Choose Copilot in Settings"));
-        let missing = replay_unavailable(false);
-        assert!(missing.contains("does not include"), "{missing}");
-        assert!(!missing.contains("Choose Copilot"), "{missing}");
-    }
 
     #[gpui_kit::test]
     fn same_app_context_refreshes_new_chat_snapshot_without_mutating_old_one(
