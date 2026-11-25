@@ -325,6 +325,9 @@ start_services() {
 if ! command -v python3 >/dev/null; then
     ensure_packages python3
 fi
+if ! command -v git >/dev/null; then
+    ensure_packages git
+fi
 python3 "$runtime" prepare "$config" "$secrets" "$scratch" "$app_secrets" "$prune_secrets"
 install -d -m 0755 "$app" "$app/bin" "$app/src" "$app/lib" "$state"
 install -d -m 0711 "$etc"

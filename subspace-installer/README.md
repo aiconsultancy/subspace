@@ -1791,8 +1791,11 @@ at **25% remaining**. At **20% remaining**, Stargate refuses new starts and
 resumptions of that kind. Active crew can finish or checkpoint and push.
 The rear admiral posts the notices and reports verified recovery.
 
-An existing fleet picks this up on upgrade. The dry run and final summary
-name the sender and both providers' limits. To change them, pass
+An existing fleet picks this up on upgrade to a Stargate release that
+supports the guard. When a saved Stargate pin is older, re-run
+`subspace-setup --stargate-ref latest` or update `stargate.ref` in a
+hand-written `fleet.json`. The dry run and final summary name the sender and
+both providers' limits. To change them, pass
 `--usage-guard-warning 30 --usage-guard-cutoff codex=18` when re-running
 setup. Use `--no-usage-guard` to turn it off and `--usage-guard` to turn it
 back on. Each limit is an integer from 0 to 99 and each cutoff must be
@@ -1815,6 +1818,9 @@ The guard uses the fleet's loopback CLIProxyAPI management route. The
 installer generates a separate private management key if it has none.
 The crew plugin reads the verified policy without access to that key.
 A provider with no valid reading is reported in the gateway journal.
+The installer keeps the guard off for a Claude Agent SDK rear admiral
+because its tools run as the gateway user. An OpenCode rear admiral uses
+a separate gateway account.
 See [Stargate's usage guide](https://github.com/aiconsultancy/stargate/blob/main/docs/usage.md#fleet-usage-guard).
 
 
@@ -2231,9 +2237,11 @@ the selection to watch both. On upgrade, remove any previous
 
 Stargate writes the current state to `quota.json` in the primary gateway's
 data directory and posts to Slack as the rear admiral's bot. Slack intake
-ignores bot messages. An admiral relays the notice to the rear admiral in
-Slack or Starbase, and the rear admiral directs the captains, who control
-their crew's assignments through `stargate_crew`.
+ignores bot messages. With the [usage guard](#usage-guard) on, these Slack
+messages report the observed quota and captains follow the IRC notices
+for crew staffing. With the guard off, an admiral relays the notice to the
+rear admiral in Slack or Starbase, and the rear admiral directs captains
+using the following limits.
 
 - At 25% or less remaining, each captain keeps at most one crew member of
   that family working and holds further assignments as in-flight work
@@ -2244,7 +2252,7 @@ their crew's assignments through `stargate_crew`.
 - Above 25% after a warning, Stargate posts “Quota restored.” and the rear
   admiral tells captains to resume normal staffing.
 
-[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/usage.md).
+[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/main/docs/usage.md#crew-quota-notices).
 
 ## Memory limits and swap
 

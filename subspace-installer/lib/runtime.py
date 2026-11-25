@@ -1059,7 +1059,9 @@ def require_usage_guard_source(cfg, installed_only=False):
     ref = cfg["stargate"]["ref"]
     repo = cfg["stargate"]["repo"]
     source = APP / "src" / f"stargate-{ref}"
-    message = "Usage guard requires a newer Stargate. Update stargate.ref or turn off usageGuard."
+    message = ("Usage guard requires a newer Stargate. For a guided fleet, re-run subspace-setup "
+               "--stargate-ref latest or --no-usage-guard. For a hand-written fleet.json, update "
+               "stargate.ref or turn off usageGuard.")
 
     if installed_only or source.is_dir():
         require((source / USAGE_GUARD_SOURCE).is_file(), message)
@@ -1096,7 +1098,16 @@ def usage_guard_config(value):
     return result
 
 
+def fleet_usage_guard(value, rear):
+    guard = usage_guard_config(value)
+    if guard["enabled"] and rear["harness"]["type"] != "opencode":
+        guard.update(enabled=False, unsupported=True)
+    return guard
+
+
 def usage_guard_line(guard, rear):
+    if guard.get("unsupported"):
+        return "Usage guard is off for a Claude SDK rear admiral because its agent tools share the gateway user."
     if not guard["enabled"]:
         return "Usage guard is off."
     limits = ", ".join(f"{provider.title()} {guard[provider]['warning']}% warning / {guard[provider]['cutoff']}% cutoff"
@@ -1363,7 +1374,7 @@ def validate(config, credentials, check_files=True):
                               "Stargate source", STARGATE_REPO, STARGATE_REF), "api": stargate_api},
         "dashboard": dashboard, "agentsview": view, "api": api,
         "agentDispatch": dispatch and {**dispatch, "token": dispatch_token},
-        "usageGuard": usage_guard_config(cfg.get("usageGuard", {})),
+        "usageGuard": fleet_usage_guard(cfg.get("usageGuard", {}), agents[0]),
         "proxy": {"port": proxy_port, "requestRetries": retries, "key": proxy_key},
         "passwords": passwords, "operatorPassword": operator_password, "token": token, "listeners": listeners,
         "historyPassword": history_password(irc, private),
@@ -1518,7 +1529,7 @@ def extra_snapshot(cfg, directory, previous, prune):
     if "reportChannel" in cfg["integrations"]["usage"]:
         require("proxy-management-key" in tokens, "Supply a proxy management key in the secrets directory.")
     if cfg["usageGuard"]["enabled"] and "proxy-management-key" not in tokens:
-        tokens["proxy-management-key"] = secrets.token_hex(32)
+        tokens["proxy-management-key"] = previous.get("tokens", {}).get("proxy-management-key") or secrets.token_hex(32)
     if "proxy-management-key" in tokens:
         require(tokens["proxy-management-key"] != cfg["proxy"]["key"], "Use distinct proxy management and model client keys.")
     medical = {} if prune else previous.get("medical", {}).copy()
@@ -3006,7 +3017,7 @@ def allocate_ports(cfg):
     return ports
 
 
-def stakeholder_settings(cfg, tokens, backend, _user, data, environment):
+def stakeholder_settings(cfg, tokens, backend, user, data, environment):
     integrations = cfg["integrations"]
     settings, writable = {}, []
     if slack := integrations["slack"]:
@@ -3457,9 +3468,8 @@ def main(args):
     verb, *tail = args
     if verb == "usage-guard-summary":
         config = read_json(ETC / "fleet.json", private=True)
-        rear = config["rearAdmiral"]
-        print(usage_guard_line(usage_guard_config(config.get("usageGuard", {})),
-                               {"account": rear.get("account", rear["id"])}))
+        configured = validate(config, read_json(ETC / "secrets.json", private=True), check_files=False)
+        print(usage_guard_line(configured["usageGuard"], configured["members"][0]))
         return
     # install.sh --dry-run --no-systemd: the plan says what a run that leaves systemd and swap alone would do.
     managed = not (verb == "plan" and tail[-1:] == ["no-systemd"])

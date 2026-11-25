@@ -23,4 +23,7 @@ IRC account to captains in their ship channels. Captains coordinate
 checkpoints and pushes for the named provider. Let the gateway send each
 notice once, and wait for verified recovery before advising resumptions.
 If the guard is off and an admiral relays a legacy Slack quota report,
-coordinate the named provider's crew using the limits in that report.
+have captains keep at most one worker of that kind at 25% remaining. At
+15%, have them pause new starts and resumptions, checkpoint active work
+and keep task claims. On the legacy recovery notice, tell captains to
+resume normal staffing for that provider.

@@ -1126,6 +1126,14 @@ class InstalledFleet(unittest.TestCase):
         self.assertNotIn("usageGuardFile",
                          runtime.crew_options(cfg, cfg["members"][1], self.state, 4097, "ses_fixture"))
 
+    def test_usage_guard_keeps_the_management_key_away_from_a_native_rear_admirals_tools(self):
+        config, private = crew_fleet("orion")
+        config["rearAdmiral"]["harness"] = {"type": "claude-sdk", "family": "claude"}
+        cfg = runtime.validate(config, private)
+        self.assertFalse(cfg["usageGuard"]["enabled"])
+        self.assertIn("share the gateway user", runtime.usage_guard_line(cfg["usageGuard"], cfg["members"][0]))
+        self.assertNotIn("proxy-management-key", runtime.extra_snapshot(cfg, None, {}, False)["tokens"])
+
     def test_usage_guard_mints_a_management_key_once_and_keeps_it_on_upgrade(self):
         config, private = crew_fleet("orion")
         cfg = runtime.validate(config, private)
