@@ -67,10 +67,23 @@ impl ChatPanel {
         let _ = opened.then(|| self.place_tab(Tab::opened(chat), window, cx));
     }
 
+    /// Why a cloud session would not open here, when it would not. The shell
+    /// asks before it opens the pane and shows the reason as a toast: the
+    /// pane may be off, or on its Sessions tab, where a chat tab's error is
+    /// hidden.
+    pub fn cloud_replay_refusal(&self) -> Option<&'static str> {
+        copilot_only::refuses_replay(
+            self.capabilities().cloud_replay(),
+            self.is_disabled(),
+            subspace_agent::COPILOT_BUILT_IN,
+        )
+        .then(|| copilot_only::unavailable(CopilotOnly::Replay))
+    }
+
     /// Replays a cloud agent task's last session in a read-only tab. Every
     /// replay opens a fresh tab: the connected session is transient, so
     /// there is no saved chat to focus instead. The shell opens the pane
-    /// first.
+    /// first, unless `cloud_replay_refusal` gives a reason not to.
     pub fn show_cloud_session(
         &mut self,
         task: &CloudSession,

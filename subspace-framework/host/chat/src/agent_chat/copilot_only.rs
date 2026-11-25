@@ -11,6 +11,14 @@ pub(super) enum CopilotOnly {
     Replay,
 }
 
+/// Whether Open in chat refuses a cloud session: only an engine that replays
+/// one opens it. A build without Copilot refuses it whatever the pane runs,
+/// Chat off included. With Copilot built in, Chat off is not refused here:
+/// the pane opens and says how to turn chat on.
+pub(super) fn refuses_replay(replays: bool, off: bool, copilot_built_in: bool) -> bool {
+    !replays && (!off || !copilot_built_in)
+}
+
 /// Why the control is unavailable in this build.
 pub(super) fn unavailable(control: CopilotOnly) -> &'static str {
     unavailable_in(control, subspace_agent::COPILOT_BUILT_IN)
@@ -49,7 +57,7 @@ fn unavailable_in(control: CopilotOnly, copilot_built_in: bool) -> &'static str 
 #[cfg(test)]
 mod tests {
     use super::super::{ChatPanel, InputIntent};
-    use super::{CopilotOnly, unavailable, unavailable_in};
+    use super::{CopilotOnly, refuses_replay, unavailable, unavailable_in};
     use crate::prefs;
     use gpui_kit::TestAppContext;
     use subspace_core::config::ChatEngine;
@@ -73,6 +81,24 @@ mod tests {
             );
             assert!(!missing.contains("Choose Copilot"), "{missing}");
         }
+    }
+
+    #[test]
+    fn only_a_replaying_engine_opens_a_cloud_session() {
+        for built_in in [true, false] {
+            for off in [true, false] {
+                assert!(!refuses_replay(true, off, built_in));
+            }
+            assert!(refuses_replay(false, false, built_in), "Pi or ACP");
+        }
+        assert!(
+            refuses_replay(false, true, false),
+            "a build without Copilot refuses it with Chat off"
+        );
+        assert!(
+            !refuses_replay(false, true, true),
+            "with Copilot built in, the pane says how to turn chat on"
+        );
     }
 
     /// Pi refuses YOLO in its chat tab with the text for this build.

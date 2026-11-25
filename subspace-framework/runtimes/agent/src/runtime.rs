@@ -182,6 +182,15 @@ impl AgentHandle {
         workspace: PathBuf,
         events: Vec<Event>,
     ) -> (AgentHandle, mpsc::Receiver<Command>) {
+        Self::test_offline_engine(ChatEngine::Copilot, workspace, events)
+    }
+
+    /// The same, as a runtime of another engine, such as Pi.
+    pub fn test_offline_engine(
+        engine: ChatEngine,
+        workspace: PathBuf,
+        events: Vec<Event>,
+    ) -> (AgentHandle, mpsc::Receiver<Command>) {
         let (commands, receiver) = mpsc::channel(COMMAND_LIMIT);
         let queue = EventQueue::default();
         lock(&queue.items).extend(events);
@@ -191,7 +200,7 @@ impl AgentHandle {
                 events: Arc::new(queue),
                 workspace,
                 attachment_lock: Mutex::new(()),
-                engine: ChatEngine::Copilot,
+                engine,
                 _stop: supervisor::stop_pair().0,
             }),
         };
