@@ -116,6 +116,9 @@ fn hex_and_preview_stop_at_the_last_byte_without_fetching_a_terminator(cx: &mut 
     assert_page(&view, window, DiffSide::New, 3);
     window.update(|window, _| assert!(window.try_find("crew-binary-next").is_none()));
     let _image = open_preview(&view, window);
+    click(window, "crew-binary-return");
+    click(window, "crew-binary-previous");
+    assert_page(&view, window, DiffSide::New, 0);
     assert!(
         !mock
             .requests()
