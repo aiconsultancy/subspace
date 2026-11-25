@@ -31,6 +31,8 @@ from roles import role_documents
 from roles import provision_workspace, workspace_documents
 import sessions
 import standard_channels
+import toolchains
+from toolchains import Invalid
 from workspaces import crew_worktree, prepare_workspaces, prune_worktrees
 
 
@@ -67,7 +69,9 @@ JWT = r"[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+"
 DISPATCH_GRANT = {"action": "fleet_answer_offer", "resource": "*", "effect": "allow"}
 FLEET_ACTIONS = ("fleet_verify_instruction", "fleet_dispatch", "fleet_status", "fleet_review", "fleet_answer_offer")
 FIREWALL = f"{PREFIX}firewall.service"
-TOOL_HOME = APP / "toolchains"
+# The shared toolchain store and the fleet's mise configuration (lib/toolchains.py). Fleet services that run no
+# officer's tools keep this environment; officers and crew run theirs with toolchains.officer_environment.
+TOOL_HOME = toolchains.SHARED
 TOOL_ENV = {"MISE_DATA_DIR": str(TOOL_HOME), "MISE_GLOBAL_CONFIG_FILE": str(ETC / "toolchains.toml"),
             "MISE_SYSTEM_CONFIG_DIR": str(TOOL_HOME / "system-config")}
 FLEET_PATH = f"{APP}/bin:{TOOL_HOME}/shims:/usr/local/bin:/usr/bin:/bin"
@@ -132,10 +136,6 @@ CREW_GRANTS = [
     *({"action": action, "resource": "*", "effect": "allow"} for action in ("stargate_crew", "stargate_mail", "stargate_history")),
     {"action": "stargate_model", "resource": "get", "effect": "allow"},
 ]
-
-
-class Invalid(ValueError):
-    pass
 
 
 def require(condition, message):
@@ -896,13 +896,8 @@ def repository_notes(value):
     return notes
 
 
-def toolchain_config(value):
-    tools = fields(value, "toolchains", "node rust go python kubectl gh zig deno")
-    result = {}
-    for name, version in {"node": "24", **tools}.items():
-        if version is not False:
-            result[name] = pattern(version, r"(?:[0-9]+(?:\.[0-9]+){0,2}|stable|latest)", f"{name} version")
-    return result
+# fleet.json's toolchains and systemPackages (lib/toolchains.py).
+toolchain_config = toolchains.toolchain_config
 
 
 def maintenance_config(value):
@@ -1018,7 +1013,7 @@ def officer_names(officers, naming):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains systemPackages maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
     naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
@@ -1236,6 +1231,7 @@ def validate(config, credentials, check_files=True):
         "repositoryNotes": repository_notes(cfg.get("repositories", [])),
         "integrations": integrations, "operators": operators, "protectedBranches": protected,
         "toolchains": toolchain_config(cfg.get("toolchains", {})),
+        "systemPackages": toolchains.package_config(cfg.get("systemPackages", [])),
         "maintenance": maintenance_config(cfg.get("maintenance", {})),
         "stargate": {**source({key: stargate[key] for key in ("repo", "ref") if key in stargate},
                               "Stargate source", STARGATE_REPO, STARGATE_REF), "api": stargate_api},
@@ -1985,6 +1981,15 @@ def publish_ready(pins):
             sessions.write_durable(marker, f"{session_id}\n")
 
 
+def officer_tool_environment(cfg, person, home):
+    """The environment an officer runs its tools in, and its crew with it (toolchains.officer_environment): its
+    own mise data directory, the shared store as mise's system data directory, mise configuration trusted where
+    it works (its workspace and its crew's worktrees; the rear admiral's reference checkouts), a private TMPDIR."""
+    trusted = [home / "workspace", home / "worktrees"] if person["role"] == "captain" else \
+        [home / "workspace", STATE / "references" / person["id"]]
+    return toolchains.officer_environment(cfg["toolchains"], f"ss-{person['id']}", home, trusted)
+
+
 def render_engine(cfg, person, home, workspace, engine_port, seed, documents, session_id, answers_offers=False):
     agent_id = person["id"]
     user = f"ss-{agent_id}"
@@ -2021,6 +2026,7 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         "OPENCODE_DISABLE_AUTOUPDATE": "true",
         "OPENCODE_DISABLE_MODELS_FETCH": "true",
         "OPENCODE_DISABLE_TERMINAL_TITLE": "true",
+        **officer_tool_environment(cfg, person, home),
     }
     auth_var = "ENGINE_" + agent_id.upper().replace("-", "_")
     backend = {"type": "opencode", "url": f"http://{LOOPBACK}:{engine_port}", "directory": str(workspace),
@@ -2057,10 +2063,12 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
     settings = save_settings(f"engine-{agent_id}", {
         "environment": environment, "port": engine_port, "directory": str(workspace), "slug": cfg["slug"],
     }, user)
+    # The engine's tool environment is in its settings (runtime.py engine), not the unit's.
     unit = serve_unit(
         f"engine-{agent_id}", f"OpenCode engine {agent_id}",
         f"{APP}/lib/runtime.py engine {settings}", user, [f"{PREFIX}proxy.service"],
         user_paths=[home, database_dir], post_start=f"{APP}/lib/runtime.py share-database {settings}",
+        toolchain=False,
     )
     return unit, backend, {auth_var: header}, database_dir
 
@@ -2351,21 +2359,48 @@ def render_firewall(cfg):
     return FIREWALL
 
 
-def toolchains(versions, update=False):
+def install_toolchains(cfg, homes, update=False):
+    """Install the configured toolchains (ETC/toolchains.toml is written first), or with update, upgrade them within
+    their configured versions. Shared tools: as root, explicit tool@version arguments, from /opt/subspace-fleet,
+    into the shared store. Per-user tools: as each officer's user, the same way, from its home, into its own mise
+    data directory. Neither runs mise in a checkout, so no repository's configuration is read."""
+    tools = cfg["toolchains"]
     directory(TOOL_HOME, 0o755)
     directory(TOOL_HOME / "system-config", 0o755)
-    data = "[tools]\n" + "".join(f'{name} = "{version}"\n' for name, version in sorted(versions.items()))
-    write(ETC / "toolchains.toml", data, 0o644)
-    if not versions:
-        return
-    # Source configuration is operator-owned and the working directory is outside agent workspaces.
-    env = {**TOOL_ENV, "PATH": FLEET_PATH, "HOME": "/root", "MISE_YES": "1", "MISE_LOCKFILE": "0", "MISE_SELF_UPDATE_AVAILABLE": "0"}
-    previous = os.umask(0o022)
-    try:
-        command = [str(APP / "bin/mise"), "upgrade", "--no-prune"] if update else [str(APP / "bin/mise"), "install"]
-        subprocess.run(command, cwd=APP, env=env, check=True)
-    finally:
-        os.umask(previous)
+
+    def command(arguments):
+        names = list(dict.fromkeys(argument.rsplit("@", 1)[0] for argument in arguments))
+        return [str(toolchains.MISE), *(["upgrade", "--no-prune", *names] if update else ["install", *arguments])]
+
+    if shared := toolchains.requests(tools, "shared"):
+        previous = os.umask(0o022)
+        try:
+            subprocess.run(command(shared), cwd=APP, env=toolchains.root_environment(tools), check=True)
+        finally:
+            os.umask(previous)
+    if personal := toolchains.requests(tools, "user"):
+        for person in cfg["members"]:
+            home = homes[person["id"]]
+            # The installer is not in the engine's private /tmp, so mise keeps the system's temporary directory.
+            environment = {key: value for key, value in officer_tool_environment(cfg, person, home).items()
+                           if key != "TMPDIR"}
+            subprocess.run(["runuser", "-u", f"ss-{person['id']}", "--", *toolchains.clean_environment(
+                f"ss-{person['id']}", home, environment), *command(personal)], cwd=home, check=True)
+
+
+def toolchain_plan(cfg):
+    """--dry-run: the toolchains this run installs and where, and what changes from the installed fleet.json."""
+    officers = {f"ss-{person['id']}": STATE / "agents" / person["id"] for person in cfg["members"]}
+    previous = None
+    installed = ETC / "fleet.json"
+    if os.access(installed, os.R_OK):
+        try:
+            saved = read_json(installed, private=True)
+            previous = (toolchain_config(saved.get("toolchains", {})),
+                        toolchains.package_config(saved.get("systemPackages", [])))
+        except (Invalid, AttributeError):
+            previous = None
+    return toolchains.plan_lines(cfg["toolchains"], cfg["systemPackages"], officers, previous)
 
 
 def maintenance_units(cfg):
@@ -2590,7 +2625,7 @@ def maintain(action):
         if action == "mirrors":
             reconcile_workspaces(cfg, homes, refresh_only=True)
         elif action == "tools":
-            toolchains(cfg["toolchains"], update=True)
+            install_toolchains(cfg, homes, update=True)
         elif action == "prune":
             run("journalctl", "--namespace=subspace-fleet", "--rotate", f"--vacuum-time={settings['logDays']}d")
             prune_worktrees(cfg["repositories"], cfg["members"], homes, settings["worktreeDays"])
@@ -2906,7 +2941,10 @@ def render(cfg, extra, prune=False):
         user = f"ss-{agent_id}" if native else GATEWAY
         home = homes[agent_id] if native else gateway_home
         opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "ready": [],
-                                         "writable": []})
+                                         "writable": [], "native": native})
+        if native:
+            # A Claude Agent SDK officer's gateway runs its tools, as its own user, as an engine does.
+            opts["environment"].update(officer_tool_environment(cfg, person, home))
         entry = irc_officer(cfg, person, registrations[agent_id])
         check_sign_in(entry, entry["server"])
         if control := fleet_control(cfg, person, pins.get(agent_id), rear_session, gateway_home):
@@ -2974,6 +3012,7 @@ def render(cfg, extra, prune=False):
         units.append(serve_unit(
             group, "Stargate fleet gateway", f"{APP}/lib/runtime.py gateway {runtime_path} start", user, after,
             user_paths=writable, unit_options=[f"ConditionPathExists={path}" for path in options["ready"]],
+            toolchain=not options["native"],
         ))
     write(ETC / "gateway-checks.json", json_text(checks))
     dash = cfg["dashboard"]
@@ -2981,7 +3020,8 @@ def render(cfg, extra, prune=False):
     units.append(serve_unit("dashboard", "Stargate dashboard", f"{APP}/lib/dashboard.py {bind} {dash['port']} {dashboard_socket}", dashboard_user, [f"{PREFIX}gateway.service"]))
     units.append(render_view(cfg, databases, view_home))
     units.insert(0, render_firewall(cfg))
-    toolchains(cfg["toolchains"])
+    write(ETC / "toolchains.toml", toolchains.mise_config(cfg["toolchains"]), 0o644)
+    install_toolchains(cfg, homes)
     units.extend(maintenance_units(cfg))
 
     path = ETC / "units"
@@ -3054,7 +3094,16 @@ def commission(prune, existing=False):
 
 def engine(path, attach=False):
     settings = read_json(path)
-    env = {**os.environ, **TOOL_ENV, **settings["environment"], "PATH": FLEET_PATH}
+    environment = settings["environment"]
+    if "MISE_DATA_DIR" not in environment:
+        # Settings rendered before officers had a tool environment of their own.
+        environment = {**TOOL_ENV, "PATH": FLEET_PATH, **environment}
+    env = {**os.environ, **environment}
+    if attach:
+        # The TUI only talks to the engine, which runs the tools; the private TMPDIR is the engine's.
+        env.pop("TMPDIR", None)
+    elif "TMPDIR" in env:
+        toolchains.private_tmp(env["TMPDIR"])
     os.umask(0o027)
     os.chdir(settings["directory"])
     binary = str(APP / "bin/opencode")
@@ -3115,6 +3164,12 @@ def view_config(source, destination):
 def gateway(path, verb):
     settings = read_json(path)
     env = {**os.environ, **settings["environment"]}
+    if "TMPDIR" in settings["environment"]:
+        # A Claude Agent SDK officer's gateway: its private TMPDIR is made in the service's own /tmp.
+        if verb[:1] == ["start"]:
+            toolchains.private_tmp(env["TMPDIR"])
+        else:
+            env.pop("TMPDIR")
     bun = str(APP / "bin/bun")
     args = [bun, settings["entrypoint"], *verb, "--config", settings["config"]]
     os.execve(bun, args, env)
@@ -3200,6 +3255,8 @@ def main(args):
                 directory = stage / "github-apps" / member_id
                 directory.mkdir(parents=True)
                 (directory / "github-app.pem").write_text(key)
+            # fleet.json's systemPackages, validated as Debian package names, which install.sh installs with apt.
+            (stage / "system-packages").write_text("".join(f"{name}\n" for name in cfg["systemPackages"]))
             sources = [cfg["stargate"]["repo"], cfg["stargate"]["ref"], cfg["irc"]["mode"]]
             if cfg["irc"]["mode"] == "local":
                 sources.extend(cfg["irc"]["compose"][key] for key in ("repo", "ref"))
@@ -3257,6 +3314,8 @@ def main(args):
             if line := captain_tools_line(cfg):
                 print(line)
             for line in policy_lines(cfg):
+                print(line)
+            for line in toolchain_plan(cfg):
                 print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":

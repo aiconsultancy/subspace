@@ -577,7 +577,9 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(cfg["stargate"]["ref"], runtime.STARGATE_REF)
 
     def test_toolchain_versions_are_data(self):
-        self.assertEqual(toolchain_config({"node": False, "go": "1.26.1"}), {"go": "1.26.1"})
+        # More in toolchains_test.py.
+        self.assertEqual(toolchain_config({"node": False, "go": "1.26.1"}),
+                         {"go": {"versions": ["1.26.1"], "install": "shared", "options": {}}})
         with self.assertRaises(Invalid):
             toolchain_config({"rust": "latest\n[env]"})
 

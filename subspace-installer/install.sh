@@ -290,6 +290,14 @@ install_file "$scratch/secrets.json" "$etc/secrets.json" 0600
 install_file "$scratch/extra-secrets.json" "$etc/extra-secrets.json" 0600
 mapfile -t source < "$scratch/sources"
 ensure_packages ca-certificates curl git openssh-client tmux unzip xz-utils build-essential jq ripgrep rsync nftables python3-venv
+# fleet.json's systemPackages, which runtime.py prepare checked are Debian package names. Never removed.
+mapfile -t system_packages < "$scratch/system-packages"
+if (( ${#system_packages[@]} )); then
+    for package in "${system_packages[@]}"; do
+        [[ $package =~ ^[a-z0-9][a-z0-9+.-]+$ ]] || die "Invalid system package name $package."
+    done
+    ensure_packages "${system_packages[@]}"
+fi
 if [[ ${source[2]} == local ]]; then
     install_docker
 fi
@@ -327,7 +335,7 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
 done
 install -d -m 0755 "$app/lib/git-hooks"

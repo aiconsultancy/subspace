@@ -610,10 +610,17 @@ def check_shape():
         assert subprocess.run(["runuser", "-u", user, "--", "test", "-w", ref]).returncode == 1
         assert subprocess.run(["runuser", "-u", user, "--", "test", "-w", ref / "README.md"]).returncode == 1
     assert subprocess.run(["runuser", "-u", "ss-orion", "--", "test", "-r", ref / "README.md"]).returncode == 1
-    command = ["runuser", "-u", "ss-orion", "--", "env", "MISE_DATA_DIR=/opt/subspace-fleet/toolchains",
-               "MISE_GLOBAL_CONFIG_FILE=/etc/subspace-fleet/toolchains.toml",
-               "/opt/subspace-fleet/toolchains/shims/node", "--version"]
-    assert subprocess.check_output(command, text=True).startswith("v24.")
+    # The captain's tools, with its engine's environment: the shared Node through mise's system data directory,
+    # from its workspace, and its own mise data directory under its home.
+    environment = json.loads((etc / "engine-orion.json").read_text())["environment"]
+    tools = {key: value for key, value in environment.items() if key.startswith("MISE_") or key == "PATH"}
+    assert tools["MISE_DATA_DIR"] == str(CAPTAIN_HOME / ".local/share/mise")
+    assert environment["TMPDIR"] == "/tmp/ss-orion"
+    command = ["runuser", "-u", "ss-orion", "--", "env", *(f"{key}={value}" for key, value in tools.items()),
+               f"HOME={CAPTAIN_HOME}", "sh", "-c", f"cd {CAPTAIN_HOME / 'workspace'} && node --version && mise which node"]
+    output = subprocess.check_output(command, text=True).splitlines()
+    assert output[0].startswith("v24."), output
+    assert output[1].startswith("/opt/subspace-fleet/toolchains/installs/node/24."), output
     captain = pwd.getpwnam("ss-orion")
     # The captain's workspace instructions sit beside its checkouts, written as the captain.
     workspace = CAPTAIN_HOME / "workspace"
