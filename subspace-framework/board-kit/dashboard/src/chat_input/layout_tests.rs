@@ -148,3 +148,27 @@ fn a_counter_does_not_move_or_shrink_a_manually_sized_editor(cx: &mut TestAppCon
         assert!(pill.bounds().bottom() <= input.read(cx).state.read(cx).input_bounds().top());
     });
 }
+
+#[gpui_kit::test]
+fn draft_boundary_arrows_scroll_the_caret_into_view(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    cx.update(crate::bind_keys);
+    let (input, cx) = cx.add_window_view(ChatInput::message);
+    cx.update(|_, cx| input.update(cx, |input, cx| input.set_recall_keys(true, cx)));
+    let text = ["Fixture café"; 20].join("\n");
+    draft(&input, &text, cx);
+
+    cx.update(|window, cx| window.press("down", cx));
+    draw(cx);
+    input.read_with(cx, |input, cx| {
+        assert_eq!(input.cursor(cx), text.len());
+        assert!(input.state.read(cx).scroll_offset().y < px(0.0));
+    });
+
+    cx.update(|window, cx| window.press("up", cx));
+    draw(cx);
+    input.read_with(cx, |input, cx| {
+        assert_eq!(input.cursor(cx), 0);
+        assert_eq!(input.state.read(cx).scroll_offset().y, px(0.0));
+    });
+}

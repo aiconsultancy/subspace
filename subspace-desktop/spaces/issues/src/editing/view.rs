@@ -1,5 +1,6 @@
 //! New issue and Edit issue use the same focused form.
 mod actions_view;
+mod description;
 mod inline;
 mod notices;
 mod picker;
@@ -23,11 +24,11 @@ use subspace_framework::lucide::IconName;
 pub(crate) use actions_view::{edit_button, new_button};
 
 use super::{Field, IssueEditor, Phase};
-use crate::Issues;
+use crate::{Issues, view::reveal_focus};
 
 actions!(issue_editor, [CancelIssueEditor, SubmitIssueEditor]);
 const EDITOR_CONTEXT: &str = "IssueEditor";
-const FORM_WIDTH_REMS: f32 = 45.;
+const FORM_WIDTH_REMS: f32 = 64.;
 
 pub(crate) fn bind(cx: &mut App) {
     let context = Some(EDITOR_CONTEXT);
@@ -79,6 +80,7 @@ pub(crate) fn render(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) 
         .child(
             v_flex()
                 .id("issue-editor-scroll")
+                .track_scroll(&editor.scroll)
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
@@ -163,7 +165,7 @@ fn submit(
 }
 
 fn form(board: &Issues, editor: &IssueEditor, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
-    let locked = editor.frozen() || editor.discard;
+    let locked = editor.controls_locked();
     v_flex()
         .mx_auto()
         .w_full()
@@ -172,27 +174,30 @@ fn form(board: &Issues, editor: &IssueEditor, tokens: &Tokens, cx: &mut Context<
         .gap_4()
         .child(scope(board, tokens))
         .child(notices::notice(editor, tokens, cx))
-        .child(fields::form_field(
-            "Title",
-            fields::input(&editor.title, InputRole::Configuration, "Issue title")
-                .id("issue-edit-title")
-                .disabled(locked),
+        .child(reveal_focus::scope(
+            "title",
+            &editor.scroll,
+            fields::form_field(
+                "Title",
+                fields::input(&editor.title, InputRole::Configuration, "Issue title")
+                    .id("issue-edit-title")
+                    .disabled(locked),
+            ),
         ))
         .when(
             subspace_api_client::capabilities().issue_summaries,
             |form| {
-                form.child(fields::form_field(
-                    "Summary",
-                    summary::input(editor, InputRole::Configuration, locked, cx),
+                form.child(reveal_focus::scope(
+                    "summary",
+                    &editor.scroll,
+                    fields::form_field(
+                        "Summary",
+                        summary::input(editor, InputRole::Configuration, locked, cx),
+                    ),
                 ))
             },
         )
-        .child(fields::form_field(
-            "Description",
-            fields::textarea(&editor.description, "Markdown description")
-                .accessibility_id("issue-edit-description")
-                .readonly(locked),
-        ))
+        .child(description::render(editor, locked, tokens, cx))
         .child(properties(board, editor, locked, tokens, cx))
 }
 
@@ -215,40 +220,55 @@ fn properties(
         .border_color(tokens.hair)
         .child(div().text_size(tokens.heading_font).child("Properties"))
         .child(
-            h_flex().gap_3().flex_wrap().children(
-                Field::ALL
-                    .into_iter()
-                    .map(|field| picker::render(board, editor, field, locked, cx)),
-            ),
+            h_flex()
+                .gap_3()
+                .flex_wrap()
+                .children(Field::ALL.into_iter().map(|field| {
+                    reveal_focus::scope(
+                        field.facts().0,
+                        &editor.scroll,
+                        picker::render(board, editor, field, locked, cx),
+                    )
+                })),
+        )
+        .child(additional_properties(editor, locked))
+}
+
+fn additional_properties(editor: &IssueEditor, locked: bool) -> Div {
+    h_flex()
+        .items_start()
+        .flex_wrap()
+        .gap_3()
+        .child(
+            div().min_w_48().flex_1().child(reveal_focus::scope(
+                "due-date",
+                &editor.scroll,
+                fields::form_field(
+                    "Due date",
+                    fields::input(
+                        &editor.due,
+                        InputRole::Configuration,
+                        "Due date in YYYY-MM-DD format",
+                    )
+                    .id("issue-edit-due")
+                    .disabled(locked),
+                ),
+            )),
         )
         .child(
-            h_flex()
-                .items_start()
-                .flex_wrap()
-                .gap_3()
-                .child(
-                    div().min_w_48().flex_1().child(fields::form_field(
-                        "Due date",
-                        fields::input(
-                            &editor.due,
-                            InputRole::Configuration,
-                            "Due date in YYYY-MM-DD format",
-                        )
-                        .id("issue-edit-due")
-                        .disabled(locked),
-                    )),
-                )
-                .child(
-                    div().min_w_48().flex_1().child(fields::form_field(
-                        "Parent",
-                        fields::input(
-                            &editor.parent,
-                            InputRole::Configuration,
-                            "Parent issue identifier",
-                        )
-                        .id("issue-edit-parent")
-                        .disabled(locked),
-                    )),
+            div().min_w_48().flex_1().child(reveal_focus::scope(
+                "parent",
+                &editor.scroll,
+                fields::form_field(
+                    "Parent",
+                    fields::input(
+                        &editor.parent,
+                        InputRole::Configuration,
+                        "Parent issue identifier",
+                    )
+                    .id("issue-edit-parent")
+                    .disabled(locked),
                 ),
+            )),
         )
 }

@@ -2211,13 +2211,205 @@ their crew's assignments through `stargate_crew`.
 
 [Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/usage.md).
 
+## Memory limits and swap
+
+Every officer's engine has memory and task limits, sized for the VM, and
+the VM has swap. Without them one runaway process, such as a test suite
+whose child grows until the VM runs out of memory, makes the kernel kill
+processes wherever it must: the officer's engine with it, then again after
+each restart. With them the runaway meets its own engine's cap, the kernel
+kills it there, and the engine and the rest of the VM keep running.
+
+Each engine's systemd unit gets:
+
+- `MemoryMax`, the hard cap. A captain's crew run inside its engine, so one
+  cap covers the whole ship.
+- `MemoryHigh`, a soft limit a tenth under it, where the kernel starts to
+  reclaim and slow the engine down.
+- `MemorySwapMax`, the engine's swap allowance, a fifth of the hard cap.
+- `TasksMax=4096`, which stops a runaway that forks.
+- `OOMPolicy=continue`: when a process in the engine is killed for memory,
+  systemd logs it and the engine keeps running, instead of stopping the
+  whole engine as `OOMPolicy=stop`, systemd's default, does.
+
+A Claude Agent SDK officer's work runs in its own gateway
+(`subspace-fleet-gateway-agent-<id>.service`, or the rear admiral's
+`subspace-fleet-gateway.service`), which takes the officer's limits. The
+shared gateway and the model proxy, which every officer depends on, have no
+cap, so a leak in either cannot take the fleet off the air by itself;
+`OOMScoreAdjust=-500` has the kernel kill an agent's process before either
+when the whole VM runs out of memory. Limits need the unified cgroup
+hierarchy (cgroup v2), which Ubuntu 24.04 and Debian 12 use.
+
+### How the installer sizes them
+
+The installer reads the VM's memory (`MemTotal`) on every run.
+
+- **A captain's hard cap** is its share of the VM if up to three ships build
+  at full stretch at once: all of it with one captain, half with two, a
+  third with three or more. It is never more than leaves the OS and the
+  fleet's services their room, the rear admiral its cap and every other
+  captain 1 GiB at rest, never more than 32 GiB (no build these fleets run
+  needs more; a process that wants more is almost certainly a runaway) and
+  never less than 2 GiB. It is rounded down to a whole GiB, or to 256 MiB
+  under 4 GiB.
+- **The OS and the fleet's services** keep 2 GiB, plus 1 GiB when the
+  Subspace API and its PostgreSQL run on the VM and 512 MiB when Ergo does.
+  The installer knows the API runs here from `memory.localApi`, which
+  `subspace-setup` sets whenever it runs the API on the VM, whatever its
+  sign-in, or from an `api.url` on this VM's loopback.
+- **The rear admiral's hard cap** is an eighth of the VM, between 1 and
+  4 GiB.
+- **The soft limit** is the hard cap less a tenth, rounded down to a whole
+  GiB (256 MiB under 4 GiB); **the swap allowance** a fifth of it, to the
+  nearest GiB and at least 512 MiB.
+
+For example, a 64 GB VM reports about 62.7 GiB. With four captains each
+captain's share is a third, 20.9 GiB, so its hard cap is 20 GiB, its soft
+limit 18 GiB and its swap allowance 4 GiB; the rear admiral's are 4, 3 and
+1 GiB. The caps add up to 84 GiB, more than the VM. That is deliberate: a
+cap stops one ship taking the whole machine, and it is unlikely that more
+than three build at full stretch at once.
+
+A captain's hard cap, soft limit and swap allowance, with a hosted API and
+a shared IRC server (the rear admiral gets 2, 1.75 and 0.5 GiB on 16 GB and
+4, 3 and 1 GiB from 32 GB up):
+
+| VM | 1 captain | 4 captains | 8 captains |
+| --- | --- | --- | --- |
+| 16 GB (15.7 GiB) | 11, 9, 2 GiB | 5, 4, 1 GiB | 4, 3, 1 GiB |
+| 32 GB (31.3 GiB) | 25, 22, 5 GiB | 10, 9, 2 GiB | 10, 9, 2 GiB |
+| 64 GB (62.7 GiB) | 32, 28, 6 GiB | 20, 18, 4 GiB | 20, 18, 4 GiB |
+| 128 GB (125.3 GiB) | 32, 28, 6 GiB | 32, 28, 6 GiB | 32, 28, 6 GiB |
+
+With the API, PostgreSQL and Ergo on the VM, small VMs give one ship less:
+10 GiB with one captain on 16 GB, 3 GiB with eight.
+
+The installer never refuses a VM for being small. When a computed captain's
+cap falls below 4 GiB, what a typical build or test run needs, the dry run
+and the summary warn that builds may be killed for memory and name the
+memory the fleet needs, and the install goes ahead with the floor or what
+fits. When the hard caps add up to more than the VM, which is allowed, they
+say so too. Run the installer again after resizing the VM: the limits
+follow its memory.
+
+### Choose your own
+
+Set limits in `fleet.json`'s `memory`, fleet-wide for every officer, in a
+`captain` or `rearAdmiral` block for a role, or in an officer's own
+`memory`. Each takes `max`, `high`, `swapMax` and `tasksMax`; the officer's
+own wins over its role's, which wins over the fleet-wide one, which wins
+over the sizing.
+
+```json
+{
+  "memory": {
+    "captain": { "max": "24G" },
+    "rearAdmiral": { "max": "4G", "tasksMax": 2048 },
+    "swap": "8G"
+  },
+  "captains": [{ "id": "orion", "name": "Orion", "memory": { "max": "32G" } }]
+}
+```
+
+- Sizes are written as in systemd, `24G` or `512M` (GiB and MiB), at least
+  512 MiB. A soft limit or swap allowance you do not set follows the hard
+  cap you set.
+- `none`, or `0`, turns a limit off: the unit then has no such line, and
+  systemd's default applies (no memory limit; for tasks, 15% of the
+  system's). The one exception is `swapMax: 0`, which means no swap for that
+  engine.
+- `auto` is the installer's own value, over a less specific setting:
+  `"captain": { "max": "auto" }` gives every captain the sizing's hard cap
+  whatever the fleet-wide `max`, and an officer's own `auto` does the same
+  over its role's.
+- `subspace-setup --captain-memory SIZE` and `--rear-admiral-memory SIZE`
+  set each role's hard cap (`none` for no cap, `auto` for the sizing again,
+  written as `auto` so a fleet-wide `max` does not apply to that role), and
+  `--swap SIZE` the swap file (`none`, or `auto`). Setup keeps them on later
+  runs, over a value set in `fleet.json` by hand, and leaves the rest of
+  `memory` as you wrote it, officers' own included.
+
+A setting that cannot work is warned about, not refused: a cap above the
+VM's memory, which the VM runs out of before the cap takes effect, or a
+soft limit not below its hard cap.
+
+### Swap
+
+By default (`memory.swap` `auto`) the installer makes sure the VM has swap.
+If it has none, it creates `/subspace-fleet.swap`, an eighth of the VM's
+memory, between 2 and 16 GiB and at most a quarter of the root
+filesystem's free space; turns it on and adds it to `/etc/fstab`, so it
+survives a reboot; and sets `vm.swappiness` to 10 in
+`/etc/sysctl.d/60-subspace-fleet-swap.conf`, so the kernel swaps only under
+pressure. It adds no swap file, saying why, when:
+
+- the VM already has swap, whoever made it: a swap file or partition,
+  zram, or swap a cloud agent such as cloud-init set up;
+- `/etc/fstab` or a systemd swap unit names swap that is not on;
+- the Azure Linux agent manages swap (`ResourceDisk.EnableSwap=y` in
+  `/etc/waagent.conf`);
+- the root filesystem cannot hold a plain swap file (anything but ext2,
+  ext3, ext4 and XFS, such as btrfs);
+- the disk is tight: a quarter of the free space is under 1 GiB, or a size
+  you set is more than half of it;
+- `/etc/fstab` exists but cannot be read. The installer only ever appends
+  its one entry to that file, byte for byte after what is there, and never
+  writes it from a read that failed.
+
+Whenever the VM has swap, the installer's or another, it sets
+`vm.swappiness` to 10 the same way, unless another `sysctl` file sets it:
+then the installer leaves that one and removes its own. A size of your
+own, such as `"swap": "8G"`, applies only when the installer creates the
+file: it never resizes a swap file in use, and when the file is not the
+size you set, says how to (`sudo swapoff /subspace-fleet.swap && sudo rm
+/subspace-fleet.swap`, then run the installer again). With `auto` it keeps
+the file it made, whatever the VM's memory or disk has become since.
+`"swap": "none"`
+leaves swap and `vm.swappiness` exactly as they are. Uninstalling leaves the
+swap file, like other system settings. With `--no-systemd` the installer
+does not touch swap.
+
+### Limits set by hand
+
+A limit set on the VM by hand, with `systemctl set-property` (which writes
+a drop-in under `/etc/systemd/system.control/`, or `/run/` with
+`--runtime`) or in a drop-in file under
+`/etc/systemd/system/<unit>.d/`, wins over the installer's, because systemd
+applies drop-ins after the unit file. The installer never removes, edits or
+repeats them, so a tighter one is never loosened. The dry run, the summary
+and `subspace-fleetctl memory` list each one with where it is set and the
+installer's own value where that differs, say when an officer's are all the
+same as the installer's, and end with the commands that hand them to the
+installer: `sudo rm` for the files that hold only limits, which is what
+`systemctl set-property` writes, an edit for a file that holds more, then
+`sudo systemctl daemon-reload` and the installer again.
+
+### What you see
+
+The dry run, the end of every install and `subspace-setup`'s summary print
+lines that start `Memory:` and `Swap:`: the VM's memory, each engine's
+limits and why, limits set by hand, the swap decision, and warnings as
+`Memory warning:` and `Swap warning:`. On the VM,
+`sudo subspace-fleetctl memory` (also part of `sudo subspace-setup status`)
+shows each engine's limits as systemd applies them now, its memory use and
+peak, its restarts and last result, any limit that differs from the
+installer's, the VM's swap, and every fleet process the kernel has killed
+for memory since boot: when, which engine, which process and how big, and
+whether the whole VM had run out of memory (what caps prevent) or the
+process met its engine's own cap (what caps are for) or another limit the
+kernel names. That list comes from the journal (`journalctl -k -b`); when
+the journal cannot be read, it says the kills are unknown. An engine's own
+count of processes killed for memory since it started is every such kill,
+whether at its cap or with the whole VM out of memory.
+
 ## Configuration reference
 
 | Field | Meaning and default |
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
 | `officerNames` | `plain` (the example, and what `subspace-setup` writes for a new fleet): each officer's `account` is its `id`, which is also its API agent name and Stargate ID, and a ship channel is `#<captain-id>`. `prefixed`, the default when left out: accounts as written and ship channels `#<slug>-<captain-id>`, as fleets installed before plain names have them. See [Officer names](#officer-names). |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, an `account` (with `officerNames` plain it may be left out, and is the `id` if given) and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` (each crew slot's [name](#crew-names)), `crewIds` (an installed crew member's ID kept under a new name; needs a Stargate that allows it) and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, an `account` (with `officerNames` plain it may be left out, and is the `id` if given) and optional `channel`, `git`, `githubApp`, `harness`, `memory` (its own [memory limits](#choose-your-own)) and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` (each crew slot's [name](#crew-names)), `crewIds` (an installed crew member's ID kept under a new name; needs a Stargate that allows it) and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model`, `effort` and `extraPermissions`, apply to one. Explicit OpenCode V2 rules in `permissions` replace the starter policy; rules in `extraPermissions` (fleet, role and officer, appended in that order) extend whichever applies. Each rule has `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
@@ -2236,6 +2428,7 @@ their crew's assignments through `stargate_crew`.
 | `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
 | `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots): Xvfb with keyboard maps, fonts, and Playwright with its Chromium. `false` installs nothing for them and leaves in place what an earlier run installed. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
+| `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap), or `auto` for the installer's own value. Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. `localApi: true` says the Subspace API and its PostgreSQL run on this VM, so the sizing leaves them their room; `subspace-setup` sets it whenever it runs the API here. |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. The rear admiral posts them through `stakeholders.slack` or its own Slack bot, so one of them is required. |
 | `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) `initiatives` (array of UUIDs) and `agentUrl` (the API's agent listener on this VM's loopback, such as `http://127.0.0.1:3001`; see [The API's agent listener](#the-apis-agent-listener)), or `enrolment: true` for [a hosted Subspace API](#a-hosted-subspace-api), which excludes `agentUrl` and `apiToken`. HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
@@ -2438,6 +2631,17 @@ one is refused, none of them is applied.
   and its Chromium into `/opt/subspace-fleet/browsers` (several hundred
   megabytes), and `playwright` on the officers' `PATH`. The dry run lists
   what it adds. `"screenshots": false` in `fleet.json` leaves them out.
+- **Memory limits and swap.** The upgrade gives every officer's engine
+  [memory and task limits](#memory-limits-and-swap) sized for the VM, with
+  `OOMPolicy=continue`, and restarts the engines with them, as any changed
+  unit does. A VM with no swap gets a swap file. Read the dry run's
+  `Memory:` and `Swap:` lines first. Limits you set by hand with
+  `systemctl set-property` or a drop-in keep winning; the dry run lists each
+  one beside the installer's value and gives the commands that hand it over,
+  and an existing swap file or partition stays as it is. To keep a fleet
+  without memory caps, set them to `none` (`subspace-setup
+  --captain-memory none --rear-admiral-memory none`), and `memory.swap` to
+  `none` (`--swap none`) to keep the VM without swap.
 - **Officers call the tracker's REST route as `subspace-request`.** On a
   fleet with a hosted API, officers' instructions now name
   `subspace-request` instead of the long Stargate command. The starter
@@ -2640,6 +2844,7 @@ the container and checks rule generation otherwise. For the offline checks,
 run `python3 -B subspace-installer/tests/policy_test.py`,
 `python3 -B subspace-installer/tests/sessions_test.py`,
 `python3 -B subspace-installer/tests/setup_test.py`,
+`python3 -B subspace-installer/tests/memory_test.py`,
 `python3 -B subspace-installer/tests/medical_test.py` and
 `python3 -B subspace-installer/tests/toolchains_test.py` (Python 3.11 or
 later: detection reads TOML). The last builds small fixture repositories of

@@ -43,9 +43,10 @@ your own computer is the quickest way, and it stays fully supported.
 > 5. Never print, paste or log passwords, tokens or private keys. The
 >    installer saves them as owner-only files and tells you where.
 > 6. Finish by running the [privacy audit](#check-that-the-fleet-is-private)
->    and reporting its result. Then tell the user that **the agents stay
->    offline until CLIProxyAPI is signed in to at least one of their provider
->    accounts**. That sign-in needs the user's browser and comes after the
+>    and reporting its result, and the memory limits and swap the install
+>    chose ([question 21](#decide-with-the-user)). Then tell the user that
+>    **the agents stay offline until CLIProxyAPI is signed in to at least
+>    one of their provider accounts**. That sign-in needs the user's browser and comes after the
 >    install, so you cannot do it unattended: walk them through
 >    [bringing the agents online](#bring-the-agents-online) if they are there,
 >    or leave them the exact commands.
@@ -148,7 +149,8 @@ answer it now.
      with Hyper-V (Windows Pro, Enterprise or Education; Windows Home has no
      Hyper-V, so use an existing VM instead). All are free. The VM needs
      about 4 CPUs, 8 GiB of memory and 40 to 60 GiB of disk; use 16 GiB of
-     memory for two or more captains. Ask whether you may install the VM
+     memory for two or more captains, or for real builds (with less, the
+     installer warns that builds may be killed for memory; question 21). Ask whether you may install the VM
      tool if it is missing (`--install-deps`); without that, the installer
      stops and says what to install.
    - **An existing VM**, in their cloud or elsewhere. Ubuntu 24.04 or
@@ -445,6 +447,31 @@ answer it now.
     run each repository's basic check as a crew member would, after
     installing, and report pass or fail; it never stops the install. See
     [Toolchains](subspace-installer/README.md#toolchains).
+21. **How much memory may each ship use?** Every officer's engine gets a
+    memory cap sized for the VM, and the VM gets swap if it has none, so
+    that one runaway process (a test suite or a build) is killed inside its
+    own ship instead of taking the ship's engine and the VM down with it
+    ([Memory limits and swap](subspace-installer/README.md#memory-limits-and-swap)).
+    Tell the user what the sizing gives on the VM they chose, from the
+    table there: on a 64 GB VM with four captains, each captain and its crew
+    may use 20 GiB, the rear admiral 4 GiB, and the VM gets an 8 GiB swap
+    file. Explain that the captains' caps may add up to more than the VM,
+    on the bet that no more than three ships build heavily at once. Ask
+    whether that suits how they will use the fleet: if several ships will
+    run heavy builds at the same time, offer a lower cap, and if their
+    builds need more, a higher one. The options are `--captain-memory SIZE`
+    (every captain's hard cap, such as `16G`; `none` for no cap),
+    `--rear-admiral-memory SIZE`, and `--swap SIZE` or `--swap none` (leave
+    the VM's swap as it is); `auto` returns any of them to the sizing. One
+    ship's own cap goes in `/root/fleet/fleet.json` after the install, as
+    `memory` on that captain. The
+    dry run and the end of the install print the VM's memory, each engine's
+    limits and why, any limits set on the VM by hand, the swap decision and
+    any warning, in lines that start `Memory` and `Swap`. Read them and
+    report them to the user in your own words, every warning included (the
+    caps add up to more than the VM; the VM looks small for its fleet),
+    with the options that change them. **Default: the installer's sizing,
+    and swap when the VM has none.**
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -1293,6 +1320,7 @@ fleet's agents then have no way into the API yet.
 | Change the repositories | Run the install command again with `--repositories`; it replaces the list. Once a captain's session is pinned, the installer refuses an empty list or a different first repository, whether reordered or replaced |
 | Add private repositories or GitHub Apps | Edit `/root/fleet/fleet.json` on the VM, put credential files under `/root/fleet/fleet.secrets/`, then `sudo subspace-setup` |
 | Change the toolchains | `sudo subspace-setup toolchains` shows what is installed and why; `--toolchains TOOL@VERSION,...` and `--system-packages NAME,...` add, `--toolchains=-TOOL@VERSION` removes, and `sudo subspace-setup toolchains detect` proposes from the repositories again |
+| See or change memory limits and swap | `sudo subspace-fleetctl memory` on the VM (also in `./install.sh status`) shows each engine's limits and use, the swap, and any fleet process killed for memory since boot; run the install command again with `--captain-memory SIZE`, `--rear-admiral-memory SIZE` or `--swap SIZE` (`none` or `auto`) to change them ([Memory limits and swap](subspace-installer/README.md#memory-limits-and-swap)) |
 | Give a fleet installed with fleet-prefixed names (`example-fleet-orion`) plain ones | `sudo subspace-setup rename-officers --dry-run`, then without `--dry-run`, on the VM ([Officer names](subspace-installer/README.md#rename-an-installed-fleet)); not for a fleet installed with `--api-target` |
 | Print your IRC password | `sudo subspace-setup secret irc-admin` on the VM |
 | Seed the demo data again | `sudo subspace-setup demo` on the VM |

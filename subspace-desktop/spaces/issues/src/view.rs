@@ -11,6 +11,7 @@ mod shell;
 pub(crate) use issue::section_heading;
 pub(crate) mod lanes;
 pub(crate) mod progress;
+pub(crate) mod reveal_focus;
 mod states;
 
 use gpui_kit::{

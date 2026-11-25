@@ -201,6 +201,7 @@ record. [Change records](changes/README.md) explains the convention.
 
 - [Public repository examples](changes/public-repository-examples/README.md):
   fictional deployment settings, tracker references and fixture identifiers.
+- [Wider issue editor](changes/wider-issue-editor/README.md): a larger issue form with Markdown and Plain text editing.
 - [Issue Activity data](changes/issue-activity-data/README.md) and
   [Issue Activity pane](changes/issue-activity-pane/README.md): data retrieval,
   refresh and the Issues Space view.
@@ -243,6 +244,7 @@ record. [Change records](changes/README.md) explains the convention.
   running request, and the client layer's review findings closed.
 - [Channels preview status colour](changes/irc-preview-status-colour/README.md)
   keeps issue and pull request status in their badges.
+- [Channels draft keys and reference cards](changes/channels-composer-and-reference-library/README.md): keyboard navigation and gallery examples.
 - [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
   pull request tile only under the first message that names it, and fuller
   two-line tiles of a fixed size for both.

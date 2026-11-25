@@ -3,8 +3,11 @@ use crate::{
     ComponentGallery,
     samples::{Sample, sample},
 };
-use gpui_kit::{Context, ParentElement as _, Styled as _, Window};
-use subspace_dashboard::Tokens;
+use gpui_kit::{Context, Div, ParentElement as _, Styled as _, Window, component::h_flex};
+use subspace_dashboard::{
+    Tokens, Tone,
+    reference_card::{self, Treatment},
+};
 use subspace_lucide::IconName;
 pub(in crate::samples) fn reference_cards(
     _: &ComponentGallery,
@@ -13,22 +16,22 @@ pub(in crate::samples) fn reference_cards(
     cx: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
     use crate::samples::ignore_click;
-    use subspace_dashboard::{
-        Tone,
-        action::card_button,
-        reference_card::{self, Treatment},
-    };
+    use subspace_dashboard::action::card_button;
     [
-        ("Outline", Treatment::Outline, false),
-        ("State edge", Treatment::Accent(Tone::Yellow), true),
-        ("Chip", Treatment::Chip, false),
+        ("Issue", Treatment::Outline, issue_content(false, tokens)),
+        (
+            "Pull request",
+            Treatment::Outline,
+            pull_request_content(tokens),
+        ),
+        ("Issue chip", Treatment::Chip, issue_content(true, tokens)),
     ]
     .into_iter()
-    .map(|(name, treatment, agent)| {
+    .map(|(name, treatment, content)| {
         let button = card_button(
             gpui_kit::SharedString::from(format!("gallery-reference:{name}")),
             format!("Open fixture {name}"),
-            content(treatment, agent, tokens),
+            content,
         )
         .on_click(ignore_click);
         sample(name, reference_card::surface(button, treatment, tokens, cx))
@@ -43,47 +46,41 @@ pub(in crate::samples) fn reference_frames(
     _: &mut Window,
     cx: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
-    use subspace_dashboard::reference_card::{self, Treatment};
     [
-        ("Tracker hover frame", Treatment::Outline),
-        (
-            "Issue hover frame",
-            Treatment::Accent(subspace_dashboard::Tone::Yellow),
-        ),
+        ("Issue hover frame", issue_content(false, tokens)),
+        ("Pull request hover frame", pull_request_content(tokens)),
     ]
     .into_iter()
-    .map(|(name, treatment)| {
+    .map(|(name, content)| {
         sample(
             name,
-            reference_card::frame(content(treatment, false, tokens), treatment, tokens, cx),
+            reference_card::frame(content, Treatment::Outline, tokens, cx),
         )
     })
     .collect()
 }
 
-fn content(
-    treatment: subspace_dashboard::reference_card::Treatment,
-    agent: bool,
-    tokens: &Tokens,
-) -> gpui_kit::Div {
-    use gpui_kit::component::h_flex;
-    use subspace_dashboard::{
-        Tone,
-        reference_card::{self, Treatment},
-    };
+fn issue_content(chip: bool, tokens: &Tokens) -> Div {
     h_flex()
         .gap_2()
-        .child(reference_card::avatar(
-            "Rosa Fixture",
-            agent,
-            matches!(treatment, Treatment::Chip),
-            tokens,
-        ))
-        .child("SUB-28")
+        .child(reference_card::avatar("Rosa Fixture", false, chip, tokens))
+        .child("NAV-7")
         .child(reference_card::pill(
             "In progress",
             IconName::Contrast,
             Tone::Yellow,
+            tokens,
+        ))
+}
+
+fn pull_request_content(tokens: &Tokens) -> Div {
+    h_flex()
+        .gap_2()
+        .child("relay#42")
+        .child(reference_card::pill(
+            "Merged",
+            IconName::GitMerge,
+            Tone::Magenta,
             tokens,
         ))
 }
