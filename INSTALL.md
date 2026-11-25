@@ -31,7 +31,10 @@ your own computer is the quickest way, and it stays fully supported.
 >    user through you. Do not stop to ask again. If something the plan did
 >    not cover comes up, take the safe default named in
 >    [Decide with the user](#decide-with-the-user), or stop with a clear
->    message that says what is needed and which command to run next.
+>    message that says what is needed and which command to run next. The one
+>    exception is planned: if the user chose to derive the toolchains
+>    (question 20), show them the proposal the run ends with and ask which
+>    items to install.
 > 4. **The fleet VM must stay private.** Never open its services to the
 >    internet, never bind them to `0.0.0.0`, and never pass `--no-lockdown`
 >    unless the user asks for it after you have explained the risk. Agents'
@@ -256,7 +259,8 @@ answer it now.
    without credentials, before cloning anything, until it is marked
    `"private": true` with the Apps in place, or left out for now (see
    [Add private repositories later](subspace-installer/README.md#add-private-repositories-later)).
-   **Default: no repositories, so no crew yet.**
+   **Default: no repositories, so no crew yet.** With repositories, also ask
+   question 20, about the toolchains they need.
 5. **Crew per captain** (**2 Claude, 2 Codex**; 0 to 10 each,
    `--crew-claude`, `--crew-codex`). Explain that crew run inside their
    captain's OpenCode server as the captain's Linux user: they share the
@@ -406,6 +410,37 @@ answer it now.
     client ID. Creating the private repository on GitHub and pushing to it
     is outward-facing: ask for that separately. **Default: yes for a cloud
     or hosted deployment, no for a trial on a local VM.**
+20. **Which toolchains do the repositories need?** The VM has Git, Bun, a
+    C/C++ build toolchain, Python and Node 24; anything else the
+    repositories build or test with (a .NET SDK, Rust, pnpm, Terraform, GUI
+    development libraries) must be installed for the officers and crew. Offer
+    three answers:
+    - **Derive them from the repositories** (`--toolchains derive`;
+      recommended when the user names repositories). Once the install has
+      cloned them, setup reads them on the VM, private ones included, and
+      ends the run with a proposal: each tool or package with its version,
+      the file and line it came from, a confidence, whether it is installed
+      and where it would go, then what it could not determine (versions from
+      a CI matrix or a secret, Docker-only tools, licensed builds, tests that
+      need a database). Nothing in it is installed yet. Show it to the user,
+      ask which items to install, and run the command it ends with, edited to
+      their answer (`./install.sh ... --toolchains TOOL@VERSION,...
+      --system-packages NAME,...` with the same other options, or
+      `sudo subspace-setup --toolchains ...` on the VM). If they are not
+      there, finish without it and leave them the proposal and that command.
+      Later runs propose only what repositories added since need.
+    - **List them** (`--toolchains node@22.11.0,pnpm@9.12.3
+      --system-packages zsh,clang`), when the user knows; any
+      [mise tool](https://mise.jdx.dev) works, such as
+      `cargo:cargo-nextest@0.9.100` or `github:example/tool@1.2.0`.
+    - **None** (`--toolchains none`). **Default: none**, the base tools only.
+
+    Shared tools are installed once for the whole fleet; Rust and `cargo:`
+    tools go to each officer's own directory, since Rust installs a
+    repository's pinned toolchain on first use. Add `--verify-toolchains` to
+    run each repository's basic check as a crew member would, after
+    installing, and report pass or fail; it never stops the install. See
+    [Toolchains](subspace-installer/README.md#toolchains).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -1248,6 +1283,7 @@ fleet's agents then have no way into the API yet.
 | Connect the rear admiral to Slack or Teams | [Slack](docs/slack.md), [Teams](docs/teams.md) |
 | Change the repositories | Run the install command again with `--repositories`; it replaces the list. Once a captain's session is pinned, the installer refuses an empty list or a different first repository, whether reordered or replaced |
 | Add private repositories or GitHub Apps | Edit `/root/fleet/fleet.json` on the VM, put credential files under `/root/fleet/fleet.secrets/`, then `sudo subspace-setup` |
+| Change the toolchains | `sudo subspace-setup toolchains` shows what is installed and why; `--toolchains TOOL@VERSION,...` and `--system-packages NAME,...` add, `--toolchains=-TOOL@VERSION` removes, and `sudo subspace-setup toolchains detect` proposes from the repositories again |
 | Give a fleet installed with fleet-prefixed names (`example-fleet-orion`) plain ones | `sudo subspace-setup rename-officers --dry-run`, then without `--dry-run`, on the VM ([Officer names](subspace-installer/README.md#rename-an-installed-fleet)); not for a fleet installed with `--api-target` |
 | Print your IRC password | `sudo subspace-setup secret irc-admin` on the VM |
 | Seed the demo data again | `sudo subspace-setup demo` on the VM |
