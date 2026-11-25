@@ -161,6 +161,18 @@ mod tests {
     }
 
     #[test]
+    fn ship_events_keep_task_revision_with_bounded_roster_text() {
+        let mut frames = Frames::default();
+        frames.push(b"event: ship\ndata: {\"id\":\"s\",\"crewMembers\":[{\"id\":\"wren\",\"contexts\":[{\"current\":{\"id\":\"task_1\",\"status\":\"running\",\"updatedAt\":42,\"progress\":\"bounded\"}}]}]}\n\n").unwrap();
+        let Some(FleetEvent::Ship(ship)) = frames.ready.pop_front() else {
+            panic!("expected a ship event");
+        };
+        let task = ship.crew_members[0].current_task().unwrap();
+        assert_eq!(task.updated_at, Some(42));
+        assert_eq!(task.progress, "bounded");
+    }
+
+    #[test]
     fn oversized_frames_and_invalid_text_break_the_stream() {
         let mut frames = Frames::default();
         assert_eq!(

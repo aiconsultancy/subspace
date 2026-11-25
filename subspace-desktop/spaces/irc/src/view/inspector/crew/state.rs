@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use subspace_client_fleet::Error;
-use subspace_client_fleet::model::{CrewContext, CrewMember, ShipDetail, Task};
+use subspace_client_fleet::model::{CrewContext, CrewMember, ShipDetail, Task, TaskStatus};
 
 #[derive(PartialEq, Eq)]
 pub(super) enum Roster {
@@ -33,14 +33,16 @@ impl Roster {
         old.id == new.id && old.backend == new.backend && assignments(old).eq(assignments(new))
     }
 
-    fn same_task_text(&self, next: &Self) -> bool {
+    fn same_task_revision(&self, next: &Self) -> bool {
         let (Self::Present(old), Self::Present(new)) = (self, next) else {
             return false;
         };
-        old.contexts.iter().all(|ctx| {
-            let next = current_in(new, ctx.project.as_deref()).and_then(|ctx| ctx.current.as_ref());
-            task_text(ctx.current.as_ref()) == task_text(next)
-        })
+        task_revision(old.current_task()) == task_revision(new.current_task())
+            && old.contexts.iter().all(|ctx| {
+                let next =
+                    current_in(new, ctx.project.as_deref()).and_then(|ctx| ctx.current.as_ref());
+                task_revision(ctx.current.as_ref()) == task_revision(next)
+            })
     }
 }
 
@@ -85,7 +87,7 @@ impl DetailState {
             return false;
         }
         let invalidated = directory_changed || !self.roster.same_assignment(&roster);
-        let text_changed = !invalidated && !self.roster.same_task_text(&roster);
+        let task_changed = !invalidated && !self.roster.same_task_revision(&roster);
         if invalidated {
             self.detail = None;
             self.generation = self.generation.wrapping_add(1);
@@ -98,7 +100,7 @@ impl DetailState {
         self.roster = roster;
         if invalidated {
             self.rearm();
-        } else if text_changed {
+        } else if task_changed {
             self.queue();
         }
         true
@@ -281,7 +283,7 @@ fn overlay_facts(shown: &mut Cow<'_, CrewMember>, previous: &CrewContext, next: 
         (old, new) => old != new,
     };
     if !git_changed
-        && task_text(previous.current.as_ref()) == task_text(next.current.as_ref())
+        && same_task_facts(previous.current.as_ref(), next.current.as_ref())
         && previous.activity == next.activity
         && previous.provisioned == next.provisioned
         && previous.pull_request == next.pull_request
@@ -318,10 +320,10 @@ fn overlay_facts(shown: &mut Cow<'_, CrewMember>, previous: &CrewContext, next: 
             (shown, _, new) => shown.clone_from(new),
         }
     }
-    if task_text(previous.current.as_ref()) != task_text(next.current.as_ref()) {
+    if !same_task_facts(previous.current.as_ref(), next.current.as_ref()) {
         match (&mut context.current, &previous.current, &next.current) {
             (Some(shown), Some(old), Some(new)) if shown.id == new.id => {
-                overlay!(shown, old, new; summary, phase, progress)
+                overlay!(shown, old, new; status, updated_at, summary, phase, progress)
             }
             (shown, _, new) => shown.clone_from(new),
         }
@@ -336,13 +338,19 @@ fn current_in<'a>(member: &'a CrewMember, key: Option<&str>) -> Option<&'a CrewC
         .find(|ctx| ctx.project.as_deref() == key)
 }
 
-fn task_text(task: Option<&Task>) -> Option<(&str, &str, &str, &str)> {
-    task.map(|task| {
-        (
-            task.id.as_str(),
-            task.summary.as_str(),
-            task.phase.as_str(),
-            task.progress.as_str(),
-        )
-    })
+fn task_revision(task: Option<&Task>) -> Option<(&str, TaskStatus, Option<i64>)> {
+    task.map(|task| (task.id.as_str(), task.status, task.updated_at))
+}
+
+fn same_task_facts(old: Option<&Task>, new: Option<&Task>) -> bool {
+    fn text(task: Option<&Task>) -> Option<(&str, &str, &str)> {
+        task.map(|task| {
+            (
+                task.summary.as_str(),
+                task.phase.as_str(),
+                task.progress.as_str(),
+            )
+        })
+    }
+    task_revision(old) == task_revision(new) && text(old) == text(new)
 }

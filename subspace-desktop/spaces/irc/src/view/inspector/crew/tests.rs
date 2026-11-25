@@ -84,16 +84,52 @@ fn checked_at_churn_does_not_discard_a_read_or_queue_a_follow_up() {
     state.finish(first, Ok(member("first", &full, 1)));
     assert_progress(&state, &full);
     assert_eq!(state.begin(), None);
-    assert!(state.update(roster("first", "Checking again…", 5), 0));
+    let revised = |checked| {
+        let mut member = member("first", "Checking again…", checked);
+        member.contexts[0].current.as_mut().unwrap().updated_at = Some(5);
+        Roster::Present(Box::new(member))
+    };
+    assert!(state.update(revised(5), 0));
     assert!(state.has_full_detail());
     assert_progress(&state, "Checking again…");
     let follow_up = state.begin().unwrap();
-    assert!(state.update(roster("first", "Checking again…", 6), 0));
+    assert!(state.update(revised(6), 0));
     assert_eq!(state.begin(), None);
     let newer = "Full follow-up response. ".repeat(200);
     state.finish(follow_up, Ok(member("first", &newer, 5)));
     assert_progress(&state, &newer);
     assert_eq!(state.begin(), None);
+}
+
+#[test]
+fn tail_only_progress_changes_refresh_full_detail() {
+    let prefix = "a".repeat(400);
+    let revision = |progress: &str, at| {
+        let mut crew = member("first", progress, 1);
+        crew.contexts[0].current.as_mut().unwrap().updated_at = Some(at);
+        crew
+    };
+    let bounded = |at| Roster::Present(Box::new(revision(&prefix, at)));
+    let mut state = DetailState::new(bounded(1), 0);
+    let first = state.begin().unwrap();
+    let old = format!("{prefix} old tail");
+    let new = format!("{prefix} new tail");
+    state.finish(first, Ok(revision(&old, 1)));
+    assert_progress(&state, &old);
+    assert!(state.update(bounded(2), 0));
+    let read = state
+        .begin()
+        .expect("updatedAt triggers a read despite identical roster text");
+    state.finish(read, Ok(revision(&new, 2)));
+    assert_progress(&state, &new);
+
+    let mut crew = revision("Different roster text alone", 2);
+    assert!(state.update(Roster::Present(Box::new(crew.clone())), 0));
+    assert_eq!(state.begin(), None);
+    crew.contexts[0].current.as_mut().unwrap().status =
+        subspace_client_fleet::model::TaskStatus::Running;
+    assert!(state.update(Roster::Present(Box::new(crew)), 0));
+    assert!(state.begin().is_some(), "status alone triggers a read");
 }
 
 #[test]
