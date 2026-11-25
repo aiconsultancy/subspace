@@ -24,6 +24,8 @@ pub(super) fn focus(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) 
         });
     }
     if changed {
+        // The turns belong to the conversation that was in front.
+        board.inspector_activity = None;
         board.find_revision = board.find_revision.wrapping_add(1);
         cx.notify();
     }

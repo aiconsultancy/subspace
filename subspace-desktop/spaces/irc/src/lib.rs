@@ -89,6 +89,8 @@ pub struct Irc {
     /// The inspector's open tab for a fleet channel: its ship or Starbase,
     /// or its people.
     inspector_tab: view::InspectorTab,
+    /// The captain whose turns the Ship tab shows, while they are open.
+    inspector_activity: Option<view::inspector::activity::Selection>,
     /// The thread chosen in each conversation, for the inspector's Thread
     /// tab.
     threads: thread::Threads,

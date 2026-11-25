@@ -25,6 +25,7 @@ use crate::live::{self, FleetLive};
 use crate::members::MemberList;
 use crate::{Irc, dock};
 
+pub(crate) mod activity;
 mod play;
 mod reason;
 mod ship;
@@ -114,6 +115,8 @@ struct Front {
     subject: Subject,
     channel: String,
     roster: std::rc::Rc<Roster>,
+    /// The fleet's Subspace API id, when the roster places the channel.
+    fleet_id: Option<String>,
     fleet: Option<FleetLive>,
 }
 
@@ -126,10 +129,12 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
     let roster = hub.roster(&buffer.network, cx);
     let subject = Subject::of(roster.channel(channel)?)?;
     let fleet = live::fleet_of(&hub.fleets, &roster, channel).cloned();
+    let fleet_id = live::fleet_id(&roster, channel).map(str::to_owned);
     Some(Front {
         subject,
         channel: channel.clone(),
         roster,
+        fleet_id,
         fleet,
     })
 }
@@ -223,7 +228,7 @@ fn people(members: Option<Entity<MemberList>>, cx: &App) -> AnyElement {
 
 /// The subject tab: the ship or the Starbase. Like every tab, it starts
 /// at the inspector body's own text edge, with no inset of its own.
-fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
+fn subject_body(board: &Irc, front: &Front, cx: &Context<Irc>) -> AnyElement {
     let content = match &front.subject {
         Subject::Ship { captain } => ship::body(board, front, captain, cx),
         Subject::Starbase => starbase::body(front, cx),
