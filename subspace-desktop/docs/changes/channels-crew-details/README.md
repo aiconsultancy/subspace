@@ -29,8 +29,8 @@ and up to five automatic retries, with delays of one to 16 seconds or
 the gateway's longer requested wait (up to 30 seconds). Reloading Channels
 or reconnecting to the fleet also rearms the read. Hidden crew views do
 not start reads; showing a retained view rearms the read and ignores any
-older response. A 404 falls back to the roster without polling. Reload,
-a reconnect or a returning member explicitly probes the route again.
+older response. A 404 falls back to the roster without polling. Showing the
+detail again, Reload, a reconnect or a returning member each probes the route.
 Task summaries and progress each carry up to 64,000 characters, the dispatch
 limit. The crew detail response allows up to 16 MiB of JSON; the fleet and
 ship reads still allow 8 MiB. Control and bidirectional formatting codes are

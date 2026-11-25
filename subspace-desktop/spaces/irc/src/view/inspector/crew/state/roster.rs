@@ -22,7 +22,7 @@ impl Roster {
             .map_or(Self::Gone, |member| Self::Present(Box::new(member)))
     }
 
-    pub(super) fn member_returned(&self, next: &Self) -> bool {
+    pub(in super::super) fn member_returned(&self, next: &Self) -> bool {
         !matches!(self, Self::Present(_)) && matches!(next, Self::Present(_))
     }
 

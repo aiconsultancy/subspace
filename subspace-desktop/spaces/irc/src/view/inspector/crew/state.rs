@@ -78,8 +78,8 @@ impl DetailState {
         self.queue();
     }
 
-    /// Reload, reconnect or a returning member can supersede a missing
-    /// route (or an older read). Ordinary updates still do not poll a 404.
+    /// Showing the detail, Reload, reconnect or a returning member can
+    /// supersede an older read. Ordinary roster updates do not poll a 404.
     pub fn probe(&mut self) {
         self.retries = 0;
         self.flight = None;
@@ -92,9 +92,10 @@ impl DetailState {
             return false;
         }
         self.visible = visible;
-        self.flight = None;
         if visible {
-            self.rearm();
+            self.probe();
+        } else {
+            self.flight = None;
         }
         true
     }

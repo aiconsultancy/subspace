@@ -52,6 +52,13 @@ fn missing_route_uses_the_current_roster() {
     state.finish(probe, Err(Error::NotFound));
     assert_eq!(state.begin(), None);
     assert_eq!(state.retry_delay(), None);
+    assert!(state.set_visible(false));
+    assert_eq!(state.begin(), None);
+    assert!(state.set_visible(true));
+    assert!(
+        state.begin().is_some(),
+        "showing the detail probes it again"
+    );
 }
 
 #[test]

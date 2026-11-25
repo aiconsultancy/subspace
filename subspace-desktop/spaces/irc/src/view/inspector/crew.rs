@@ -153,11 +153,11 @@ pub(crate) fn visible(board: &Irc, cx: &gpui_kit::App) -> bool {
 impl Selection {
     fn update(&mut self, api: &FleetApi) -> bool {
         let directory = api.directory_revision();
-        if self.state.directory_changed(directory) {
-            self.request = None;
-            self.retry_timer = None;
-        }
         let next = roster_of(api, &self.fleet, &self.ship, &self.member);
+        if self.state.directory_changed(directory) || self.state.roster.member_returned(&next) {
+            self.retry_timer = None;
+            self.request = None;
+        }
         let changed = self.state.update(next, directory);
         let live = api.state(&self.fleet).is_live();
         if live && !self.live {
@@ -174,13 +174,12 @@ impl Selection {
         let state = client.as_ref().err().cloned();
         let changed = self.client_state != state;
         self.client_state = state;
-        if let Ok(client) = client {
+        if let Ok(client) = client
+            && self.retry_timer.is_none()
+        {
             if let Some(generation) = self.state.begin() {
-                self.retry_timer = None;
                 self.request = Some(self.read(client, generation, api, cx));
-            } else if self.retry_timer.is_none()
-                && let Some(delay) = self.state.retry_delay()
-            {
+            } else if let Some(delay) = self.state.retry_delay() {
                 self.retry_timer = Some(self.schedule_retry(delay, api, cx));
             }
         }
