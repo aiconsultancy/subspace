@@ -365,9 +365,7 @@ class ReportTests(unittest.TestCase):
             script = script.replace(old, new)
         (installer / "install.sh").write_text(script)
         (installer / "lib/runtime.py").write_text("import sys\nprint(' '.join(sys.argv[1:]))\n")
-        config = json.loads(EXAMPLE.read_text())
-        config.pop("api", None)  # Its agent listener would need agent-skills/ beside the copy.
-        (root / "fleet.json").write_text(json.dumps(config))
+        (root / "fleet.json").write_text(EXAMPLE.read_text())
         for flags, last in (([], "false"), (["--no-systemd"], "no-systemd")):
             with self.subTest(flags):
                 result = subprocess.run(["bash", str(installer / "install.sh"), "--config", str(root / "fleet.json"),
