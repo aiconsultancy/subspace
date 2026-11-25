@@ -53,9 +53,8 @@ content. The PRs Space’s GitHub path keeps its own account, links and marks.
 - Fictional HTTP and GPUI fixtures cover paging, stale snapshots and opening
   the view without a GitHub account. The capture Fleet API serves Wren’s
   paged chart diff, Talon’s clean checkout and Corvin’s unavailable checkout.
-  Screenshot capture still needs a native entry point: the Channels control
-  is separate, and selecting the PRs Space in `CAPTURE_STATE` does not open
-  a crew diff.
+  The capture-only `link:` step opens the native PRs viewer without the
+  separate Channels control. Screenshot evidence remains pending.
 - Progressive file-list display and a shared patch cache budget are SUB-67
   follow-ups, deferred from this change under STAR decision `01c2e208`.
 - An empty HTTP 404 means either the checkout is unavailable or the gateway

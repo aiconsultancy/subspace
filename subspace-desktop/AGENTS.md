@@ -320,7 +320,8 @@ compare them yourself before asking for review.
   environment, so `SUBSPACE_REPORT_ISSUE_REPOSITORY= make capture …`
   captures a build without Report issue.
 - `STEPS` is a `;` list of `wait:<ms>`, `action:<name>` (for example
-  `subspace_app::OpenSettings`), `click:<x>,<y>`, `right-click:<x>,<y>`,
+  `subspace_app::OpenSettings`), `link:<space-id>,<url>` (open a Space's
+  internal link), `click:<x>,<y>`, `right-click:<x>,<y>`,
   `move:<x>,<y>` (the pointer without a click, for hover states),
   `resize:<width>,<height>` (the window's content size, for a start with no
   saved window bounds),
@@ -337,7 +338,9 @@ compare them yourself before asking for review.
 - Capture starts on the first Space unless `CAPTURE_STATE` sets
   `app.dashboard` to a Space id. `action:` dispatches from the window's app
   root regardless of focus, and an unknown action or one without a root handler
-  fails with `capture failed` and a non-zero exit. Keys go to the focused
+  fails with `capture failed` and a non-zero exit. A `link:` step fails the
+  same way if the Space is unknown or refuses the link. Let fixture data load
+  first with `wait:` when the route depends on it. Keys go to the focused
   element: each `key:` step first focuses the active Space, then sends the
   whole sequence, so keys such as Tab can change focus within that sequence.
   `type:` preserves focus; click the composer before typing into it.

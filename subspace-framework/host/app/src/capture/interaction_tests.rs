@@ -6,7 +6,7 @@ use gpui_kit::{
 };
 use subspace_dashboard::{ChatInput, Dashboard, DashboardEvent, prefs};
 
-use super::{dispatch, press, press_space};
+use super::{dispatch, open_link, press, press_space};
 use crate::app::SubspaceApp;
 use crate::registry::{BoardFactories, BoardRegistration};
 
@@ -51,6 +51,33 @@ impl Render for Space {
     }
 }
 
+const LINK: &str = "example://item?tags=a,b";
+
+struct LinkSpace(FocusHandle);
+
+impl EventEmitter<DashboardEvent> for LinkSpace {}
+impl Focusable for LinkSpace {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.0.clone()
+    }
+}
+impl Dashboard for LinkSpace {
+    const ID: &'static str = "capture-link";
+    const TITLE: &'static str = "Capture link";
+    fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self(cx.focus_handle())
+    }
+    fn reload(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+    fn open_link(&mut self, url: &str, _: &mut Context<Self>) -> bool {
+        url == LINK
+    }
+}
+impl Render for LinkSpace {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().track_focus(&self.0)
+    }
+}
+
 fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Space>, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
     let (window, _) = cx.update(|cx| {
@@ -58,7 +85,11 @@ fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Space>, tempfile::T
         crate::theme::initialize(cx);
         prefs::set(cx, crate::settings::CHECK_UPDATES_KEY, "0");
         prefs::set(cx, subspace_chat::OPEN_KEY, "0");
-        cx.set_global(BoardFactories(vec![BoardRegistration::new::<Space>()]));
+        prefs::set(cx, "app.dashboard", Space::ID);
+        cx.set_global(BoardFactories(vec![
+            BoardRegistration::new::<Space>(),
+            BoardRegistration::new::<LinkSpace>(),
+        ]));
         cx.bind_keys([KeyBinding::new("down", MoveDown, Some("CaptureTest"))]);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| SubspaceApp::new(Vec::new(), window, cx))
@@ -74,6 +105,23 @@ fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Space>, tempfile::T
     })
     .unwrap();
     (window, space, root)
+}
+
+#[gpui_kit::test]
+fn a_capture_link_switches_only_when_the_named_space_accepts_it(cx: &mut TestAppContext) {
+    let (_, _, _root) = open(cx);
+    cx.update(|cx| {
+        let unknown = open_link("missing-space", LINK, cx).unwrap_err();
+        assert_eq!(unknown, "link: unknown Space missing-space");
+        let refused = open_link(LinkSpace::ID, "example://unknown", cx).unwrap_err();
+        assert_eq!(refused, "link: Space capture-link refused the link");
+        assert_eq!(prefs::get(cx, "app.dashboard").as_deref(), Some(Space::ID));
+        open_link(LinkSpace::ID, LINK, cx).unwrap();
+        assert_eq!(
+            prefs::get(cx, "app.dashboard").as_deref(),
+            Some(LinkSpace::ID)
+        );
+    });
 }
 
 #[gpui_kit::test]

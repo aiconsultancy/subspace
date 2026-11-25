@@ -584,6 +584,30 @@ impl SubspaceApp {
         self.dashboard().map(|space| space.focus_handle(cx))
     }
 
+    #[cfg(any(test, all(debug_assertions, feature = "capture")))]
+    pub(crate) fn capture_open_link(
+        &mut self,
+        space: &str,
+        url: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let index = self
+            .dashboards
+            .iter()
+            .position(|board| board.id == space)
+            .ok_or_else(|| format!("link: unknown Space {space}"))?;
+        if sign_in_gate::shown(cx) {
+            return Err(format!("link: sign in before opening {space}"));
+        }
+        self.note_arrival_from(index, None, cx);
+        if !self.dashboards[index].open_link(url, cx) {
+            return Err(format!("link: Space {space} refused the link"));
+        }
+        self.switch_to(index, window, cx);
+        Ok(())
+    }
+
     fn focus_active(&self, window: &mut Window, cx: &mut App) {
         if let Some(host) = &self.help_dock
             && host.update(cx, |host, cx| host.focus_if_zoomed(window, cx))

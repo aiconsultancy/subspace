@@ -3,7 +3,9 @@
 # user. Usage: scripts/capture.sh <out-dir> [steps]
 #
 # steps is SUBSPACE_CAPTURE_STEPS (see AGENTS.md), default
-# "wait:5000;shot:main". The app starts in the background from an empty
+# "wait:5000;shot:main". Use link:<space-id>,<url> for an internal Space
+# route, after a wait: if its fixture data must load first.
+# The app starts in the background from an empty
 # environment and sees only fixtures: a new HOME and XDG folders, a gh
 # config with the fictional octo-dev accounts and a gh that hands out
 # fixture tokens, the fictional GitHub and Subspace API servers on loopback (so no

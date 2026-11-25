@@ -3,7 +3,7 @@
 //! script's private X server. Neither path captures the user's desktop.
 //!
 //! `SUBSPACE_CAPTURE_DIR` enables it. `SUBSPACE_CAPTURE_STEPS` is a `;` list of
-//! `wait:<ms>`, `action:<name>`, `click:<x>,<y>`, `right-click:<x>,<y>`,
+//! `wait:<ms>`, `action:<name>`, `link:<space-id>,<url>`, `click:<x>,<y>`, `right-click:<x>,<y>`,
 //! `move:<x>,<y>`, `drag:<x1>,<y1>,<x2>,<y2>`, `scroll:<x>,<y>,<dy>`,
 //! `type:<text>`, `key:<keystrokes>`, `drop:<x>,<y>,<fixture-path>`, `installed:<version>`,
 //! `resize:<width>,<height>` and `shot:<name>` steps, run in order
@@ -14,7 +14,8 @@
 //! space-separated keystrokes such as `down tab`; `installed` puts the updater
 //! in the state after an update to `<version>` installed, without installing
 //! anything; `resize` sets the window's content size, for a start with no
-//! saved window bounds. Actions dispatch at the app root independently of focus. Each
+//! saved window bounds. Actions dispatch at the app root independently of focus.
+//! A link opens its target Space only if that Space accepts the route. Each
 //! key step focuses the active Space, then sends its sequence to normal focus;
 //! type steps preserve focus. The initial Space is the first unless fixture
 //! state sets `app.dashboard`. The default waits four
@@ -85,6 +86,7 @@ fn target<'a>(window: &Window, cx: &'a App) -> Option<&'a Shell> {
 enum Step {
     Wait(Duration),
     Action(String),
+    Link(String, String),
     Click(f32, f32),
     RightClick(f32, f32),
     Move(f32, f32),
@@ -113,6 +115,13 @@ fn parse_step(step: &str) -> Option<Step> {
             .ok()
             .map(|ms| Step::Wait(Duration::from_millis(ms))),
         ("action", _) => Some(Step::Action(value.to_owned())),
+        ("link", _) => {
+            let mut parts = value.splitn(2, ',');
+            let space = parts.next()?.trim();
+            let url = parts.next()?;
+            (!space.is_empty() && !url.trim().is_empty())
+                .then(|| Step::Link(space.to_owned(), url.to_owned()))
+        }
         ("shot", _) => Some(Step::Shot(value.to_owned())),
         ("type", _) => Some(Step::Type(value.to_owned())),
         ("key", _) => Some(Step::Key(value.to_owned())),
@@ -189,6 +198,7 @@ async fn run_step(step: &Step, dir: &Path, cx: &mut AsyncApp) -> Result<(), Stri
             Ok(())
         }
         Step::Action(name) => cx.update(|cx| dispatch(name, cx)),
+        Step::Link(space, url) => cx.update(|cx| open_link(space, url, cx)),
         Step::Click(x, y) => cx.update(|cx| click(point(px(*x), px(*y)), MouseButton::Left, cx)),
         Step::RightClick(x, y) => {
             cx.update(|cx| click(point(px(*x), px(*y)), MouseButton::Right, cx))
@@ -389,6 +399,15 @@ fn app(window: &Window, cx: &App) -> Result<gpui_kit::Entity<crate::app::Subspac
         .ok_or_else(|| "no capture app shell for this window".into())
 }
 
+fn open_link(space: &str, url: &str, cx: &mut App) -> Result<(), String> {
+    let window = cx.windows().into_iter().next().ok_or("no window")?;
+    window
+        .update(cx, |_, window, cx| {
+            app(window, cx)?.update(cx, |app, cx| app.capture_open_link(space, url, window, cx))
+        })
+        .map_err(|error| error.to_string())?
+}
+
 fn press_space(keys: &str, cx: &mut App) -> Result<(), String> {
     let window = cx.windows().into_iter().next().ok_or("no window")?;
     window
@@ -475,12 +494,13 @@ mod tests {
     fn steps_parse_in_order_and_reject_unknown_kinds() {
         assert_eq!(
             parse_steps(
-                "wait:10; action:app::Quit;click:4,5;right-click:6,7;move:8,9;drag:1,2,3,4;drop:5,6,/tmp/fixture.zip;scroll:1,2,-30;type:@gal;key:down tab;installed:1.2.0;resize:1440,900;shot:main;"
+                "wait:10; action:app::Quit;link:sample,example://item?tags=a,b;click:4,5;right-click:6,7;move:8,9;drag:1,2,3,4;drop:5,6,/tmp/fixture.zip;scroll:1,2,-30;type:@gal;key:down tab;installed:1.2.0;resize:1440,900;shot:main;"
             )
             .unwrap(),
             vec![
                 Step::Wait(Duration::from_millis(10)),
                 Step::Action("app::Quit".into()),
+                Step::Link("sample".into(), "example://item?tags=a,b".into()),
                 Step::Click(4., 5.),
                 Step::RightClick(6., 7.),
                 Step::Move(8., 9.),
@@ -499,6 +519,18 @@ mod tests {
         assert!(parse_steps("wait:soon").is_err());
         assert!(parse_steps("resize:1440").is_err());
         assert!(parse_steps("resize:0,900").is_err());
+    }
+
+    #[test]
+    fn a_link_needs_a_space_and_a_url() {
+        for step in [
+            "link:sample",
+            "link:,example://item",
+            "link:sample,",
+            "link:sample,  ",
+        ] {
+            assert!(parse_steps(step).is_err(), "accepted {step}");
+        }
     }
 
     #[test]

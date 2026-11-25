@@ -95,6 +95,12 @@ environment. Add `CAPTURE_FLEET_API=1` to show Fleet Console, which such a
 build shows only once its own address and token are saved.
 
 The step syntax is listed in [AGENTS.md](../AGENTS.md#ui-change-evidence).
+Use `link:<space-id>,<url>` to open an internal route in a Space that accepts
+it. Commas after the Space ID are part of the URL. An unknown Space or a
+refused link fails the capture instead of taking a screenshot of the wrong
+view. Put a `wait:` step before the link when its destination needs fixture
+data first.
+
 Capture uses the same steps and fixture data on both platforms. Window
 decorations and text rasterisation can differ between operating systems.
 macOS reads the GPUI-rendered image. The pinned GPUI version does not implement
@@ -108,6 +114,16 @@ notice. Themes that name no font still use the machine's own fonts. See
 [Embedded fonts](../../subspace-framework/docs/appearance.md#embedded-fonts).
 
 ## Fleet fixture
+
+To capture the native crew diff without using the Channels drill-in, start
+in Fleet Console so it starts the shared Fleet API service. Let the fixture
+fleet load before opening Wren's checkout in PRs:
+
+```bash
+CAPTURE_THEME="Twilight Two" CAPTURE_FLEET_API=1 CAPTURE_FLEET=1 \
+  CAPTURE_STATE='{"app.dashboard":"fleet-console"}' \
+  make capture OUT=dist/capture STEPS='wait:9000;link:github,subspace-crew-diff://open?fleet=aurora&ship=aurora-lyra&member=wren&project=navigation-console;wait:1000;shot:crew-diff'
+```
 
 `CAPTURE_FLEET_API=1` runs `scripts/fleet_api_test_server.py` on loopback: a
 fictional Stargate Fleet API v1 serving the demo world's `aurora` fleet (host
