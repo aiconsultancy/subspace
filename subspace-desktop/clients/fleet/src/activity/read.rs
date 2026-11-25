@@ -92,7 +92,8 @@ impl FleetClient {
 
     /// Page `page` of an item too large to hold whole, of the version
     /// `pinned` (a page read before); page 0 of the newest version instead
-    /// when the item changed since, at most once. Run in the background;
+    /// when the item changed since, or shrank so `page` is past its last,
+    /// at most once. Run in the background;
     /// `None` once `cancel` is set, checked before each page is requested.
     pub fn activity_item_part(
         &self,
@@ -101,7 +102,7 @@ impl FleetClient {
         item: &str,
         (page, pinned): (u32, Option<&ItemPage>),
         cancel: &AtomicBool,
-    ) -> Option<Result<ItemPart, Error>> {
+    ) -> Option<Result<ItemPart, PartFailed>> {
         read_part(cancel, page, pinned, |page| {
             self.activity_item_page(agent, turn, item, page)
         })
@@ -131,6 +132,14 @@ pub struct ItemPart {
     /// The item changed since the page it was pinned to: this is page 0 of
     /// its newest version.
     pub newer: bool,
+}
+
+/// A part read that failed: why, and the page to ask for when it is tried
+/// again ([`FleetClient::activity_item_part`]).
+#[non_exhaustive]
+pub struct PartFailed {
+    pub page: u32,
+    pub error: Error,
 }
 
 /// What [`join_pages`] joined. No `Debug`: it holds what a tool printed.
@@ -260,13 +269,16 @@ fn same_version(page: &ItemPage, other: &ItemPage) -> bool {
 }
 
 /// Page `page` of the version `pinned`, or, when the item changed since,
-/// page 0 of its newest version: read again once, never more.
+/// page 0 of its newest version: read again once, never more. A page past
+/// the item's last (404) means it shrank, so it changed too. A failure
+/// names the page to try again: page 0 once the item is known to have
+/// changed, never the old index.
 pub(crate) fn read_part(
     cancel: &AtomicBool,
     page: u32,
     pinned: Option<&ItemPage>,
     mut read: impl FnMut(u32) -> Result<ItemPage, Error>,
-) -> Option<Result<ItemPart, Error>> {
+) -> Option<Result<ItemPart, PartFailed>> {
     let mut read = |page| {
         if cancel.load(Ordering::Acquire) {
             return None;
@@ -279,27 +291,29 @@ pub(crate) fn read_part(
             }
         }))
     };
-    let answer = match read(page)? {
-        Ok(answer) => answer,
-        Err(error) => return Some(Err(error)),
-    };
-    match pinned {
-        None => Some(Ok(ItemPart {
-            page: answer,
-            newer: false,
-        })),
-        Some(pinned) if same_version(&answer, pinned) => Some(Ok(ItemPart {
-            page: answer,
-            newer: false,
-        })),
+    let changed = match read(page)? {
+        Ok(answer) if pinned.is_none_or(|pinned| same_version(&answer, pinned)) => {
+            return Some(Ok(ItemPart {
+                page: answer,
+                newer: false,
+            }));
+        }
         // Changed, and this is already page 0 of the newer version.
-        Some(_) if page == 0 => Some(Ok(ItemPart {
-            page: answer,
-            newer: true,
-        })),
-        Some(_) => Some(read(0)?.map(|first| ItemPart {
+        Ok(answer) if page == 0 => {
+            return Some(Ok(ItemPart {
+                page: answer,
+                newer: true,
+            }));
+        }
+        Ok(_) => true,
+        Err(Error::NotFound) if page > 0 => true,
+        Err(error) => return Some(Err(PartFailed { page, error })),
+    };
+    Some(match read(0)? {
+        Ok(first) => Ok(ItemPart {
             page: first,
-            newer: true,
-        })),
-    }
+            newer: changed,
+        }),
+        Err(error) => Err(PartFailed { page: 0, error }),
+    })
 }

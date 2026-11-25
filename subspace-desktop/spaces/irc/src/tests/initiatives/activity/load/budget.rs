@@ -7,8 +7,8 @@ use gpui_kit::{Entity, SharedString, TestAppContext, VisualTestContext};
 
 use super::super::super::super::remove::settle;
 use super::{
-    Error, Irc, PAGE, answer, drawn, held_bytes, label, late_reply, load, loaded_keys, on, paged,
-    read_of, refresh, running, served, set_budget, tool,
+    Error, Irc, PAGE, answer, changed_under_parts, drawn, held_bytes, label, late_reply, load,
+    loaded_keys, on, paged, read_of, refresh, running, served, served_json, set_budget, tool,
 };
 
 /// The view's budget set to `budget`.
@@ -40,9 +40,16 @@ fn an_item_over_the_budget_shows_page_by_page_within_it(cx: &mut TestAppContext)
     let (board, served, cx) = served(cx, 6, &output);
     let budget = 3 * PAGE as u64;
     budgeted(&board, budget, cx);
+    // Captain's ruling on round 4, point 5: the action says how it reads.
+    refresh(&board, cx);
+    answer(
+        &board,
+        Ok(running(paged(6, served.item.lock().unwrap().1.len()))),
+        cx,
+    );
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load in parts"));
     load(cx);
-    let json = served.item.lock().unwrap().1.clone();
-    let pages = json.len().div_ceil(PAGE);
+    let (json, pages) = served_json(&served);
     assert_eq!(
         served.asked().len(),
         1,
@@ -82,14 +89,8 @@ fn an_item_over_the_budget_shows_page_by_page_within_it(cx: &mut TestAppContext)
 fn a_part_of_a_changed_item_starts_again_and_says_a_newer_version_is_there(
     cx: &mut TestAppContext,
 ) {
-    let (board, served, cx) = served(cx, 6, &"x".repeat(200_000));
-    board.update(cx, |board, _| {
-        set_budget(board.inspector_activity.as_mut().unwrap(), 3 * PAGE as u64);
-    });
-    load(cx);
-    served.serve(7, tool(7, &"y".repeat(300_000)));
-    let json = served.item.lock().unwrap().1.clone();
-    let pages = json.len().div_ceil(PAGE);
+    let (served, cx, (json, pages)) =
+        changed_under_parts(cx, (&"x".repeat(200_000), &"y".repeat(300_000)));
     cx.update(|window, cx| window.click(SharedString::from(on("page-next")), cx));
     settle(cx);
     assert!(drawn(&on("newer"), cx).starts_with("A newer version is on the gateway"),);
@@ -125,7 +126,7 @@ fn a_late_reply_is_dropped(cx: &mut TestAppContext) {
     });
     settle(cx);
     assert!(keys(&board, cx).is_empty(), "a reply after its item went");
-    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load in full"));
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load in parts"));
 
     // Read again: the first read's reply is no answer to the second.
     board.update(cx, |board, _| {
@@ -152,8 +153,7 @@ fn an_item_that_grew_past_its_room_is_read_whole_once_room_is_made(cx: &mut Test
     budgeted(&board, budget, cx);
     // The snapshot still names the short version.
     served.serve(7, tool(7, &format!("{}GROWN-END", "g".repeat(200_000))));
-    let json = served.item.lock().unwrap().1.clone();
-    let pages = json.len().div_ceil(PAGE);
+    let (json, pages) = served_json(&served);
     let inline = held(&board, cx);
     cx.update(|window, cx| window.click(SharedString::from(on("load")), cx));
     assert_eq!(

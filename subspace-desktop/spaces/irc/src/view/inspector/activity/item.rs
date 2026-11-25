@@ -6,7 +6,8 @@
 use gpui_kit::{AnyElement, Context};
 use serde_json::Value;
 use subspace_client_fleet::activity::{
-    ActivityContent, ActivityError, ActivityItem, StepItem, TextItem, ToolItem, UnknownItem,
+    ActivityContent, ActivityEntry, ActivityError, ActivityItem, StepItem, TextItem, ToolItem,
+    UnknownItem,
 };
 
 use super::parts::{Shown, block, caption, card, labelled};
@@ -23,6 +24,53 @@ pub(super) fn item(id: &str, item: &ActivityItem, shown: &Shown, cx: &Context<Ir
     }
 }
 
+/// The label of an item's card, as drawn above its body.
+pub(super) fn label(entry: &ActivityEntry) -> String {
+    match entry {
+        ActivityEntry::Item(item) => match &**item {
+            ActivityItem::Step(step) => step_label(step),
+            ActivityItem::Text(text) => words_label("Reply", text),
+            ActivityItem::Reasoning(text) => words_label("Reasoning", text),
+            ActivityItem::Tool(tool) => tool_label(tool),
+        },
+        ActivityEntry::Unknown(unknown) => unknown_label(unknown),
+        ActivityEntry::Paged(paged) => super::paged::label(paged),
+    }
+}
+
+fn unknown_label(unknown: &UnknownItem) -> String {
+    visible(&format!("Item · {}", unknown.kind))
+}
+
+fn words_label(label: &str, text: &TextItem) -> String {
+    match text.status.as_str() {
+        "completed" => label.to_owned(),
+        status => format!("{label} · {}", visible(status)),
+    }
+}
+
+fn step_label(step: &StepItem) -> String {
+    let model = step.model.as_ref().map(|model| match &model.variant {
+        Some(variant) => format!("{}/{} ({variant})", model.provider, model.id),
+        None => format!("{}/{}", model.provider, model.id),
+    });
+    let label = [
+        Some(format!("Step · {}", step.status)),
+        model,
+        step.finish.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
+    visible(&label)
+}
+
+fn tool_label(tool: &ToolItem) -> String {
+    let name = tool.name.as_deref().unwrap_or("unnamed tool");
+    visible(&format!("Tool · {name} · {}", tool.status))
+}
+
 /// An item of a kind or shape this version does not know: what was sent,
 /// as its JSON, whole.
 pub(super) fn unknown(
@@ -33,7 +81,7 @@ pub(super) fn unknown(
 ) -> AnyElement {
     card(
         id,
-        &visible(&format!("Item · {}", unknown.kind)),
+        &unknown_label(unknown),
         vec![
             caption(
                 &format!("{id}:unknown"),
@@ -52,13 +100,9 @@ pub(super) fn words(
     shown: &Shown,
     cx: &Context<Irc>,
 ) -> AnyElement {
-    let label = match text.status.as_str() {
-        "completed" => label.to_owned(),
-        status => format!("{label} · {}", visible(status)),
-    };
     card(
         id,
-        &label,
+        &words_label(label, text),
         vec![block(&format!("{id}:text"), &text.text, shown, cx)],
         cx,
     )
@@ -67,26 +111,13 @@ pub(super) fn words(
 /// A model step: its model, how it finished, its settled tokens and cost,
 /// and its error.
 pub(super) fn step(id: &str, step: &StepItem, shown: &Shown, cx: &Context<Irc>) -> AnyElement {
-    let model = step.model.as_ref().map(|model| match &model.variant {
-        Some(variant) => format!("{}/{} ({variant})", model.provider, model.id),
-        None => format!("{}/{}", model.provider, model.id),
-    });
-    let label = [
-        Some(format!("Step · {}", step.status)),
-        model,
-        step.finish.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
     let mut parts = vec![caption(&format!("{id}:use"), &step_use(step), cx)];
     parts.extend(
         step.error
             .as_ref()
             .map(|error| failure(id, error, shown, cx)),
     );
-    card(id, &visible(&label), parts, cx)
+    card(id, &step_label(step), parts, cx)
 }
 
 /// `10 in · 5 out · 2 reasoning · 1 cache read · 0 cache write · $0.2500`,
@@ -107,8 +138,6 @@ pub(super) fn step_use(step: &StepItem) -> String {
 /// A tool call: its input as parsed and as the model streamed it, which
 /// can differ, then its progress, output and error, each whole.
 pub(super) fn tool(id: &str, tool: &ToolItem, shown: &Shown, cx: &Context<Irc>) -> AnyElement {
-    let name = tool.name.as_deref().unwrap_or("unnamed tool");
-    let label = visible(&format!("Tool · {name} · {}", tool.status));
     let mut parts = match &tool.input {
         Some(input) => value_blocks(&format!("{id}:input"), "Input", input, shown, cx),
         None => Vec::new(),
@@ -144,7 +173,7 @@ pub(super) fn tool(id: &str, tool: &ToolItem, shown: &Shown, cx: &Context<Irc>) 
             .as_ref()
             .map(|error| failure(id, error, shown, cx)),
     );
-    card(id, &label, parts, cx)
+    card(id, &tool_label(tool), parts, cx)
 }
 
 /// One part of a tool's output: text, a file, or the JSON of a type this

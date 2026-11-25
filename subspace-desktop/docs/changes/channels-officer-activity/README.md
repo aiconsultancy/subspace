@@ -32,7 +32,8 @@ item too large to send inline is paged and loads on demand, never hidden.
   part this version does not know shows as its indented JSON, never
   dropped.
 - **Paged items.** An item the snapshot sends as paged shows its kind, name,
-  status and size, with **Load in full**. No item is too large to read (SUB
+  status and size, with **Load in full**, or **Load in parts** when it is
+  larger than the room left. No item is too large to read (SUB
   decision `a17870f4`). The client reads every page, restarting if the
   item's `seq` changes midway, and the view shows the joined item whole:
   as its kind, or, for a kind or shape this version does not know, as its
@@ -51,13 +52,32 @@ item too large to send inline is paged and loads on demand, never hidden.
   opened item goes first (it shows **Load in full** again); items go when
   their turn leaves the snapshot. A reply that arrives after its item was
   let go, or after it was read again, is dropped.
+- **What is drawn counts too** (SUB decision `ed71a299`). What the open
+  turns draw counts against the same budget, beside the inline content and
+  the items read: a block its length, or one 64 KiB part when it shows in
+  parts; an unknown item its indented JSON; an item read on demand the
+  bytes it shows. Collapsed turns build no bodies and draw nothing. Bodies
+  are drawn the most recently opened turn first, and its items in order;
+  one that would pass the room left shows its label, its size and that it
+  is not drawn to stay within the view's memory budget, with **Show**.
+  **Show** makes room, letting go of the least recently opened items read
+  first, then of bodies shown earlier, the least recent first, and draws
+  the body asked for.
+- **The floor.** Inline content is the snapshot itself and is never let
+  go. When it alone fills the budget, the view holds no items read, one
+  page per part read in flight, and the one body last asked for.
 - **Larger than the budget.** An item larger than the room left is read
   one page at a time: its JSON, one 64 KiB page per part, with **First
   part**, **Previous part**, **Next part**, **Last part** and `Part k of
-  N`. Only the page shown is held. Each part is pinned to the `seq`,
-  page count and size of the part before; when the item changed, the view
-  starts again once from the newest version's first part and says a newer
-  version is on the gateway.
+  N`. Only the page shown is held; while the next part is read, room for
+  one more page is held beside it, and once it arrives only its length.
+  When the room made is under one page, the part is read anyway. Each part
+  is pinned to the `seq`, page count and size of the part before; when the
+  item changed, the view starts again once from the newest version's
+  first part and says a newer version is on the gateway. A part past the
+  item's last page (the item shrank) is a change too: the first part is
+  read once, and **Try again** after a failure reads the first part, never
+  the old one.
 - **Long text in parts.** A text over 256 KiB shows one 64 KiB part at a
   time, cut on character boundaries, with **First part**, **Previous
   part**, **Next part**, **Last part** and `Part k of N`, so every byte,
@@ -110,7 +130,10 @@ events and 8 MiB.
   `seq` is above the snapshot's cursor. Events at or below the cursor are
   dropped without a refetch. An event at or below the cursor as fetched is
   covered: it neither refetches nor resets the `seq` later events must
-  pass. A skipped `seq` is not a gap.
+  pass. Events that wait for a fetch are first matched to the snapshot it
+  returns, and only those it does not cover are checked for a `seq` that
+  rises, so an event covered by a snapshot still in flight never fetches
+  again. A skipped `seq` is not a gap.
 - The snapshot is fetched again, one fetch at a time, when the stream
   closes or reopens, the generation changes, an event's `seq` does not rise
   above the last one, or an item names a turn the join does not hold.
@@ -160,6 +183,13 @@ events and 8 MiB.
   `?agent=` while another follow keeps the stream; a late 400 or 404
   refusing only the officers its stream asked for; and a covered event
   never fetching again.
+- Round 4 of review added: an open turn drawing only up to the room left
+  with **Show** on the rest, **Show** drawing the body asked for within
+  the budget, and a collapsed turn drawing nothing; a part read holding a
+  page of room until it arrives; an item that shrank starting again from
+  its first part, with **Try again** reading that part; an event covered
+  by the snapshot in flight never fetching again; **Load in parts** for an
+  item larger than the room; and a turn ID with `:` keeping its part.
 - Not in this change: opening the turns from the status line, crew
   activity, and **View diff**.
 

@@ -1,7 +1,8 @@
 //! Items too large to send inline, read in the background and kept in the
-//! selection within one budget ([`MAX_LOADED`], SUB decision `a17870f4`):
-//! every byte the view holds of the captain's activity counts against it,
-//! the snapshot's inline content too. No item is too large to read: one
+//! selection within one budget ([`MAX_LOADED`], SUB decisions `a17870f4`
+//! and `ed71a299`): every byte the view holds of the captain's activity
+//! counts against it, the snapshot's inline content and what the open
+//! turns draw ([`super::draw`]) too. No item is too large to read: one
 //! that fits the room left is read whole, page by page; a larger one is
 //! read and shown one page of its JSON at a time, never whole. Room is
 //! made before each read, the least recently opened item going first, and
@@ -24,7 +25,7 @@ mod part;
 pub(super) use part::show_page;
 
 /// The most bytes of the captain's activity one view holds: the
-/// snapshot's inline content and the items read for it.
+/// snapshot's inline content, the items read for it and what is drawn.
 pub(super) const MAX_LOADED: u64 = 64 * 1024 * 1024;
 /// The most bytes of item JSON one page carries, and so one part.
 const PAGE: u64 = 64 * 1024;
@@ -36,7 +37,7 @@ pub(super) struct Loaded {
     /// read, the bytes room was made for.
     bytes: u64,
     /// When it was last opened, by [`Selection::opened`].
-    opened: u64,
+    pub(super) opened: u64,
     /// The read under way or last made: a reply for any other is dropped.
     read: u64,
     /// An item found larger than its room is read again, once, with room
@@ -209,6 +210,8 @@ fn publish(
     };
     if let Some(selection) = board.inspector_activity.as_mut() {
         make_room(selection, 0, Some(key));
+        // Read to be seen: its body is asked for, and room made for it.
+        super::draw::ask(selection, key);
     }
     cx.notify();
 }
@@ -286,11 +289,20 @@ pub(super) fn prune(selection: &mut Selection) {
     selection
         .loaded
         .retain(|(turn, _), _| turns.contains(turn.as_str()));
+    selection
+        .asked
+        .retain(|(turn, _), _| turns.contains(turn.as_str()));
+    selection
+        .turn_opened
+        .retain(|turn, _| turns.contains(turn.as_str()));
+    // By the whole `irc-activity:{turn}:` prefix: a turn ID may hold `:`.
+    let prefixes: Vec<String> = turns
+        .iter()
+        .map(|turn| format!("irc-activity:{turn}:"))
+        .collect();
     selection.parts.retain(|block, _| {
-        block
-            .strip_prefix("irc-activity:")
-            .and_then(|rest| rest.split(':').next())
-            .is_none_or(|turn| turns.contains(turn))
+        !block.starts_with("irc-activity:")
+            || prefixes.iter().any(|prefix| block.starts_with(prefix))
     });
     selection.inline = inline;
     make_room(selection, 0, None);

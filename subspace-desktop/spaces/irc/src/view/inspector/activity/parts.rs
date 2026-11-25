@@ -21,9 +21,9 @@ use super::text::visible;
 use crate::Irc;
 
 /// A text longer than this shows in parts.
-const LONG: usize = 256 * 1024;
+pub(super) const LONG: usize = 256 * 1024;
 /// The most bytes of a text one part shows.
-const PART: usize = 64 * 1024;
+pub(super) const PART: usize = 64 * 1024;
 
 /// The part shown of each long text, by its block's ID; the first when
 /// none is.

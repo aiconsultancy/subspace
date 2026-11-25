@@ -57,7 +57,7 @@ fn fleet_gateway(gateway: &Arc<Gateway>) -> String {
                     return;
                 }
                 let body = if target.contains("page=") {
-                    page(&gateway, &target)
+                    page(&gateway, &target).unwrap_or_default()
                 } else {
                     let bytes = gateway.item.lock().unwrap().1.len();
                     json!({

@@ -40,6 +40,8 @@ struct Gateway {
     /// The item's `seq` and complete JSON.
     item: Mutex<(u64, String)>,
     asked: Mutex<Vec<String>>,
+    /// Page 0 answers 503 while set.
+    busy_first: Mutex<bool>,
 }
 
 impl Gateway {
@@ -50,6 +52,13 @@ impl Gateway {
     fn asked(&self) -> Vec<String> {
         self.asked.lock().unwrap().clone()
     }
+}
+
+/// The item's JSON as `gateway` serves it, and how many pages carry it.
+fn served_json(gateway: &Gateway) -> (String, usize) {
+    let json = gateway.item.lock().unwrap().1.clone();
+    let pages = json.len().div_ceil(PAGE);
+    (json, pages)
 }
 
 /// A loopback gateway answering each page of `i3` from `gateway`, and a
@@ -72,10 +81,19 @@ fn gateway(gateway: &Arc<Gateway>) -> FleetClient {
             }
             let target = first.split(' ').nth(1).unwrap_or_default().to_owned();
             gateway.asked.lock().unwrap().push(target.clone());
-            let body = page(&gateway, &target).to_string();
+            let (status, body) = match page(&gateway, &target) {
+                Some(page) => ("200 OK", page.to_string()),
+                None => ("404 Not Found", String::new()),
+            };
+            let busy = *gateway.busy_first.lock().unwrap() && target.contains("page=0");
+            let status = if busy {
+                "503 Service Unavailable"
+            } else {
+                status
+            };
             let _ = write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
         }
@@ -84,9 +102,10 @@ fn gateway(gateway: &Arc<Gateway>) -> FleetClient {
     FleetClient::new(address, Secret::new("fixture-throwaway"))
 }
 
-/// The page `target` asks for. The fixture's JSON is ASCII, so any byte
-/// is a character boundary.
-fn page(gateway: &Gateway, target: &str) -> Value {
+/// The page `target` asks for; `None`, answered 404 as Stargate does, past
+/// the item's last page. The fixture's JSON is ASCII, so any byte is a
+/// character boundary.
+fn page(gateway: &Gateway, target: &str) -> Option<Value> {
     let number: usize = target
         .split("page=")
         .nth(1)
@@ -98,11 +117,12 @@ fn page(gateway: &Gateway, target: &str) -> Value {
         .chunks(PAGE)
         .map(|chunk| std::str::from_utf8(chunk).unwrap())
         .collect();
-    json!({
+    let data = pages.get(number)?;
+    Some(json!({
         "agent": "aurora-lyra", "turn": "t-now", "item": "i3", "seq": seq,
         "page": number, "pages": pages.len(), "bytes": item.len(),
-        "data": pages.get(number).copied().unwrap_or_default()
-    })
+        "data": data
+    }))
 }
 
 /// Item `i3` in full: a tool call whose input only the stream carried and
@@ -140,6 +160,32 @@ fn served<'a>(
     let bytes = served.item.lock().unwrap().1.len();
     answer(&board, Ok(running(paged(seq, bytes))), cx);
     (board, served, cx)
+}
+
+/// The turn view with `i3` served with `output` and read in parts, its
+/// budget three pages.
+fn in_parts<'a>(
+    cx: &'a mut TestAppContext,
+    output: &str,
+) -> (Entity<Irc>, Arc<Gateway>, &'a mut VisualTestContext) {
+    let (board, served, cx) = served(cx, 6, output);
+    board.update(cx, |board, _| {
+        set_budget(board.inspector_activity.as_mut().unwrap(), 3 * PAGE as u64);
+    });
+    load(cx);
+    (board, served, cx)
+}
+
+/// `i3` read in parts with `before` as its output, then changed on the
+/// gateway to `after`: the gateway, and the new JSON and its page count.
+fn changed_under_parts<'a>(
+    cx: &'a mut TestAppContext,
+    (before, after): (&str, &str),
+) -> (Arc<Gateway>, &'a mut VisualTestContext, (String, usize)) {
+    let (_board, served, cx) = in_parts(cx, before);
+    served.serve(7, tool(7, after));
+    let json = served_json(&served);
+    (served, cx, json)
 }
 
 fn load(cx: &mut VisualTestContext) {
@@ -245,3 +291,4 @@ fn an_item_goes_with_its_turn(cx: &mut TestAppContext) {
 mod budget;
 mod kinds;
 mod leave;
+mod part;

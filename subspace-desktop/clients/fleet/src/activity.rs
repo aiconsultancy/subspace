@@ -18,7 +18,7 @@ mod read;
 
 pub use join::{ActivityJoin, ActivityNews, Fetch};
 pub(crate) use join::{MAX_HELD_BYTES, MAX_HELD_EVENTS};
-pub use read::{ItemPart, ItemRead};
+pub use read::{ItemPart, ItemRead, PartFailed};
 #[cfg(test)]
 use read::{Joined, decode_item, join_pages, read_part};
 

@@ -18,6 +18,7 @@ use crate::Irc;
 use crate::view::inspector::activity::retry_scheduled;
 
 mod close;
+mod draw;
 mod load;
 mod text;
 

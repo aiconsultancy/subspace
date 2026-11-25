@@ -1,8 +1,9 @@
 //! One turn as the view draws it: a heading that opens and closes it,
 //! then its items in the order they began: model steps with their settled
 //! tokens and cost, tool calls with their input, progress, output and
-//! errors, and reply and reasoning text, each whole. An item of a kind
-//! or shape this version does not know shows as its JSON.
+//! errors, and reply and reasoning text, each whole, within the room the
+//! budget leaves ([`super::draw`]). An item of a kind or shape this
+//! version does not know shows as its JSON.
 
 use gpui_kit::component::v_flex;
 use gpui_kit::{
@@ -15,6 +16,7 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
 use super::Selection;
+use super::draw::Plan;
 use super::parts::caption;
 use crate::Irc;
 
@@ -23,11 +25,12 @@ pub(super) fn list(selection: &Selection, cx: &Context<Irc>) -> Vec<AnyElement> 
     let Some(activity) = selection.join.activity() else {
         return Vec::new();
     };
+    let plan = super::draw::plan(selection);
     activity
         .turns
         .iter()
         .rev()
-        .map(|turn| view(selection, turn, cx))
+        .map(|turn| view(selection, &plan, turn, cx))
         .collect()
 }
 
@@ -37,7 +40,12 @@ pub(super) fn is_open(selection: &Selection, turn: &TurnSummary) -> bool {
     (turn.status == TurnStatus::Running) != selection.toggled.contains(&turn.id)
 }
 
-pub(super) fn view(selection: &Selection, turn: &ActivityTurn, cx: &Context<Irc>) -> AnyElement {
+pub(super) fn view(
+    selection: &Selection,
+    plan: &Plan,
+    turn: &ActivityTurn,
+    cx: &Context<Irc>,
+) -> AnyElement {
     let id = turn.summary.id.clone();
     let open = is_open(selection, &turn.summary);
     let icon = if open {
@@ -63,7 +71,7 @@ pub(super) fn view(selection: &Selection, turn: &ActivityTurn, cx: &Context<Irc>
     let items = open.then(|| {
         turn.items
             .iter()
-            .map(|entry| self::entry(selection, &id, entry, cx))
+            .map(|entry| self::entry(selection, plan, &id, entry, cx))
     });
     v_flex()
         .w_full()
@@ -100,13 +108,20 @@ pub(super) fn total(tokens: &ActivityTokens) -> u64 {
     tokens.input + tokens.output + tokens.reasoning + tokens.cache_read + tokens.cache_write
 }
 
+/// One item: its body, or, when that would pass the room left, its label
+/// and **Show** ([`super::draw`]).
 pub(super) fn entry(
     selection: &Selection,
+    plan: &Plan,
     turn: &str,
     entry: &ActivityEntry,
     cx: &Context<Irc>,
 ) -> AnyElement {
     let id = format!("irc-activity:{turn}:{}", entry.base().id);
+    let key = (turn.to_owned(), entry.base().id.clone());
+    if let Some(bytes) = plan.held_back.get(&key) {
+        return super::draw::held_back(&id, (&key, entry, *bytes), cx);
+    }
     match entry {
         ActivityEntry::Item(item) => super::item::item(&id, item, &selection.parts, cx),
         ActivityEntry::Paged(paged) => super::paged::paged(selection, turn, paged, cx),

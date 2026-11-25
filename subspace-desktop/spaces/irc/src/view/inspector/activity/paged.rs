@@ -21,6 +21,16 @@ pub(super) fn paged(
     cx: &Context<Irc>,
 ) -> AnyElement {
     let id = format!("irc-activity:{turn}:{}", paged.base.id);
+    let key = (turn.to_owned(), paged.base.id.clone());
+    let loaded = selection.loaded.get(&key);
+    // An item larger than the room left is read in parts.
+    let whole = paged.paged.bytes <= super::load::room(selection);
+    let parts = load_parts(&id, (&key, paged, whole), loaded, &selection.parts, cx);
+    card(&id, &label(paged), parts, cx)
+}
+
+/// `Tool · read · completed · 140000 bytes in 3 pages`.
+pub(super) fn label(paged: &PagedItem) -> String {
     let kind = match paged.kind.as_str() {
         "tool" => "Tool",
         "text" => "Reply",
@@ -29,17 +39,13 @@ pub(super) fn paged(
         _ => "Item",
     };
     let name = paged.name.as_deref().map(|name| format!(" · {name}"));
-    let label = visible(&format!(
+    visible(&format!(
         "{kind}{} · {} · {} bytes in {} pages",
         name.unwrap_or_default(),
         paged.status,
         paged.paged.bytes,
         paged.paged.pages
-    ));
-    let key = (turn.to_owned(), paged.base.id.clone());
-    let loaded = selection.loaded.get(&key);
-    let parts = load_parts(&id, (&key, paged), loaded, &selection.parts, cx);
-    card(&id, &label, parts, cx)
+    ))
 }
 
 /// A button that reads the item again from its first page.
@@ -63,17 +69,18 @@ fn load_action(
 }
 
 /// The load action, or the item once read. An item let go to make room
-/// for others shows the load action again.
+/// for others shows the load action again: **Load in full** when it fits
+/// the room left (`fits`), **Load in parts** when it does not.
 pub(super) fn load_parts(
     id: &str,
-    (key, paged): (&(String, String), &PagedItem),
+    (key, paged, fits): (&(String, String), &PagedItem, bool),
     loaded: Option<&Loaded>,
     shown: &Shown,
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
     let action = |label| load_action(id, (key, paged.paged.bytes), label, cx);
     let Some(loaded) = loaded else {
-        return vec![action("Load in full")];
+        return vec![action(load_label(fits))];
     };
     match &loaded.held {
         Held::Loading => vec![caption(&format!("{id}:loading"), "Loading…", cx)],
@@ -97,6 +104,15 @@ pub(super) fn load_parts(
             caption(&format!("{id}:failed"), &error.to_string(), cx),
             action("Try again"),
         ],
+    }
+}
+
+/// The load action's label: how the item will be read.
+pub(super) fn load_label(whole: bool) -> &'static str {
+    if whole {
+        "Load in full"
+    } else {
+        "Load in parts"
     }
 }
 

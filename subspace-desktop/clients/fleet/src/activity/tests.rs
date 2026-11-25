@@ -11,8 +11,8 @@ use subspace_framework::core::Secret;
 
 use super::{
     ActivityChange, ActivityContent, ActivityEntry, ActivityItem, ActivityJoin, ActivityNews,
-    AgentActivity, AgentActivityEvent, ItemPage, Joined, TurnStatus, decode_item, join_pages,
-    read_part,
+    AgentActivity, AgentActivityEvent, ItemPage, Joined, PartFailed, TurnStatus, decode_item,
+    join_pages, read_part,
 };
 use crate::events::{FleetEvent, Frames};
 use crate::model::Role;

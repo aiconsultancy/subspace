@@ -20,15 +20,21 @@
 //! What the captain saw is shown in full, whatever its size (SUB decision
 //! `a17870f4`): an item too large to send inline loads on demand, page by
 //! page, then shows whole, a long text in parts of 64 KiB. Everything the
-//! view holds, the inline content too, counts against one budget of
-//! 64 MiB. Room is made before each read, the least recently opened item
-//! going first; an item larger than the room left shows one page of its
-//! JSON at a time, every page in reach, and is never held whole. Items go
+//! view holds, the inline content and what the open turns draw too,
+//! counts against one budget of 64 MiB (SUB decision `ed71a299`). Room is
+//! made before each read, the least recently opened item going first; an
+//! item larger than the room left shows one page of its JSON at a time,
+//! every page in reach, and is never held whole. A body that would pass
+//! the room left is not drawn until asked for with **Show** ([`draw`]).
+//! Inline content is the snapshot itself and is never let go: when it
+//! alone fills the budget, the view holds no items read, one page per
+//! part read in flight, and the one body last asked for. Items go
 //! with their turn. Closing the view, or leaving Channels, cancels any
 //! read: no page is asked for after it, and a late reply is dropped. The
 //! content lives in this selection only: nothing is written to disk,
 //! cached or logged, and none of it can be added to the chat.
 
+mod draw;
 mod fetch;
 mod item;
 mod load;
@@ -77,6 +83,12 @@ pub(crate) struct Selection {
     /// The part shown of each text long enough to show in parts, by the
     /// ID of its block.
     parts: HashMap<String, usize>,
+    /// The bodies the person asked for, by turn and item ID, with when
+    /// ([`Self::opened`]): drawn first ([`draw`]).
+    asked: HashMap<(String, String), u64>,
+    /// When each turn was last opened by hand ([`Self::opened`]): the most
+    /// recently opened draw first.
+    turn_opened: HashMap<String, u64>,
     /// Counts each item opened and each read, for evicting the least
     /// recently opened and dropping late replies.
     opened: u64,
@@ -121,6 +133,8 @@ pub(super) fn open(
         toggled: HashSet::new(),
         loaded: HashMap::new(),
         parts: HashMap::new(),
+        asked: HashMap::new(),
+        turn_opened: HashMap::new(),
         opened: 0,
         budget: MAX_LOADED,
         inline: 0,
@@ -221,12 +235,17 @@ pub(super) fn show_part(board: &mut Irc, block: &str, part: usize, cx: &mut Cont
     }
 }
 
-/// Opens or closes a turn.
+/// Opens or closes a turn. A turn opened draws before those opened
+/// earlier.
 pub(super) fn toggle(board: &mut Irc, turn: &str, cx: &mut Context<Irc>) {
     if let Some(selection) = board.inspector_activity.as_mut() {
         if !selection.toggled.remove(turn) {
             selection.toggled.insert(turn.to_owned());
         }
+        selection.opened += 1;
+        selection
+            .turn_opened
+            .insert(turn.to_owned(), selection.opened);
         cx.notify();
     }
 }
@@ -347,6 +366,18 @@ pub(crate) fn set_budget(selection: &mut Selection, bytes: u64) {
 #[cfg(test)]
 pub(crate) fn held_bytes(selection: &Selection) -> u64 {
     selection.inline + load::held(selection)
+}
+
+/// Leaves `bytes` of room beside the inline content of `selection`.
+#[cfg(test)]
+pub(crate) fn set_room(selection: &mut Selection, bytes: u64) {
+    selection.budget = selection.inline + bytes;
+}
+
+/// The bytes the bodies the open turns draw hold.
+#[cfg(test)]
+pub(crate) fn drawn_bytes(selection: &Selection) -> u64 {
+    draw::plan(selection).drawn
 }
 
 /// The read under way or last made of item `item` of turn `turn`.

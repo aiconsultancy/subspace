@@ -3,12 +3,13 @@
 //! too, copied as shown), unknown shapes as JSON, and menus without Add
 //! to chat.
 
-use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt as _;
+use gpui_kit::{SharedString, TestAppContext};
 use serde_json::json;
 use subspace_framework::dashboard::Dashboard as _;
 
-use super::{answer, drawn, opened, running, snapshot};
+use super::super::super::remove::settle;
+use super::{answer, drawn, opened, refresh, running, snapshot, turn};
 
 #[gpui_kit::test]
 fn a_tool_shows_its_input_as_parsed_and_as_streamed(cx: &mut TestAppContext) {
@@ -121,4 +122,31 @@ fn activity_text_offers_copy_and_select_all_and_never_reaches_the_chat(cx: &mut 
     let content = context.map(|context| context.content).unwrap_or_default();
     assert!(!content.contains("OUTPUT-SENTINEL"), "{content}");
     assert!(!content.contains("Looking at"), "{content}");
+}
+
+/// Captain's ruling on round 4, point 6: a turn whose ID holds `:` keeps
+/// the part shown of its long text when the snapshot is read again.
+#[gpui_kit::test]
+fn a_turn_id_with_a_colon_keeps_the_part_shown(cx: &mut TestAppContext) {
+    let (board, cx) = opened(cx);
+    let long = "w".repeat(300 * 1024);
+    let colon = || {
+        let items = json!([{"id": "i1", "seq": 4, "startedAt": 1, "updatedAt": 2,
+                            "kind": "text", "status": "completed", "text": long}]);
+        serde_json::from_value(json!({
+            "agent": {"id": "aurora-lyra", "role": "captain", "backend": "opencode",
+                      "collected": true},
+            "turns": [turn("t:1", "running", 0, items)],
+            "cursor": {"generation": "g1", "seq": 5}
+        }))
+        .unwrap()
+    };
+    answer(&board, Ok(colon()), cx);
+    let id = "irc-activity:t:1:i1:text";
+    cx.update(|window, cx| window.click(SharedString::from(format!("{id}:part-next")), cx));
+    settle(cx);
+    assert_eq!(drawn(&format!("{id}:part"), cx), "Part 2 of 5");
+    refresh(&board, cx);
+    answer(&board, Ok(colon()), cx);
+    assert_eq!(drawn(&format!("{id}:part"), cx), "Part 2 of 5");
 }
