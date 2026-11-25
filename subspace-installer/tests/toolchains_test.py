@@ -399,13 +399,13 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(tools["node"]["versions"], ["22.11.0", "24"])
         self.assertEqual({spec: entry["install"] for spec, entry in tools.items()}, {
             "node": "shared", "dotnet": "shared", "pnpm": "shared", "cargo:cargo-nextest": "user",
-            "github:example/release-tool": "shared", "conda:openssl": "shared", "npm:@example/cli": "shared",
+            "github:example/release-tool": "shared", "conda:openssl": "user", "npm:@example/cli": "user",
             "rust": "user", "terraform": "user"})
         self.assertEqual(toolchains.requests(tools, "shared"), [
-            "node@22.11.0", "node@24", "dotnet@8.0.404", "pnpm@9.12.3", "github:example/release-tool@2.4.0",
-            "conda:openssl@3.4.0", "npm:@example/cli@1.2.0"])
+            "node@22.11.0", "node@24", "dotnet@8.0.404", "pnpm@9.12.3", "github:example/release-tool@2.4.0"])
         self.assertEqual(toolchains.requests(tools, "user"), ["rust@1.99.0", "terraform@1.9.8",
-                                                              "cargo:cargo-nextest@0.9.100"])
+                                                              "cargo:cargo-nextest@0.9.100", "conda:openssl@3.4.0",
+                                                              "npm:@example/cli@1.2.0"])
         self.assertEqual(toolchains.mise_config(tools).splitlines()[1:], [
             "[tools]",
             'node = ["22.11.0", "24"]',
@@ -417,6 +417,34 @@ class ConfigurationTests(unittest.TestCase):
             '"npm:@example/cli" = "1.2.0"',
             'rust = { version = "1.99.0", components = "clippy,rustfmt" }',
             'terraform = "1.9.8"'])
+
+    def test_tools_that_run_code_while_installing_are_installed_per_user_unless_marked_shared(self):
+        tools = toolchains.toolchain_config({
+            "npm:@example/cli": "1.2.0", "gem:example": "2.0.0", "pipx:example-tool": "3.1.0",
+            "asdf:example/asdf-tool": "1.0.0", "vfox:example/vfox-tool": "1.0.0", "conda:openssl": "3.4.0",
+            "cargo:cargo-nextest": "0.9.100", "aqua:example/tool": "1.0.0", "go:example.com/tool": "1.0.0"})
+        self.assertEqual(sorted(spec for spec, entry in tools.items() if entry["install"] == "user"), [
+            "asdf:example/asdf-tool", "cargo:cargo-nextest", "conda:openssl", "gem:example", "npm:@example/cli",
+            "pipx:example-tool", "vfox:example/vfox-tool"])
+        self.assertEqual(toolchains.requests(tools, "shared"), ["node@24", "aqua:example/tool@1.0.0",
+                                                                "go:example.com/tool@1.0.0"])
+        # Root's mise never uses those backends, so a plain name that mise's registry resolves to one fails as
+        # root rather than running its code there.
+        self.assertEqual(toolchains.root_environment(tools)["MISE_DISABLE_BACKENDS"],
+                         "asdf,cargo,conda,gem,npm,pipx,pypi,vfox")
+        # The operator may mark one shared: then root installs it, and that backend only is enabled for root.
+        marked = toolchains.toolchain_config({"npm:@example/cli": {"version": "1.2.0", "install": "shared"}})
+        self.assertEqual(toolchains.requests(marked, "shared"), ["node@24", "npm:@example/cli@1.2.0"])
+        self.assertEqual(toolchains.root_environment(marked)["MISE_DISABLE_BACKENDS"],
+                         "asdf,cargo,conda,gem,pipx,pypi,vfox")
+        # Detection proposes them per user too: a repository cannot mark anything shared.
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        repo = Path(directory.name)
+        (repo / "mise.toml").write_text('[tools]\n"npm:@example/cli" = { version = "1.2.0", install = "shared" }\n')
+        proposal = toolchains.annotate(toolchains.detect({"cli": repo}), toolchains.toolchain_config({}), [], [],
+                                       states={})
+        self.assertEqual(items_of(proposal, "npm:@example/cli")["1.2.0"]["where"], "user")
 
     def test_names_versions_options_and_packages_are_strict(self):
         # These end up on command lines run as root, and in a TOML file that root's mise reads.

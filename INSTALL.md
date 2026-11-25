@@ -435,9 +435,11 @@ answer it now.
       `cargo:cargo-nextest@0.9.100` or `github:example/tool@1.2.0`.
     - **None** (`--toolchains none`). **Default: none**, the base tools only.
 
-    Shared tools are installed once for the whole fleet; Rust and `cargo:`
-    tools go to each officer's own directory, since Rust installs a
-    repository's pinned toolchain on first use. Add `--verify-toolchains` to
+    Shared tools are installed once for the whole fleet; Rust goes to each
+    officer's own directory, since Rust installs a repository's pinned
+    toolchain on first use, and so do tools whose installs run third-party
+    code (`cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:`, `conda:`), so
+    that code never runs as root. Add `--verify-toolchains` to
     run each repository's basic check as a crew member would, after
     installing, and report pass or fail; it never stops the install. See
     [Toolchains](subspace-installer/README.md#toolchains).

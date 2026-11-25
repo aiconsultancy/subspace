@@ -710,13 +710,26 @@ Debian packages:
 | --- | --- | --- | --- |
 | `systemPackages` | root, with apt | the system | everyone |
 | A shared tool (the default) | root, with mise, as explicit `tool@version` arguments, from `/opt/subspace-fleet` | `/opt/subspace-fleet/toolchains`, the shared store | every officer and crew member, through mise's system data directory |
-| A per-user tool: `rust` and `cargo:` tools by default, or `"install": "user"` | each officer's Linux user, with mise, as explicit `tool@version` arguments, from its home | the officer's own `~/.local/share/mise` | that officer and, since crew run as their captain's user, its crew |
+| A per-user tool: `rust`, and the tools of backends that run third-party code while they install (`cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:`, `conda:`), by default; or `"install": "user"` | each officer's Linux user, with mise, as explicit `tool@version` arguments, from its home | the officer's own `~/.local/share/mise` | that officer and, since crew run as their captain's user, its crew |
 
 Neither install runs mise, a package manager or anything else inside an
 agent's checkout, so no repository's configuration reaches root. Rust is per
 user because rustup keeps its toolchains in the user's home and installs a
 repository's pinned toolchain and components when they are first used, which a
-read-only shared store cannot; `cargo:` tools build with that Rust. A .NET SDK
+read-only shared store cannot; `cargo:` tools build with that Rust.
+
+**Install-time code never runs as root by default.** `cargo:` runs build
+scripts, `npm:` lifecycle scripts, `gem:` native extension builds, `pipx:`
+package builds, `asdf:` and `vfox:` plugin scripts, and `conda:` packages may
+carry link scripts, all from third parties. Their tools install as each
+officer's user. Root's mise has those backends disabled
+(`MISE_DISABLE_BACKENDS`, with `pypi:` too), so a plain tool name that mise's
+registry resolves to one of them, such as a tool published only on npm, fails
+as root instead of running its code; give it `"install": "user"`. To install
+such a tool once for the whole fleet as root, mark it explicitly:
+`"npm:@example/cli": {"version": "1.2.0", "install": "shared"}`, which also
+enables that backend for root's installs. Detection never proposes `shared`
+for them; only the operator can mark it, in `fleet.json`. A .NET SDK
 is shared: every SDK goes into one root, `/opt/subspace-fleet/toolchains/dotnet-root`,
 so `global.json` can choose among them. The installer never removes a tool or
 package taken off the list; the dry run names them as left installed. The
@@ -2114,7 +2127,7 @@ their crew's assignments through `stargate_crew`.
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
 | `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
-| `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust` and `cargo:` tools). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
+| `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
 | `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |

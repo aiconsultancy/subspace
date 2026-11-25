@@ -8,9 +8,10 @@ Where things are installed:
 - toolchains, shared (the default): installed by root with mise, as explicit tool@version arguments, into the
   shared store /opt/subspace-fleet/toolchains, from /opt/subspace-fleet and never from an agent's checkout. Every
   officer and crew member sees them: the shared store is their mise system data directory.
-- toolchains, per user (rust and cargo: tools by default, or "install": "user"): installed as each officer's
-  Linux user, as explicit tool@version arguments from its home, into its own mise data directory. Crew run as
-  their captain's user, so they share their captain's.
+- toolchains, per user (by default rust, and the tools of backends that run third-party code while they install,
+  such as cargo:, npm: or asdf:; or "install": "user"): installed as each officer's Linux user, as explicit
+  tool@version arguments from its home, into its own mise data directory. Crew run as their captain's user, so
+  they share their captain's.
 
 Detection reads the repositories' files as data. It never runs mise, a package manager, Git or anything else
 from a repository, and never follows a symbolic link.
@@ -45,10 +46,15 @@ DEFAULT_TOOLS = {"node": "24"}
 # from fleet.json. http: (arbitrary URLs) and spm: are left out.
 BACKENDS = ("aqua", "asdf", "cargo", "conda", "dotnet", "gem", "github", "gitlab", "go", "npm", "pipx", "ubi", "vfox")
 # Installed per user by default: rustup keeps its toolchains in the user's home and installs a repository's
-# pinned toolchain and components on first use, which a read-only shared store cannot; cargo: tools build with
-# the user's own Rust.
+# pinned toolchain and components on first use, which a read-only shared store cannot.
 USER_TOOLS = {"rust"}
-USER_BACKENDS = {"cargo"}
+# Backends that run third-party code while they install: cargo: (build scripts), npm: (lifecycle scripts), gem:
+# (native extensions), pipx: (package builds), asdf: and vfox: (plugins are scripts), conda: (packages may carry
+# link scripts). Their tools install as each officer's user unless the operator marks one "install": "shared".
+USER_BACKENDS = {"cargo", "npm", "gem", "pipx", "asdf", "vfox", "conda"}
+# Root's installs never use these backends, so a plain tool name that mise's registry resolves to one of them
+# (pypi: is pipx's) fails as root instead of running its code; the operator installs it per user instead.
+CODE_BACKENDS = USER_BACKENDS | {"pypi"}
 PLAIN_TOOL = r"[a-z0-9][a-z0-9._-]{0,63}"
 BACKEND_TOOL = rf"(?:{'|'.join(BACKENDS)}):@?[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9._+-]+){{0,6}}"
 VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}"
@@ -267,12 +273,16 @@ def officer_environment(tools, user, home, trusted):
 
 def root_environment(tools):
     """Root's environment for the shared installs: the shared store as its data directory, the fleet's
-    configuration as its only configuration, and no project configuration (it runs from /opt/subspace-fleet)."""
+    configuration as its only configuration, no project configuration (it runs from /opt/subspace-fleet), and the
+    backends that run third-party code at install disabled, except those of tools the operator marked shared."""
+    shared = {spec.partition(":")[0] for spec, entry in tools.items() if ":" in spec and entry["install"] == "shared"}
+    if "pipx" in shared:
+        shared.add("pypi")
     environment = {
         "PATH": f"{APP}/bin:{SHARED}/shims:{BASE_PATH}", "HOME": "/root",
         "MISE_DATA_DIR": str(SHARED), "MISE_GLOBAL_CONFIG_FILE": str(SHARED_CONFIG),
         "MISE_SYSTEM_CONFIG_DIR": str(SYSTEM_CONFIG_DIR), "MISE_YES": "1", "MISE_LOCKFILE": "0",
-        "MISE_SELF_UPDATE_AVAILABLE": "0",
+        "MISE_SELF_UPDATE_AVAILABLE": "0", "MISE_DISABLE_BACKENDS": ",".join(sorted(CODE_BACKENDS - shared)),
     }
     if root := dotnet_root(tools):
         environment["DOTNET_ROOT"] = root
