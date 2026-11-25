@@ -93,7 +93,10 @@ if "$dry_run"; then
     if [[ $action == uninstall ]]; then
         printf 'Would disable fleet services and remove installed programs and units. Fleet state and system packages are retained.\n'
     else
-        python3 "$runtime" plan "$config" "$secrets" "$app_secrets" "$prune_secrets"
+        plan=(plan "$config" "$secrets" "$app_secrets" "$prune_secrets")
+        # The plan says what this run would do: with --no-systemd, leave swap as it is.
+        if "$no_systemd"; then plan+=(no-systemd); fi
+        python3 "$runtime" "${plan[@]}"
         printf 'Would install packages and pinned %s binaries, converge service files, and apply optional fleet registration.\n' "$arch"
         if "$no_systemd"; then
             printf 'Would skip systemd and container startup.\n'
@@ -379,7 +382,7 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
 done
 # The screenshot tools' pinned versions, which runtime.py render installs from.
@@ -408,6 +411,10 @@ if [[ $(readlink "$app/bin/subspace-github") != "$app/lib/github_app.py" ]]; the
 fi
 python3 "$app/lib/runtime.py" render "$etc/fleet.json" "$etc/secrets.json" "$prune_secrets"
 python3 "$app/lib/runtime.py" check
+if ! "$no_systemd"; then
+    # Swap for the engines' swap allowances, before they start (lib/memory.py). A problem is reported, never fatal.
+    python3 "$app/lib/runtime.py" swap || printf 'subspace-fleet: swap could not be checked; the install carries on.\n' >&2
+fi
 if [[ ${source[2]} == local ]]; then
     "$app/lib/runtime.py" irc config --quiet
 fi
@@ -447,4 +454,8 @@ if "$verify_toolchains"; then
     python3 "$app/lib/runtime.py" verify-toolchains || printf 'subspace-fleet: the toolchain check could not run.\n' >&2
 fi
 python3 "$app/lib/runtime.py" usage-guard-summary
+# The VM's memory, each engine's limits and why, limits set by hand, and swap: for the operator and their agent.
+summary=(memory-summary)
+if "$no_systemd"; then summary+=(no-systemd); fi
+python3 "$app/lib/runtime.py" "${summary[@]}" || printf 'subspace-fleet: the memory summary could not run.\n' >&2
 printf 'Fleet installation complete.\n'
