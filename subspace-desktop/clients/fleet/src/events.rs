@@ -6,9 +6,12 @@ use std::collections::VecDeque;
 
 use serde::Deserialize;
 
+use crate::activity::AgentActivityEvent;
 use crate::model::{ActivityEvent, FleetOverview, Host, ShipDetail};
 
-/// A ship detail with a large crew stays far below this.
+/// A ship detail with a large crew stays far below this, and so does an
+/// `agent-activity` event: its item is at most 64 KiB of JSON, sent as its
+/// identity and `paged` beyond that.
 const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 
 /// One event from `GET /api/v1/events`.
@@ -27,6 +30,9 @@ pub enum FleetEvent {
     Activity(Box<ActivityEvent>),
     /// Every fifteen seconds.
     Heartbeat { at: i64 },
+    /// One change to a subscribed officer's turns, only on a stream opened
+    /// with `?agent=`.
+    AgentActivity(Box<AgentActivityEvent>),
 }
 
 /// The stream broke its framing: an oversized frame or text that is not
@@ -125,6 +131,7 @@ fn event(name: &str, data: &[u8]) -> Option<FleetEvent> {
         "host" => parse(data).map(|host| FleetEvent::Host(Box::new(host))),
         "activity" => parse(data).map(|activity| FleetEvent::Activity(Box::new(activity))),
         "heartbeat" => parse(data).map(|beat: Heartbeat| FleetEvent::Heartbeat { at: beat.at }),
+        "agent-activity" => parse(data).map(|event| FleetEvent::AgentActivity(Box::new(event))),
         _ => None,
     }
 }

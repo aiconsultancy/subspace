@@ -22,9 +22,11 @@ mod follow;
 mod queue;
 mod retry;
 mod tokens;
+mod watch;
 
 pub use follow::FleetFollow;
 pub use tokens::TokenError;
+pub use watch::ActivityWatch;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -116,6 +118,9 @@ pub struct FleetApi {
     reads: Reads,
     /// Each fleet a handle follows, with the holder every handle clones.
     interest: BTreeMap<String, Arc<()>>,
+    /// Each officer whose turn activity a handle watches, by fleet and
+    /// registration ID, with the holder every handle clones.
+    watched: BTreeMap<(String, String), Arc<()>>,
     feeds: BTreeMap<String, Followed>,
     revision: u64,
     directory_revision: u64,
@@ -183,6 +188,7 @@ impl FleetApi {
             tokens: BTreeMap::new(),
             reads: Reads::default(),
             interest: BTreeMap::new(),
+            watched: BTreeMap::new(),
             feeds: BTreeMap::new(),
             revision: 0,
             directory_revision: 0,

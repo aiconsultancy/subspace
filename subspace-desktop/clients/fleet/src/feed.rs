@@ -9,13 +9,17 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
+use crate::activity::ActivityNews;
 use crate::events::FleetEvent;
 use crate::model::{ActivityEvent, FleetOverview, ShipDetail};
 use crate::stream::{self, StreamEnd};
 use crate::{Error, FleetClient};
 
+mod agents;
 mod link;
 mod pace;
+
+use agents::Agents;
 
 pub use link::Link;
 pub(crate) use pace::Pace;
@@ -48,6 +52,10 @@ struct Shared {
     revision: AtomicU64,
     stopped: AtomicBool,
     wake: tokio::sync::Notify,
+    /// The officers watched and their kept `agent-activity` events.
+    agents: Mutex<Agents>,
+    /// Told when the officers the stream subscribes to change.
+    retarget: tokio::sync::Notify,
 }
 
 /// One fleet followed in the background until dropped.
@@ -65,6 +73,8 @@ impl Feed {
             revision: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
             wake: tokio::sync::Notify::new(),
+            agents: Mutex::new(Agents::default()),
+            retarget: tokio::sync::Notify::new(),
         });
         let thread = Arc::clone(&shared);
         let started = std::thread::Builder::new()
@@ -88,6 +98,20 @@ impl Feed {
 
     pub fn link(&self) -> Link {
         lock(&self.0.state).link
+    }
+
+    /// Subscribes the stream to exactly these officers' turn activity (the
+    /// first eight), opening it again with the new query when that changes.
+    pub(crate) fn set_agents(&self, agents: std::collections::BTreeSet<String>) {
+        if lock(&self.0.agents).set(agents) {
+            self.0.retarget.notify_one();
+        }
+    }
+
+    /// What a reader at position `after` has not taken of `agent`'s
+    /// events, while the feed watches `agent`.
+    pub(crate) fn activity_news(&self, agent: &str, after: u64) -> Option<ActivityNews> {
+        lock(&self.0.agents).news(agent, after)
     }
 }
 
@@ -126,7 +150,11 @@ async fn run(shared: &Arc<Shared>, client: &FleetClient, pace: Pace) {
         if stable {
             backoff.reset();
         }
+        lock(&shared.agents).disconnected();
+        bump(shared);
         let next = match end {
+            StreamEnd::Retarget => Some(()),
+            StreamEnd::Refused(error) if lock(&shared.agents).refuse(error) => Some(()),
             StreamEnd::Refused(error) => refused(shared, client, pace, error).await,
             StreamEnd::Network => wait_to_retry(shared, &mut backoff, Link::Unreachable).await,
             StreamEnd::Protocol | StreamEnd::Closed => {
@@ -147,14 +175,26 @@ async fn follow(
     client: &FleetClient,
     pace: Pace,
 ) -> (StreamEnd, bool) {
-    let mut events = match stream::connect(http, client).await {
+    let subscribed = lock(&shared.agents).subscribed();
+    let mut events = match stream::connect(http, client, &subscribed).await {
         Ok(events) => events,
         Err(end) => return (end, false),
     };
+    lock(&shared.agents).connected(&subscribed);
     set_link(shared, Link::Live);
+    bump(shared);
     let opened = Instant::now();
     loop {
-        match events.next().await {
+        let next = tokio::select! {
+            next = events.next() => next,
+            () = shared.retarget.notified() => {
+                if lock(&shared.agents).subscribed() == subscribed {
+                    continue;
+                }
+                Err(StreamEnd::Retarget)
+            }
+        };
+        match next {
             Ok(event) => apply(shared, event),
             Err(end) => return (end, opened.elapsed() >= pace.stable),
         }
@@ -261,7 +301,19 @@ fn update(shared: &Shared, change: impl FnOnce(&mut FleetSnapshot) -> bool) {
 }
 
 fn apply(shared: &Shared, event: FleetEvent) {
-    update(shared, |state| apply_event(state, event));
+    match event {
+        FleetEvent::AgentActivity(activity) => {
+            if lock(&shared.agents).push(*activity) {
+                bump(shared);
+            }
+        }
+        event => update(shared, |state| apply_event(state, event)),
+    }
+}
+
+/// Tells readers there is news outside the snapshot.
+fn bump(shared: &Shared) {
+    shared.revision.fetch_add(1, Ordering::AcqRel);
 }
 
 fn replace(shared: &Shared, overview: FleetOverview, ships: Vec<ShipDetail>) {
@@ -308,7 +360,7 @@ pub(crate) fn apply_event(state: &mut FleetSnapshot, event: FleetEvent) -> bool 
                 state.activity.pop_front();
             }
         }
-        FleetEvent::Heartbeat { .. } => return false,
+        FleetEvent::Heartbeat { .. } | FleetEvent::AgentActivity(_) => return false,
     }
     true
 }

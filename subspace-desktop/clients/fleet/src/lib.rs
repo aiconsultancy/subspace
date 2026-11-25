@@ -3,13 +3,17 @@
 //! background with reconnect, backoff and a polling fallback ([`Feed`]),
 //! one saved token per fleet bound to the address it was saved for
 //! ([`TokenStore`]), and the app-wide service that ties them to the fleets
-//! the Subspace API assigns to the person's initiatives ([`FleetApi`]).
+//! the Subspace API assigns to the person's initiatives ([`FleetApi`]),
+//! and an officer's turns ([`activity`]): the snapshot, its paged items and
+//! the `agent-activity` events the fleet's one stream carries while
+//! something watches the officer ([`FleetApi::watch_activity`]).
 //!
 //! Blocking calls never run in render: use `cx.background_spawn`, or the
 //! service, which does. A token is only ever sent in the `Authorization`
 //! header, to the address it was saved for; it never appears in a URL, a
 //! log line or an error.
 
+pub mod activity;
 mod address;
 mod client;
 mod directory;
@@ -28,7 +32,7 @@ pub use directory::{FleetRecord, FleetState, SharedFleet, fleets_of};
 pub use error::Error;
 pub use events::FleetEvent;
 pub use feed::{Feed, FleetSnapshot, Link, MAX_ACTIVITY};
-pub use service::{FleetApi, FleetFollow, FleetInfo, TokenError};
+pub use service::{ActivityWatch, FleetApi, FleetFollow, FleetInfo, TokenError};
 pub use tokens::{SavedToken, StoreError, TOKEN_FILE, TokenMismatch, TokenStore};
 
 #[cfg(test)]
