@@ -222,13 +222,19 @@ closes it, as does moving to another tier; focus returns to the button.
 
 - **Nothing is cut.** Content is shown in full. Long text wraps, scrolls
   inside its block and stays selectable. An item larger than 64 KiB arrives
-  paged: **Load in full** reads every page, one item at a time, and shows
+  paged: **Load in full** reads every page, one page at a time, and shows
   it whole; if the item changes between pages the read starts again from
-  page 0, and a page that is not the one asked for or does not add up to
-  the item's size stops the read with an error. A loaded item over 256 KiB
-  shows in 64 KiB parts with First, Previous, Next and Last. A view keeps
-  at most 64 MiB of loaded items; past that the least recently opened is
-  freed and offers **Load in full** again. A loaded item is not read again
+  page 0, up to five times, and a page that is not the one asked for or
+  does not add up to the item's size stops the read with an error and
+  **Try again**. An item too large for the view (over 64 MiB, or more than
+  its budget) is read and shown a part (256 KiB) at a time, with First
+  part, Previous part, Next part and Last part, so every byte is still
+  reachable. Text longer than 64 KiB or 1,000 lines shows one section at a
+  time with First, Previous, Next and Last; a closed turn holds no items,
+  and an open one shows 20 at a time with **Earlier items** and **Later
+  items**. A view holds at most 64 MiB in all, items read and what is
+  shown; past that the least recently opened is freed and offers **Load in
+  full** again, or its turn closes. A loaded item is not read again
   by itself when it changes, as a running tool changes often: it says a
   newer version is on the gateway and offers **Load the latest**. When a
   tool call has both parsed
@@ -237,7 +243,8 @@ closes it, as does moving to another tier; focus returns to the button.
 - **Content is text.** Every value is set as text, never parsed as HTML.
   Control characters (other than newline and tab) and bidi formatting
   characters show as `⟨U+XXXX⟩` markers, in JSON keys and values too, so
-  content cannot hide or reorder itself. Activity stays in memory only: it
+  content cannot hide or reorder itself; a copy is exactly what shows. A
+  turn or item the console cannot read shows as the JSON it came as. Activity stays in memory only: it
   is never stored or logged, never reaches chat or an agent's context, and
   closing the view drops it. A change to the fleet's address or token drops
   it too, and the view starts again from the new stream; removing the token
@@ -330,8 +337,9 @@ quality governor, label dirty tracking, render batching, the fleet store
 and its failure modes, address validation, the source merge, per-fleet
 connections and poll timing, the Fleets layout, navigation and breadcrumb
 through L0, officer activity (decoding, page joins, the snapshot and event
-join, refetches, join order, the one stream's `agent` parameters, and
-rendering that never parses HTML and marks hidden characters), and the
+join, refetches, join order, the one stream's `agent` parameters, paged
+and part reads within a bounded budget, bounded rendering that never parses
+HTML and marks hidden characters), the pager, and the
 package rules.
 
 | Path | Purpose |
@@ -340,6 +348,7 @@ package rules.
 | `src/main.js` | Page wiring: mode, frame loop, navigation, inspector, bridge effects |
 | `src/api.js`, `src/live.js`, `src/sse.js`, `src/connection.js` | Fleet API client, event stream, SSE parser, connection states |
 | `src/activity.js`, `src/activity-view.js` | Officer activity: snapshot and event join, paged items; the Activity view |
+| `src/pager.js`, `src/budget.js` | Reading and showing a part at a time, fenced by revision; a view's byte budget, least recently opened first |
 | `src/contract.js`, `src/reducer.js`, `src/model.js` | Payload checks, state reducer, derived views |
 | `src/sample.js`, `src/sample-source.js` | Sample fleets and their simulation |
 | `src/fleet-sources.js`, `src/fleet-store.js`, `src/fleet-manager.js` | Fleet sources and their merge, the page's fleet list, one connection per fleet |

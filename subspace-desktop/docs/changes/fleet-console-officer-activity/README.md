@@ -15,19 +15,43 @@ the desktop side are separate work.
 - **Routes.** `src/api.js` adds `activity(agent, {turn})` for
   `GET /api/v1/agents/{id}/activity` and `activityItemPage(agent, turn,
   item, page)` for its pages. `events()` sends each watched officer as a
-  repeated `agent` query parameter. `readPagedItem` joins an item's pages
-  in full and checks each page as it arrives, before holding more: it must
-  be the agent, turn, item and page asked for, `pages` at least 1, data at
-  most 64 KiB of UTF-8 and non-empty for a multi-page item, and `bytes`
-  between the minimum needed for its pages and the smaller of
-  `pages × 64 KiB` and the console's 64 MiB item limit. The data joined so
-  far must fit within `bytes`, with the whole equal to it. Invalid responses
-  stop the read. It starts again from page 0 when `seq` or the page
-  count changes between pages; after eight restarts it reports that the
-  item kept changing. A snapshot body is capped at 128 MiB and a page body
-  at 512 KiB before either is decoded. Nothing is ever truncated.
-  The oversized-item test stops at an unexpected second read so a
-  regression cannot build and diff a million-entry array in the test runner.
+  repeated `agent` query parameter. Every page is checked as it arrives,
+  before the next is asked for: it must be the agent, turn, item and page
+  asked for, `pages` at least 1, data at most 64 KiB of UTF-8 and non-empty
+  in a multi-page item, and `bytes` between the minimum its pages need
+  (`pages ≤ max(1, bytes)`) and `pages × 64 KiB`. The data joined so far
+  must fit within `bytes`, with the whole equal to it. Invalid responses stop
+  the read. A snapshot body is capped at 128 MiB and a page body at 512 KiB
+  before either is decoded. Nothing is ever truncated.
+- **Paged items** (SUB decision `a17870f4`). `readPagedItem` reads an item
+  whole. After page 0 it refuses an item over `MAX_ITEM_BYTES` (64 MiB), or
+  one its view cannot make room for (`room(bytes)`), with `TooLargeError`
+  before page 1 is asked for; no read is unbounded, even without a `room`.
+  The joined JSON must be an object with the ID asked for. A page of another
+  `seq`, `bytes` or page count belongs to another version, so the read starts
+  again from page 0, at most five reads in all, as Channels
+  (`PAGE_ATTEMPTS`); then it says the item kept changing, and **Try again**
+  reads it again. An item too large to read whole is read and shown a part
+  at a time instead (`readItemPart`: four pages, at most 256 KiB, pinned to
+  one version; a newer version restarts once from its first part and says
+  so). Any part can be reached directly by page number.
+- **Pager.** `src/pager.js` `createPager({budget, key, read, partBytes})`
+  shows one part of anything read part by part. `read({part, cursor,
+  version, signal})` answers `{data, next, version, count?, newer?}`. Room
+  for the part is reserved before each read, beside the part on show, and
+  only the part shown stays charged. Every read is fenced by a revision: a
+  reply that arrives after an eviction, a restart, a drop or another read is
+  dropped. An evicted pager reads again from its first part with no cursor,
+  so the next read may have different page boundaries. A reply that holds
+  more than `partBytes`, has no data, or does not advance is a failure.
+  `splitBounded(text, {maxBytes, maxLines})` splits text into windows
+  between code points.
+- **Budget.** `src/budget.js` is one view's byte budget (64 MiB), shared by
+  the items read, their formatted copies and what the panel mounts. Room is
+  made before each read by evicting the least recently opened; an evicted
+  item offers **Load in full** again, and a closed turn unmounts. An item
+  read whole is charged twice its length (the item and its formatted copy);
+  one that does not fit so is read in parts.
 - **One stream.** The gateway allows eight event-stream viewers in total.
   `src/live.js` `setAgents(ids)` re-opens the fleet's one stream with
   `?agent=` (quietly, keeping `Last-Event-ID`) and `onOpen(agents)` runs
@@ -51,10 +75,14 @@ the desktop side are separate work.
   events response starts. Events with `seq` at or below the snapshot cursor
   are dropped. A `seq` at or below the last applied one, a new
   `generation`, an item for an unknown turn and every stream (re)open read
-  the snapshot again, single-flight. `seq` may skip; a skip is not a gap.
+  the snapshot again, single-flight, as does an item event with no `id`.
+  `seq` may skip; a skip is not a gap.
   Readiness is per stream attempt: each new attempt, and each close or
   failure of the one that carried the agent, makes the view wait again for
-  the next answer, and **Try again** queues until then. If a read fails
+  the next answer, and **Try again** queues until then. The wait is checked
+  when a queued read starts, not when it was asked for: a retry or an
+  overflow refetch queued behind a read in flight never reads before the
+  new stream answers, and then reads once. If a read fails
   while a snapshot is on show, the view goes stale: it keeps the last
   snapshot, says so with the error, applies no events but keeps buffering
   them (at most 512 events or 8 MiB, as Channels; on overflow the buffer is
@@ -68,26 +96,33 @@ the desktop side are separate work.
   hold is placed by `startedAt`, so a late `turn-ended` for an evicted turn
   falls off again rather than showing as the newest. Item events upsert by
   ID, keeping the higher `seq`; an item that fails its checks is kept as
-  unreadable and shown as its JSON. A loaded paged item is not read again
+  unreadable and shown as its JSON. A turn that fails its checks, such as
+  one with no `startedAt`, is kept too, as an unreadable turn whose one item
+  is the turn as sent. A loaded paged item is not read again
   by itself when its `seq` rises: the view says a newer version is on the
   gateway and offers **Load the latest**, as Channels does, so a running
-  tool is not downloaded back to back. One item is read at a time per view. Loaded items take at
-  most 64 MiB per view: past that the least recently opened is freed and
-  shows **Load in full** again. Loaded items go when their turn leaves the
-  snapshot, and when the officer or fleet changes.
+  tool is not downloaded back to back. Page reads go one at a time per
+  view. Loaded items go when their turn leaves the snapshot, and when the
+  officer or fleet changes.
 - **View.** `src/activity-view.js` owns the inspector while open, like the
   fleet form. Turns are newest first, the running one open; steps show
   model, settled tokens and cost; tool calls show name, input (both the
   parsed `input` and the streamed `rawInput` when both came),
   progress (`metadata`), full output (`content`) and errors; when a tool
   call has both a parsed `input` and the streamed `rawInput`, both show,
-  labelled, as they can differ. Text and reasoning show in full. A loaded
-  item over 256 KiB shows in 64 KiB parts, split between code points, with
-  First, Previous, Next and Last and "Part k of N"; only the current part is
-  in the page. An unknown kind or content type, and a known kind that fails
+  labelled, as they can differ. Text and reasoning show in full. What is
+  mounted is bounded: a closed turn mounts no items; an open turn mounts at
+  most 20, with **Earlier items** and **Later items**; an item whose text is
+  over one window (64 KiB or 1,000 lines) shows one window at a time with
+  First, Previous, Next and Last and "Section k of N". An item read in parts
+  has First part, Previous part, Next part and Last part, and "Part k of N",
+  and each part shows in windows the same way. Formats and mounted text are
+  charged to the view's budget. An unknown kind or content type, and a known kind that fails
   its checks, show as indented JSON: nothing is withheld (SUB-70). DOM is built with `createElement` and text nodes
   only, never `innerHTML`; attributes are an allow-list. Control and bidi
-  characters other than newline and tab show as `⟨U+XXXX⟩`, including in
+  characters other than newline and tab show as `⟨U+XXXX⟩`, each its own
+  marker, with a run of them in one element, so a copy is exactly what
+  shows; including in
   nested JSON keys and values and the backend label; a backslash typed
   before `u0000` stays escaped, so it reads differently from a marker. Unchanged turns
   and items keep their nodes across updates, so a selection survives.
@@ -159,3 +194,23 @@ read a loaded item once, not on each of ten `seq` rises, then once more on
 Load the latest; refetch exactly once on a byte or count overflow of the
 event buffer; keep a malformed item event as unreadable; and place turn
 events for turns the view does not hold by `startedAt`.
+
+The round 3 tests are in `test/pager.test.js` and
+`test/activity-round3.test.js`; each of the latter fails at `822c411d`
+except the multibyte-boundary case, which guards a valid page split. They
+read an item of 1,600 pages (100 MiB) in parts, its first and last part
+only; show a run of 10,000 hidden characters as one element; mount no items
+in a closed turn and a bounded window of items and text in an open one;
+hold a snapshot, queue a retry or an overflow refetch, then disconnect or
+reset, and see no read until the new stream answers and then one; refuse
+pages that together run past `bytes`; keep a turn with no `startedAt` as
+unreadable; read the snapshot again on an item event with no `id`; show an
+ID mismatch as failed with **Try again**; and, with a 300 KiB budget, hold
+an item's second part, evict the item by reading another, release the
+reply, and read the item again from its first part in order, its pages
+once each, with a line split across a part boundary joined exactly once.
+The pager tests cover cursors, a re-read at a new page size after
+eviction, A → B → A, a newer version and malformed replies. Every fake page
+reader stops itself after a few reads. The #118 tests stop at an
+unexpected second read of an oversized item, and refuse a page count that
+needs empty pages or an empty page in a multi-page item.
