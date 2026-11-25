@@ -1100,3 +1100,27 @@ earlier database in this order.
 
 Suppress live notifications during the import and use an isolated target for
 verification. File storage supports local disk and private S3-compatible storage.
+
+## Images and files in IRC
+
+To inspect an issue image or chat upload, use `subspace_view_image` with
+`kind: "attachment"` and its media UUID, or `kind: "chatUpload"` and its UPL
+reference. Inspect the returned image with a vision-capable model. Use
+`subspace_read_text_page` for text and Markdown.
+
+When asked to attach an issue file to a conversation, call
+`subspace_share_attachment(mediaId, uploadId)`. Use a fresh UUID and reuse it
+on retry. Include the exact returned UPL reference in the intended IRC reply.
+Desktop shows the file card there. The upload is readable by active members
+of the organisation for 30 days. For a new file, use `subspace_create_chat_upload`
+within the MCP request limit, or use the authenticated chat upload HTTP endpoint.
+
+For a freshly rendered diagram or a local document, stage the requested file
+as `/tmp/subspace-share-overview.png` (replace `overview.png` with the
+file name). Call the `subspace_files` server's `upload_file` with that
+file name and a fresh upload UUID. Use the returned UPL reference in the
+reply. The tool reads the staged file in the officer's own service. It also
+works for files larger than the model's text limit. The chat copy survives
+deletion of its source. PPTX presentations stay on the issue. For visual
+inspection, use a preview up to 3.75 MB and 4096 pixels per edge.
+The hosted signing proxy accepts staged files up to 6 MB, and the local agent listener accepts up to 25 MB.

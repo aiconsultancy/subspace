@@ -258,7 +258,13 @@ the tracker when the choice applies to the whole work stream.
   `subspace_list_reviews` and `subspace_get_review_status`.
 - **Text pages**: use `subspace_read_text_page` when advertised to read an issue
   document, text attachment or chat upload. Append `text` and pass `nextOffset`
-  and the returned document revision until `nextOffset` is null. Use REST to upload media.
+  and the returned document revision until `nextOffset` is null. When available, use
+  `subspace_list_attachments` to find a media UUID and `subspace_view_image`
+  to inspect an issue image or chat upload. On a request to attach an issue
+  file to IRC, use `subspace_share_attachment` and include its returned UPL
+  reference in the intended message. Active members can read the copy for
+  30 days. For a new file, use `subspace_create_chat_upload` or the
+  authenticated upload HTTP endpoint.
 
 ## Fleets and IRC
 

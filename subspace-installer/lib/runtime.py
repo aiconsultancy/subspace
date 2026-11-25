@@ -1730,8 +1730,13 @@ def model_provider(cfg, family, models):
     else:
         package = "@opencode/ai/providers/openai-compatible/responses"
         settings.update(encoding="none", transport="http")
+    catalogue = {model: {"name": model} for model in models}
+    # An unrecognised custom model keeps its provider defaults.
+    for model, entry in catalogue.items():
+        if model in {"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "gpt-5.4", "gpt-6.2-sol"}:
+            entry["capabilities"] = {"input": ["text", "image"]}
     return {"name": f"Fleet model proxy, {family.title()} family", "package": package, "settings": settings,
-            "models": {model: {"name": model} for model in models}}
+            "models": catalogue}
 
 
 # The Subspace API's MCP server, as the officer's harness names it, and the grant for its tools.
@@ -1756,6 +1761,13 @@ def agent_socket(agent_id):
 
 def stargate_entry(cfg):
     return APP / "src" / f"stargate-{cfg['stargate']['ref']}" / "src/main.ts"
+
+
+def officer_upload_command(cfg, person):
+    # The issuer and transport come from the installed profile, never from a tool argument.
+    target = (["socket", str(agent_socket(person["id"]))] if enrolled(cfg)
+              else ["http", subspace_mcp_url(cfg)])
+    return ["/usr/bin/python3", "-I", str(APP / "lib/officer_upload.py"), *target, person["account"]]
 
 
 def subspace_bridge(cfg, agent_id):
@@ -2215,6 +2227,8 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         engine["mcp"] = {"servers": {SUBSPACE_MCP: {
             "type": "remote", "url": mcp_url, "headers": {AGENT_HEADER: person["account"]},
         }}}
+    if "mcp" in engine:
+        engine["mcp"]["servers"]["subspace_files"] = {"type": "local", "command": officer_upload_command(cfg, person)}
     if has_repository_refresh(cfg, person):
         servers = engine.setdefault("mcp", {"servers": {}})["servers"]
         servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(), "timeout": 110000}
@@ -2337,6 +2351,9 @@ def claude_backend(cfg, person, workspace, documents):
             "type": "http", "url": mcp_url,
             "headersHelper": f"{APP}/lib/runtime.py agent-header {person['account']}",
         }}
+    if "mcpServers" in backend:
+        command, *args = officer_upload_command(cfg, person)
+        backend["mcpServers"]["subspace_files"] = {"type": "stdio", "command": command, "args": args}
     if has_repository_refresh(cfg, person):
         command, *args = repository_refresh_command()
         backend.setdefault("mcpServers", {})["repo_refresh"] = {"type": "stdio", "command": command, "args": args}

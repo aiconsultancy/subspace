@@ -402,7 +402,8 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertNotIn("effort", backend)
         self.assertEqual(runtime.claude_backend(cfg, {**person, "harness": {**person["harness"], "effort": "xhigh"}},
                                                 Path("/workspace"), documents)["effort"], "xhigh")
-        self.assertEqual(backend["mcpServers"], {"subspace": {
+        self.assertIn("subspace_files", backend["mcpServers"])
+        self.assertEqual({"subspace": backend["mcpServers"]["subspace"]}, {"subspace": {
             "type": "http", "url": "http://127.0.0.1:3001/mcp",
             "headersHelper": f"/opt/subspace-fleet/lib/runtime.py agent-header {person['account']}",
         }})

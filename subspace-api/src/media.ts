@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { HttpServerResponse } from "effect/http";
 import { Database } from "./db";
-import { fileTypes, imageTypes, validContent } from "./file-validation";
+import { chatTypes, fileTypes, imageTypes, validContent } from "./file-validation";
 import { type Member } from "./identity";
 import { readIssue } from "./issues";
 import { mediaDescriptor, mediaUrl } from "./issue-media";
@@ -102,11 +102,18 @@ function commitBlob(db: Db, store: (typeof Storage)["Service"], row: Row, bytes:
 export const createChatUpload = (member: Member, input: typeof ChatUploadInput.Type) =>
   Effect.gen(function* () {
     const bytes = Buffer.from(input.base64, "base64");
-    if (
-      bytes.length > maxChatBytes ||
-      bytes.toString("base64") !== input.base64 ||
-      !validContent(input.fileName, input.contentType, bytes)
-    ) {
+    if (bytes.toString("base64") !== input.base64)
+      return yield* Effect.fail(problem(400, "Supply canonical base64 file bytes."));
+    return yield* storeChatUpload(member, input, bytes);
+  });
+
+function storeChatUpload(
+  member: Member,
+  input: Omit<typeof ChatUploadInput.Type, "base64">,
+  bytes: Buffer,
+) {
+  return Effect.gen(function* () {
+    if (bytes.length > maxChatBytes || !validContent(input.fileName, input.contentType, bytes)) {
       return yield* Effect.fail(
         problem(
           400,
@@ -149,16 +156,24 @@ export const createChatUpload = (member: Member, input: typeof ChatUploadInput.T
         return yield* Effect.fail(problem(410, "This upload has expired."));
       }
       if (current.state !== "ready")
-        return yield* Effect.fail(problem(409, "The upload is currently unavailable."));
+        return yield* Effect.fail(
+          problem(
+            409,
+            "The upload is currently unavailable. If a pending upload stays unavailable after checking its ID, start a new share with a new UUID.",
+          ),
+        );
       return chatDto(current);
     }
     return chatDto(yield* commitBlob(db, store, newRow, bytes));
   });
+}
 
 export const chatUpload = (member: Member, ref: string) =>
-  Effect.flatMap(Database, (db) => Effect.map(readChat(db, member, ref), chatDto));
+  Effect.flatMap(Database, (db) =>
+    Effect.map(readChat(db, member, isUuid(ref) ? reference(ref) : ref), chatDto),
+  );
 
-function readBytes(row: Row) {
+function verifiedBytes(row: Row) {
   return Effect.gen(function* () {
     const store = yield* Storage;
     const bytes = yield* storageOperation(() => store.get(objectKey(row))).pipe(
@@ -167,14 +182,20 @@ function readBytes(row: Row) {
     if (bytes.byteLength !== row.sizeBytes || digest(bytes) !== row.sha256) {
       return yield* Effect.fail(problem(503, "The file could not be verified."));
     }
-    return HttpServerResponse.uint8Array(bytes, {
+    return bytes;
+  });
+}
+
+function readBytes(row: Row) {
+  return Effect.map(verifiedBytes(row), (bytes) =>
+    HttpServerResponse.uint8Array(bytes, {
       contentType: row.contentType,
       headers: {
         "X-Content-Type-Options": "nosniff",
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(row.fileName)}`,
       },
-    });
-  });
+    }),
+  );
 }
 
 export const chatBytes = (member: Member, ref: string) =>
@@ -209,7 +230,7 @@ export const resolveUploads = (member: Member, refs: readonly string[]) =>
 export const deleteChat = (member: Member, ref: string) =>
   Effect.gen(function* () {
     const db = yield* Database;
-    const row = yield* readChat(db, member, ref);
+    const row = yield* readChat(db, member, isUuid(ref) ? reference(ref) : ref);
     if (row.uploadedById !== member.id) {
       return yield* Effect.fail(problem(403, "Only the uploader may delete this upload."));
     }
@@ -223,7 +244,7 @@ export const deleteChat = (member: Member, ref: string) =>
 export const issueMedia = (
   member: Member,
   ref: string,
-  kind: Kind,
+  kind: Kind | "all",
   query: { limit?: number; cursor?: string },
 ) =>
   Effect.gen(function* () {
@@ -240,7 +261,7 @@ export const issueMedia = (
         and(
           scope(member),
           eq(uploads.issueId, issue.id),
-          eq(uploads.kind, kind),
+          kind === "all" ? undefined : eq(uploads.kind, kind),
           eq(uploads.state, "ready"),
         ),
       );
@@ -270,6 +291,16 @@ export const listFiles = (
   query: { limit?: number; cursor?: string },
 ) =>
   Effect.map(issueMedia(member, ref, "file", query), ({ items, nextCursor }) => ({
+    items: items.map(({ upload }) => mediaDescriptor(upload)),
+    nextCursor,
+  }));
+
+export const listAttachments = (
+  member: Member,
+  issue: string,
+  query: { limit?: number; cursor?: string },
+) =>
+  Effect.map(issueMedia(member, issue, "all", query), ({ items, nextCursor }) => ({
     items: items.map(({ upload }) => mediaDescriptor(upload)),
     nextCursor,
   }));
@@ -325,14 +356,19 @@ export const addImage = (member: Member, ref: string, file: Parameters<typeof ad
 export const addFile = (member: Member, ref: string, file: Parameters<typeof addIssueMedia>[3]) =>
   Effect.map(addIssueMedia(member, ref, "file", file), mediaDescriptor);
 
-const readIssueMedia = (member: Member, id: string, kind: Kind) =>
+const readIssueMedia = (member: Member, id: string, kind?: Kind) =>
   Effect.gen(function* () {
     const db = yield* Database;
     const [row] = yield* db
       .select()
       .from(uploads)
       .where(
-        and(scope(member), eq(uploads.id, id), eq(uploads.kind, kind), eq(uploads.state, "ready")),
+        and(
+          scope(member),
+          eq(uploads.id, id),
+          kind ? eq(uploads.kind, kind) : or(eq(uploads.kind, "image"), eq(uploads.kind, "file")),
+          eq(uploads.state, "ready"),
+        ),
       );
     if (!row) return yield* Effect.fail(problem(404, "Issue file not found."));
     return row;
@@ -340,6 +376,62 @@ const readIssueMedia = (member: Member, id: string, kind: Kind) =>
 
 export const issueBytes = (member: Member, id: string, kind: Kind) =>
   Effect.flatMap(readIssueMedia(member, id, kind), readBytes);
+
+/** An MCP image result is carried as an image block, separate from JSON tool results. */
+export class MediaImage {
+  constructor(
+    readonly mimeType: string,
+    readonly data: string,
+  ) {}
+}
+
+export const viewImage = (member: Member, kind: "attachment" | "chatUpload", ref: string) =>
+  Effect.gen(function* () {
+    if (kind === "attachment" && !isUuid(ref))
+      return yield* Effect.fail(problem(400, "Use an attachment media UUID."));
+    const row =
+      kind === "attachment"
+        ? yield* readIssueMedia(member, ref)
+        : yield* readChat(yield* Database, member, isUuid(ref) ? reference(ref) : ref);
+    if (!imageTypes.some((type) => type === row.contentType))
+      return yield* Effect.fail(problem(400, "Choose a PNG, JPEG, GIF or WebP image."));
+    if (row.sizeBytes > 3_750_000)
+      return yield* Effect.fail(
+        problem(400, "For visual inspection, attach a preview of at most 3.75 MB."),
+      );
+    return yield* modelImage(row.contentType, yield* verifiedBytes(row));
+  });
+
+export function modelImage(contentType: string, bytes: Uint8Array) {
+  return Effect.gen(function* () {
+    const info = yield* Effect.tryPromise({
+      try: () => new Bun.Image(bytes).metadata(),
+      catch: () => problem(400, "The image header could not be read."),
+    });
+    const canvas = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const wideGif =
+      info.format === "gif" &&
+      (canvas.getUint16(6, true) > 4096 || canvas.getUint16(8, true) > 4096);
+    if (bytes.length > 3_750_000 || info.width > 4096 || info.height > 4096 || wideGif)
+      return yield* Effect.fail(
+        problem(400, "Attach a preview of at most 3.75 MB and 4096 pixels per edge."),
+      );
+    return new MediaImage(contentType, Buffer.from(bytes).toString("base64"));
+  });
+}
+
+export const shareAttachment = (member: Member, mediaId: string, uploadId: string) =>
+  Effect.gen(function* () {
+    const row = yield* readIssueMedia(member, mediaId);
+    const contentType = chatTypes.find((type) => type === row.contentType);
+    if (!contentType)
+      return yield* Effect.fail(problem(400, "This file type cannot be shared in chat."));
+    return yield* storeChatUpload(
+      member,
+      { uploadId, fileName: row.fileName, contentType },
+      Buffer.from(yield* verifiedBytes(row)),
+    );
+  });
 
 export const mediaTextRange = (
   member: Member,

@@ -45,7 +45,9 @@ zip -q -j "$work/check.zip" "$config"
 unzip -tq "$work/check.zip"
 mapfile -t units < "$etc/units"
 systemd-analyze verify "${units[@]/#//etc/systemd/system/}"
+test -x "$app/lib/officer_upload.py"
 python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
+python3 -B /installer/tests/officer_upload_test.py
 python3 -B /installer/tests/policy_test.py
 python3 -B /installer/tests/medical_test.py
 (
@@ -72,6 +74,7 @@ fi
 ) > "$work/after"
 diff -u "$work/before" "$work/after"
 test -f "$crew_checkout/worker-draft"
+test -x "$app/lib/officer_upload.py"
 python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
 "$app/lib/runtime.py" maintenance tools
 printf 'Second install preserved binaries, configuration and service units.\n'

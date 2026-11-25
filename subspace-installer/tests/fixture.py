@@ -588,7 +588,9 @@ def check_shape(phase):
     units = (etc / "units").read_text().splitlines()
     assert sorted(unit for unit in units if "-engine-" in unit) == [f"subspace-fleet-engine-{agent}.service" for agent in MEMBERS]
     gateway_unit = Path("/etc/systemd/system/subspace-fleet-gateway.service").read_text()
-    assert (f"ConditionPathExists={etc}/sessions/orion.json" in gateway_unit) == pinned
+    ready_marker = etc / "sessions/orion.ready"
+    assert ready_marker.is_file() == pinned
+    assert (f"ConditionPathExists={ready_marker}" in gateway_unit.splitlines()) == pinned
     assert f'tcp dport 8317 meta skuid != {{ {", ".join(map(str, sorted(model_uids)))} }}' in firewall
     for service in ("proxy", "view", "dashboard", "engine-atlas", "gateway"):
         unit = Path(f"/etc/systemd/system/subspace-fleet-{service}.service").read_text()
@@ -633,7 +635,9 @@ def check_shape(phase):
                f"HOME={CAPTAIN_HOME}", "sh", "-c", f"cd {CAPTAIN_HOME / 'workspace'} && node --version && mise which node"]
     output = subprocess.check_output(command, text=True).splitlines()
     assert output[0].startswith("v24."), output
-    assert output[1].startswith("/opt/subspace-fleet/toolchains/installs/node/24."), output
+    # mise may return the major-version alias or the full installed version.
+    shared_node = Path("/opt/subspace-fleet/toolchains/installs/node")
+    assert Path(output[1]) in {shared_node / version / "bin/node" for version in ("24", output[0].removeprefix("v"))}, output
     captain = pwd.getpwnam("ss-orion")
     # The captain's workspace instructions sit beside its checkouts, written as the captain.
     workspace = CAPTAIN_HOME / "workspace"
@@ -784,7 +788,7 @@ def check_addons():
     [captain] = other["irc"]
     assert captain["id"] == "orion" and not captain.get("crew") and captain["backend"]["sessionID"]
     assert {"bots", "teams", "quotaWatch"}.isdisjoint(other)
-    assert "ConditionPathExists=/etc/subspace-fleet/sessions/orion.json" in \
+    assert "ConditionPathExists=/etc/subspace-fleet/sessions/orion.ready" in \
         Path("/etc/systemd/system/subspace-fleet-gateway-opencode.service").read_text()
     assert not list(Path("/etc/systemd/system").glob("subspace-fleet-gateway-agent-orion-*"))
     check_cloud()
