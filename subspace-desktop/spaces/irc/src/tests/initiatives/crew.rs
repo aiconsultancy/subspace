@@ -2,7 +2,7 @@
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{ScrollDelta, TestAppContext, VisualTestContext, point, px};
-use subspace_client_fleet::{FleetApi, TokenStore};
+use subspace_client_fleet::{FleetApi, FleetRecord, FleetState, TokenStore};
 use subspace_client_irc::Event;
 
 use super::super::{inject, remove::settle};
@@ -102,6 +102,25 @@ fn thread_tab_pauses_refresh_until_the_ship_tab_returns(cx: &mut TestAppContext)
     cx.update(|window, cx| window.click(SHIP, cx));
     board.read_with(cx, |board, cx| {
         assert!(view::inspector::crew::visible(board, cx))
+    });
+}
+
+#[gpui_kit::test]
+fn crew_detail_explains_the_missing_token_even_without_a_roster(cx: &mut TestAppContext) {
+    let (_, hub, cx) = ship(cx);
+    let record = FleetRecord::new("aurora", "Aurora", Some("http://127.0.0.1:9".into()));
+    cx.update(|_, cx| FleetApi::install_new(TokenStore::memory(), vec![record], cx));
+    settle(cx);
+    set_fleet(&hub, live(), cx);
+    cx.update(|window, cx| window.click(ROW, cx));
+    set_fleet(&hub, FleetState::NoToken, cx);
+    cx.update(|window, _| {
+        assert!(window.find(BACK).visible());
+        let reason_node = window.find("irc-inspector-reason");
+        let reason = reason_node.label().unwrap_or_default();
+        assert!(reason.starts_with("No token: "), "{reason}");
+        assert!(reason.contains("Settings › Fleets"), "{reason}");
+        assert!(!reason.contains("Showing the ship's roster"), "{reason}");
     });
 }
 

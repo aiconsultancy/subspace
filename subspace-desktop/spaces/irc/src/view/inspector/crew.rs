@@ -238,14 +238,16 @@ impl Selection {
         })
     }
 
-    fn connection_note(&self) -> Option<String> {
-        let (label, reason) = super::reason::reason(self.client_state.as_ref()?)?;
-        let fallback = if self.state.has_full_detail() {
-            "Showing the last available detail and current roster tasks."
-        } else {
-            "Showing the ship's roster data."
-        };
-        Some(format!("{label}: {reason} {fallback}"))
+    fn connection_note(&self, roster_shown: bool, cx: &gpui_kit::App) -> Option<AnyElement> {
+        let (label, mut reason) = super::reason::reason(self.client_state.as_ref()?)?;
+        if roster_shown {
+            reason.push_str(if self.state.has_full_detail() {
+                " Showing the last available detail and current roster tasks."
+            } else {
+                " Showing the ship's roster data."
+            });
+        }
+        Some(super::reason::view(label, reason, cx))
     }
 }
 
@@ -313,21 +315,19 @@ pub(super) fn body(
     )
     .track_focus(&selection.back)
     .on_click(cx.listener(|board, _, window, cx| close(board, window, cx)));
-    let connection = member.as_ref().and_then(|_| selection.connection_note());
-    let note = note
-        .map(str::to_owned)
-        .or(connection)
-        .map(|note| feedback::empty_line(&tokens, "irc-crew-note", note));
+    let connection = selection.connection_note(member.is_some(), cx);
+    let note = note.map(|note| feedback::empty_line(&tokens, "irc-crew-note", note));
     let retry = (member.is_some() && selection.state.can_retry()).then(|| {
         action_button("irc-crew-retry", Intent::Quiet, None, "Try again")
             .on_click(cx.listener(|board, _, _, cx| self::retry(board, cx)))
     });
-    let status = (note.is_some() || retry.is_some()).then(|| {
+    let status = (connection.is_some() || note.is_some() || retry.is_some()).then(|| {
         v_flex()
             .w_full()
             .min_w_0()
             .items_start()
             .gap_2()
+            .children(connection)
             .children(note)
             .children(retry)
     });
