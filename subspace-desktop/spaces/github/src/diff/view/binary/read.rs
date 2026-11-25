@@ -8,7 +8,7 @@ use subspace_client_fleet::{
 use subspace_framework::dashboard::Toast;
 
 use super::{DiffView, Move, Position};
-use crate::diff::view::{DiffEvent, DiffSource, load::validate_page};
+use crate::diff::view::{DiffEvent, DiffSource, pages::validate_page};
 
 impl DiffView {
     pub(super) fn read_binary(&mut self, direction: Move, cx: &mut Context<Self>) {

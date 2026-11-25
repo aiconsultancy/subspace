@@ -130,6 +130,7 @@ mod hunk;
 mod image;
 mod load;
 mod nav;
+mod pages;
 mod source;
 mod toolbar;
 
