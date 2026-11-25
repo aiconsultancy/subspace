@@ -788,8 +788,9 @@ class InstalledFleet(unittest.TestCase):
         rear_session = json.loads((self.etc / "sessions/atlas.json").read_text())["sessionID"]
         captain_session = json.loads(self.store.confirmed.read_text())["sessionID"]
         # The rear admiral's root is created with its own policy, no crew grants.
+        validated = runtime.validate(config, secrets)
         self.assertEqual(servers[4096].sessions[rear_session]["permissions"],
-                         runtime.validate(config, secrets)["members"][0]["harness"]["permissions"])
+                         runtime.harness_permissions(validated, validated["members"][0]))
         self.assertIn(runtime.DISPATCH_GRANT, servers[4097].sessions[captain_session]["permissions"])
         stargate = json.loads((self.etc / "stargate.json").read_text())
         rear, orion = stargate["irc"]

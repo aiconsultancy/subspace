@@ -1844,6 +1844,9 @@ def harness_permissions(cfg, person):
     """
     permissions = person["harness"]["permissions"]
     commands = []
+    if has_repository_refresh(cfg, person):
+        commands.extend({"action": f"repo_refresh_{tool}", "resource": "*", "effect": "allow"}
+                        for tool in ("refresh_origin", "read_origin_file"))
     if enrolled(cfg):
         commands.append(SUBSPACE_REQUEST_GRANT)
     if person.get("mergeCheckouts"):
@@ -2184,6 +2187,9 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         engine["mcp"] = {"servers": {SUBSPACE_MCP: {
             "type": "remote", "url": mcp_url, "headers": {AGENT_HEADER: person["account"]},
         }}}
+    if has_repository_refresh(cfg, person):
+        servers = engine.setdefault("mcp", {"servers": {}})["servers"]
+        servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(), "timeout": 110000}
     password = hmac.new(seed, agent_id.encode(), hashlib.sha256).hexdigest()
     header = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
     environment = {
@@ -2301,6 +2307,9 @@ def claude_backend(cfg, person, workspace, documents):
             "type": "http", "url": mcp_url,
             "headersHelper": f"{APP}/lib/runtime.py agent-header {person['account']}",
         }}
+    if has_repository_refresh(cfg, person):
+        command, *args = repository_refresh_command()
+        backend.setdefault("mcpServers", {})["repo_refresh"] = {"type": "stdio", "command": command, "args": args}
     return backend
 
 
@@ -3095,6 +3104,56 @@ def agent_dispatch_settings(cfg):
     }, {DISPATCH_TOKEN_ENV: dispatch["token"]}
 
 
+def has_repository_refresh(cfg, person):
+    return person["role"] == "rear_admiral" and bool(cfg.get("repositories"))
+
+
+def repository_refresh_command():
+    return ["/usr/bin/python3", str(APP / "lib/repo_refresh.py"), "mcp"]
+
+
+def repository_refresh_units(cfg):
+    rear = cfg["members"][0]
+    if not has_repository_refresh(cfg, rear):
+        (ETC / "repo-refresh.json").unlink(missing_ok=True)
+        return []
+    write(ETC / "repo-refresh.json",
+          json_text({"rearAdmiral": rear["id"], "repositories": cfg["repositories"]}))
+    user = f"ss-{rear['id']}"
+    socket_unit = f"{PREFIX}repo-refresh.socket"
+    service_unit = f"{PREFIX}repo-refresh@.service"
+    git_directories = " ".join(f"-{STATE}/references/{rear['id']}/{repo}/.git"
+                               for repo in cfg["repositories"])
+    write(SYSTEMD / socket_unit, f"""[Unit]
+Description=Rear admiral repository refresh socket
+[Socket]
+ListenStream=/run/subspace-fleet-repo-refresh.sock
+SocketUser={user}
+SocketGroup={user}
+SocketMode=0600
+Accept=yes
+MaxConnections=1
+RemoveOnStop=yes
+[Install]
+WantedBy=sockets.target
+""", 0o644)
+    write(SYSTEMD / service_unit, f"""[Unit]
+Description=Fetch rear admiral repository origin refs
+[Service]
+ExecStart=/usr/bin/python3 {APP}/lib/repo_refresh.py serve
+StandardInput=socket
+StandardOutput=null
+RuntimeMaxSec=100
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths={git_directories}
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+""", 0o644)
+    return [service_unit, socket_unit]
+
+
 def render(cfg, extra, prune=False):
     check_crew_ids(cfg)
     slug_path = STATE / "slug"
@@ -3113,7 +3172,7 @@ def render(cfg, extra, prune=False):
     guard_enabled = cfg["usageGuard"]["enabled"]
     if not guard_enabled and "reportChannel" not in cfg["integrations"]["usage"]:
         tokens.pop("proxy-management-key", None)
-    units = [render_proxy(cfg, tokens)]
+    units = [render_proxy(cfg, tokens), *repository_refresh_units(cfg)]
     # Every officer's memory and task limits, sized from this VM's memory and the fleet (lib/memory.py).
     limits = memory_plan(cfg)["limits"]
     view_home = account(VIEW, STATE / "view")
