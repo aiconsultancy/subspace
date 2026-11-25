@@ -2,7 +2,7 @@
 //! show everything. A build with no API backend (`api_backend: "none"`)
 //! leaves out each surface that needs the API, so it shows no trace of one:
 //!
-//! - the Issues and Decisions Spaces, from the registrations and the
+//! - the Issues, Projects and Decisions Spaces, from the registrations and the
 //!   descriptor (Settings, **Add a Space**, search and the command palette
 //!   list only those);
 //! - Settings › Fleets, whose fleets are the API's initiatives' fleets.
@@ -22,7 +22,7 @@ use subspace_framework::shell::{BoardRegistration, SettingsExtension};
 use crate::settings::ApiBackend;
 
 /// The Spaces that read the tracker API.
-const API_SPACES: [&str; 2] = ["issues", "decisions"];
+const API_SPACES: [&str; 3] = ["issues", "projects", "decisions"];
 
 /// The Settings extensions that list what the tracker API records.
 const API_SETTINGS: [&str; 1] = ["fleets"];

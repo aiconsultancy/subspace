@@ -99,6 +99,7 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
 | Copilot Agents | [Copilot agent tasks](../spaces/github-copilot-agents/help.md) | [Copilot Agents dashboard](github-copilot-agents.md) |
 | Channels | [IRC networks, channels and private messages](../spaces/irc/help.md) | [Channels](irc.md): configuration, protocol support, initiatives and fleets, agent tools |
 | Issues | [Subspace API issues and comments](../spaces/issues/help.md) | [Issues and Subspace API](issues.md): connection, shared hub and offline fixtures |
+| Projects | [Projects and milestones](../spaces/projects/help.md) | |
 | Decisions | [Subspace API decisions](../spaces/decisions/help.md) | [Decisions](decisions.md): reads, stored choices and opening linked issues |
 | Space Lab | [Native dashboards and managed environments](../spaces/space-lab/help.md) | [Space Lab](space-lab.md): enablement and safety; [design evidence](agents/space-lab/README.md): retired harness history |
 | Actions | [GitHub Actions](../spaces/actions/help.md) | [Actions board](actions.md) |

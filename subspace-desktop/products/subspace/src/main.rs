@@ -189,6 +189,7 @@ fn all_board_registrations() -> Vec<BoardRegistration> {
             .description("IRC networks, channels and private messages"),
         BoardRegistration::new::<subspace_issues_board::Issues>()
             .description("Subspace API issues and comments"),
+        BoardRegistration::new::<subspace_projects_board::Projects>(),
         BoardRegistration::new::<subspace_decisions_board::Decisions>()
             .description("Search, propose and review Subspace API decisions"),
         #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
@@ -556,7 +557,7 @@ mod tests {
         let expected: Vec<_> = all
             .iter()
             .copied()
-            .filter(|id| !["issues", "decisions"].contains(id))
+            .filter(|id| !["issues", "projects", "decisions"].contains(id))
             .collect();
         assert_eq!(none, expected);
         for kept in ["github", "github-copilot-agents", "irc", "actions"] {

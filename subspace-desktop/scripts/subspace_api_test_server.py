@@ -695,7 +695,10 @@ def validate_issue_payload(payload, create):
 def planning_rows(key, cycles=False):
     if cycles:
         return [dict(id=uid(key + 'cycle'), projectId=uid(key), number=1, state='current')]
-    return [dict(id=uid(key + 'milestone'), name='First delivery', projectId=uid(key), description='Fixture milestone description.')]
+    return [dict(id=uid(key + 'milestone'), name='First delivery', projectId=uid(key),
+                 description='Finish the review and share the first build for feedback.',
+                 targetDate=(datetime.now(timezone.utc).date() + timedelta(days=14)).isoformat(),
+                 status='next', completionSource=None, issueProgress=dict(done=2, total=5), version=1)]
 
 
 def planning_properties(row, payload):
@@ -941,8 +944,12 @@ def validate_chat_upload(name, mime, data):
 class Fixture(IssueWrites):
     def __init__(self, fleet=False):
         now = instant()
+        start = datetime.now(timezone.utc).date() - timedelta(days=14)
         self.projects = [
-            dict(project('SUB', 'Subspace fixture', now), initiativeId='ca2aabe7-68bd-4e82-9b76-d577ddf987ac'),
+            dict(project('SUB', 'Subspace fixture', now), initiativeId='ca2aabe7-68bd-4e82-9b76-d577ddf987ac',
+                 description='Coordinate the desktop release and validate the onboarding flow.',
+                 health='onTrack', priority=2, startDate=start.isoformat(),
+                 targetDate=(start + timedelta(days=42)).isoformat()),
             dict(project('OPS', 'Operations fixture', now), initiativeId='47d093d1-2498-4943-b0fd-b816d3b83425'),
         ]
         created = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
@@ -1562,6 +1569,14 @@ class Handler(BaseHTTPRequestHandler):
             ] + ([fleet_initiative(self.server.fleet_api_url)] if fixture.fleet else []))
         if method == 'GET' and path == '/api/v1/projects':
             return 200, page(fixture.projects, query, 'projects')
+        match = re.fullmatch(r'/api/v1/projects/([^/]+)/updates', path)
+        if method == 'GET' and match:
+            project_row = next((p for p in fixture.projects if match[1] in (p['key'], p['id'])), None)
+            if project_row is None:
+                raise Problem(404, 'Project not found.')
+            updates = [dict(body='The first round of review is complete. Two changes are ready for the next build.',
+                            createdAt=project_row['updatedAt'])]
+            return 200, page(updates, query, path)
         match = re.fullmatch(r'/api/v1/projects/([^/]+)/workflow-states', path)
         if method == 'GET' and match:
             project_row = next((p for p in fixture.projects if match[1] in (p['key'], p['id'])), None)
