@@ -91,6 +91,7 @@ pub struct Irc {
     inspector_tab: view::InspectorTab,
     /// The member selected within the Ship tab of the focused conversation.
     inspector_crew: Option<view::inspector::crew::Selection>,
+    inspector_crew_focus: view::inspector::crew::CrewFocus,
     /// The thread chosen in each conversation, for the inspector's Thread
     /// tab.
     threads: thread::Threads,

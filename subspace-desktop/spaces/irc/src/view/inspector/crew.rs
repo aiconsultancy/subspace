@@ -1,45 +1,132 @@
-//! A single crew member inside the Ship tab. The one-shot read is scoped
-//! to this selection; live ship updates take over as soon as the roster
-//! changes, including when the member leaves.
+//! A single crew member inside the Ship tab. The live roster controls
+//! presence and asks for a fresh detail read when the member changes.
 
 mod detail;
 pub(super) mod list;
+mod state;
 
 use gpui_kit::component::v_flex;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, IntoElement as _, ParentElement as _,
-    Styled as _, Subscription, Task,
+    AnyElement, AppContext as _, Context, Entity, FocusHandle, IntoElement as _,
+    ParentElement as _, Styled as _, Subscription, Task, Window,
 };
-use subspace_client_fleet::model::{CrewMember, ShipDetail};
-use subspace_client_fleet::{Error, FleetApi};
+use subspace_client_fleet::{FleetApi, FleetState};
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, feedback};
 
 use crate::{Irc, live::ShipLive};
+use state::{DetailState, Roster};
+
+pub(crate) struct CrewFocus {
+    pub(super) ship_tab: FocusHandle,
+    row: FocusHandle,
+    returned: Option<String>,
+}
+
+impl CrewFocus {
+    pub(crate) fn new(cx: &mut Context<Irc>) -> Self {
+        Self {
+            ship_tab: cx.focus_handle().tab_stop(true),
+            row: cx.focus_handle().tab_stop(true),
+            returned: None,
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.returned = None;
+    }
+}
 
 pub(crate) struct Selection {
     fleet: String,
     ship: String,
     member: String,
-    directory_revision: u64,
-    roster: Option<ShipDetail>,
-    follow_live: bool,
-    read: Option<Result<CrewMember, Error>>,
+    state: DetailState,
+    back: FocusHandle,
+    client_state: Option<FleetState>,
     request: Option<Task<()>>,
     _updates: Subscription,
 }
 
-pub(super) fn open(board: &mut Irc, fleet: &str, ship: &str, member: &str, cx: &mut Context<Irc>) {
+pub(super) fn open(
+    board: &mut Irc,
+    target: &(String, String, String),
+    window: &mut Window,
+    cx: &mut Context<Irc>,
+) {
     let Some(api) = FleetApi::current(cx) else {
         return;
     };
+    let (fleet, ship, member) = target;
     let service = api.read(cx);
-    let directory_revision = service.directory_revision();
-    let roster = detail_of(service, fleet, ship);
-    let client = service.client(fleet).ok();
-    let request = client.map(|client| {
-        let (ship, member) = (ship.to_owned(), member.to_owned());
+    let state = DetailState::new(
+        roster_of(service, fleet, ship, member),
+        service.directory_revision(),
+    );
+    let back = cx.focus_handle().tab_stop(true);
+    back.focus(window, cx);
+    board.inspector_crew = Some(Selection {
+        fleet: fleet.clone(),
+        ship: ship.clone(),
+        member: member.clone(),
+        state,
+        back,
+        client_state: None,
+        request: None,
+        // The selected member may move beyond the Ship tab's bounded list.
+        _updates: cx.observe(&api, sync),
+    });
+    sync(board, api, cx);
+    cx.notify();
+}
+
+fn roster_of(api: &FleetApi, fleet: &str, ship: &str, member: &str) -> Roster {
+    Roster::find(api.ship_detail(fleet, ship), member)
+}
+
+fn sync(board: &mut Irc, api: Entity<FleetApi>, cx: &mut Context<Irc>) {
+    let Some(selection) = &mut board.inspector_crew else {
+        return;
+    };
+    let roster_changed = selection.update(api.read(cx));
+    let client_changed = selection.refresh(&api, cx);
+    if roster_changed || client_changed {
+        cx.notify();
+    }
+}
+
+impl Selection {
+    fn update(&mut self, api: &FleetApi) -> bool {
+        let next = roster_of(api, &self.fleet, &self.ship, &self.member);
+        self.state.update(next, api.directory_revision())
+    }
+
+    fn refresh(&mut self, api: &Entity<FleetApi>, cx: &mut Context<Irc>) -> bool {
+        let client = api.read(cx).client(&self.fleet);
+        let state = client.as_ref().err().cloned();
+        let changed = self.client_state != state;
+        self.client_state = state;
+        if let Ok(client) = client
+            && let Some(generation) = self.state.begin()
+        {
+            self.request = Some(self.read(client, generation, api, cx));
+        }
+        changed
+    }
+
+    fn read(
+        &self,
+        client: subspace_client_fleet::FleetClient,
+        generation: u64,
+        api: &Entity<FleetApi>,
+        cx: &mut Context<Irc>,
+    ) -> Task<()> {
+        let (ship, member) = (self.ship.clone(), self.member.clone());
+        let api = api.clone();
+        // The Back control belongs to this selection, even if the same row
+        // is closed and opened again before the background read returns.
+        let selection_id = self.back.clone();
         cx.spawn(async move |board, cx| {
             let result = cx
                 .background_spawn(
@@ -47,112 +134,56 @@ pub(super) fn open(board: &mut Irc, fleet: &str, ship: &str, member: &str, cx: &
                 )
                 .await;
             _ = board.update(cx, |board, cx| {
-                if let Some(selection) = &mut board.inspector_crew {
-                    selection.read = Some(result);
+                if let Some(selection) = &mut board.inspector_crew
+                    && selection.back == selection_id
+                {
+                    selection.update(api.read(cx));
+                    selection.state.finish(generation, result);
+                    selection.refresh(&api, cx);
                     cx.notify();
                 }
             });
         })
-    });
-    board.inspector_crew = Some(Selection {
-        fleet: fleet.to_owned(),
-        ship: ship.to_owned(),
-        member: member.to_owned(),
-        directory_revision,
-        roster,
-        follow_live: false,
-        read: None,
-        request,
-        // The selected member may move beyond the Ship tab's bounded list.
-        _updates: cx.observe(&api, sync),
-    });
+    }
+
+    fn connection_note(&self) -> Option<String> {
+        let (label, reason) = super::reason::reason(self.client_state.as_ref()?)?;
+        let fallback = if self.state.has_full_detail() {
+            "Showing the last available detail and current roster tasks."
+        } else {
+            "Showing the ship's roster data."
+        };
+        Some(format!("{label}: {reason} {fallback}"))
+    }
+}
+
+fn close(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
+    let Some(selection) = board.inspector_crew.take() else {
+        return;
+    };
+    let ship = super::front(board, cx).and_then(|front| front.fleet?.ship(&selection.ship));
+    let row = ship.as_ref().and_then(|ship| selection.return_row(ship));
+    let focus = &mut board.inspector_crew_focus;
+    focus.returned = row.map(str::to_owned);
+    if row.is_some() {
+        focus.row.focus(window, cx);
+    } else {
+        focus.ship_tab.focus(window, cx);
+    }
     cx.notify();
 }
 
-fn detail_of(api: &FleetApi, fleet: &str, ship: &str) -> Option<ShipDetail> {
-    api.snapshot(fleet)?.ships.remove(ship)
-}
-
-fn sync(board: &mut Irc, api: Entity<FleetApi>, cx: &mut Context<Irc>) {
-    if let Some(selection) = board.inspector_crew.as_mut()
-        && selection.sync(api.read(cx))
-    {
-        cx.notify();
-    }
-}
-
 impl Selection {
-    fn sync(&mut self, api: &FleetApi) -> bool {
-        let next = detail_of(api, &self.fleet, &self.ship);
-        let previous = Roster::find(self.roster.as_ref(), &self.member);
-        let changed = previous.changed(Roster::find(next.as_ref(), &self.member));
-        self.update(next, api.directory_revision(), changed)
-    }
-
-    fn update(&mut self, next: Option<ShipDetail>, revision: u64, changed: bool) -> bool {
-        let directory_changed = revision != self.directory_revision;
-        if directory_changed {
-            self.directory_revision = revision;
-            self.request = None;
-            self.read = None;
+    fn return_row<'a>(&self, ship: &'a ShipLive) -> Option<&'a str> {
+        let mut rows = ship.members.iter().filter(|member| {
+            !matches!(self.state.roster, Roster::Gone) || member.id != self.member
+        });
+        let first = rows.next()?;
+        if first.id == self.member {
+            return Some(&first.id);
         }
-        self.follow_live |= directory_changed || changed;
-        self.roster = next;
-        directory_changed || changed
-    }
-}
-
-#[derive(PartialEq, Eq)]
-enum Roster<'a> {
-    Present(&'a CrewMember),
-    Gone,
-    Unavailable,
-}
-
-impl<'a> Roster<'a> {
-    fn changed(self, next: Self) -> bool {
-        self != next
-    }
-
-    fn find(detail: Option<&'a ShipDetail>, member: &str) -> Self {
-        let Some(detail) = detail.filter(|detail| detail.ship.available && !detail.detail_stale)
-        else {
-            return Self::Unavailable;
-        };
-        detail
-            .crew_members
-            .iter()
-            .find(|entry| entry.id == member)
-            .map_or(Self::Gone, Self::Present)
-    }
-}
-
-fn shown<'a>(
-    roster: Roster<'a>,
-    follow_live: bool,
-    read: Option<&'a Result<CrewMember, Error>>,
-) -> (Option<&'a CrewMember>, Option<&'static str>) {
-    let member = match roster {
-        Roster::Present(member) => member,
-        Roster::Gone => {
-            return (None, Some("This member is no longer on the ship's roster."));
-        }
-        Roster::Unavailable => {
-            return (None, Some("The ship's current crew roster is unavailable."));
-        }
-    };
-    match read {
-        Some(Ok(detail)) if !follow_live => (Some(detail), None),
-        Some(Ok(_)) => (Some(member), None),
-        Some(Err(Error::NotFound)) => (
-            Some(member),
-            Some("Crew detail is not available on this gateway. Showing the ship's roster data."),
-        ),
-        Some(Err(_)) => (
-            Some(member),
-            Some("Could not load crew detail. Showing the ship's roster data."),
-        ),
-        None => (Some(member), None),
+        rows.find(|member| member.id == self.member)
+            .map_or(Some(first.id.as_str()), |member| Some(member.id.as_str()))
     }
 }
 
@@ -166,14 +197,9 @@ pub(super) fn body(
     let selection = board.inspector_crew.as_ref().filter(|selection| {
         fleet == Some(&selection.fleet) && selection.ship.eq_ignore_ascii_case(captain)
     })?;
-    let roster = ship
-        .filter(|ship| ship.unavailable.is_none())
-        .and(selection.roster.as_ref());
-    let (member, note) = shown(
-        Roster::find(roster, &selection.member),
-        selection.follow_live,
-        selection.read.as_ref(),
-    );
+    let (member, note) = selection
+        .state
+        .shown(ship.is_some_and(|ship| ship.unavailable.is_none()));
     let tokens = Tokens::current(cx);
     let back = action_button(
         "irc-crew-back",
@@ -181,14 +207,18 @@ pub(super) fn body(
         Some(IconName::ArrowLeft),
         "Back to Ship",
     )
-    .on_click(cx.listener(|board, _, _, cx| {
-        board.inspector_crew = None;
-        cx.notify();
-    }));
-    let note = note.map(|note| feedback::empty_line(&tokens, "irc-crew-note", note));
+    .track_focus(&selection.back)
+    .on_click(cx.listener(|board, _, window, cx| close(board, window, cx)));
+    let connection = member.as_ref().and_then(|_| selection.connection_note());
+    let note = note
+        .map(str::to_owned)
+        .or(connection)
+        .map(|note| feedback::empty_line(&tokens, "irc-crew-note", note));
     let detail = member
         .zip(board.dock.focused.as_ref())
-        .map(|(member, buffer)| detail::view(member, buffer, cx));
+        .map(|(member, buffer)| {
+            detail::view(&member, selection.state.current_task(&member), buffer, cx)
+        });
     Some(
         v_flex()
             .w_full()

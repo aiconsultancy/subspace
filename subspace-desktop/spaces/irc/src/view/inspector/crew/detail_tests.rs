@@ -59,3 +59,9 @@ fn project_distinguishes_no_checkout_from_an_unavailable_git_read() {
         assert!(project.pull_request.is_none());
     }
 }
+#[test]
+fn control_codes_are_visible_without_reordering_or_cutting_the_text() {
+    let text = "A\tB\r\nC\u{202e}D\x1bE\u{0085}F".repeat(500);
+    let expected = "A\tB\r\nC⟨U+202E⟩D⟨U+001B⟩E⟨U+0085⟩F".repeat(500);
+    assert_eq!(super::visible(&text), expected);
+}

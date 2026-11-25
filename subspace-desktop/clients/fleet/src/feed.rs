@@ -81,6 +81,10 @@ impl Feed {
         lock(&self.0.state).clone()
     }
 
+    pub(crate) fn ship_detail(&self, ship: &str) -> Option<crate::model::ShipDetail> {
+        lock(&self.0.state).ships.get(ship).cloned()
+    }
+
     /// Changes with every update, so a caller can tell when to read again.
     pub fn revision(&self) -> u64 {
         self.0.revision.load(Ordering::Acquire)

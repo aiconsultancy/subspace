@@ -25,6 +25,7 @@ pub(super) fn focus(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) 
     }
     if changed {
         board.inspector_crew = None;
+        board.inspector_crew_focus.clear();
         board.find_revision = board.find_revision.wrapping_add(1);
         cx.notify();
     }

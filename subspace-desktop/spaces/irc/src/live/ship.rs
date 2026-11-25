@@ -199,13 +199,17 @@ const BIDI_CONTROLS: [char; 12] = [
     '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
 ];
 
+pub(crate) fn is_bidi_control(ch: char) -> bool {
+    BIDI_CONTROLS.contains(&ch)
+}
+
 /// `text` on one line, without control or bidirectional formatting
 /// characters, trimmed and cut to at most `max` characters, the last an
 /// ellipsis when cut.
 pub(crate) fn bounded(text: &str, max: usize) -> String {
     let flat: String = text
         .chars()
-        .filter(|ch| !BIDI_CONTROLS.contains(ch))
+        .filter(|ch| !is_bidi_control(*ch))
         .map(|ch| if ch.is_control() { ' ' } else { ch })
         .collect();
     let words: Vec<&str> = flat.split_whitespace().collect();

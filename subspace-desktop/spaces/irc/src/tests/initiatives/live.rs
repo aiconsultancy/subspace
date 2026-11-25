@@ -80,6 +80,7 @@ fn a_live_ship_channel_s_inspector_has_ship_thread_and_people_tabs(cx: &mut Test
             "no member list here"
         );
     });
+    super::crew::round_trip(cx);
     cx.update(|window, cx| window.click(("workspace-inspector-tab", 2usize), cx));
     settle(cx);
     board.read_with(cx, |board, _| {

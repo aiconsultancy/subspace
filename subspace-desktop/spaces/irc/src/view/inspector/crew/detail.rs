@@ -1,5 +1,7 @@
 //! The crew card and one inspector row per Fleet API project.
 
+use std::fmt::Write as _;
+
 use gpui_kit::component::v_flex;
 use gpui_kit::{
     AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement as _,
@@ -11,14 +13,19 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::badge::Pill;
 use subspace_framework::dashboard::{Tokens, feedback, workspace};
 
-use crate::live::ship::state_word;
+use crate::live::ship::{is_bidi_control, state_word};
 use crate::{Irc, markup::PrRef, pull_requests};
 
 use super::super::ship::state_tone;
 
 type Facts = Vec<(&'static str, String)>;
 
-pub(super) fn view(member: &CrewMember, buffer: &BufferKey, cx: &Context<Irc>) -> AnyElement {
+pub(super) fn view(
+    member: &CrewMember,
+    current: Option<&Task>,
+    buffer: &BufferKey,
+    cx: &Context<Irc>,
+) -> AnyElement {
     let tokens = Tokens::current(cx);
     let title = nonempty(&member.name).unwrap_or(&member.id);
     let pill = Pill::new(
@@ -28,7 +35,7 @@ pub(super) fn view(member: &CrewMember, buffer: &BufferKey, cx: &Context<Irc>) -
     .hue(state_tone(member.activity));
     let mut facts = Facts::new();
     optional(&mut facts, "Model", member.model.as_deref());
-    task_facts(&mut facts, member.current_task());
+    task_facts(&mut facts, current);
     let empty = member
         .contexts
         .is_empty()
@@ -37,7 +44,8 @@ pub(super) fn view(member: &CrewMember, buffer: &BufferKey, cx: &Context<Irc>) -
         member
             .contexts
             .iter()
-            .map(|context| project_row(context, buffer, cx)),
+            .enumerate()
+            .map(|(index, context)| project_row(context, index, buffer, cx)),
     );
     v_flex()
         .w_full()
@@ -54,7 +62,7 @@ pub(super) fn view(member: &CrewMember, buffer: &BufferKey, cx: &Context<Irc>) -
                         .text_size(tokens.row_font)
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(tokens.fg_strong)
-                        .child(title.to_owned()),
+                        .child(visible(title)),
                 )
                 .child(pill)
                 .children(fact_rows(facts, cx)),
@@ -65,19 +73,37 @@ pub(super) fn view(member: &CrewMember, buffer: &BufferKey, cx: &Context<Irc>) -
 
 fn fact_rows(facts: Facts, cx: &App) -> impl Iterator<Item = AnyElement> {
     facts.into_iter().map(|(label, value)| {
-        workspace::fact(label, div().whitespace_normal().child(value), cx).into_any_element()
+        workspace::fact(label, div().whitespace_normal().child(visible(&value)), cx)
+            .into_any_element()
     })
 }
 
-fn project_row(context: &CrewContext, buffer: &BufferKey, cx: &Context<Irc>) -> AnyElement {
+fn project_row(
+    context: &CrewContext,
+    index: usize,
+    buffer: &BufferKey,
+    cx: &Context<Irc>,
+) -> AnyElement {
     let tokens = Tokens::current(cx);
-    let key = context.project.as_deref().unwrap_or_default();
+    let key = context
+        .project
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .map_or_else(
+            || format!("default:{index}"),
+            |name| format!("named:{name}"),
+        );
     let buffer = buffer.clone();
     let project = Project::of(context);
-    let actions = project.pull_request.map(|link| {
-        action_button(format!("irc-crew-pr:{key}"), Intent::Quiet, None, "Open PR")
-            .on_click(cx.listener(move |_, _, _, cx| pull_requests::open(&link, &buffer, cx)))
-    });
+    let name = visible(&project.name);
+    let actions = project
+        .pull_request
+        .zip(context.pull_request.as_ref())
+        .map(|(link, pr)| {
+            action_button(format!("irc-crew-pr:{key}"), Intent::Quiet, None, "Open PR")
+                .accessibility_label(format!("Open PR #{} for {name}", pr.number))
+                .on_click(cx.listener(move |_, _, _, cx| pull_requests::open(&link, &buffer, cx)))
+        });
     v_flex()
         .id(format!("irc-crew-project:{key}"))
         .w_full()
@@ -88,7 +114,7 @@ fn project_row(context: &CrewContext, buffer: &BufferKey, cx: &Context<Irc>) -> 
             div()
                 .text_size(tokens.secondary_size())
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(project.name),
+                .child(name),
         )
         .children(fact_rows(project.facts, cx))
         .children(actions)
@@ -161,7 +187,11 @@ fn pr_facts(facts: &mut Facts, context: &CrewContext) -> Option<PrRef> {
     };
     facts.push((
         "Pull request",
-        format!("#{} {}", pr.number, pr.title).trim_end().to_owned(),
+        if pr.title.is_empty() {
+            format!("#{}", pr.number)
+        } else {
+            format!("#{} {}", pr.number, pr.title)
+        },
     ));
     optional(facts, "PR state", Some(&pr.state));
     optional(facts, "Checks", Some(&pr.checks));
@@ -184,13 +214,26 @@ fn task_facts(facts: &mut Facts, task: Option<&Task>) {
 }
 
 fn nonempty(text: &str) -> Option<&str> {
-    (!text.trim().is_empty()).then_some(text)
+    (!text.is_empty()).then_some(text)
 }
 
 fn optional(facts: &mut Facts, label: &'static str, value: Option<&str>) {
     if let Some(value) = value.and_then(nonempty) {
         facts.push((label, value.to_owned()));
     }
+}
+
+/// Show control codes without giving them control over the surrounding text.
+fn visible(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')) || is_bidi_control(ch) {
+            let _ = write!(result, "⟨U+{:04X}⟩", u32::from(ch));
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 #[cfg(test)]

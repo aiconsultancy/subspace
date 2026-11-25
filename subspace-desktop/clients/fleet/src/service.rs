@@ -250,6 +250,11 @@ impl FleetApi {
             .map(|followed| followed.feed.snapshot())
     }
 
+    /// What the followed fleet has delivered for one ship, without copying the fleet.
+    pub fn ship_detail(&self, fleet: &str, ship: &str) -> Option<crate::model::ShipDetail> {
+        self.feeds.get(fleet)?.feed.ship_detail(ship)
+    }
+
     /// The fleets the built-in Fleet Console may use, each with its token
     /// only for the address it was saved for.
     pub fn shared_fleets(&self) -> Vec<SharedFleet> {

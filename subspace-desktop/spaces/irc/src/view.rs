@@ -55,6 +55,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         watch: Default::default(),
         inspector_tab: Default::default(),
         inspector_crew: None,
+        inspector_crew_focus: inspector::crew::CrewFocus::new(cx),
         threads: Default::default(),
         seen_fleets: Default::default(),
         absorbing: Default::default(),

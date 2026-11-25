@@ -1,8 +1,8 @@
 //! Crew rows in the Ship tab.
 
-use chrono::{DateTime, Utc};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::h_flex;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
     SharedString, Styled as _, TestSupportExt as _, div,
@@ -14,18 +14,19 @@ use crate::{
     live::{CrewLine, ShipLive},
 };
 
-use super::super::ship::{age, work};
+use super::super::ship::work;
+use super::CrewFocus;
 
 /// One crew member: their dot, name, work and how long.
 pub(in super::super) fn row(
+    focus: &CrewFocus,
     member: &CrewLine,
-    ship: &ShipLive,
-    fleet: Option<&str>,
-    now: DateTime<Utc>,
+    route: (&ShipLive, Option<&str>),
+    since: String,
     cx: &mut Context<Irc>,
 ) -> AnyElement {
+    let (ship, fleet) = route;
     let tokens = Tokens::current(cx);
-    let since = member.since.map(|at| age(at, now)).unwrap_or_default();
     let id = SharedString::from(format!("irc-inspector-crew:{}", member.id));
     let row = h_flex()
         .w_full()
@@ -69,9 +70,12 @@ pub(in super::super) fn row(
         .min_w_0()
         .accessibility_id(id)
         .accessibility_label(format!("Open crew member {}", member.name))
+        .when(focus.returned.as_deref() == Some(&member.id), |button| {
+            button.track_focus(&focus.row)
+        })
         .child(row)
-        .on_click(cx.listener(move |board, _, _, cx| {
-            super::open(board, &target.0, &target.1, &target.2, cx);
+        .on_click(cx.listener(move |board, _, window, cx| {
+            super::open(board, &target, window, cx);
         }))
         .into_any_element()
 }

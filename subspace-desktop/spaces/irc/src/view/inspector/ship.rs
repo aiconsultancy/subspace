@@ -35,7 +35,11 @@ pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &mut Context<I
     let hub = board.hub.as_ref().map(|hub| hub.read(cx));
     let now = hub.map_or_else(Utc::now, |hub| hub.now);
     let here = hub.map(|hub| here_now(board, hub)).unwrap_or_default();
-    let route = ShipRoute { fleet, captain };
+    let route = ShipRoute {
+        fleet,
+        captain,
+        focus: &board.inspector_crew_focus,
+    };
     v_flex()
         .w_full()
         .min_w_0()
@@ -49,13 +53,18 @@ pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &mut Context<I
 struct ShipRoute<'a> {
     fleet: Option<&'a str>,
     captain: &'a str,
+    focus: &'a crew::CrewFocus,
 }
 
 /// The card and the crew while the ship is live, else why not.
 fn fleet_part(
     ship: Option<&ShipLive>,
     front: &Front,
-    ShipRoute { fleet, captain }: ShipRoute<'_>,
+    ShipRoute {
+        fleet,
+        captain,
+        focus,
+    }: ShipRoute<'_>,
     now: DateTime<Utc>,
     cx: &mut Context<Irc>,
 ) -> AnyElement {
@@ -66,7 +75,7 @@ fn fleet_part(
             .min_w_0()
             .gap_4()
             .child(card(ship, captain, cx))
-            .child(crew_section(ship, fleet, now, cx))
+            .child(crew_section(ship, fleet, now, focus, cx))
             .into_any_element(),
         (None, Some((title, sentence))) => reason::view(title, sentence, cx),
         (None, None) => {
@@ -172,6 +181,7 @@ fn crew_section(
     ship: &ShipLive,
     fleet: Option<&str>,
     now: DateTime<Utc>,
+    focus: &crew::CrewFocus,
     cx: &mut Context<Irc>,
 ) -> AnyElement {
     let tokens = Tokens::current(cx);
@@ -187,11 +197,10 @@ fn crew_section(
             .into_any_element();
     }
     section
-        .children(
-            ship.members
-                .iter()
-                .map(|member| crew::list::row(member, ship, fleet, now, cx)),
-        )
+        .children(ship.members.iter().map(|member| {
+            let since = member.since.map(|at| age(at, now)).unwrap_or_default();
+            crew::list::row(focus, member, (ship, fleet), since, cx)
+        }))
         .into_any_element()
 }
 
