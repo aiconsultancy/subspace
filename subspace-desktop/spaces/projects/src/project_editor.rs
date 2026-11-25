@@ -1,13 +1,15 @@
 //! A versioned editor for the project shown in Overview.
 
+mod controls;
+
 use chrono::NaiveDate;
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::input::{InputState, TextareaState};
 use gpui_kit::component::select::{SearchableVec, SelectItem, SelectState};
-use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, Div, Entity, Focusable as _,
-    InteractiveElement as _, IntoElement as _, ParentElement as _, Role, SharedString,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
+    AnyElement, App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _,
+    IntoElement as _, ParentElement as _, Role, SharedString, StatefulInteractiveElement as _,
+    TestSupportExt as _, Window,
 };
 use subspace_api_client::{
     Backend, backend,
@@ -16,10 +18,8 @@ use subspace_api_client::{
 use subspace_framework::dashboard::{
     Tokens,
     action::{Intent, dialog_button},
-    anchored,
     dialog::{self, DialogWidth},
-    feedback,
-    fields::{self, InputRole},
+    feedback, fields,
 };
 use subspace_framework::lucide::IconName;
 
@@ -255,7 +255,7 @@ pub(super) fn render(
             .test_support()
             .role(Role::Dialog)
             .aria_label("Edit project")
-            .child(form_body(form, busy))
+            .child(controls::form_body(form, busy))
             .children(
                 this.error
                     .as_ref()
@@ -289,48 +289,4 @@ pub(super) fn render(
             ),
     )
     .into_any_element()
-}
-
-fn form_body(form: &Form, busy: bool) -> Div {
-    v_flex()
-        .gap_3()
-        .child(input_field("Name", &form.name, busy))
-        .child(fields::form_field(
-            "Description",
-            fields::textarea(&form.description, "Description").disabled(busy),
-        ))
-        .child(
-            h_flex()
-                .gap_3()
-                .child(div().min_w_0().flex_1().child(fields::form_field(
-                    "Status",
-                    anchored::select(&form.status).disabled(busy),
-                )))
-                .child(div().min_w_0().flex_1().child(fields::form_field(
-                    "Priority",
-                    anchored::select(&form.priority).disabled(busy),
-                ))),
-        )
-        .child(
-            h_flex()
-                .gap_3()
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .child(input_field("Start date", &form.start, busy)),
-                )
-                .child(div().min_w_0().flex_1().child(input_field(
-                    "Target date",
-                    &form.target,
-                    busy,
-                ))),
-        )
-}
-
-fn input_field(label: &'static str, state: &Entity<InputState>, busy: bool) -> Div {
-    fields::form_field(
-        label,
-        fields::input(state, InputRole::Configuration, label).disabled(busy),
-    )
 }
