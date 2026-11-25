@@ -43,7 +43,7 @@ test ! -e "$etc"
 "$installer" --config "$config" --no-systemd
 mapfile -t units < "$etc/units"
 systemd-analyze verify "${units[@]/#//etc/systemd/system/}"
-python3 /installer/tests/fixture.py check_shape "$work"
+python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
 python3 -B /installer/tests/policy_test.py
 python3 -B /installer/tests/medical_test.py
 (
@@ -70,7 +70,7 @@ fi
 ) > "$work/after"
 diff -u "$work/before" "$work/after"
 test -f "$crew_checkout/worker-draft"
-python3 /installer/tests/fixture.py check_shape "$work"
+python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
 "$app/lib/runtime.py" maintenance tools
 printf 'Second install preserved binaries, configuration and service units.\n'
 
@@ -95,7 +95,7 @@ done
 # then restart that engine so it loads Stargate's crew plugin with the pinned session.
 "$app/lib/runtime.py" commission false
 test "$(stat -c '%U %a' "$etc/sessions/orion.json")" = 'root 600'
-python3 /installer/tests/fixture.py check_shape "$work"
+python3 /installer/tests/fixture.py check_shape "$work" commissioned
 kill "${pids[-1]}" 2>/dev/null || true
 wait "${pids[-1]}" 2>/dev/null || true
 unset 'pids[-1]'

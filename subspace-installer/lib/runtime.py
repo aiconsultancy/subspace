@@ -1063,12 +1063,12 @@ def require_usage_guard_source(cfg, installed_only=False):
                "--stargate-ref latest or --no-usage-guard. For a hand-written fleet.json, update "
                "stargate.ref or turn off usageGuard.")
 
+    if not installed_only and (repo, ref) == (STARGATE_REPO, STARGATE_REF):
+        return  # The installer's published pin includes the guard. The checkout is repaired before rendering.
+
     if installed_only or source.is_dir():
         require((source / USAGE_GUARD_SOURCE).is_file(), message)
         return
-
-    if (repo, ref) == (STARGATE_REPO, STARGATE_REF):
-        return  # The installer's published pin includes the guard.
 
     with tempfile.TemporaryDirectory(prefix="subspace-stargate-check-") as work:
         try:
@@ -1078,6 +1078,8 @@ def require_usage_guard_source(cfg, installed_only=False):
                            check=True, capture_output=True, timeout=60)
             check = subprocess.run(["git", "-C", work, "cat-file", "-e", f"FETCH_HEAD:{USAGE_GUARD_SOURCE}"],
                                    capture_output=True, timeout=20)
+        except FileNotFoundError:
+            raise Invalid("Install git before checking usage guard support for a custom Stargate revision.") from None
         except (OSError, subprocess.SubprocessError):
             raise Invalid(f"Could not check usage guard support in Stargate {ref[:12]}. Check GitHub access "
                           "or choose a known Stargate release.") from None
@@ -1541,7 +1543,7 @@ def extra_snapshot(cfg, directory, previous, prune):
     if "reportChannel" in cfg["integrations"]["usage"]:
         require("proxy-management-key" in tokens, "Supply a proxy management key in the secrets directory.")
     if cfg["usageGuard"]["enabled"] and "proxy-management-key" not in tokens:
-        tokens["proxy-management-key"] = previous.get("tokens", {}).get("proxy-management-key") or secrets.token_hex(32)
+        tokens["proxy-management-key"] = secrets.token_hex(32)
     if "proxy-management-key" in tokens:
         require(tokens["proxy-management-key"] != cfg["proxy"]["key"], "Use distinct proxy management and model client keys.")
     medical = {} if prune else previous.get("medical", {}).copy()
@@ -3272,7 +3274,7 @@ def render(cfg, extra, prune=False):
             if guard_enabled:
                 directory(usage_guard_file().parent, 0o755, user)
                 writable.append(usage_guard_file().parent)
-                settings["usageGuard"] = usage_guard_settings(cfg, home)
+                settings["usageGuard"] = usage_guard_settings(cfg, gateway_home)
             dispatch, dispatch_env = agent_dispatch_settings(cfg)
             if dispatch:
                 settings["agentDispatch"] = dispatch

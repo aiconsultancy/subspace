@@ -545,11 +545,13 @@ def check_pinned_session():
     assert plugin["options"]["projectDirectory"] == record["project"] == f"{workspace}/sample"
 
 
-def check_shape():
+def check_shape(phase):
     etc = Path("/etc/subspace-fleet")
     settings = json.loads((etc / "stargate.json").read_text())
     rear, *captains = settings["irc"]
-    pinned = (etc / "sessions/orion.json").is_file()
+    assert phase in ("uncommissioned", "commissioned")
+    pinned = phase == "commissioned"
+    assert (etc / "sessions/orion.json").is_file() == pinned
     # A newly installed captain joins the gateway once its engine has commissioned its root session.
     assert [person["id"] for person in captains] == (["orion"] if pinned else [])
     guard = settings["usageGuard"]

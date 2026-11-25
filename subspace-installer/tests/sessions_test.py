@@ -1107,12 +1107,21 @@ class InstalledFleet(unittest.TestCase):
         runtime.subprocess.run.return_value.returncode = 0
         runtime.require_usage_guard_source(cfg)
 
+    def test_usage_guard_allows_the_published_pin_to_repair_its_checkout(self):
+        cfg = runtime.validate(*crew_fleet("orion"))
+        with tempfile.TemporaryDirectory() as root, patch.object(runtime, "APP", Path(root)):
+            (Path(root) / "src" / f"stargate-{runtime.STARGATE_REF}").mkdir(parents=True)
+            runtime.require_usage_guard_source(cfg)
+            with self.assertRaisesRegex(runtime.Invalid, "Usage guard requires a newer Stargate"):
+                runtime.require_usage_guard_source(cfg, installed_only=True)
+
     def test_usage_guard_defaults_route_all_captains_and_all_crew_engines_read_one_file(self):
         config, private = crew_fleet("orion", "vega")
         self.render(config, private)
         settings = json.loads((self.etc / "stargate.json").read_text())
         guard = settings["usageGuard"]
         self.assertEqual(guard["sender"], "atlas")
+        self.assertEqual(guard["proxy"]["managementKeyFile"], str(self.state / "gateway/quota-management-key"))
         self.assertEqual({target["account"] for target in guard["captains"]}, {"example-orion", "example-vega"})
         self.assertEqual(guard["providers"]["claude"]["limits"], [
             {"remainingPercent": 20, "action": "warn"}, {"remainingPercent": 10, "action": "pause"},
@@ -1151,6 +1160,7 @@ class InstalledFleet(unittest.TestCase):
         self.assertRegex(key, r"^[a-f0-9]{64}$")
         self.assertNotEqual(key, private["proxyKey"])
         self.assertEqual(runtime.extra_snapshot(cfg, None, first, False)["tokens"]["proxy-management-key"], key)
+        self.assertNotEqual(runtime.extra_snapshot(cfg, None, first, True)["tokens"]["proxy-management-key"], key)
 
     def test_memory_limits_reach_every_unit_and_hand_made_ones_stay_and_are_reported(self):
         config, secrets = crew_fleet("orion", "vega")
