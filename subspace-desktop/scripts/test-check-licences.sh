@@ -76,6 +76,7 @@ subspace-framework = { path = "../../../resolved-framework" }
 markdown = "1.0.0"
 [features]
 terminal = []
+copilot = []
 EOF
 write_framework_manifest() {
     cat >"$framework/Cargo.toml" <<'EOF'
