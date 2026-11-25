@@ -135,6 +135,42 @@ class SetupInputsTests(unittest.TestCase):
         self.assertIn("dispatch", bundle["channels"][1]["topic"])
         self.assertEqual(bundle["humans"], ["admiral"])
 
+    def test_memory_options_reach_fleet_json_and_are_kept(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
+        answers, members, config, secrets, _ = self.generate(
+            [*base, "--captain-memory", "24G", "--rear-admiral-memory", "none", "--swap", "8G"])
+        self.assertEqual(config["memory"], {"captain": {"max": "24G"}, "rearAdmiral": {"max": "none"}, "swap": "8G"})
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual(cfg["memory"]["captain"], {"max": 24 * 1024})
+        self.assertEqual(cfg["memory"]["rear_admiral"], {"max": "none"})
+        plan = runtime.memory_plan(cfg, 64154)["limits"]
+        self.assertEqual((plan["orion"]["max"], plan["orion"]["high"], plan["atlas"]["max"]), (24 * 1024, 21 * 1024,
+                                                                                            "none"))
+        # Later runs keep the answers; what the operator added to fleet.json by hand stays beside them.
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            **config, "memory": {**config["memory"], "tasksMax": 2048, "captain": {"max": "16G", "high": "15G"}}})
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            kept = fleet_setup.gather(args, answers)
+        config = fleet_setup.fleet_config(kept, members, "a" * 40)
+        self.assertEqual(config["memory"], {"captain": {"max": "24G", "high": "15G"}, "rearAdmiral": {"max": "none"},
+                                            "swap": "8G", "tasksMax": 2048})
+        # auto returns to the installer's own sizing, removing only what the option sets.
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--captain-memory", "auto",
+                                       "--rear-admiral-memory", "", "--swap", "auto"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            reset = fleet_setup.gather(args, kept)
+        self.assertEqual(fleet_setup.fleet_config(reset, members, "a" * 40)["memory"],
+                         {"captain": {"high": "15G"}, "tasksMax": 2048})
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {**config, "memory": {"captain": {"max": "16G"}}})
+        self.assertNotIn("memory", fleet_setup.fleet_config(reset, members, "a" * 40))
+        # Bad values stop setup before it saves anything.
+        for flag, value, message in (("--captain-memory", "lots", "--captain-memory must be a size such as 20G"),
+                                     ("--rear-admiral-memory", "100M", "--rear-admiral-memory must be at least 512M"),
+                                     ("--swap", "big", "--swap must be a size")):
+            with self.subTest(flag), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                answers_for([*base, flag, value])
+
     def test_stargate_api_and_secrets_are_stable(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
         _, _, config, secrets, _ = self.generate(argv, stargate_api=True)

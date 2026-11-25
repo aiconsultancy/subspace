@@ -54,6 +54,7 @@ INSTALLER = PAYLOAD / "subspace-installer"
 sys.path.insert(0, str(HERE.parent / "lib"))
 import fleet_records  # noqa: E402
 import irc_accounts  # noqa: E402
+import memory  # noqa: E402
 import postgres_check  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
@@ -231,6 +232,14 @@ def parse_args(argv):
         parser.add_argument(f"--{flag}-effort", help=f"reasoning effort of {who}: {', '.join(EFFORTS)} (default "
                             f"{default['effort']} on {default['model']}, else the provider's; kept on later runs; '' "
                             "returns to the default)")
+    parser.add_argument("--captain-memory", help="each captain's memory hard cap, its crew included, such as 24G: "
+                        "'auto' (the default) sizes it from the VM's memory and the fleet, 'none' sets no cap. Kept on "
+                        "later runs (installer README, 'Memory limits and swap')")
+    parser.add_argument("--rear-admiral-memory", help="the rear admiral's memory hard cap, such as 4G, 'auto' (the "
+                        "default) or 'none'. Kept on later runs")
+    parser.add_argument("--swap", help="the VM's swap: 'auto' (the default: a swap file of an eighth of the VM's "
+                        "memory, 2 to 16 GiB, when it has no swap), a size such as 8G, or 'none' to leave swap as it "
+                        "is. Kept on later runs")
     parser.add_argument("--demo", dest="demo", action="store_true", default=None, help="seed fictional demo data")
     parser.add_argument("--no-demo", dest="demo", action="store_false")
     parser.add_argument("--irc", choices=["local", "remote"],
@@ -435,6 +444,22 @@ def gather(args, saved):
             require(effort == "" or effort in EFFORTS, f"--{flag}-effort must be one of {', '.join(EFFORTS)}.")
             choice["effort"] = effort
     answers["officerModels"] = officers
+    # Memory: each role's hard cap and the VM's swap. auto is the fleet installer's own sizing, even over a value
+    # set in fleet.json by hand; the soft limit and the swap allowance follow the hard cap (lib/memory.py).
+    chosen = answers.setdefault("memory", {})
+    for key, value, flag in (("captain", args.captain_memory, "--captain-memory"),
+                             ("rearAdmiral", args.rear_admiral_memory, "--rear-admiral-memory"),
+                             ("swap", args.swap, "--swap")):
+        if value is None:
+            continue
+        value = value.strip() or "auto"
+        check = memory.swap_setting if key == "swap" else memory.parse_size
+        try:
+            if value != "auto":
+                check(value, flag)
+        except memory.Refused as error:
+            raise SetupError(f"{error} 'auto' is the installer's own sizing.") from None
+        chosen[key] = value
     answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
         pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
@@ -1042,9 +1067,28 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
             crew["model"] = model
     # Keep anything the operator added by hand, such as private repositories, GitHub Apps or stakeholders.
     for key in ("harness", "stakeholders", "usage", "medical", "toolchains", "maintenance",
-                "githubPolicy", "dashboard", "proxy", "agentsview"):
+                "githubPolicy", "dashboard", "proxy", "agentsview", "memory"):
         if key in previous:
             config[key] = previous[key]
+    # Each role's memory hard cap and the VM's swap: this or an earlier run's answer, over one set by hand.
+    limits = dict(config.get("memory") or {})
+    for key, value in answers.get("memory", {}).items():
+        block = limits if key == "swap" else dict(limits.get(key) or {})
+        name = "swap" if key == "swap" else "max"
+        if value == "auto":
+            block.pop(name, None)
+        else:
+            block[name] = value
+        if key == "swap":
+            continue
+        if block:
+            limits[key] = block
+        else:
+            limits.pop(key, None)
+    if limits:
+        config["memory"] = limits
+    else:
+        config.pop("memory", None)
     # Each role's model and effort: this or an earlier run's answer, over one set in fleet.json by hand.
     harness = dict(config.get("harness") or {})
     officers = answers.get("officerModels", {})
@@ -2871,6 +2915,9 @@ def configure(args):
     if not local_irc:
         say(remote_irc_next_step(answers, operator))
     say(f"forward these loopback ports to reach it: {values['SUBSPACE_PORTS']}")
+    # The VM's memory, each engine's limits and why, limits set by hand, and swap, for the operator and their agent
+    # (installer README, 'Memory limits and swap'). --captain-memory, --rear-admiral-memory and --swap change them.
+    run(FLEET_APP / "lib/runtime.py", "memory-summary", check=False)
     if run(HERE / "providers.sh", "status", check=False):
         say("next: bring the agents online by signing CLIProxyAPI in to a provider account "
             "(INSTALL.md, 'Bring the agents online').")
