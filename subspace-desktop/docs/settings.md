@@ -26,7 +26,8 @@ for when sounds are on again. Cancel discards the edit. The app preference
 is `notifications.sounds` in `state.json` (`1` on, `0` off).
 
 The **Copilot** section applies only to Copilot chat: turn completion,
-waiting for input, OS notifications and sound. Space rows keep their own
+waiting for input, OS notifications and sound. A build without Copilot
+([Copilot chat](../README.md#copilot-chat)) calls it **Chat**. Space rows keep their own
 delivery, style and Sound choices. **Preview sound** deliberately plays even
 when the master is off. **Test notification** follows the saved master
 choice; neither button saves the draft. OS permission, Focus and retention

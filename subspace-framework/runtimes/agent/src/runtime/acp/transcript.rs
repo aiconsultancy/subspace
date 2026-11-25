@@ -3,7 +3,7 @@
 //! so a confirmed row always lands where its stream did.
 use super::{Entry, EntryKind, HashMap, ToolStatus, TranscriptEntry, Value};
 use crate::ToolCall;
-use crate::runtime::transcript;
+use crate::runtime::summary;
 
 const TITLE_LIMIT: usize = 120;
 
@@ -212,10 +212,10 @@ fn merge_call(call: &mut ToolCall, update: &Value, started: bool) {
         .or_else(|| update["kind"].as_str())
         .filter(|title| !title.trim().is_empty());
     if let Some(title) = title {
-        call.title = transcript::one_line(title, TITLE_LIMIT);
+        call.title = summary::one_line(title, TITLE_LIMIT);
     }
     if update.get("rawInput").is_some() || started {
-        call.detail = transcript::argument_summary(&update["rawInput"]);
+        call.detail = summary::argument_summary(&update["rawInput"]);
     }
     if let Some(status) = update["status"].as_str().map(tool_status) {
         call.status = status;

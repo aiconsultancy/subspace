@@ -5,7 +5,7 @@ pub mod failure;
 mod runtime;
 
 pub use failure::{FailureCategory, TurnFailure};
-pub use runtime::{AgentHandle, export_file_name};
+pub use runtime::{AgentHandle, COPILOT_BUILT_IN, COPILOT_UNAVAILABLE, export_file_name};
 use std::path::PathBuf;
 pub use subspace_agent_model::{
     ContextRef, DRAFT_ATTACHMENT_LIMIT, ImageAttachment, SessionSummary,

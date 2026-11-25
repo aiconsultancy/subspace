@@ -38,7 +38,14 @@ pub(super) fn render(
                 .placeholder(placeholder)
                 .disabled(locked),
         ))
-        .child(note(tokens, help::GH_ACCOUNT))
+        .child(note(
+            tokens,
+            if subspace_chat::COPILOT_BUILT_IN {
+                help::GH_ACCOUNT
+            } else {
+                help::GH_ACCOUNT_NO_COPILOT
+            },
+        ))
         .child(settings.token_field(GITHUB_TOKEN, locked, tokens, cx))
         .child(note(tokens, help::GH_TOKEN))
 }

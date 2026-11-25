@@ -34,6 +34,7 @@ pub(super) async fn report_failed(
 
 /// A message that started no turn, as a skill that only shows a note, ends
 /// the turn the panel started for it, unless one runs.
+#[cfg(feature = "copilot")]
 pub(super) async fn ran_nothing(events: &EventQueue, chat: ChatId, running: bool) {
     if !running {
         events.push(Event::of(chat, ChatEvent::TurnDone)).await;

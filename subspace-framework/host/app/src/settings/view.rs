@@ -20,7 +20,7 @@ mod updates;
 use secret::{SecretRow, secret_row};
 
 use super::Settings;
-use super::copy::{help, text};
+use super::copy::{chat_alerts, help, text};
 use super::form::SettingsPage;
 use crate::notifications::NotificationChoice;
 use gpui_kit::component::{h_flex, v_flex};
@@ -164,14 +164,12 @@ impl Settings {
                 NotificationChoice::Sound,
             ),
         ];
+        let copy = chat_alerts(subspace_chat::COPILOT_BUILT_IN);
         let body = v_flex()
             .gap_3()
             .child(sources::sounds(self, tokens, cx))
-            .child("Copilot")
-            .child(note(
-                tokens,
-                "These event and delivery choices apply only to Copilot chat.",
-            ))
+            .child(copy.heading)
+            .child(note(tokens, copy.scope))
             .children(choices.map(|(id, label, checked, choice)| {
                 toggle_row(
                     label,
@@ -183,7 +181,7 @@ impl Settings {
                 )
             }));
         page_frame(
-            "Choose how Copilot and Spaces notify you.",
+            copy.intro,
             body.child(note(tokens, "OS delivery depends on system permission and packaging. Sound is independent of OS notifications."))
                 .child(sources::render(self, tokens, cx)),
             tokens,
@@ -224,6 +222,7 @@ impl Settings {
     }
 
     fn chat(&self, tokens: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+        let copilot = subspace_chat::COPILOT_BUILT_IN;
         let body = v_flex()
             .gap_3()
             .child(labelled(
@@ -231,7 +230,26 @@ impl Settings {
                 anchored::select(&self.chat_engine).accessibility_label(text::CHAT_ENGINE),
             ))
             .child(note(tokens, help::CHAT_ENGINE))
+            .children(
+                self.copilot_kept(cx)
+                    .then(|| note(tokens, help::COPILOT_KEPT)),
+            )
             .children(self.acp_agent_field(tokens, cx))
+            .children(copilot.then(|| self.approve_all_field(tokens, cx)));
+        let intro = if copilot {
+            "Choose the engine and permission default for new chats."
+        } else {
+            "Choose the engine for new chats."
+        };
+        page_frame(intro, body, tokens, cx).into_any_element()
+    }
+
+    /// Copilot's approve-all default, with its warning. Only Copilot has the
+    /// mode, so a build without Copilot shows neither and keeps the saved
+    /// preference.
+    fn approve_all_field(&self, tokens: &Tokens, cx: &mut Context<Self>) -> Div {
+        v_flex()
+            .gap_3()
             .child(
                 toggle_row("Approve all tool requests for new chats", subspace_dashboard::toggle::switch("chat-approve-all-default", cx)
                     .checked(self.approve_all_default)
@@ -243,14 +261,7 @@ impl Settings {
             .child(note(
                 tokens,
                 "Allows new Copilot chats to approve tool requests automatically, including full host and service access. This can be high risk: managed policy and service limits still apply, but review each request before enabling it. Pi and ACP agents do not support this mode; the saved choice is kept for Copilot.",
-            ));
-        page_frame(
-            "Choose the engine and permission default for new chats.",
-            body,
-            tokens,
-            cx,
-        )
-        .into_any_element()
+            ))
     }
 }
 

@@ -30,8 +30,14 @@ space = [
     "dep:subspace-lucide",
     "dep:subspace-client-github",
 ]
-# The agent runtime: Copilot, Pi and ACP chat engines.
+# The agent runtime: the Pi and ACP chat engines.
 agent = ["space", "dep:subspace-agent"]
+# The Copilot chat engine, through the Copilot SDK. Not part of `agent` or
+# `host`: the SDK's build script downloads the Copilot CLI and its runtime,
+# and the binary embeds them (about 240 MB on macOS ARM64). Without it the app
+# offers no Copilot engine, sign-in or setting, and keeps a saved Copilot
+# choice in the config file without starting it.
+copilot = ["agent", "subspace-agent/copilot"]
 # The shell and the other host crates, for app builders only.
 host = [
     "space",

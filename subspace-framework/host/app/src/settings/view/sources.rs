@@ -6,16 +6,24 @@ use subspace_dashboard::{Tokens, anchored};
 use subspace_lucide::IconName;
 
 pub(super) fn sounds(settings: &Settings, tokens: &Tokens, cx: &mut Context<Settings>) -> Div {
-    v_flex().gap_3()
+    v_flex()
+        .gap_3()
         .child(subspace_dashboard::toggle::toggle_row(
             "Play notification sounds",
             subspace_dashboard::toggle::switch("notification-sounds", cx)
                 .checked(settings.notifications.sounds)
                 .on_click(cx.listener(|settings, enabled: &bool, _, cx| {
-                    settings.set_notification(crate::notifications::NotificationChoice::Sounds, *enabled, cx);
+                    settings.set_notification(
+                        crate::notifications::NotificationChoice::Sounds,
+                        *enabled,
+                        cx,
+                    );
                 })),
         ))
-        .child(note(tokens, "Off mutes every notification sound: Copilot and every Space. Each Space's own Sound choice is kept for when sounds are on."))
+        .child(note(
+            tokens,
+            crate::settings::copy::chat_alerts(subspace_chat::COPILOT_BUILT_IN).sounds,
+        ))
 }
 
 pub(super) fn render(settings: &Settings, tokens: &Tokens, cx: &mut Context<Settings>) -> Div {

@@ -11,6 +11,11 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
+# The Copilot chat engine. Off by default: the SDK's build script downloads
+# the Copilot CLI and its runtime and embeds them in the binary (about 240 MB
+# on macOS ARM64). Without it, Pi and ACP still work and a saved Copilot
+# choice is kept but not started.
+copilot = ["dep:github-copilot-sdk", "dep:subspace-client-github", "dep:dirs"]
 test-support = []
 
 [dependencies]
@@ -20,16 +25,16 @@ subspace-core.workspace = true
 subspace-charts.workspace = true
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 roxmltree = "0.21"
-# The gh CLI account behind a credential, for the chat identity.
-subspace-client-github.workspace = true
+# The gh CLI account behind a credential, for the Copilot chat identity.
+subspace-client-github = { workspace = true, optional = true }
 base64.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-dirs.workspace = true
+dirs = { workspace = true, optional = true }
 # Canvas is experimental; keep the tested SDK and its bundled CLI together.
 # Keep `failure::SDK_VERSION` equal to this pin; a test checks it.
-github-copilot-sdk = "=1.0.34"
+github-copilot-sdk = { version = "=1.0.34", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process", "io-util"] }
 async-trait = "0.1"
 

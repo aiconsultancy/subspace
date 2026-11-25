@@ -94,7 +94,9 @@ const DEFAULT_WIDTH: f32 = 420.;
 const DEFAULT_CANVAS_WIDTH: f32 = 380.;
 /// Leave a title/tab lane beside header actions; their measured row overflows.
 const HEADER_ACTION_MAX_SHARE: f32 = 0.75;
-/// The first chat id the panel assigns itself, past the restored range.
+/// The first chat id the panel assigns itself. The runtime numbers the tabs
+/// it restores from 1, so the panel's own ids start past that range and never
+/// collide with them.
 const FIRST_CHAT: ChatId = subspace_agent::MAX_CHATS as ChatId + 1;
 const MIN_WIDTH: f32 = 300.;
 const MAX_WIDTH_FRACTION: f32 = 0.6;
@@ -164,6 +166,9 @@ enum Preference {
 
 pub struct ChatPanel {
     engine: ChatEngine,
+    /// The config file selects Copilot, which this build does not include:
+    /// the panel is off and says why, and the file keeps the choice.
+    copilot_kept: bool,
     /// The configured ACP agent, which names the engine when it is ACP.
     acp_agent: subspace_agent::AcpAgent,
     handle: Option<AgentHandle>,
@@ -219,7 +224,12 @@ impl EventEmitter<ChatPanelEvent> for ChatPanel {}
 
 impl ChatPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::with_engine(configured_engine(cx), window, cx)
+        let (engine, copilot_kept) =
+            engine::runnable(configured_engine(cx), subspace_agent::COPILOT_BUILT_IN);
+        Self {
+            copilot_kept,
+            ..Self::with_engine(engine, window, cx)
+        }
     }
 
     fn with_engine(engine: ChatEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -240,6 +250,7 @@ impl ChatPanel {
         ];
         Self {
             engine,
+            copilot_kept: false,
             acp_agent: configured_acp_agent(cx),
             handle: None,
             input,
@@ -247,8 +258,6 @@ impl ChatPanel {
             slash,
             tabs: vec![Tab::new(1)],
             active: 0,
-            // The runtime numbers the tabs it restores from 1, so the panel's
-            // own ids start past that range and never collide with them.
             next_chat: FIRST_CHAT,
             renaming: None,
             rename_input,

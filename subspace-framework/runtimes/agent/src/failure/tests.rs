@@ -220,7 +220,9 @@ fn every_category_has_a_title_an_action_and_a_round_tripping_slug() {
 fn the_sdk_version_matches_the_cargo_pin() {
     let manifest = include_str!("../../Cargo.toml");
     assert!(
-        manifest.contains(&format!("github-copilot-sdk = \"={SDK_VERSION}\"")),
+        manifest.contains(&format!(
+            "github-copilot-sdk = {{ version = \"={SDK_VERSION}\", optional = true }}"
+        )),
         "update SDK_VERSION with the github-copilot-sdk pin"
     );
 }

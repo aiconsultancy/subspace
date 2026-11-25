@@ -2,19 +2,23 @@
 //! with attached references folded to their labels and one line per tool
 //! call. The formatting is pure; only the read and the write are not.
 
+#[cfg(feature = "copilot")]
 use super::{
-    ATTACHMENT_MARKER, Client, Entry, EventLogReadRequest, EventsReadDirection, Path, Session,
-    SessionEvent, SessionId, SessionsReadPersistedEventsRequest, ToolStatus, TranscriptEntry,
-    history_entries, state,
+    Client, EventLogReadRequest, EventsReadDirection, Session, SessionEvent, SessionId,
+    SessionsReadPersistedEventsRequest, history_entries,
 };
-use crate::ToolCall;
+use super::{Entry, Path, ToolStatus, TranscriptEntry, state};
+use crate::{ATTACHMENT_MARKER, ToolCall};
 
 /// Events read per page, and the most pages one export reads, so a very long
 /// chat cannot hold the runtime.
+#[cfg(feature = "copilot")]
 const PAGE: i64 = 200;
+#[cfg(feature = "copilot")]
 const MAX_PAGES: usize = 50;
 
 /// The saved events of a chat that is not open, read without resuming it.
+#[cfg(feature = "copilot")]
 pub(super) async fn session_history(
     client: &Client,
     session: SessionId,
@@ -45,6 +49,7 @@ pub(super) async fn session_history(
 /// The events of an open chat, read from its journal rather than from
 /// `session.getMessages`: that call returns the messages alone, so a replay
 /// built from it loses every tool call the conversation made.
+#[cfg(feature = "copilot")]
 pub(super) async fn open_session_events(session: &Session) -> Result<Vec<SessionEvent>, String> {
     let mut events = Vec::new();
     let mut cursor = None;
@@ -73,6 +78,7 @@ pub(super) async fn open_session_events(session: &Session) -> Result<Vec<Session
 }
 
 /// The transcript as Markdown, led by the chat's name.
+#[cfg(feature = "copilot")]
 pub(super) fn markdown(title: &str, entries: &[TranscriptEntry]) -> String {
     markdown_with_agent(title, entries, "Copilot")
 }
@@ -158,8 +164,12 @@ pub(super) fn write_export(path: &Path, text: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{export_file_name, markdown, tool_line};
+    use super::{export_file_name, markdown_with_agent, tool_line};
     use crate::{ATTACHMENT_MARKER, Entry, ToolCall, ToolStatus, TranscriptEntry};
+
+    fn markdown(title: &str, entries: &[TranscriptEntry]) -> String {
+        markdown_with_agent(title, entries, "Copilot")
+    }
 
     fn entry(id: &str, entry: Entry) -> TranscriptEntry {
         TranscriptEntry {
