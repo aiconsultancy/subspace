@@ -109,6 +109,16 @@ class UsageGuardAnswersTests(unittest.TestCase):
             self.assertEqual(on, {**off, "enabled": True})
             self.assertIn("Codex 35% warning / 15% cutoff", runtime.usage_guard_line(on, {"account": "atlas"}))
 
+    def test_cli_overrides_can_repair_a_saved_partial_policy(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
+            (Path(root) / "fleet.json").write_text(json.dumps({"usageGuard": {"claude": {"cutoff": 22}}}))
+            with self.assertRaisesRegex(fleet_setup.SetupError, "must be lower"):
+                fleet_setup.usage_guard_answers(fleet_setup.parse_args([]), {})
+            args = fleet_setup.parse_args(["--usage-guard-warning", "claude=25"])
+            limits = fleet_setup.usage_guard_answers(args, {})
+            self.assertEqual(limits["claude"], {"warning": 25, "cutoff": 22})
+            self.assertEqual(limits["codex"], {"warning": 20, "cutoff": 10})
+
     def test_bad_provider_range_and_order_are_rejected(self):
         with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
             for argument, value, message in (

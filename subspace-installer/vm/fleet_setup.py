@@ -1078,7 +1078,8 @@ def latest_stargate():
 def usage_guard_answers(args, answers):
     try:
         installed = read_json(INPUTS / "fleet.json", {}) or {}
-        guard = runtime.usage_guard_config(installed.get("usageGuard", answers.get("usageGuard", {})))
+        saved = installed.get("usageGuard", answers.get("usageGuard", {}))
+        guard = dict(runtime.fields(saved, "usageGuard", "enabled claude codex"))
         if args.usage_guard is not None:
             guard["enabled"] = args.usage_guard
         for key in ("warning", "cutoff"):
@@ -1089,7 +1090,8 @@ def usage_guard_answers(args, answers):
                 require((not provider or provider in runtime.PROVIDERS) and re.fullmatch(r"[0-9]{1,2}", number),
                         f"--usage-guard-{key} expects [claude=|codex=]PERCENT from 0 to 99.")
                 for name in (provider,) if provider else runtime.PROVIDERS:
-                    guard[name][key] = int(number)
+                    provider_limits = runtime.fields(guard.get(name, {}), f"usageGuard.{name}", "warning cutoff")
+                    guard[name] = {**provider_limits, key: int(number)}
         return runtime.usage_guard_config(guard)
     except runtime.Invalid as error:
         raise SetupError(str(error)) from None
