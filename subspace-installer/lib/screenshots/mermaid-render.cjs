@@ -1,5 +1,5 @@
 const { readFileSync } = require("node:fs");
-const { writeFile } = require("node:fs/promises");
+const { mkdir, writeFile } = require("node:fs/promises");
 const { dirname, extname, join } = require("node:path");
 const { chromium } = require("playwright");
 
@@ -40,6 +40,7 @@ async function main(args) {
             return new XMLSerializer().serializeToString(diagram);
         }, definition);
         if (format === ".svg") {
+            await mkdir(dirname(output), { recursive: true });
             await writeFile(output, svg);
         } else {
             await page.locator("main > svg").screenshot({ path: output, type: "png" });

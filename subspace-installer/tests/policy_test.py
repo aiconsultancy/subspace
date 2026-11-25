@@ -816,9 +816,13 @@ class CaptainPolicyTests(unittest.TestCase):
         self.assertEqual(fixture.opencode_decision(rules, "external_directory", ["/tmp/*"]), "allow")
 
     def test_the_rear_admiral_can_render_a_diagram_from_standard_input(self):
-        rear = captain_fleet()["members"][0]
+        config = captain_fleet()
+        rear = config["members"][0]
         rules = rear["harness"]["permissions"]
-        self.assertEqual(fixture.opencode_decision(rules, "shell", ["mermaid-render - diagram.png"]), "allow")
+        command = 'mermaid-render - "${TMPDIR:-/tmp}/diagram.png"'
+        instructions = roles.role_documents(config, rear, Path("/references/example"), Path("/example"))["instructions"]
+        self.assertIn(command, instructions)
+        self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow")
         self.assertEqual(fixture.opencode_decision(rules, "edit", ["diagram.mmd"]), "deny")
 
     def test_a_standard_captain_keeps_its_policy_and_reads_its_crews_worktrees(self):

@@ -159,14 +159,13 @@ def install_packages(pinned, manifest, lock):
                             "PATH": f"{node(pinned).parent}:{toolchains.BASE_PATH}", "HOME": "/root",
                             "npm_config_cache": str(stage / "cache"), "npm_config_update_notifier": "false"})
         backup = stage / "previous-node-modules"
-        if modules.exists():
-            modules.rename(backup)
         try:
+            if modules.exists():
+                modules.rename(backup)
             (stage / modules.name).rename(modules)
-        except OSError:
-            if backup.exists():
+        finally:
+            if backup.exists() and not modules.exists():
                 backup.rename(modules)
-            raise
     write_file(PLAYWRIGHT / "package.json", manifest, 0o644)
     write_file(PLAYWRIGHT / "package-lock.json", lock, 0o644)
 

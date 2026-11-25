@@ -1106,6 +1106,28 @@ class ScreenshotTests(unittest.TestCase):
         self.assertEqual(screenshots.installed_version("playwright"), self.pins["playwright"])
         self.assertEqual(lock.read_text(), "prior lockfile")
 
+    def test_interrupting_the_package_swap_restores_installed_playwright(self):
+        screenshots.PLAYWRIGHT.mkdir()
+        modules = screenshots.PLAYWRIGHT / "node_modules"
+        existing = modules / "playwright"
+        existing.mkdir(parents=True)
+        (existing / "package.json").write_text('{"version": "old"}')
+
+        def install(command, **options):
+            (options["cwd"] / "node_modules").mkdir()
+
+        rename = Path.rename
+
+        def interrupt(source, target):
+            if source.name == modules.name and target == modules:
+                raise KeyboardInterrupt
+            return rename(source, target)
+
+        with patch.object(screenshots.subprocess, "run", side_effect=install), patch.object(Path, "rename", interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                screenshots.install_packages(self.pins, "{}", "{}")
+        self.assertEqual(screenshots.installed_version("playwright"), "old")
+
     def test_a_crew_user_takes_page_and_mermaid_screenshots(self):
         calls = []
         shot = self.root / "shot"
