@@ -1216,6 +1216,76 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     ).toBe(false);
   });
 
+  test("a rear admiral reconstructs documents, attachments and chat uploads without splitting characters", async () => {
+    const issue = await createIssue("Long text fixture");
+    const content = "a".repeat(1535) + "🛰" + "\r\n" + "z".repeat(3300) + "🪐";
+    const doc = await call<{ reference: string }>(
+      201,
+      `/issues/${issue.id}/documents`,
+      "admin",
+      "POST",
+      { type: "spec", title: "Fixture", content },
+    );
+    const chat = await call<{ reference: string }>(201, "/chat/uploads", "admin", "POST", {
+      uploadId: crypto.randomUUID(),
+      fileName: "note.md",
+      contentType: "text/markdown",
+      base64: Buffer.from(content).toString("base64"),
+    });
+    const form = new FormData();
+    form.append("file", new Blob([content], { type: "text/markdown" }), "note.md");
+    const upload = await fetch(`${origin}/api/v1/issues/${issue.id}/attachments`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tokens.get("admin")}` },
+      body: form,
+    });
+    expect(upload.status).toBe(201);
+    const { mediaId } = (await upload.json()) as { mediaId: string };
+    type TextPage = {
+      text: string;
+      offset: number;
+      nextOffset: number | null;
+      revision: number | null;
+    };
+    for (const [kind, reference] of [
+      ["document", doc.reference],
+      ["attachment", mediaId],
+      ["chatUpload", chat.reference],
+    ] as const) {
+      const name = "subspace_read_text_page";
+      expect((await tool(name, { kind, reference }, "other")).isError).toBe(true);
+      let offset: number | null = 0;
+      let revision: number | undefined;
+      let joined = "";
+      do {
+        const response = await tool<TextPage>(
+          name,
+          { kind, reference, offset, revision },
+          "rearAdmiral",
+        );
+        expect(response.isError).toBe(false);
+        const page: TextPage = response.structuredContent;
+        expect(page.offset).toBe(Buffer.byteLength(joined));
+        expect(Buffer.byteLength(page.text)).toBeLessThanOrEqual(1536);
+        if (offset === 0 && kind === "document") {
+          await call(200, `/documents/${reference}`, "admin", "PUT", {
+            baseRevision: 1,
+            content: "Revised",
+          });
+          expect((await tool(name, { kind, reference, offset: page.nextOffset })).isError).toBe(
+            true,
+          );
+        }
+        revision = page.revision ?? undefined;
+        joined += page.text;
+        offset = page.nextOffset;
+        if (offset !== null) expect(offset).toBe(Buffer.byteLength(joined));
+      } while (offset !== null);
+      expect(joined).toBe(content);
+      expect((await tool(name, { kind, reference, offset: 1536, revision })).isError).toBe(true);
+    }
+  });
+
   test("desktop Markdown media references resolve and keep attached bytes available", async () => {
     const issue = await createIssue("Desktop image fixture");
     const form = new FormData();

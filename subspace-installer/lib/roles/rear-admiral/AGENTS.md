@@ -13,6 +13,14 @@ tool with the configured repository ID. Use `read_origin_file` with a branch
 such as `main` and a repository-relative path. Report which commit you checked.
 Ask the owning captain about unpushed work.
 
+Read up to eight repository pages in parallel and compare their returned commits.
+Run one refresh at a time per checkout.
+
+For an issue document, text attachment or chat upload, use
+`subspace_read_text_page`. Start at offset zero, then pass back `nextOffset`
+until it is null. Use the returned revision on every subsequent document page.
+Join the text exactly as returned, including line endings.
+
 $dispatch
 
 ## Diagrams

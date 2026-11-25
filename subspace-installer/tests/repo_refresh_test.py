@@ -1,4 +1,8 @@
 """Exercise a real fetch into the rear admiral's reference checkout."""
+import io
+import json
+from threading import Barrier
+from unittest.mock import patch
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -22,6 +26,33 @@ def git(directory, *args):
 
 
 class ReferenceRefresh(unittest.TestCase):
+    def test_reads_overlap_on_one_mcp_connection(self):
+        readers = Barrier(5, timeout=5)
+
+        def read(_tool, arguments):
+            readers.wait()
+            return {'startLine': arguments['startLine']}
+
+        requests = [{'id': n, 'method': 'tools/call', 'params': {'name': refresh.READ,
+                     'arguments': {'repository': 'demo', 'branch': 'main', 'path': 'README',
+                                   'startLine': n}}} for n in range(1, 6)]
+        stream = io.BytesIO(b''.join(json.dumps(req).encode() + b'\n' for req in requests))
+        output = io.StringIO()
+        with patch.object(refresh, 'ask', side_effect=read):
+            refresh.mcp(stream, output)
+        replies = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(sorted(r['id'] for r in replies), list(range(1, 6)))
+        for reply in replies:
+            self.assertEqual(json.loads(reply['result']['content'][0]['text'])['startLine'], reply['id'])
+
+    def test_fetch_lock_is_per_checkout(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            with refresh.refresh_lock(a), refresh.refresh_lock(b):
+                with self.assertRaises(BlockingIOError), refresh.refresh_lock(a):
+                    self.fail('Concurrent fetch entered the same checkout')
+            with refresh.refresh_lock(a):
+                pass
+
     def test_fetch_published_refs_without_touching_checkout(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
