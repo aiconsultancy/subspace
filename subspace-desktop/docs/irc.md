@@ -469,7 +469,12 @@ in `live.rs` and `live/`.
   view, but only while it is on screen: the Space in front, the inspector
   shown on a ship's Ship tab; an ordinary conversation, a Starbase or a
   hidden view asks for nothing); and
-  **Here now**, the channel's members. **Starbase**: **Ships**, one row
+  **Here now**, the channel's members. The captain card's **Activity**
+  action (`view/inspector/activity.rs`) shows the captain's turns in the
+  tab, newest first, under **Back to Ship**: steps, tool calls and text in
+  full, joined live from the fleet's one event stream
+  ([Channels officer activity](changes/channels-officer-activity/README.md)).
+  **Starbase**: **Ships**, one row
   each with the captain's icon, name, state and `avatar::crew_meter`.
   While the fleet is not live the tab says why in one sentence
   (`view/inspector/reason.rs`): the state's `label()` and its `help()`, and

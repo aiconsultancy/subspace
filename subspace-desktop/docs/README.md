@@ -234,6 +234,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels fleet live](changes/channels-fleet-live/README.md): each
   fleet's live state from its Fleet API in Channels: a ship's dot, the
   header pill and the Ship, Starbase and People inspector tabs.
+- [Channels officer activity](changes/channels-officer-activity/README.md):
+  the captain's turns from the Ship tab's Activity action, joined live from
+  the fleet's one event stream, with paged items loaded in full.
 - [Channels Thread tab](changes/channels-thread-tab/README.md): the
   inspector's Thread tab with a request's status timeline and its replies,
   reply counts and status lines that open it, and reply mode.
