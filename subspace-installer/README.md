@@ -687,9 +687,15 @@ every fleet VM gets the means in its base install, whatever its toolchains:
   those browsers. Officers and crew have no outbound network to download a
   browser, so it never does: `playwright screenshot https://example.com
   shot.png`, or `playwright screenshot --full-page` for a whole page.
+- **Mermaid rendering**: `mermaid-render diagram.mmd diagram.svg` exports
+  a vector diagram and `mermaid-render diagram.mmd diagram.png` takes a
+  screenshot of just the diagram. Write the Mermaid syntax in the `.mmd`
+  file without Markdown fences. The command uses the installed browser
+  offline so private diagrams stay on the VM. The rear admiral can also pass
+  `-` as the input to author a diagram on standard input.
 
 Every version is pinned in one place,
-[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright
+[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright and Mermaid
 (with its `package-lock.json`, so `npm ci` checks each package's integrity
 hash and runs no package scripts), the Chromium revision that Playwright
 names, the Node that runs it, and the distribution packages for Ubuntu
@@ -700,10 +706,10 @@ fleet gains the tools on its next run and its dry run says so. A package
 apt does not offer, or a browser download that fails, is reported and does
 not stop the install; the next run tries again.
 
-After every install, the installer checks that a crew member can take one
-screenshot of a local page: as the user of a captain with crew, with its
-tool environment, under `xvfb-run`. It prints `Screenshot check ... PASS` or a
-`WARNING` with what failed, and never fails the install.
+After every install, the installer takes a screenshot of a local page under
+`xvfb-run` and renders a Mermaid PNG. It runs both with the tool environment
+of a captain with crew when one is available. It prints `Screenshot check ...
+PASS` or a warning identifying the failing command, and continues the install.
 
 A repository's own Playwright downloads its own browsers into the officer's
 `~/.cache/ms-playwright`, which needs network the lockdown does not give
@@ -714,7 +720,8 @@ To do without them, set `"screenshots": false` in `fleet.json` (on a VM set
 up with `subspace-setup`, `/root/fleet/fleet.json`, which setup keeps) and run
 the installer or `sudo subspace-setup` again. Nothing is removed; to remove
 what an earlier run installed, `sudo rm -rf /opt/subspace-fleet/playwright
-/opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright` (the
+/opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright
+/opt/subspace-fleet/bin/mermaid-render` (the
 distribution packages stay).
 
 ### Toolchains
@@ -2498,7 +2505,7 @@ whether at its cap or with the whole VM out of memory.
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
 | `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust`, `dotnet` and `yarn` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
 | `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
-| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots): Xvfb with keyboard maps, fonts, and Playwright with its Chromium. `false` installs nothing for them and leaves in place what an earlier run installed. |
+| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots), including Xvfb with keyboard maps and fonts, Playwright with its Chromium, and offline Mermaid rendering. `false` installs nothing for them and leaves in place what an earlier run installed. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap), or `auto` for the installer's own value. Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. `localApi: true` says the Subspace API and its PostgreSQL run on this VM, so the sizing leaves them their room; `subspace-setup` sets it whenever it runs the API here. |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
@@ -2701,7 +2708,7 @@ one is refused, none of them is applied.
   fonts and the browser's libraries from apt, Node 24 into the shared store
   if it has not got that version, Playwright into `/opt/subspace-fleet/playwright`
   and its Chromium into `/opt/subspace-fleet/browsers` (several hundred
-  megabytes), and `playwright` on the officers' `PATH`. The dry run lists
+  megabytes), and `playwright` and `mermaid-render` on the officers' `PATH`. The dry run lists
   what it adds. `"screenshots": false` in `fleet.json` leaves them out.
 - **Memory limits and swap.** The upgrade gives every officer's engine
   [memory and task limits](#memory-limits-and-swap) sized for the VM, with

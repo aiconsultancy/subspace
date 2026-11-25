@@ -388,10 +388,10 @@ fi
 for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py repo_refresh.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
 done
-# The screenshot tools' pinned versions, which runtime.py render installs from.
+# The screenshot tools' pinned versions and renderer, which runtime.py render installs from.
 install -d -m 0755 "$app/lib/screenshots"
-for pins in package.json package-lock.json; do
-    install_file "$here/lib/screenshots/$pins" "$app/lib/screenshots/$pins" 0644
+for asset in package.json package-lock.json mermaid-render.cjs; do
+    install_file "$here/lib/screenshots/$asset" "$app/lib/screenshots/$asset" 0644
 done
 install -d -m 0755 "$app/lib/git-hooks"
 install_file "$here/lib/git-hooks/pre-push" "$app/lib/git-hooks/pre-push" 0755
