@@ -55,6 +55,9 @@ pub(crate) enum Effect {
     Install(u64, SiteCookie),
     /// Show the view opened for this attempt, loading this address.
     Show(u64, String),
+    /// Drop the view opened for this attempt, which never showed, with its
+    /// store.
+    Discard(u64),
     /// Tell the page its session was renewed.
     Renewed,
     /// Load this address again, the page the view showed, after a renewal
@@ -140,10 +143,7 @@ impl Session {
             _ if expired => self.end(here),
             Phase::Ready if shown => self.acquire(Base::Fresh { resume: None }),
             Phase::Live(live) if live.renew.is_some_and(|renew| renew.passed(now)) => {
-                self.acquire(Base::Renewal {
-                    live,
-                    signalled: false,
-                })
+                self.acquire(live.renewal(false))
             }
             phase => self.keep(phase),
         }
@@ -173,7 +173,8 @@ impl Session {
     /// only once the store confirms its cookie. A renewal the store
     /// refused, or did not confirm in time, ends the session and closes the
     /// view: the store may hold, or still write, a cookie whose grant would
-    /// otherwise be revoked while the page uses it.
+    /// otherwise be revoked while the page uses it. A new view the store
+    /// failed is dropped, with its store, before it ever shows.
     pub(crate) fn installed(
         &mut self,
         attempt: u64,
@@ -195,7 +196,9 @@ impl Session {
                 self.ended_with(NOT_INSTALLED.into(), here)
             }
             (_, base @ Base::Fresh { .. }) => {
-                self.failed(base, SessionFailure::action(NOT_INSTALLED), now)
+                let mut effects = vec![Effect::Discard(attempt)];
+                effects.extend(self.failed(base, SessionFailure::action(NOT_INSTALLED), now));
+                effects
             }
         }
     }
@@ -223,7 +226,8 @@ impl Session {
     /// The site sent the view to its signal: renew now and return to the
     /// page. Another signal soon after the page went back, or after
     /// renewing failed for good, ends the session; while a failed renewal
-    /// waits to try again, the signal waits with it.
+    /// waits to try again, the signal waits with it, and the page returns
+    /// once a renewal succeeds.
     pub(crate) fn signal(&mut self, now: Now, here: Here) -> Vec<Effect> {
         match self.take() {
             Phase::Live(live)
@@ -232,11 +236,8 @@ impl Session {
             {
                 self.end(here)
             }
-            Phase::Live(live) if live.retrying() => self.keep(Phase::Live(live)),
-            Phase::Live(live) => self.acquire(Base::Renewal {
-                live,
-                signalled: true,
-            }),
+            Phase::Live(live) if live.retrying() => self.keep(Phase::Live(live.signal_waits())),
+            Phase::Live(live) => self.acquire(live.renewal(true)),
             Phase::Acquiring { attempt, base } => self.keep(Phase::Acquiring {
                 attempt,
                 base: base.signalled(),
@@ -268,10 +269,7 @@ impl Session {
     pub(crate) fn retry(&mut self) -> Vec<Effect> {
         match self.take() {
             Phase::Ended { resume, .. } => self.acquire(Base::Fresh { resume }),
-            Phase::Live(live) if live.renew.is_none() => self.acquire(Base::Renewal {
-                live,
-                signalled: false,
-            }),
+            Phase::Live(live) if live.renew.is_none() => self.acquire(live.renewal(false)),
             phase => self.keep(phase),
         }
     }
@@ -353,8 +351,8 @@ impl Session {
                 };
                 Vec::new()
             }
-            Base::Renewal { live, .. } => {
-                self.phase = Phase::Live(live.retry_later(failure.transient, now));
+            Base::Renewal { live, signalled } => {
+                self.phase = Phase::Live(live.retry_later(failure.transient, signalled, now));
                 vec![Effect::Notice(failure.message)]
             }
         }
