@@ -261,6 +261,9 @@ the tracker when the choice applies to the whole work stream.
   `subspace_unarchive_document` and `subspace_list_document_revisions`.
 - **Reviews**: `subspace_get_review_requirements`, `subspace_record_review`,
   `subspace_list_reviews` and `subspace_get_review_status`.
+- **Chat files**: use `subspace_read_chat_upload` when advertised with the
+  visible `UPL-…` reference. It returns short text or a base64 chunk and the
+  next byte offset. For the whole file, use its authenticated content URL.
 - **Text pages**: use `subspace_read_text_page` when advertised to read an issue
   document, text attachment or chat upload. Append `text` and pass `nextOffset`
   and the returned document revision until `nextOffset` is null. When available, use

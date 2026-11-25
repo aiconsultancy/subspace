@@ -20,6 +20,7 @@ type Kind = "image" | "file";
 const maxChatBytes = 25_000_000;
 const maxIssueBytes = 10_000_000;
 const chatExpiration = 30 * 86_400_000;
+const chatUploadChunkBytes = 32_768;
 
 const scope = (member: Member) => eq(uploads.organisationId, member.organisationId);
 export const digest = (data: Uint8Array) =>
@@ -198,8 +199,40 @@ function readBytes(row: Row) {
   );
 }
 
+function readRange(row: Row, offset: number, length: number) {
+  return Effect.gen(function* () {
+    if (!length) return new Uint8Array();
+    const store = yield* Storage;
+    const bytes = yield* storageOperation(() => store.range(objectKey(row), offset, length)).pipe(
+      Effect.mapError(() => problem(503, "The file is temporarily unavailable.")),
+    );
+    if (bytes.length !== length) return yield* Effect.fail(problem(503, "The file is incomplete."));
+    return bytes;
+  });
+}
+
 export const chatBytes = (member: Member, ref: string) =>
   Effect.flatMap(Database, (db) => Effect.flatMap(readChat(db, member, ref), readBytes));
+
+export const readChatUpload = (member: Member, ref: string, offset: number) =>
+  Effect.gen(function* () {
+    const row = yield* readChat(yield* Database, member, ref);
+    if (offset > row.sizeBytes)
+      return yield* Effect.fail(problem(400, "The byte offset exceeds the file size."));
+    const length = Math.min(chatUploadChunkBytes, row.sizeBytes - offset);
+    const wholeFile = offset === 0 && length === row.sizeBytes;
+    const chunk = yield* wholeFile ? verifiedBytes(row) : readRange(row, offset, length);
+    const nextOffset = offset + length;
+    return {
+      ...fileFacts(row),
+      reference: ref,
+      offset,
+      nextOffset: nextOffset < row.sizeBytes ? nextOffset : null,
+      ...(wholeFile && row.contentType.startsWith("text/")
+        ? { text: new TextDecoder().decode(chunk) }
+        : { base64: Buffer.from(chunk).toString("base64") }),
+    };
+  });
 
 export const resolveUploads = (member: Member, refs: readonly string[]) =>
   Effect.gen(function* () {
@@ -451,14 +484,7 @@ export const mediaTextRange = (
     if (offset > size)
       return yield* Effect.fail(problem(400, "The offset is beyond the end of the text."));
     const length = Math.min(limit, size - offset);
-    const store = yield* Storage;
-    const bytes = length
-      ? yield* storageOperation(() => store.range(objectKey(row), offset, length)).pipe(
-          Effect.mapError(() => problem(503, "The file is temporarily unavailable.")),
-        )
-      : new Uint8Array();
-    if (bytes.length !== length) return yield* Effect.fail(problem(503, "The file is incomplete."));
-    return { bytes, size };
+    return { bytes: yield* readRange(row, offset, length), size };
   });
 
 export const deleteMedia = (member: Member, id: string, kind: Kind) =>

@@ -26,3 +26,7 @@ $completion
 
 Follow the usage guard guidance in your officer instructions when a ship
 notice names a provider.
+
+Include the `UPL-…` reference and file name when assigning work that needs
+a chat upload. Use `subspace_read_chat_upload` if you received the reference
+as text.

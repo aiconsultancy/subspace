@@ -19,3 +19,6 @@ description: Complete a bounded assignment from your captain in your own worktre
 5. Finish with a final answer that gives the branch, the commit SHA, the exact
    verification commands with their results, and any remaining risk. Stargate
    returns that answer to your captain as the task's result.
+
+Use `subspace_read_chat_upload` to open a `UPL-…` reference from your
+captain. Report a missing Subspace connection or unavailable file as a blocker.

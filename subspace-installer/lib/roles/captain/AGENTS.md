@@ -47,6 +47,13 @@ within any remaining warning limit.
 
 ## Images and files in IRC
 
+A human can attach a file and address you in the same IRC message. The
+message shows the `UPL-…` reference. Stargate hands supported files to your
+session using your Subspace identity. If it reports a missing attachment or
+only the reference arrives, use `subspace_read_chat_upload` when advertised,
+or request `/api/v1/chat/uploads/<reference>/content` with your existing
+Subspace access. Keep the reference when handing a file to crew.
+
 If the API advertises `subspace_view_image`, inspect an issue image or chat upload with
 `kind: "attachment"` and its media UUID, or `kind: "chatUpload"` and its UPL
 reference. Inspect the returned image with a vision-capable model. Use

@@ -508,6 +508,15 @@ such as a symbolic link, it leaves both files unchanged and says so.
 
 ### Instructions, permissions and toolchains
 
+When a person attaches a file and addresses an officer in the same IRC
+message, the desktop shows a `UPL-…` reference. With the hosted Subspace
+bridge, Stargate reads supported attachments as that officer. If the
+session cannot take the attachment, the reference stays in the request.
+The officer and its crew can use `subspace_read_chat_upload` when advertised,
+or the authenticated `/api/v1/chat/uploads/<reference>/content` route. Pass
+the reference in crew assignments. Active members of the organisation can
+read the same file for 30 days.
+
 The installer renders role-specific OpenCode `AGENTS.md` and
 `skills/fleet-*/SKILL.md` under the rear admiral's and each captain's
 `~/.config/opencode/` using the fleet name, agent name and assigned channel.

@@ -1597,6 +1597,19 @@ class OfficerSlackTests(unittest.TestCase):
         self.assertNotIn("s=slack", rear)
         self.assertNotIn("$", captain)
 
+    def test_shared_chat_upload_guidance_reaches_officers_and_crew(self):
+        cfg = validate(self.config, self.secrets)
+        home = Path("/var/lib/subspace-fleet/agents/example-captain")
+        rear, captain = (roles.role_documents(cfg, person, Path("/references/example"), home)
+                         for person in cfg["members"])
+        for documents, role in ((rear, "rear-admiral"), (captain, "captain")):
+            for content in (documents["instructions"], documents["skills"][f"fleet-{role}"]):
+                self.assertIn("UPL-…", content)
+                self.assertIn("subspace_read_chat_upload", content)
+        self.assertTrue(captain["crew"])
+        for prompt in (*captain["crew"].values(), captain["skills"]["fleet-crew"]):
+            self.assertIn("subspace_read_chat_upload", prompt)
+
     def test_a_workspace_rooted_captain_keeps_its_slack_guidance_beside_the_workspace_instructions(self):
         # The workspace AGENTS.md is the project file OpenCode loads in the workspace; the role instructions with
         # the Slack section are its global file. Both are written as the captain, and neither replaces the other.

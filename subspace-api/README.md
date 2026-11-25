@@ -1103,6 +1103,14 @@ verification. File storage supports local disk and private S3-compatible storage
 
 ## Images and files in IRC
 
+Use `subspace_read_chat_upload` with a visible `UPL-…` reference to read a
+shared file as the signed-in member or officer. It returns text for a small
+text file, or up to 32 KiB of bytes as base64. Pass the returned `nextOffset`
+to continue, or get the original file from its authenticated content URL.
+The upload must be ready, unexpired and in the caller's organisation.
+For a complete paged download, compare the assembled bytes with the returned
+SHA-256.
+
 To inspect an issue image or chat upload, use `subspace_view_image` with
 `kind: "attachment"` and its media UUID, or `kind: "chatUpload"` and its UPL
 reference. Inspect the returned image with a vision-capable model. Use
