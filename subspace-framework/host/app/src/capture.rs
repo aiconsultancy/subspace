@@ -15,8 +15,10 @@
 //! in the state after an update to `<version>` installed, without installing
 //! anything; `resize` sets the window's content size, for a start with no
 //! saved window bounds. Actions dispatch at the app root independently of focus.
-//! A link opens its target Space only if that Space accepts the route. Each
-//! key step focuses the active Space, then sends its sequence to normal focus;
+//! A link opens its target Space only if that Space accepts the route. Commas
+//! after the Space ID are part of the URL. A literal semicolon ends the step,
+//! so use `%3B` in the URL instead. Each key step focuses the active Space,
+//! then sends its sequence to normal focus;
 //! type steps preserve focus. The initial Space is the first unless fixture
 //! state sets `app.dashboard`. The default waits four
 //! seconds and takes one `main` shot.
