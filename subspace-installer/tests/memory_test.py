@@ -368,6 +368,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(runtime.memory_plan(cfg, VMS[16])["reserve"], memory.reserve(True, True))
         self.assertEqual(runtime.memory_plan(runtime.validate(fleet(1), {"proxyKey": "fixture-model-proxy-key"}),
                                              VMS[16])["reserve"], memory.RESERVE)
+        # An API that signs in with WorkOS or Entra has no api block, and still runs here: memory.localApi says so.
+        cfg = runtime.validate(fleet(1, memory={"localApi": True}), {"proxyKey": "fixture-model-proxy-key"})
+        self.assertIsNone(cfg["api"])
+        self.assertEqual(runtime.memory_plan(cfg, VMS[16])["reserve"], memory.reserve(api_here=True))
+        self.assertEqual(shape(runtime.memory_plan(cfg, VMS[16])["limits"]["orion"]), ("10G", "9G", "2G"))
+        with self.assertRaisesRegex(runtime.Invalid, "memory.localApi must be true or false"):
+            runtime.validate(fleet(1, memory={"localApi": "yes"}), {"proxyKey": "fixture-model-proxy-key"})
 
 
 SET_PROPERTY = "# This is a drop-in unit file extension, created via \"systemctl set-property\"\n" \

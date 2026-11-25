@@ -164,11 +164,32 @@ class SetupInputsTests(unittest.TestCase):
         self.assertIn("dispatch", bundle["channels"][1]["topic"])
         self.assertEqual(bundle["humans"], ["admiral"])
 
+    def test_the_sizing_counts_the_api_setup_runs_on_this_vm_whatever_its_sign_in(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        local = runtime.memory.reserve(api_here=True, irc_here=True)
+        # With development sign-in setup writes the API's block, and without it (WorkOS or Entra) none: either way
+        # the API runs here, and the engines leave it its room.
+        for block in ({"url": "http://127.0.0.1:3000", "initiatives": []}, None):
+            with self.subTest(block=block):
+                _, _, config, secrets, _ = self.generate(base, api_block=block)
+                self.assertEqual(config["memory"], {"localApi": True})
+                cfg = validate(config, secrets, check_files=False)
+                self.assertEqual(runtime.memory_plan(cfg, 16036)["reserve"], local)
+        # A hosted API, or none: nothing runs here for it.
+        for flags in (["--api-url", "https://subspace.example.com"], ["--no-api"]):
+            with self.subTest(flags=flags):
+                _, _, config, secrets, _ = self.generate([*base, *flags])
+                self.assertNotIn("memory", config)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"memory": {"localApi": True, "swap": "4G"}})
+        _, _, config, _, _ = self.generate([*base, "--no-api"])
+        self.assertEqual(config["memory"], {"swap": "4G"})
+
     def test_memory_options_reach_fleet_json_and_are_kept(self):
         base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
         answers, members, config, secrets, _ = self.generate(
             [*base, "--captain-memory", "24G", "--rear-admiral-memory", "none", "--swap", "8G"])
-        self.assertEqual(config["memory"], {"captain": {"max": "24G"}, "rearAdmiral": {"max": "none"}, "swap": "8G"})
+        self.assertEqual(config["memory"], {"captain": {"max": "24G"}, "rearAdmiral": {"max": "none"}, "swap": "8G",
+                                            "localApi": True})
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(cfg["memory"]["captain"], {"max": 24 * 1024})
         self.assertEqual(cfg["memory"]["rear_admiral"], {"max": "none"})
@@ -183,7 +204,7 @@ class SetupInputsTests(unittest.TestCase):
             kept = fleet_setup.gather(args, answers)
         config = fleet_setup.fleet_config(kept, members, "a" * 40)
         self.assertEqual(config["memory"], {"captain": {"max": "24G", "high": "15G"}, "rearAdmiral": {"max": "none"},
-                                            "swap": "8G", "tasksMax": 2048})
+                                            "swap": "8G", "tasksMax": 2048, "localApi": True})
         # auto returns to the installer's own sizing, changing only what the option sets: a role's hard cap is
         # written as auto, and swap's default needs no entry.
         args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--captain-memory", "auto",
@@ -191,14 +212,16 @@ class SetupInputsTests(unittest.TestCase):
         with patch.object(fleet_setup.pwd, "getpwnam"):
             reset = fleet_setup.gather(args, kept)
         self.assertEqual(fleet_setup.fleet_config(reset, members, "a" * 40)["memory"],
-                         {"captain": {"max": "auto", "high": "15G"}, "rearAdmiral": {"max": "auto"}, "tasksMax": 2048})
+                         {"captain": {"max": "auto", "high": "15G"}, "rearAdmiral": {"max": "auto"}, "tasksMax": 2048,
+                          "localApi": True})
         # A fleet-wide cap set by hand reaches neither role, whose auto is the sizing for this VM, while an
         # officer's own cap still wins.
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
             **config, "memory": {"max": "16G", "captain": {"max": "12G"}},
             "captains": [{**config["captains"][0], "memory": {"max": "28G"}}, *config["captains"][1:]]})
         auto = fleet_setup.fleet_config(reset, members, "a" * 40)
-        self.assertEqual(auto["memory"], {"max": "16G", "captain": {"max": "auto"}, "rearAdmiral": {"max": "auto"}})
+        self.assertEqual(auto["memory"], {"max": "16G", "captain": {"max": "auto"}, "rearAdmiral": {"max": "auto"},
+                                          "localApi": True})
         result = runtime.memory_plan(validate(auto, secrets, check_files=False), 64154)
         plan = result["limits"]
         self.assertEqual((plan["orion"]["max"], plan["vega"]["max"], plan["atlas"]["max"]),

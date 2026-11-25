@@ -2098,7 +2098,10 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
 def memory_plan(cfg, total=None):
     """Each officer's memory and task limits for this VM (lib/memory.py), from its memory and the fleet's shape."""
     api = cfg["api"]
-    api_here = bool(api) and not enrolled(cfg) and urlsplit(api["url"]).hostname in {"localhost", LOOPBACK, "::1"}
+    # The API and its PostgreSQL run on this VM: memory.localApi, which subspace-setup sets whatever the API's
+    # sign-in (its api block is there only with development sign-in), or an api block on this VM's loopback.
+    api_here = cfg["memory"]["localApi"] or (bool(api) and not enrolled(cfg)
+                                             and urlsplit(api["url"]).hostname in {"localhost", LOOPBACK, "::1"})
     officers = [{"id": person["id"], "role": person["role"], "memory": person["memory"]} for person in cfg["members"]]
     return memory.plan(cfg["memory"], officers, memory.total_memory() if total is None else total,
                        api_here=api_here, irc_here=cfg["irc"]["mode"] == "local")

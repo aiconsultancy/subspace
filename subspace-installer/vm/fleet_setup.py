@@ -1088,6 +1088,12 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 limits["swap"] = value
             continue
         limits[key] = {**(limits.get(key) or {}), "max": value}
+    # Whether setup runs the API and its PostgreSQL on this VM, for which the installer's sizing leaves room. The api
+    # block cannot say so: setup writes it only while the API offers development sign-in, not with WorkOS or Entra.
+    if answers.get("api"):
+        limits["localApi"] = True
+    else:
+        limits.pop("localApi", None)
     if limits:
         config["memory"] = limits
     else:

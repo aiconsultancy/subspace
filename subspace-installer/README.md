@@ -1985,6 +1985,9 @@ The installer reads the VM's memory (`MemTotal`) on every run.
   under 4 GiB.
 - **The OS and the fleet's services** keep 2 GiB, plus 1 GiB when the
   Subspace API and its PostgreSQL run on the VM and 512 MiB when Ergo does.
+  The installer knows the API runs here from `memory.localApi`, which
+  `subspace-setup` sets whenever it runs the API on the VM, whatever its
+  sign-in, or from an `api.url` on this VM's loopback.
 - **The rear admiral's hard cap** is an eighth of the VM, between 1 and
   4 GiB.
 - **The soft limit** is the hard cap less a tenth, rounded down to a whole
@@ -2149,7 +2152,7 @@ process met its engine's own cap (what caps are for).
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
 | `toolchains` | Mise versions. Defaults to Node 24 plus the base OS tooling. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
-| `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap). Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. |
+| `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap), or `auto` for the installer's own value. Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. `localApi: true` says the Subspace API and its PostgreSQL run on this VM, so the sizing leaves them their room; `subspace-setup` sets it whenever it runs the API here. |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. The rear admiral posts them through `stakeholders.slack` or its own Slack bot, so one of them is required. |
 | `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) `initiatives` (array of UUIDs) and `agentUrl` (the API's agent listener on this VM's loopback, such as `http://127.0.0.1:3001`; see [The API's agent listener](#the-apis-agent-listener)), or `enrolment: true` for [a hosted Subspace API](#a-hosted-subspace-api), which excludes `agentUrl` and `apiToken`. HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |

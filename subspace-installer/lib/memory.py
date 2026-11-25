@@ -145,13 +145,17 @@ def swap_setting(value, label="memory.swap"):
 
 
 def config(value):
-    """fleet.json's memory block: fleet-wide limits, the captain and rearAdmiral blocks, and swap."""
-    allowed = {*KEYS, "swap", *ROLE_KEYS.values()}
+    """fleet.json's memory block: fleet-wide limits, the captain and rearAdmiral blocks, swap, and localApi, which
+    says the Subspace API runs on this VM (subspace-setup sets it whatever the API's sign-in)."""
+    allowed = {*KEYS, "swap", "localApi", *ROLE_KEYS.values()}
     if not isinstance(value, dict) or not value.keys() <= allowed:
-        raise Refused("memory must be an object with any of max, high, swapMax, tasksMax, captain, rearAdmiral and swap.")
+        raise Refused("memory must be an object with any of max, high, swapMax, tasksMax, captain, rearAdmiral, swap "
+                      "and localApi.")
+    if not isinstance(value.get("localApi", False), bool):
+        raise Refused("memory.localApi must be true or false.")
     return {"fleet": limits({key: value[key] for key in KEYS if key in value}, "memory"),
             **{role: limits(value.get(key, {}), f"memory.{key}") for role, key in ROLE_KEYS.items()},
-            "swap": swap_setting(value.get("swap", "auto"))}
+            "swap": swap_setting(value.get("swap", "auto")), "localApi": value.get("localApi", False)}
 
 
 def unit_size(mib):
