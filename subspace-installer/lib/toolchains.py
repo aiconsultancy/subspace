@@ -58,8 +58,11 @@ PLAIN_TOOL = r"[a-z0-9][a-z0-9._-]{0,63}"
 BACKEND_TOOL = rf"(?:{'|'.join(BACKENDS)}):@?[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9._+-]+){{0,6}}"
 VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}"
 OPTION_VALUE = r"[A-Za-z0-9._,:/@+=*{}-]{0,200}"
-# Debian package names (Debian Policy 5.6.1): lower case letters, digits, plus, minus and full stops.
-PACKAGE = r"[a-z0-9][a-z0-9+.-]{1,99}"
+# A Debian package name (Debian Policy 5.6.1: lower case letters, digits, plus, minus and full stops) as apt
+# installs it, and only installs it: never ending in a minus, which apt-get takes for "remove this package", and
+# with no version (=), release (/), architecture (:) or pattern. A trailing plus is allowed, as in g++: apt-get
+# takes a package of that exact name first, and otherwise reads the plus as "install".
+PACKAGE = r"[a-z0-9][a-z0-9+.-]{0,98}[a-z0-9+.]"
 MAX_VERSIONS = 8
 MAX_PACKAGES = 200
 MAX_TOOLS = 100
@@ -150,7 +153,8 @@ def package_config(value):
             f"systemPackages must be an array of at most {MAX_PACKAGES} package names.")
     for name in value:
         require(isinstance(name, str) and re.fullmatch(PACKAGE, name),
-                f"Invalid system package {name!r}: use a Debian package name such as libssl-dev.")
+                f"Invalid system package {name!r}: use a Debian package name such as libssl-dev, with no version, "
+                "release, pattern or trailing minus (which apt reads as a removal).")
     require(len(set(value)) == len(value), "systemPackages lists a package twice.")
     return list(value)
 
@@ -280,15 +284,20 @@ def installed(data, spec, version):
 def package_state(name):
     """installed, available, missing (in no apt source) or unknown."""
     try:
+        # From /, never the caller's working directory.
         status = subprocess.run(["dpkg-query", "-W", "-f", "${db:Status-Status}", name], capture_output=True,
-                                text=True, check=False, timeout=30)
+                                text=True, check=False, timeout=30, cwd="/")
         if status.returncode == 0 and status.stdout.strip() == "installed":
             return "installed"
-        shown = subprocess.run(["apt-cache", "show", "--no-all-versions", name], capture_output=True, text=True,
-                               check=False, timeout=30)
+        # Package names apt knows that start with this one; the name must be among them exactly, as the
+        # installer requires (apt-get would read an unknown name as a pattern).
+        known = subprocess.run(["apt-cache", "pkgnames", name], capture_output=True, text=True, check=False,
+                               timeout=30, cwd="/")
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
-    return "available" if shown.returncode == 0 and shown.stdout.strip() else "missing"
+    if known.returncode:
+        return "unknown"
+    return "available" if name in known.stdout.split() else "missing"
 
 
 def tool_state(spec, version, install, homes):
@@ -1060,7 +1069,10 @@ def ci_version(text):
 
 
 def apt_packages(command):
-    """Package names in apt-get or apt install commands, and the tokens that are not package names."""
+    """Package names in apt-get or apt install commands, and the words that are not, each as (word, reason).
+
+    Only packages to install are proposed: a word ending in a minus, which apt-get removes, a release (/), a file
+    or a pattern is reported instead. A version (=) or architecture (:) is dropped from the name proposed."""
     packages, others = [], []
     command = re.sub(r"\\\n", " ", command)
     for segment in re.split(r"&&|\|\||[;|\n]", command):
@@ -1081,12 +1093,14 @@ def apt_packages(command):
                         continue
                     elif "$" in word or "{" in word or "}" in word or "`" in word:
                         # A variable or expression: what follows is not a list of names either.
-                        others.append(word)
+                        others.append((word, "a variable or expression"))
                         break
+                    elif re.fullmatch(r"[a-z0-9][a-z0-9+.-]*-", word):
+                        others.append((word, f"apt-get removes {word[:-1]} when a name ends in a minus"))
                     elif re.fullmatch(PACKAGE, name := re.split(r"[=:]", word)[0]):
                         packages.append(name)
                     else:
-                        others.append(word)
+                        others.append((word, "not a plain package name (a file, release or pattern)"))
                 break
     return packages, others
 
@@ -1181,9 +1195,9 @@ def scan_workflow(finder, repository, rel, text):
             for package in packages:
                 finder.add("package", package, None, "medium", source_of(repository, rel, run.line,
                                                                          f"apt-get install {package}"))
-            for other in others:
+            for other, why in others:
                 finder.cannot(source_of(repository, rel, run.line, other),
-                              f"apt-get installs {other}, which is not a package name (a variable or expression)")
+                              f"apt-get is given {other}, which detection does not propose: {why}")
 
 
 def scan_compose(finder, repository, rel, text):

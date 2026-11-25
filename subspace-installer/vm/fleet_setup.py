@@ -1228,8 +1228,9 @@ def parse_package_items(value):
         if not raw:
             continue
         remove, name = raw.startswith("-"), raw.removeprefix("-")
-        require(re.fullmatch(toolchains.PACKAGE, name), f"--system-packages: {name!r} is not a Debian package name, "
-                "such as libssl-dev.")
+        require(re.fullmatch(toolchains.PACKAGE, name), f"--system-packages: {name!r} is not a Debian package name "
+                "apt installs, such as libssl-dev: no version, release, pattern or trailing minus (which apt reads "
+                "as a removal).")
         items.append((remove, name))
     return items
 

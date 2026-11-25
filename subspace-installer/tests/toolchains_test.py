@@ -11,6 +11,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -349,9 +350,23 @@ class DetectionTests(unittest.TestCase):
     def test_apt_commands(self):
         self.assertEqual(toolchains.apt_packages(
             "sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confold install -y clang=1:18 "
-            "libssl-dev:arm64 && make"), (["clang", "libssl-dev"], []))
-        self.assertEqual(toolchains.apt_packages("apt-get install -y zsh ${{ matrix.extra }} git"), (["zsh"], ["${{"]))
+            "libssl-dev:arm64 g++ && make"), (["clang", "libssl-dev", "g++"], []))
+        self.assertEqual(toolchains.apt_packages("apt-get install -y zsh ${{ matrix.extra }} git"),
+                         (["zsh"], [("${{", "a variable or expression")]))
         self.assertEqual(toolchains.apt_packages("apt-get update; apt-get remove nano"), ([], []))
+        # apt-get install removes a package whose name ends in a minus: never proposed, always reported.
+        packages, others = toolchains.apt_packages("apt-get install -y zsh nano- foo/bookworm-backports 'lib*'")
+        self.assertEqual(packages, ["zsh"])
+        self.assertEqual([word for word, _ in others], ["nano-", "foo/bookworm-backports", "lib*"])
+        self.assertIn("apt-get removes nano", others[0][1])
+
+    def test_a_removal_in_a_workflow_is_reported_not_proposed(self):
+        repo = write_repositories(self.directory.name, {"removes": {".github/workflows/ci.yml": (
+            "jobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n"
+            "      - run: sudo apt-get install -y zsh vim-tiny- nano-\n")}})["removes"]
+        proposal = toolchains.detect({"removes": repo})
+        self.assertEqual([item["name"] for item in proposal["items"]], ["zsh"])
+        self.assertEqual(len([reason for reason in reasons(proposal, "removes") if "apt-get removes" in reason]), 2)
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -403,11 +418,16 @@ class ConfigurationTests(unittest.TestCase):
                       {"rust": {"version": "1", "install": "root"}}, {"rust": {"versions": ["1"]}}, {"rust": True}):
             with self.subTest(tools=tools), self.assertRaises(Invalid):
                 toolchains.toolchain_config(tools)
-        for packages in (["zsh; reboot"], ["-y"], ["Clang"], ["libssl-dev", "libssl-dev"], "zsh", [7], ["a"]):
+        # Only names apt installs: never a removal (a trailing minus), a version, release, architecture or pattern.
+        for packages in (["zsh; reboot"], ["-y"], ["Clang"], ["libssl-dev", "libssl-dev"], "zsh", [7], ["a"],
+                         ["nano-"], ["zsh=5.9-6"], ["zsh/noble-updates"], ["zsh:arm64"], ["lib*"], ["zsh?"],
+                         ["./local.deb"]):
             with self.subTest(packages=packages), self.assertRaises(Invalid):
                 toolchains.package_config(packages)
         self.assertEqual(toolchains.package_config(["zsh", "g++", "libwebkit2gtk-4.1-dev"]),
                          ["zsh", "g++", "libwebkit2gtk-4.1-dev"])
+        with self.assertRaises(fleet_setup.SetupError):
+            fleet_setup.parse_package_items("zsh,nano-")
 
     def test_the_fleet_installer_takes_both_settings(self):
         config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
@@ -422,6 +442,75 @@ class ConfigurationTests(unittest.TestCase):
         config["systemPackages"] = ["zsh && reboot"]
         with self.assertRaises(Invalid):
             runtime.validate(config, {"proxyKey": "fixture-model-proxy-key"}, check_files=False)
+
+
+INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
+
+
+def shell_functions(*names):
+    """The named functions from the fleet installer's install.sh, as text bash can run."""
+    lines, text = INSTALLER.read_text().splitlines(), []
+    for name in names:
+        start = next(index for index, line in enumerate(lines) if line.startswith(f"{name}() {{"))
+        end = start if lines[start].rstrip().endswith("}") else lines.index("}", start)
+        text += lines[start:end + 1]
+    return "\n".join(text) + "\n"
+
+
+class SystemPackageInstallTests(unittest.TestCase):
+    """install.sh installs systemPackages by exact name, never removing anything, with apt run from /."""
+
+    def run_installer_functions(self, call, known=("zsh", "g++", "libnss3")):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stubs, caller = root / "bin", root / "caller"
+            stubs.mkdir()
+            caller.mkdir()
+            log = root / "log"
+            # apt-get records where it ran and its arguments; apt-cache knows only these names; nothing is installed.
+            (stubs / "apt-get").write_text(f'#!/bin/sh\necho "$PWD $*" >> {log}\n')
+            (stubs / "apt-cache").write_text("#!/bin/sh\n[ \"$1\" = pkgnames ] && printf '%s\\n' "
+                                             + " ".join(f"'{name}' '{name}-doc'" for name in known) + "\n")
+            (stubs / "dpkg-query").write_text("#!/bin/sh\necho not-installed\n")
+            for stub in stubs.iterdir():
+                stub.chmod(0o755)
+            script = shell_functions("die", "apt_get", "package_installed", "ensure_listed_packages") + call
+            result = subprocess.run(["bash", "-c", script], cwd=caller, capture_output=True, text=True,
+                                    env={"PATH": f"{stubs}:/usr/bin:/bin"})
+            return result, (log.read_text().splitlines() if log.exists() else [])
+
+    def test_packages_install_by_exact_name_from_the_root_directory(self):
+        result, log = self.run_installer_functions("ensure_listed_packages required zsh g++\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(log, ["/ update -qq", "/ install -y --no-install-recommends --no-remove zsh g++"])
+
+    def test_a_removal_or_an_unknown_name_stops_before_apt_installs(self):
+        for package, message in (("nano-", "Invalid system package name nano-"),
+                                 ("zsh=5.9", "Invalid system package name zsh=5.9"),
+                                 ("zs.", "No apt source on this VM offers the package zs.")):
+            with self.subTest(package=package):
+                result, log = self.run_installer_functions(f"ensure_listed_packages required zsh '{package}'\n")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertFalse(any(" install " in line for line in log), log)
+
+    def test_optional_packages_leave_out_what_apt_does_not_offer(self):
+        result, log = self.run_installer_functions("ensure_listed_packages optional libnss3 libmissing1\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no apt source on this VM offers libmissing1; left out", result.stderr)
+        self.assertEqual(log[-1], "/ install -y --no-install-recommends --no-remove libnss3")
+
+    def test_dry_run_package_states_run_from_the_root_directory(self):
+        def run(command, **kwargs):
+            calls.append((command, kwargs["cwd"]))
+            if command[0] == "dpkg-query":
+                return subprocess_result(1, "")
+            return subprocess_result(0, "zsh\nzsh-common\n")
+        calls = []
+        with patch.object(toolchains.subprocess, "run", side_effect=run):
+            self.assertEqual(toolchains.package_state("zsh"), "available")
+            self.assertEqual(toolchains.package_state("zs"), "missing")
+        self.assertEqual({cwd for _, cwd in calls}, {"/"})
 
 
 class EnvironmentTests(unittest.TestCase):

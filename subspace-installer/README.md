@@ -689,6 +689,11 @@ Debian packages:
 - **Names are strict.** They end up on command lines run as root, so a tool,
   version, option or package that is not plainly a name or a version is
   refused before anything is installed.
+- **Packages are only ever installed.** A package name must be one apt knows
+  exactly, with no version (`=`), release (`/`), architecture (`:`) or
+  pattern, and never ending in `-`, which `apt-get install` reads as "remove
+  this package". apt runs from `/` with `--no-remove`, so it stops rather than
+  remove anything to make room.
 - Existing fleets' values, such as `{"node":"24","go":"1.26","rust":"stable"}`,
   keep their meaning.
 

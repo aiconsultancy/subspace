@@ -154,17 +154,53 @@ if [[ $action == uninstall ]]; then
     exit
 fi
 
+# apt and dpkg run from /, never from the caller's working directory.
+apt_get() { (cd / && DEBIAN_FRONTEND=noninteractive apt-get "$@"); }
+package_installed() { [[ $(cd / && dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null) == installed ]]; }
+
 ensure_packages() {
     local package
     local -a missing=()
     for package in "$@"; do
-        if [[ $(dpkg-query -W -f '${db:Status-Status}' "$package" 2>/dev/null) != installed ]]; then
-            missing+=("$package")
-        fi
+        package_installed "$package" || missing+=("$package")
     done
     if (( ${#missing[@]} )); then
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+        apt_get update -qq
+        apt_get install -y --no-install-recommends "${missing[@]}"
+    fi
+}
+
+# Packages named in fleet.json (systemPackages) or by the installer's screenshot list, installed and never
+# removed. apt-get install reads a name ending in "-" as "remove this package" and a name it does not know as a
+# pattern, so each name must be a plain package name that apt knows exactly, and --no-remove stops apt rather
+# than remove anything to make room. With "optional", a package no apt source offers, or that apt cannot install,
+# is reported and left out instead of stopping the install.
+ensure_listed_packages() {
+    local mode=$1 package names
+    local -a missing=() offered=()
+    shift
+    for package in "$@"; do
+        [[ $package =~ ^[a-z0-9][a-z0-9+.-]*[a-z0-9+.]$ ]] || die "Invalid system package name $package."
+        package_installed "$package" || missing+=("$package")
+    done
+    (( ${#missing[@]} )) || return 0
+    apt_get update -qq
+    for package in "${missing[@]}"; do
+        names=$(cd / && apt-cache pkgnames "$package") || names=
+        if grep -qxF -- "$package" <<< "$names"; then
+            offered+=("$package")
+        elif [[ $mode == optional ]]; then
+            printf 'subspace-fleet: no apt source on this VM offers %s; left out.\n' "$package" >&2
+        else
+            die "No apt source on this VM offers the package $package."
+        fi
+    done
+    (( ${#offered[@]} )) || return 0
+    if [[ $mode == optional ]]; then
+        apt_get install -y --no-install-recommends --no-remove "${offered[@]}" ||
+            printf 'subspace-fleet: apt could not install %s; left out.\n' "${offered[*]}" >&2
+    else
+        apt_get install -y --no-install-recommends --no-remove "${offered[@]}"
     fi
 }
 
@@ -298,10 +334,7 @@ ensure_packages ca-certificates curl git openssh-client tmux unzip xz-utils buil
 # fleet.json's systemPackages, which runtime.py prepare checked are Debian package names. Never removed.
 mapfile -t system_packages < "$scratch/system-packages"
 if (( ${#system_packages[@]} )); then
-    for package in "${system_packages[@]}"; do
-        [[ $package =~ ^[a-z0-9][a-z0-9+.-]+$ ]] || die "Invalid system package name $package."
-    done
-    ensure_packages "${system_packages[@]}"
+    ensure_listed_packages required "${system_packages[@]}"
 fi
 if [[ ${source[2]} == local ]]; then
     install_docker
