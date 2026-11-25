@@ -25,6 +25,8 @@ pub(super) fn detail() -> GhItemDetail {
         viewer_can_review: true,
         viewer_can_comment: true,
         changed_files: None,
+        merge_target: None,
+        viewer_approved: false,
     }
 }
 

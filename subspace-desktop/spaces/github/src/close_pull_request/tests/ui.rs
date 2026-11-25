@@ -8,6 +8,7 @@ use subspace_framework::client_test_support::Mock;
 use subspace_framework::dashboard::{Dashboard as _, Modal};
 
 mod availability;
+mod merge;
 mod success;
 
 fn detail() -> GhItemDetail {
@@ -20,6 +21,8 @@ fn detail() -> GhItemDetail {
         viewer_can_review: true,
         viewer_can_comment: true,
         changed_files: Some(0),
+        merge_target: None,
+        viewer_approved: false,
     }
 }
 

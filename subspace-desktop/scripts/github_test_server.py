@@ -450,6 +450,11 @@ def detail(item, kind):
         "headRefName": item["head"],
         "baseRefName": "main",
         "reviewDecision": item["review"],
+        "headRefOid": f"{item['number']:040x}",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": ("DRAFT" if item["draft"] else
+                             "CLEAN" if item["checks"] == "SUCCESS" and item["review"] == "APPROVED"
+                             else "BLOCKED"),
         "changedFiles": len(diff_files(item)),
         "latestReviews": {"nodes": latest},
         "latestOpinionatedReviews": {"nodes": [r for r in latest if r["state"] != "COMMENTED"]},
@@ -933,7 +938,8 @@ def graphql(body, login):
             return {"repository": {"issueOrPullRequest": None}}
         if "bodyHTML" in query:
             time.sleep(ITEM_DELAY)
-            data = {"repository": {"issueOrPullRequest": detail(item, kind)}}
+            data = {"repository": {"issueOrPullRequest": detail(item, kind),
+                                   "viewerPermission": "WRITE", "squashMergeAllowed": True}}
         else:
             data = {"repository": {"issueOrPullRequest": {
                 "__typename": "PullRequest" if kind == "PR" else "Issue", "id": node_id(kind, item)}}}

@@ -95,7 +95,7 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
 
 | Board | In-app guide | Developer page |
 | --- | --- | --- |
-| PRs | [GitHub pull requests](../spaces/github/help.md) | |
+| PRs | [GitHub pull requests](../spaces/github/help.md) | [Merge and refresh](changes/github-pr-merge/README.md) |
 | Copilot Agents | [Copilot agent tasks](../spaces/github-copilot-agents/help.md) | [Copilot Agents dashboard](github-copilot-agents.md) |
 | Channels | [IRC networks, channels and private messages](../spaces/irc/help.md) | [Channels](irc.md): configuration, protocol support, initiatives and fleets, agent tools |
 | Issues | [Subspace API issues and comments](../spaces/issues/help.md) | [Issues and Subspace API](issues.md): connection, shared hub and offline fixtures |

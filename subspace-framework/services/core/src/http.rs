@@ -28,6 +28,7 @@ pub mod status {
     pub const OK: u16 = StatusCode::OK.as_u16();
     pub const BAD_REQUEST: u16 = StatusCode::BAD_REQUEST.as_u16();
     pub const UNAUTHORIZED: u16 = StatusCode::UNAUTHORIZED.as_u16();
+    pub const CONFLICT: u16 = StatusCode::CONFLICT.as_u16();
     pub const FORBIDDEN: u16 = StatusCode::FORBIDDEN.as_u16();
     pub const NOT_FOUND: u16 = StatusCode::NOT_FOUND.as_u16();
     pub const PAYLOAD_TOO_LARGE: u16 = StatusCode::PAYLOAD_TOO_LARGE.as_u16();
