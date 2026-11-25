@@ -4,57 +4,15 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use subspace_client_fleet::Error;
-use subspace_client_fleet::model::{CrewContext, CrewMember, ShipDetail, Task, TaskStatus};
+use subspace_client_fleet::model::{CrewContext, CrewMember};
 
-#[derive(PartialEq, Eq)]
-pub(super) enum Roster {
-    Present(Box<CrewMember>),
-    Gone,
-    Unavailable,
-}
+mod roster;
+pub(super) use roster::Roster;
+use roster::{current_in, same_task_facts};
 
-impl Roster {
-    pub(super) fn find(detail: Option<ShipDetail>, member: &str) -> Self {
-        let Some(detail) = detail.filter(|detail| detail.ship.available && !detail.detail_stale)
-        else {
-            return Self::Unavailable;
-        };
-        detail
-            .crew_members
-            .into_iter()
-            .find(|entry| entry.id == member)
-            .map_or(Self::Gone, |member| Self::Present(Box::new(member)))
-    }
-
-    fn same_assignment(&self, next: &Self) -> bool {
-        let (Self::Present(old), Self::Present(new)) = (self, next) else {
-            return false;
-        };
-        old.id == new.id && old.backend == new.backend && assignments(old).eq(assignments(new))
-    }
-
-    fn same_task_revision(&self, next: &Self) -> bool {
-        let (Self::Present(old), Self::Present(new)) = (self, next) else {
-            return false;
-        };
-        task_revision(old.current_task()) == task_revision(new.current_task())
-            && old.contexts.iter().all(|ctx| {
-                let next =
-                    current_in(new, ctx.project.as_deref()).and_then(|ctx| ctx.current.as_ref());
-                task_revision(ctx.current.as_ref()) == task_revision(next)
-            })
-    }
-}
-
-fn assignments(member: &CrewMember) -> impl Iterator<Item = (Option<&str>, &str)> {
-    let mut tasks: Vec<_> = member
-        .contexts
-        .iter()
-        .filter_map(|ctx| Some((ctx.project.as_deref(), ctx.current.as_ref()?.id.as_str())))
-        .collect();
-    tasks.sort_unstable();
-    tasks.into_iter()
-}
+const MAX_RETRIES: u32 = 5;
+const MAX_RETRY_WAIT_SECS: u64 = 30;
+const SERVER_ERRORS: std::ops::RangeInclusive<u16> = 500..=599;
 
 pub(super) struct DetailState {
     pub roster: Roster,
@@ -89,9 +47,8 @@ impl DetailState {
             return false;
         }
         let invalidated = directory_changed || !self.roster.same_assignment(&roster);
-        let task_changed = !invalidated && !self.roster.same_task_revision(&roster);
-        let returned =
-            !matches!(self.roster, Roster::Present(_)) && matches!(roster, Roster::Present(_));
+        let task_changed = !self.roster.same_task_revision(&roster);
+        let returned = self.roster.member_returned(&roster);
         if invalidated {
             self.detail = None;
             self.generation = self.generation.wrapping_add(1);
@@ -155,16 +112,20 @@ impl DetailState {
     }
 
     pub fn retry_delay(&self) -> Option<Duration> {
-        if self.retries >= 5 || !self.can_retry() || !matches!(self.roster, Roster::Present(_)) {
+        if self.retries >= MAX_RETRIES
+            || !self.can_retry()
+            || !matches!(self.roster, Roster::Present(_))
+        {
             return None;
         }
         let wait = match self.error? {
             Error::Busy(wait) => wait.unwrap_or_default(),
-            Error::Unreachable | Error::UnexpectedStatus(500..=599) => 0,
+            Error::Unreachable => 0,
+            Error::UnexpectedStatus(status) if SERVER_ERRORS.contains(&status) => 0,
             _ => return None,
         };
         // Don't automatically retry earlier than the gateway asked us to.
-        (wait <= 30).then(|| Duration::from_secs(wait.max(1 << self.retries)))
+        (wait <= MAX_RETRY_WAIT_SECS).then(|| Duration::from_secs(wait.max(1 << self.retries)))
     }
 
     pub fn retry_elapsed(&mut self) {
@@ -309,13 +270,8 @@ fn overlay_facts(shown: &mut Cow<'_, CrewMember>, previous: &CrewContext, next: 
         }
         (old, new) => old != new,
     };
-    if !git_changed
-        && same_task_facts(previous.current.as_ref(), next.current.as_ref())
-        && previous.activity == next.activity
-        && previous.provisioned == next.provisioned
-        && previous.pull_request == next.pull_request
-        && previous.pull_request_known == next.pull_request_known
-    {
+    let task_changed = !same_task_facts(previous.current.as_ref(), next.current.as_ref());
+    if !needs_overlay(previous, next, git_changed || task_changed) {
         return;
     }
     let Some(context) = shown
@@ -347,7 +303,7 @@ fn overlay_facts(shown: &mut Cow<'_, CrewMember>, previous: &CrewContext, next: 
             (shown, _, new) => shown.clone_from(new),
         }
     }
-    if !same_task_facts(previous.current.as_ref(), next.current.as_ref()) {
+    if task_changed {
         match (&mut context.current, &previous.current, &next.current) {
             (Some(shown), Some(old), Some(new)) if shown.id == new.id => {
                 overlay!(shown, old, new; status, updated_at, summary, phase, progress)
@@ -358,26 +314,10 @@ fn overlay_facts(shown: &mut Cow<'_, CrewMember>, previous: &CrewContext, next: 
     overlay!(context, previous, next; activity, provisioned, pull_request_known);
 }
 
-fn current_in<'a>(member: &'a CrewMember, key: Option<&str>) -> Option<&'a CrewContext> {
-    member
-        .contexts
-        .iter()
-        .find(|ctx| ctx.project.as_deref() == key)
-}
-
-fn task_revision(task: Option<&Task>) -> Option<(&str, TaskStatus, Option<i64>)> {
-    task.map(|task| (task.id.as_str(), task.status, task.updated_at))
-}
-
-fn same_task_facts(old: Option<&Task>, new: Option<&Task>) -> bool {
-    fn text(task: Option<&Task>) -> Option<(&str, &str, &str)> {
-        task.map(|task| {
-            (
-                task.summary.as_str(),
-                task.phase.as_str(),
-                task.progress.as_str(),
-            )
-        })
-    }
-    task_revision(old) == task_revision(new) && text(old) == text(new)
+fn needs_overlay(previous: &CrewContext, next: &CrewContext, details_changed: bool) -> bool {
+    details_changed
+        || previous.activity != next.activity
+        || previous.provisioned != next.provisioned
+        || previous.pull_request != next.pull_request
+        || previous.pull_request_known != next.pull_request_known
 }

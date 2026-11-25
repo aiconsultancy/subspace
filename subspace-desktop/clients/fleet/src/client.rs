@@ -30,8 +30,11 @@ const CREW_DETAIL_TEXT_BYTES: u64 = CREW_DETAIL_TASKS
     * CREW_TASK_TEXT_FIELDS
     * CREW_TASK_TEXT_CODE_POINTS
     * JSON_BYTES_PER_CODE_POINT;
-const MAX_CREW_DETAIL_JSON_BYTES: u64 = CREW_DETAIL_TEXT_BYTES.next_power_of_two();
 pub(crate) const USER_AGENT: &str = concat!("Subspace/", env!("CARGO_PKG_VERSION"));
+
+const fn crew_detail_json_limit() -> u64 {
+    CREW_DETAIL_TEXT_BYTES.next_power_of_two()
+}
 
 /// A fleet's address and the token saved for it. Deliberately has no
 /// `Debug` that could print the token.
@@ -69,7 +72,7 @@ impl FleetClient {
     /// `GET /api/v1/ships/{ship}/crew/{member}`. Run in the background.
     /// `NotFound` can mean an absent member or a gateway without this route.
     pub fn crew(&self, ship: &str, member: &str) -> Result<CrewDetail, Error> {
-        self.get::<CrewDetail>(&["ships", ship, "crew", member], MAX_CREW_DETAIL_JSON_BYTES)?
+        self.get::<CrewDetail>(&["ships", ship, "crew", member], crew_detail_json_limit())?
             .matching(ship, member)
     }
 
@@ -153,7 +156,7 @@ fn read_json<T: DeserializeOwned>(mut response: Response<Body>, limit: u64) -> R
 mod tests {
     use super::{
         CREW_DETAIL_TASKS, CREW_TASK_TEXT_CODE_POINTS, CREW_TASK_TEXT_FIELDS,
-        JSON_BYTES_PER_CODE_POINT, MAX_CREW_DETAIL_JSON_BYTES, MAX_JSON_BYTES, retry_after,
+        JSON_BYTES_PER_CODE_POINT, MAX_JSON_BYTES, crew_detail_json_limit, retry_after,
         status_error,
     };
     use crate::Error;
@@ -165,8 +168,8 @@ mod tests {
             * CREW_TASK_TEXT_CODE_POINTS
             * JSON_BYTES_PER_CODE_POINT;
         assert_eq!(bound, 11_520_000);
-        assert_eq!(MAX_CREW_DETAIL_JSON_BYTES, bound.next_power_of_two());
-        assert_eq!(MAX_CREW_DETAIL_JSON_BYTES, 16 * 1024 * 1024);
+        assert_eq!(crew_detail_json_limit(), bound.next_power_of_two());
+        assert_eq!(crew_detail_json_limit(), 16 * 1024 * 1024);
         assert_eq!(MAX_JSON_BYTES, 8 * 1024 * 1024);
     }
 

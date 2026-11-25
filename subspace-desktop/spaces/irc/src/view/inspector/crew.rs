@@ -2,6 +2,7 @@
 //! presence and asks for a fresh detail read when the member changes.
 
 mod detail;
+mod focus;
 pub(super) mod list;
 mod state;
 
@@ -16,6 +17,7 @@ use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, feedback};
 
 use crate::{Irc, live::ShipLive};
+use focus::close;
 use state::{DetailState, Roster};
 
 pub(crate) struct CrewFocus {
@@ -251,25 +253,6 @@ impl Selection {
     }
 }
 
-fn close(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
-    let Some(selection) = board.inspector_crew.take() else {
-        return;
-    };
-    let ship = super::front(board, cx).and_then(|front| front.fleet?.ship(&selection.ship));
-    let focus = &mut board.inspector_crew_focus;
-    let row = ship.as_ref().and_then(|ship| {
-        FleetApi::current(cx)?;
-        selection.return_row(visible_members(ship, focus.show_all))
-    });
-    focus.returned = row.map(str::to_owned);
-    if row.is_some() {
-        focus.row.focus(window, cx);
-    } else {
-        focus.ship_tab.focus(window, cx);
-    }
-    cx.notify();
-}
-
 pub(super) fn visible_members(ship: &ShipLive, show_all: bool) -> &[crate::live::CrewLine] {
     let count = if show_all {
         ship.members.len()
@@ -277,20 +260,6 @@ pub(super) fn visible_members(ship: &ShipLive, show_all: bool) -> &[crate::live:
         ship.members.len().min(crate::live::ship::MAX_CREW)
     };
     &ship.members[..count]
-}
-
-impl Selection {
-    fn return_row<'a>(&self, members: &'a [crate::live::CrewLine]) -> Option<&'a str> {
-        let mut rows = members.iter().filter(|member| {
-            !matches!(self.state.roster, Roster::Gone) || member.id != self.member
-        });
-        let first = rows.next()?;
-        if first.id == self.member {
-            return Some(&first.id);
-        }
-        rows.find(|member| member.id == self.member)
-            .map_or(Some(first.id.as_str()), |member| Some(member.id.as_str()))
-    }
 }
 
 pub(super) fn body(
