@@ -1,6 +1,7 @@
 //! One item in full: a model step with its settled tokens and cost, a
-//! tool call with its input, progress, output and errors, or reply and
-//! reasoning text.
+//! tool call with its input as parsed and as streamed, progress, output
+//! and errors, or reply and reasoning text. Output of a type this version
+//! does not know shows as its JSON.
 
 use gpui_kit::{AnyElement, Context};
 use serde_json::Value;
@@ -8,21 +9,26 @@ use subspace_client_fleet::activity::{
     ActivityContent, ActivityError, ActivityItem, StepItem, TextItem, ToolItem,
 };
 
-use super::parts::{block, caption, card, labelled};
+use super::parts::{Shown, block, caption, card, labelled};
 use super::text::visible;
 use crate::Irc;
 
 /// One item in full.
-pub(super) fn item(id: &str, item: &ActivityItem, cx: &Context<Irc>) -> AnyElement {
+pub(super) fn item(id: &str, item: &ActivityItem, shown: &Shown, cx: &Context<Irc>) -> AnyElement {
     match item {
-        ActivityItem::Step(step) => self::step(id, step, cx),
-        ActivityItem::Text(text) => words(id, "Reply", text, cx),
-        ActivityItem::Reasoning(text) => words(id, "Reasoning", text, cx),
-        ActivityItem::Tool(tool) => self::tool(id, tool, cx),
+        ActivityItem::Step(step) => self::step(id, step, shown, cx),
+        ActivityItem::Text(text) => words(id, ("Reply", text), shown, cx),
+        ActivityItem::Reasoning(text) => words(id, ("Reasoning", text), shown, cx),
+        ActivityItem::Tool(tool) => self::tool(id, tool, shown, cx),
     }
 }
 
-pub(super) fn words(id: &str, label: &str, text: &TextItem, cx: &Context<Irc>) -> AnyElement {
+pub(super) fn words(
+    id: &str,
+    (label, text): (&str, &TextItem),
+    shown: &Shown,
+    cx: &Context<Irc>,
+) -> AnyElement {
     let label = match text.status.as_str() {
         "completed" => label.to_owned(),
         status => format!("{label} · {}", visible(status)),
@@ -30,14 +36,14 @@ pub(super) fn words(id: &str, label: &str, text: &TextItem, cx: &Context<Irc>) -
     card(
         id,
         &label,
-        vec![block(&format!("{id}:text"), &text.text, cx)],
+        vec![block(&format!("{id}:text"), &text.text, shown, cx)],
         cx,
     )
 }
 
 /// A model step: its model, how it finished, its settled tokens and cost,
 /// and its error.
-pub(super) fn step(id: &str, step: &StepItem, cx: &Context<Irc>) -> AnyElement {
+pub(super) fn step(id: &str, step: &StepItem, shown: &Shown, cx: &Context<Irc>) -> AnyElement {
     let model = step.model.as_ref().map(|model| match &model.variant {
         Some(variant) => format!("{}/{} ({variant})", model.provider, model.id),
         None => format!("{}/{}", model.provider, model.id),
@@ -52,7 +58,11 @@ pub(super) fn step(id: &str, step: &StepItem, cx: &Context<Irc>) -> AnyElement {
     .collect::<Vec<_>>()
     .join(" · ");
     let mut parts = vec![caption(&format!("{id}:use"), &step_use(step), cx)];
-    parts.extend(step.error.as_ref().map(|error| failure(id, error, cx)));
+    parts.extend(
+        step.error
+            .as_ref()
+            .map(|error| failure(id, error, shown, cx)),
+    );
     card(id, &visible(&label), parts, cx)
 }
 
@@ -71,48 +81,73 @@ pub(super) fn step_use(step: &StepItem) -> String {
     )
 }
 
-/// A tool call: its input, progress, output and error, each whole.
-pub(super) fn tool(id: &str, tool: &ToolItem, cx: &Context<Irc>) -> AnyElement {
+/// A tool call: its input as parsed and as the model streamed it, which
+/// can differ, then its progress, output and error, each whole.
+pub(super) fn tool(id: &str, tool: &ToolItem, shown: &Shown, cx: &Context<Irc>) -> AnyElement {
     let name = tool.name.as_deref().unwrap_or("unnamed tool");
     let label = visible(&format!("Tool · {name} · {}", tool.status));
     let mut parts = match &tool.input {
-        Some(input) => value_blocks(&format!("{id}:input"), "Input", input, cx),
-        None if !tool.raw_input.is_empty() => {
-            vec![labelled(
-                &format!("{id}:raw"),
-                "Input as streamed",
-                &tool.raw_input,
-                cx,
-            )]
-        }
+        Some(input) => value_blocks(&format!("{id}:input"), "Input", input, shown, cx),
         None => Vec::new(),
     };
+    if !tool.raw_input.is_empty() {
+        parts.push(labelled(
+            &format!("{id}:raw"),
+            "Input as streamed",
+            &tool.raw_input,
+            shown,
+            cx,
+        ));
+    }
     let progress = if matches!(tool.status.as_str(), "input" | "running") {
         "Progress"
     } else {
         "Metadata"
     };
     if let Some(metadata) = &tool.metadata {
-        parts.extend(value_blocks(&format!("{id}:meta"), progress, metadata, cx));
+        parts.extend(value_blocks(
+            &format!("{id}:meta"),
+            progress,
+            metadata,
+            shown,
+            cx,
+        ));
     }
     for (index, content) in tool.content.iter().flatten().enumerate() {
-        parts.extend(output(&format!("{id}:out:{index}"), content, cx));
+        parts.push(output(&format!("{id}:out:{index}"), content, shown, cx));
     }
-    parts.extend(tool.error.as_ref().map(|error| failure(id, error, cx)));
+    parts.extend(
+        tool.error
+            .as_ref()
+            .map(|error| failure(id, error, shown, cx)),
+    );
     card(id, &label, parts, cx)
 }
 
-pub(super) fn output(id: &str, content: &ActivityContent, cx: &Context<Irc>) -> Option<AnyElement> {
+/// One part of a tool's output: text, a file, or the JSON of a type this
+/// version does not know.
+pub(super) fn output(
+    id: &str,
+    content: &ActivityContent,
+    shown: &Shown,
+    cx: &Context<Irc>,
+) -> AnyElement {
     match content {
-        ActivityContent::Text { text } => Some(labelled(id, "Output", text, cx)),
+        ActivityContent::Text { text } => labelled(id, "Output", text, shown, cx),
         ActivityContent::File { uri, mime, name } => {
             let label = match name {
                 Some(name) => format!("File · {name} · {mime}"),
                 None => format!("File · {mime}"),
             };
-            Some(labelled(id, &visible(&label), uri, cx))
+            labelled(id, &visible(&label), uri, shown, cx)
         }
-        ActivityContent::Other => None,
+        ActivityContent::Other(raw) => labelled(
+            id,
+            "Output of a type this version can't show",
+            &pretty(raw),
+            shown,
+            cx,
+        ),
     }
 }
 
@@ -122,6 +157,7 @@ pub(super) fn value_blocks(
     id: &str,
     label: &str,
     value: &Value,
+    shown: &Shown,
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
     match value {
@@ -129,23 +165,39 @@ pub(super) fn value_blocks(
             .iter()
             .map(|(key, value)| {
                 let label = visible(&format!("{label} · {key}"));
-                labelled(&format!("{id}:{key}"), &label, &json_text(value), cx)
+                labelled(&format!("{id}:{key}"), &label, &json_text(value), shown, cx)
             })
             .collect(),
-        value => vec![labelled(id, label, &json_text(value), cx)],
+        value => vec![labelled(id, label, &json_text(value), shown, cx)],
     }
 }
 
 pub(super) fn json_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
-        value => serde_json::to_string_pretty(value).unwrap_or_default(),
+        value => pretty(value),
     }
 }
 
+/// `value` as indented JSON.
+pub(super) fn pretty(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_default()
+}
+
 /// A provider failure: its type, message, status and response, whole.
-pub(super) fn failure(id: &str, error: &ActivityError, cx: &Context<Irc>) -> AnyElement {
-    labelled(&format!("{id}:error"), "Error", &error_text(error), cx)
+pub(super) fn failure(
+    id: &str,
+    error: &ActivityError,
+    shown: &Shown,
+    cx: &Context<Irc>,
+) -> AnyElement {
+    labelled(
+        &format!("{id}:error"),
+        "Error",
+        &error_text(error),
+        shown,
+        cx,
+    )
 }
 
 pub(super) fn error_text(error: &ActivityError) -> String {

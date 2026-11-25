@@ -139,6 +139,38 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
     })
 }
 
+/// Closes the captain's turns once they no longer belong to the ship in
+/// front: the channel's fleet changed, or the ship left the live fleet
+/// (the fleet is no longer live, or its overview lists no such ship, or
+/// lists it under another registration ID).
+pub(crate) fn drop_stale_activity(board: &mut Irc, cx: &mut Context<Irc>) {
+    let Some(selected) = activity::selected(board) else {
+        return;
+    };
+    if stale_activity(front(board, cx).as_ref(), &selected) {
+        activity::close(board, cx);
+    }
+}
+
+/// Whether turns opened for `(fleet, captain, agent)` no longer belong to
+/// the ship in `front`.
+fn stale_activity(
+    front: Option<&Front>,
+    (fleet, captain, agent): &(String, String, String),
+) -> bool {
+    let Some(front) = front else {
+        return true;
+    };
+    if front.fleet_id.as_deref() != Some(fleet.as_str()) {
+        return true;
+    }
+    front
+        .fleet
+        .as_ref()
+        .and_then(|live| live.ship(captain))
+        .is_none_or(|ship| ship.id != *agent)
+}
+
 /// Asks for the answers of what the Ship tab's **In play here** lists.
 pub(crate) fn want_in_play(board: &Irc, cx: &mut Context<Irc>) {
     play::want(board, cx);
@@ -198,6 +230,10 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
             move |index, _, _, cx| {
                 _ = board_entity.update(cx, |board, cx| {
                     board.inspector_tab = InspectorTab::at(index);
+                    if board.inspector_tab != InspectorTab::Subject {
+                        // The Ship tab's turns are no longer on show.
+                        activity::close(board, cx);
+                    }
                     // Shown now: ask for what In play here lists.
                     want_in_play(board, cx);
                     cx.notify();

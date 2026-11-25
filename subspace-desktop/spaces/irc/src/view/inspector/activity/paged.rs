@@ -6,7 +6,7 @@ use subspace_client_fleet::activity::PagedItem;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
-use super::parts::{caption, card};
+use super::parts::{Shown, caption, card};
 use super::text::visible;
 use super::{Loaded, Selection};
 use crate::Irc;
@@ -29,7 +29,7 @@ pub(super) fn paged(
     };
     let name = paged.name.as_deref().map(|name| format!(" · {name}"));
     let label = visible(&format!(
-        "{kind}{} · {} · {} bytes in {} parts",
+        "{kind}{} · {} · {} bytes in {} pages",
         name.unwrap_or_default(),
         paged.status,
         paged.paged.bytes,
@@ -37,17 +37,20 @@ pub(super) fn paged(
     ));
     let key = (turn.to_owned(), paged.base.id.clone());
     let loaded = selection.loaded.get(&key);
-    let parts = load_parts(&id, &key, paged, loaded, cx);
+    let parts = load_parts(&id, (&key, paged), loaded, &selection.parts, cx);
     card(&id, &label, parts, cx)
 }
 
+/// The load action, or the item once read. An item let go to make room
+/// for others shows the load action again.
 pub(super) fn load_parts(
     id: &str,
-    key: &(String, String),
-    paged: &PagedItem,
+    (key, paged): (&(String, String), &PagedItem),
     loaded: Option<&Loaded>,
+    shown: &Shown,
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
+    let bytes = paged.paged.bytes;
     let action = |label: &'static str| {
         let (turn, item) = key.clone();
         action_button(
@@ -56,16 +59,21 @@ pub(super) fn load_parts(
             Some(IconName::Download),
             label,
         )
-        .on_click(cx.listener(move |board, _, _, cx| super::load(board, &turn, &item, cx)))
+        .on_click(cx.listener(move |board, _, _, cx| {
+            super::load(board, &turn, &item, bytes, cx);
+        }))
         .into_any_element()
     };
     match loaded.map(|loaded| loaded.result.as_ref()) {
         None => vec![action("Load in full")],
         Some(None) => vec![caption(&format!("{id}:loading"), "Loading…", cx)],
         Some(Some(Ok(item))) if item.base().seq < paged.base.seq => {
-            vec![action("Load the latest"), super::item::item(id, item, cx)]
+            vec![
+                action("Load the latest"),
+                super::item::item(id, item, shown, cx),
+            ]
         }
-        Some(Some(Ok(item))) => vec![super::item::item(id, item, cx)],
+        Some(Some(Ok(item))) => vec![super::item::item(id, item, shown, cx)],
         Some(Some(Err(error))) => vec![
             caption(&format!("{id}:failed"), &error.to_string(), cx),
             action("Try again"),

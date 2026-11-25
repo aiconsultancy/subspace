@@ -1,7 +1,8 @@
 //! One turn as the view draws it: a heading that opens and closes it,
 //! then its items in the order they began: model steps with their settled
 //! tokens and cost, tool calls with their input, progress, output and
-//! errors, and reply and reasoning text, each whole.
+//! errors, and reply and reasoning text, each whole. An item of a kind
+//! or shape this version does not know shows as its JSON.
 
 use gpui_kit::component::v_flex;
 use gpui_kit::{
@@ -14,7 +15,8 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
 use super::Selection;
-use super::parts::caption;
+use super::item::pretty;
+use super::parts::{block, caption, card};
 use super::text::visible;
 use crate::Irc;
 
@@ -108,14 +110,24 @@ pub(super) fn entry(
 ) -> AnyElement {
     let id = format!("irc-activity:{turn}:{}", entry.base().id);
     match entry {
-        ActivityEntry::Item(item) => super::item::item(&id, item, cx),
+        ActivityEntry::Item(item) => super::item::item(&id, item, &selection.parts, cx),
         ActivityEntry::Paged(paged) => super::paged::paged(selection, turn, paged, cx),
-        ActivityEntry::Unknown(unknown) => caption(
+        ActivityEntry::Unknown(unknown) => card(
             &id,
-            &format!(
-                "An item of kind {} that this version can't show.",
-                visible(&unknown.kind)
-            ),
+            &visible(&format!("Item · {}", unknown.kind)),
+            vec![
+                caption(
+                    &format!("{id}:unknown"),
+                    "This version can't show this item, so here is what was sent.",
+                    cx,
+                ),
+                block(
+                    &format!("{id}:json"),
+                    &pretty(&unknown.raw),
+                    &selection.parts,
+                    cx,
+                ),
+            ],
             cx,
         ),
     }

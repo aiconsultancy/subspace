@@ -173,6 +173,11 @@ pub(crate) fn toggle_buffers(board: &mut Irc, cx: &mut Context<Irc>) {
 /// Shows or hides the inspector's member list.
 pub(crate) fn toggle_members(board: &mut Irc, cx: &mut Context<Irc>) {
     board.dock.members.open = !board.dock.members.open;
+    if !board.dock.members.open {
+        // Hidden, the captain's turns close: their reads are cancelled and
+        // the stream drops the officer.
+        board.inspector_activity = None;
+    }
     super::persist::docks_changed(board, cx);
 }
 
