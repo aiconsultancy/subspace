@@ -940,12 +940,18 @@ sudo subspace-setup rename-officers [--irc-operator NAME --irc-operator-password
 
 1. **Plan and check.** It prints each officer's old and new IRC account,
    API agent name and ship channel. Before it changes anything, it checks
-   the fleet's answers with plain names as setup checks a new fleet's (a
+   the switch (step 4) as the switch will run: the fleet's answers with
+   plain names and any `--crew-names`, as setup checks a new fleet's (a
    name the IRC server, the API or the installer keeps for itself is
-   refused), and the new names on the IRC server and in the API: other
-   agents' names and nicks, and people's usernames. A hosted API is asked
-   only with `--api-admin-token-file`; without it, the dry run says the
-   API was not asked. The dry run stops here.
+   refused), and the `fleet.json` setup then hands the fleet installer,
+   with the fleet installer's own checks and dry run (crew names across the
+   fleet, pinned sessions). It prints each ship's crew as the switch
+   installs them, each name with its ID. It also checks the new names on
+   the IRC server and in the API: other agents' names and nicks, and
+   people's usernames. A hosted API is asked only with
+   `--api-admin-token-file`; without it, the dry run says the API was not
+   asked. The dry run stops here. A run that resumes at the switch checks
+   it the same way first.
    - A fleet with no Subspace API on its VM and no hosted API is refused:
      a fleet installed with `--api-target` keeps its agent records in
      another fleet's API, which the rename cannot reach, so keep its
