@@ -545,6 +545,17 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(toolchains.requests(marked, "shared"), ["node@24", "npm:@example/cli@1.2.0"])
         self.assertEqual(toolchains.root_environment(marked)["MISE_DISABLE_BACKENDS"],
                          "asdf,cargo,conda,gem,pipx,pypi,vfox")
+        # Yarn too: mise's registry installs Yarn 1 with a plugin or npm.
+        self.assertEqual(toolchains.toolchain_config({"yarn": "1.22.22"})["yarn"]["install"], "user")
+        # A plain name the registry installs only through a disabled backend stops root's install, saying why and
+        # what to do.
+        config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        config["toolchains"] = {"prettier": "3.3.3"}
+        cfg = runtime.validate(config, {"proxyKey": "fixture-model-proxy-key"}, check_files=False)
+        with patch.object(runtime, "directory"), patch.object(runtime.subprocess, "run",
+                                                              side_effect=subprocess.CalledProcessError(1, ["mise"])), \
+                self.assertRaisesRegex(Invalid, "give it \"install\": \"user\" in fleet.json's toolchains"):
+            runtime.install_toolchains(cfg, {})
         # Detection proposes them per user too: a repository cannot mark anything shared.
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

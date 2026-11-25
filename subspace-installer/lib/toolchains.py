@@ -8,8 +8,8 @@ Where things are installed:
 - toolchains, shared (the default): installed by root with mise, as explicit tool@version arguments, into the
   shared store /opt/subspace-fleet/toolchains, from /opt/subspace-fleet and never from an agent's checkout. Every
   officer and crew member sees them: the shared store is their mise system data directory.
-- toolchains, per user (by default rust, and the tools of backends that run third-party code while they install,
-  such as cargo:, npm: or asdf:; or "install": "user"): installed as each officer's Linux user, as explicit
+- toolchains, per user (by default rust, dotnet and yarn, and the tools of backends that run third-party code while
+  they install, such as cargo:, npm: or asdf:; or "install": "user"): installed as each officer's Linux user, as explicit
   tool@version arguments from its home, into its own mise data directory. Crew run as their captain's user, so
   they share their captain's.
 
@@ -48,8 +48,9 @@ BACKENDS = ("aqua", "asdf", "cargo", "conda", "dotnet", "gem", "github", "gitlab
 # Installed per user by default: rustup keeps its toolchains in the user's home and installs a repository's
 # pinned toolchain and components on first use, which a read-only shared store cannot. .NET likewise: the dotnet
 # host finds SDKs in one root only (DOTNET_ROOT), so an SDK a repository's global.json pins that the fleet has not
-# got installs there on first use, which needs a root the officer can write.
-USER_TOOLS = {"rust", "dotnet"}
+# got installs there on first use, which needs a root the officer can write. Yarn: mise's registry installs Yarn 1
+# with a vfox or asdf plugin, or npm, which root does not run (CODE_BACKENDS).
+USER_TOOLS = {"rust", "dotnet", "yarn"}
 # Backends that run third-party code while they install: cargo: (build scripts), npm: (lifecycle scripts), gem:
 # (native extensions), pipx: (package builds), asdf: and vfox: (plugins are scripts), conda: (packages may carry
 # link scripts). Their tools install as each officer's user unless the operator marks one "install": "shared".

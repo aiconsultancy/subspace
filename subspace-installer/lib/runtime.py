@@ -2385,8 +2385,15 @@ def install_toolchains(cfg, homes, update=False):
 
     if shared := toolchains.requests(tools, "shared"):
         previous = os.umask(0o022)
+        environment = toolchains.root_environment(tools)
         try:
-            subprocess.run(command(shared), cwd=APP, env=toolchains.root_environment(tools), check=True)
+            subprocess.run(command(shared), cwd=APP, env=environment, check=True)
+        except subprocess.CalledProcessError as error:
+            raise Invalid(f"root's mise could not install the shared tools (it exited {error.returncode}; its messages "
+                          "are above). Root's mise does not use the backends that run third-party code while they "
+                          f"install ({environment['MISE_DISABLE_BACKENDS']}), so a tool that mise's registry installs "
+                          "only that way, such as poetry or prettier, must be installed per officer: give it "
+                          "\"install\": \"user\" in fleet.json's toolchains.") from None
         finally:
             os.umask(previous)
     if personal := toolchains.requests(tools, "user"):
