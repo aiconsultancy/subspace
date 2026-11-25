@@ -1235,10 +1235,48 @@ def parse_package_items(value):
     return items
 
 
-def proposed_item(record, kind, name, version=None):
+def proposed_items(record, kind, name, version=None):
+    """The pending proposal's items for a tool version or a package: more than one when repositories ask for the
+    same version with different options."""
     proposal = record.get("proposal") or {}
-    return next((item for item in proposal.get("items", []) if item["kind"] == kind and item["name"] == name
-                 and item["version"] == version), None)
+    return [item for item in proposal.get("items", []) if item["kind"] == kind and item["name"] == name
+            and item["version"] == version]
+
+
+def proposed_item(record, kind, name, version=None):
+    return next(iter(proposed_items(record, kind, name, version)), None)
+
+
+def confirm_tool(record, tool, version, today):
+    """Add a confirmed tool version to the record, with the proposal's sources and options. mise applies one set
+    of options to every version of a tool, so the new version's options are joined with those already confirmed
+    for the tool (toolchains.merge_options), and every version gets the result; a disagreement stops setup with
+    a message saying what to choose. Returns the line for the operator."""
+    proposed = proposed_items(record, "tool", tool, version)
+    existing = [item for item in record["tools"] if item["tool"] == tool]
+    try:
+        options = {}
+        for item in proposed:
+            options = toolchains.merge_options(options, item["options"], tool)
+        merged = options
+        for item in existing:
+            merged = toolchains.merge_options(item["options"], merged, tool)
+    except runtime.Invalid as error:
+        raise SetupError(f"--toolchains {tool}@{version}: {error}") from None
+    changed = [item for item in existing if item["options"] != merged]
+    for item in existing:
+        item["options"] = merged
+    install = existing[0]["install"] if existing else proposed[0]["where"] if proposed and proposed[0].get(
+        "where") in ("shared", "user") else toolchains.default_install(tool)
+    sources = [source for item in proposed for source in item["sources"]]
+    record["tools"].append({"tool": tool, "version": version, "install": install, "options": merged,
+                            "sources": list({json.dumps(source, sort_keys=True): source for source in sources}.values())
+                            or [{"by": "listed"}], "confirmed": today})
+    line = f"confirmed {tool}@{version}" + (f", from {source_text(sources)}" if proposed else ", listed by hand")
+    if changed or merged != options:
+        line += (f"; mise applies {tool}'s options to every version, so every {tool} version now has "
+                 f"{toolchains.options_label(merged)}")
+    return line
 
 
 def update_toolchains(args, answers):
@@ -1309,15 +1347,7 @@ def update_toolchains(args, answers):
             if matching:
                 lines.append(f"{tool}@{version} is already in the toolchains")
                 continue
-            proposed = proposed_item(record, "tool", tool, version)
-            record["tools"].append({
-                "tool": tool, "version": version,
-                "install": proposed["where"] if proposed and proposed.get("where") in ("shared", "user")
-                else toolchains.default_install(tool),
-                "options": proposed["options"] if proposed else {},
-                "sources": proposed["sources"] if proposed else [{"by": "listed"}], "confirmed": today})
-            lines.append(f"confirmed {tool}@{version}" + (f", from {source_text(proposed['sources'])}" if proposed
-                                                          else ", listed by hand"))
+            lines.append(confirm_tool(record, tool, version, today))
     if args.system_packages is not None:
         for remove, name in parse_package_items(args.system_packages):
             matching = [item for item in record["packages"] if item["package"] == name]
@@ -1361,7 +1391,11 @@ def toolchain_settings(record, previous):
     for row in record["tools"]:
         entry = tools.setdefault(row["tool"], {"versions": [], "install": row["install"], "options": {}})
         entry["versions"].append(row["version"])
-        entry["options"].update(row["options"])
+        try:
+            # Confirming keeps one set of options per tool; a record edited by hand is checked the same way.
+            entry["options"] = toolchains.merge_options(entry["options"], row["options"], row["tool"])
+        except runtime.Invalid as error:
+            raise SetupError(f"{INPUTS / TOOLCHAIN_RECORD}: {error}") from None
     result = {} if "node" in tools else {"node": False}
     for spec, entry in tools.items():
         versions = entry["versions"][0] if len(entry["versions"]) == 1 else entry["versions"]

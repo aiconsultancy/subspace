@@ -156,6 +156,26 @@ def tool_options(value, spec):
     return options
 
 
+def merge_options(first, second, spec):
+    """One set of options for every version of a tool, as mise applies them: list options (components, targets,
+    filter_bins, features) are joined; any other option must agree. Invalid names a disagreement."""
+    merged = dict(first)
+    for key, value in second.items():
+        if key not in merged or merged[key] == value:
+            merged[key] = value
+        elif key in LIST_OPTIONS:
+            merged[key] = ",".join(sorted(set(merged[key].split(",")) | set(value.split(","))))
+        else:
+            raise Invalid(f"{spec} is asked for with {key}={value} and with {key}={merged[key]}: mise applies one set "
+                          f"of options to every version of a tool, so choose one {key} for {spec} in fleet.json's "
+                          "toolchains.")
+    return merged
+
+
+def options_label(options):
+    return ", ".join(f"{key}={value}" for key, value in sorted(options.items())) or "none"
+
+
 def tool_entry(spec, value):
     """One toolchains entry as {"versions", "install", "options"}, or None for false (not installed)."""
     if value is False:
@@ -1430,6 +1450,7 @@ def annotate(proposal, tools, packages, homes, system_python=None, states=None):
     that meets it), and whether it is installed. homes are the officers' homes, for per-user tools."""
     system_python = system_python or ".".join(str(part) for part in sys.version_info[:3])
     states = states if states is not None else {}
+    merged_options(proposal["items"], tools)
     for item in proposal["items"]:
         if item["kind"] == "package":
             item["where"] = "system"
@@ -1451,6 +1472,30 @@ def annotate(proposal, tools, packages, homes, system_python=None, states=None):
             item["configured"] = False
         item["installed"] = tool_state(item["name"], item["version"], item["where"], homes)
     return proposal
+
+
+def merged_options(items, tools):
+    """Note on each proposed version of a tool what confirming it does to the tool's options, before anyone
+    confirms it: mise applies one set of options to every version of a tool, so they are joined with those of the
+    versions configured and proposed beside it (merge_options), or disagree."""
+    by_tool = {}
+    for item in items:
+        if item["kind"] == "tool" and item["confidence"] != "low" and not item.get("configured"):
+            by_tool.setdefault(item["name"], []).append(item)
+    for name, rows in by_tool.items():
+        sets = ([tools[name]["options"]] if name in tools else []) + [row["options"] for row in rows]
+        if len({json.dumps(options, sort_keys=True) for options in sets}) < 2:
+            continue
+        try:
+            merged = {}
+            for options in sets:
+                merged = merge_options(merged, options, name)
+            note = (f"mise applies {name}'s options to every version of it, so confirming this gives every "
+                    f"{name} version {options_label(merged)}")
+        except Invalid as error:
+            note = f"setup cannot confirm this as it is: {error}"
+        for row in rows:
+            row.setdefault("notes", []).append(note)
 
 
 def item_label(item):

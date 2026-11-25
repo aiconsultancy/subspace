@@ -692,7 +692,13 @@ Debian packages:
   `profile` is `minimal`, `default` or `complete`; `locked` and
   `default-features` are `true` or `false`; the rest are plain names (a
   `channel` is a name, never an address). Detection reports an option it
-  cannot carry over in its "could not determine" list.
+  cannot carry over in its "could not determine" list. Since mise applies one
+  set of options to every version of a tool, confirming a version whose
+  options differ from the tool's joins them: `components`, `targets`,
+  `filter_bins` and `features` are combined (two repositories pinning Rust
+  1.99.0 with `clippy` and 1.98.0 with `rustfmt` give both versions both),
+  and any other option must agree, or setup stops and says which to choose.
+  The proposal shows the result on each item before anyone confirms it.
 - **Names are strict.** They end up on command lines run as root, so a tool,
   version, option or package that is not plainly a name or a version is
   refused before anything is installed.
