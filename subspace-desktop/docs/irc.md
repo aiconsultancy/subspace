@@ -1546,6 +1546,13 @@ so receivers see the whole paragraph without inserted newlines. A paragraph
 that cannot fit a batch keeps the existing standalone splitting fallback.
 See the [wrapped paragraph record](changes/subspace-api-accounts/README.md).
 
+An attachment send uses one logical IRC message for the draft and every
+upload reference. If one physical line suffices, the client writes a single
+`PRIVMSG`. Otherwise it requires one negotiated `draft/multiline` batch.
+If the server cannot fit one batch, the send is refused before any message
+is written. The composer retains the draft and uploaded files.
+See the [attachment delivery record](changes/irc-attachment-multiline/README.md).
+
 ## Issue references
 
 IRC shows issue references through the `issues` contract

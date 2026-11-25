@@ -41,14 +41,14 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "reference_card::surface",
         source: "board-kit/dashboard/src/reference_card.rs",
-        used_in: "Channels issue chips, status pills and assignee avatars.",
+        used_in: "Channels issue and pull request cards, chips and status pills.",
         samples: reference_cards,
         kit: None,
     },
     Item {
         name: "reference_card::frame",
         source: "board-kit/dashboard/src/reference_card.rs",
-        used_in: "Passive Channels issue and tracker hover cards, with shared popover elevation.",
+        used_in: "Channels issue and pull request hover cards with a neutral outline and coloured status pills.",
         samples: reference_frames,
         kit: None,
     },

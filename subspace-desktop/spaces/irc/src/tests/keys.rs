@@ -68,9 +68,7 @@ fn an_oversized_paste_stays_editable_and_saves_the_exact_draft(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
-fn recall_rechecks_the_limit_when_it_replaces_or_restores_an_oversized_draft(
-    cx: &mut TestAppContext,
-) {
+fn vertical_arrows_keep_an_oversized_draft_and_recall_once_it_is_cleared(cx: &mut TestAppContext) {
     let (conversation, input, cx) = composer(cx);
     cx.simulate_input("earlier");
     cx.simulate_keystrokes("enter");
@@ -80,14 +78,13 @@ fn recall_rechecks_the_limit_when_it_replaces_or_restores_an_oversized_draft(
             input.replace_range(0..0, &oversized, window, cx);
         });
     });
-    cx.simulate_keystrokes("up");
-    assert_eq!(text(&input, cx), "earlier");
-    cx.simulate_keystrokes("down enter");
-    assert!(
-        text(&input, cx) == oversized,
-        "the oversized draft is restored"
-    );
+    cx.simulate_keystrokes("up down enter");
+    assert_eq!(text(&input, cx), oversized, "the oversized draft stays");
     assert_eq!(sent(&conversation, cx), ["earlier"]);
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| input.clear(window, cx));
+        window.render_frame(cx);
+    });
     cx.simulate_keystrokes("up enter");
     assert_eq!(sent(&conversation, cx), ["earlier", "earlier"]);
 }
@@ -129,38 +126,32 @@ fn return_sends_after_the_completion_list_closes(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn up_recalls_a_sent_line_only_from_a_single_line_draft(cx: &mut TestAppContext) {
+fn vertical_arrows_jump_to_draft_boundaries_and_recall_from_empty(cx: &mut TestAppContext) {
     let (_, input, cx) = composer(cx);
     cx.simulate_input("earlier");
     cx.simulate_keystrokes("enter");
-
-    cx.simulate_input("one");
-    cx.simulate_keystrokes("shift-enter");
-    cx.simulate_input("two");
-    cx.simulate_keystrokes("up");
-    assert_eq!(
-        text(&input, cx),
-        "one\ntwo",
-        "Up moves between the draft's lines"
-    );
-    let cursor = input.read_with(cx, |input, cx| input.cursor(cx));
-    assert!(cursor <= "one".len(), "the cursor is on the first line");
-    cx.simulate_keystrokes("down");
-    assert_eq!(text(&input, cx), "one\ntwo", "Down too");
-    let cursor = input.read_with(cx, |input, cx| input.cursor(cx));
-    assert!(
-        cursor > "one".len(),
-        "the cursor is back on the second line"
-    );
-
+    for draft in ["one", "one\ntwø"] {
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| input.set_text(draft, window, cx));
+            window.render_frame(cx);
+        });
+        cx.simulate_keystrokes("up");
+        assert_eq!(input.read_with(cx, |input, cx| input.cursor(cx)), 0);
+        cx.simulate_keystrokes("down");
+        assert_eq!(
+            input.read_with(cx, |input, cx| input.cursor(cx)),
+            draft.len()
+        );
+        assert_eq!(text(&input, cx), draft, "the draft is unchanged");
+    }
     cx.update(|window, cx| {
-        input.update(cx, |input, cx| input.set_text("one", window, cx));
+        input.update(cx, |input, cx| input.clear(window, cx));
         window.render_frame(cx);
     });
     cx.simulate_keystrokes("up");
-    assert_eq!(text(&input, cx), "earlier", "a single line recalls");
+    assert_eq!(text(&input, cx), "earlier");
     cx.simulate_keystrokes("down");
-    assert_eq!(text(&input, cx), "one", "and Down returns to the draft");
+    assert_eq!(text(&input, cx), "", "Down returns to the empty draft");
 }
 
 #[gpui_kit::test]
@@ -173,13 +164,12 @@ fn a_recalled_multi_line_message_does_not_stop_the_recall(cx: &mut TestAppContex
     cx.simulate_input("second");
     cx.simulate_keystrokes("enter");
 
-    cx.simulate_input("draft");
     cx.simulate_keystrokes("up");
     assert_eq!(text(&input, cx), "first\nsecond");
     cx.simulate_keystrokes("up");
     assert_eq!(text(&input, cx), "earlier", "Up goes on past it");
     cx.simulate_keystrokes("down down");
-    assert_eq!(text(&input, cx), "draft", "and Down comes back");
+    assert_eq!(text(&input, cx), "", "and Down comes back");
 
     cx.simulate_keystrokes("up");
     cx.simulate_input("!");

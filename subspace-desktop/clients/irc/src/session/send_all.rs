@@ -3,28 +3,44 @@
 
 use super::input::{Input, parse_input};
 use super::{Output, Session, commands, send};
-use crate::model::{BufferKey, Event, LineKind, SendResult};
+use crate::model::{BufferKey, Command, Event, LineKind, SendResult};
 
 /// Why a `SendAll` waits for registration.
 pub(super) const NOT_REGISTERED: &str = "Not connected yet. Your message is kept.";
 /// Why a `SendAll` may have partly gone.
 pub(super) const WRITE_FAILED: &str = "Connection lost while sending; some lines may have gone. Check the channel before sending again.";
 
+enum SendLines<'a> {
+    Separate(&'a [String]),
+    Together(&'a [String]),
+}
+
+pub(super) fn command(session: &mut Session, command: Command, out: &mut Output) {
+    let (buffer, id, lines) = match &command {
+        Command::SendAll { buffer, id, lines } => (buffer, *id, SendLines::Separate(lines)),
+        Command::SendAllTogether { buffer, id, lines } => (buffer, *id, SendLines::Together(lines)),
+        _ => return,
+    };
+    send_all(session, buffer, id, lines, out);
+}
+
 /// Checked before written: the connection must be registered, and each line
 /// is checked and prepared against its negotiated limits first. Only then
 /// do all go to the connection; their local echoes and the success answer
 /// follow a full write, an uncertain answer a failed one. Always answered
 /// with [`Event::Sent`].
-pub(super) fn send_all(
+fn send_all(
     session: &mut Session,
     buffer: &BufferKey,
     id: u64,
-    lines: &[String],
+    lines: SendLines<'_>,
     out: &mut Output,
 ) {
     let mut prepared = Output::default();
-    let result =
-        registered(session).and_then(|()| prepare_all(session, buffer, lines, &mut prepared));
+    let result = registered(session).and_then(|()| match lines {
+        SendLines::Separate(lines) => prepare_all(session, buffer, lines, &mut prepared),
+        SendLines::Together(lines) => prepare_together(session, buffer, lines, &mut prepared),
+    });
     let sent = |result| Event::Sent {
         buffer: buffer.clone(),
         id,
@@ -72,4 +88,29 @@ fn prepare_all(
         prepared.send.extend(messages);
         Ok(())
     })
+}
+
+/// The composer has already packed the upload references into whole lines.
+/// Feed them into the normal multiline sender with the draft, then accept
+/// its prepared output only if it contains one logical IRC message.
+fn prepare_together(
+    session: &mut Session,
+    buffer: &BufferKey,
+    lines: &[String],
+    prepared: &mut Output,
+) -> Result<(), String> {
+    prepare_all(session, buffer, &[lines.join("\n")], prepared)?;
+    let logical_messages = prepared
+        .send
+        .iter()
+        .filter(|message| {
+            (message.command == "PRIVMSG" && message.tag("batch").is_none())
+                || (message.command == "BATCH" && message.param(0).starts_with('+'))
+        })
+        .count();
+    if logical_messages == 1 {
+        Ok(())
+    } else {
+        Err("This server cannot send this message and its attachments together. Shorten the message and try again.".into())
+    }
 }
