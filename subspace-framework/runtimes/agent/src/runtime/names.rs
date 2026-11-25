@@ -3,7 +3,12 @@
 
 use chrono::{DateTime, Utc};
 
-use super::{ATTACHMENT_MARKER, Entry, SessionSummary, TranscriptEntry, Value};
+#[cfg(feature = "copilot")]
+use super::Value;
+use super::{Entry, TranscriptEntry};
+use crate::ATTACHMENT_MARKER;
+#[cfg(feature = "copilot")]
+use crate::SessionSummary;
 
 /// A chat with neither a name nor a message yet.
 pub(super) const NEW_CHAT: &str = "New chat";
@@ -101,6 +106,7 @@ pub(super) fn validate_name(name: &str) -> Result<String, String> {
 
 /// The saved local chats of this account, newest first. Detached maintenance
 /// sessions and remote sessions are not offered.
+#[cfg(feature = "copilot")]
 pub(super) fn session_summaries(sessions: Vec<Value>, now: DateTime<Utc>) -> Vec<SessionSummary> {
     let mut listed: Vec<(String, SessionSummary)> = sessions
         .iter()
@@ -111,11 +117,13 @@ pub(super) fn session_summaries(sessions: Vec<Value>, now: DateTime<Utc>) -> Vec
     listed.into_iter().map(|(_, summary)| summary).collect()
 }
 
+#[cfg(feature = "copilot")]
 fn listed_session(entry: &Value) -> bool {
     !entry["isRemote"].as_bool().unwrap_or(false) && !entry["isDetached"].as_bool().unwrap_or(false)
 }
 
 /// The raw modification time, kept for sorting, and the row itself.
+#[cfg(feature = "copilot")]
 fn session_summary(entry: &Value, now: DateTime<Utc>) -> Option<(String, SessionSummary)> {
     let id = entry["sessionId"].as_str()?.to_owned();
     let modified = entry["modifiedTime"].as_str().unwrap_or_default();
@@ -175,9 +183,10 @@ fn plural(count: i64, unit: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "copilot")]
+    use super::session_summaries;
     use super::{
-        clean_title, display_name, display_title, first_message, relative_time, session_summaries,
-        validate_name,
+        clean_title, display_name, display_title, first_message, relative_time, validate_name,
     };
     use crate::{ATTACHMENT_MARKER, Entry, TranscriptEntry};
     use chrono::{DateTime, Utc};
@@ -293,6 +302,7 @@ mod tests {
         assert!(validate_name(&"n".repeat(100)).is_ok());
     }
 
+    #[cfg(feature = "copilot")]
     #[test]
     fn saved_sessions_are_local_undetached_and_newest_first() {
         let sessions = vec![

@@ -3,7 +3,9 @@
 use super::{APPROVAL_LIMIT, APPROVAL_TIMEOUT, EventQueue, PathBuf, lock, next_id, redact};
 use crate::{ChatEvent, ChatId, Event};
 use async_trait::async_trait;
+#[cfg(feature = "copilot")]
 use github_copilot_sdk::handler::{UserInputHandler, UserInputResponse};
+#[cfg(feature = "copilot")]
 use github_copilot_sdk::types::{RequestId, SessionId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -11,6 +13,8 @@ use tokio::sync::oneshot;
 
 pub(super) enum Decision {
     Approval(oneshot::Sender<bool>),
+    /// Only Copilot asks the user questions.
+    #[cfg_attr(not(feature = "copilot"), allow(dead_code))]
     Answer(oneshot::Sender<String>),
 }
 
@@ -24,14 +28,18 @@ pub(super) struct Decisions {
     pub(super) events: Arc<EventQueue>,
     pub(super) pending: Mutex<HashMap<String, Pending>>,
     /// Which chat each open session belongs to, so an SDK callback reaches
-    /// the tab that asked for it.
+    /// the tab that asked for it. Copilot only.
+    #[cfg_attr(not(feature = "copilot"), allow(dead_code))]
     pub(super) chats: Mutex<HashMap<String, ChatId>>,
     /// Subspace's private workspace, canonical. Built-in reads inside it need
     /// no prompt; the CLI runs `view`, `glob` and `grep` in its own process,
-    /// so a read anywhere else is a host read and is shown.
+    /// so a read anywhere else is a host read and is shown. Copilot only.
+    #[cfg_attr(not(feature = "copilot"), allow(dead_code))]
     pub(super) workspace: PathBuf,
 }
 
+/// The Copilot SDK's callbacks name a session, not a chat.
+#[cfg(feature = "copilot")]
 impl Decisions {
     pub(super) fn attach(&self, session: &SessionId, chat: ChatId) {
         lock(&self.chats).insert(session.to_string(), chat);
@@ -44,7 +52,9 @@ impl Decisions {
     pub(super) fn chat_of(&self, session: &SessionId) -> Option<ChatId> {
         lock(&self.chats).get(&session.to_string()).copied()
     }
+}
 
+impl Decisions {
     pub(super) async fn approval(
         &self,
         chat: ChatId,
@@ -94,6 +104,7 @@ impl Decisions {
         }
     }
 
+    #[cfg_attr(not(feature = "copilot"), allow(dead_code))]
     pub(super) fn answer(&self, id: &str, answer: String) {
         if let Some(Pending {
             decision: Decision::Answer(sender),
@@ -135,6 +146,7 @@ impl subspace_agent_tools::Approval for ChatApproval {
     }
 }
 
+#[cfg(feature = "copilot")]
 #[async_trait]
 impl UserInputHandler for Decisions {
     async fn handle(
@@ -172,7 +184,9 @@ impl UserInputHandler for Decisions {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatApproval, Decisions, UserInputHandler};
+    #[cfg(feature = "copilot")]
+    use super::UserInputHandler;
+    use super::{ChatApproval, Decisions};
     use crate::runtime::{EventQueue, lock};
     use crate::{ChatEvent, Event};
     use std::sync::{Arc, Mutex};
@@ -230,6 +244,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(feature = "copilot")]
     #[tokio::test]
     async fn session_questions_route_answers_by_request_and_detached_sessions_ask_nothing() {
         let events = Arc::new(EventQueue::default());
