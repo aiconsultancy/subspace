@@ -162,11 +162,21 @@ How the effort reaches the model:
   Claude 3.7 and 4.0 to 4.5, except Opus 4.5, take only `high` and `max`.
   The installer reads dated IDs by their version, so
   `claude-opus-4-20250514` counts as Claude 4.0.
-  The Codex family takes `low`, `medium` and `high`.
+  The Codex family takes `low`, `medium` and `high`. The installer also
+  exposes `xhigh` for GPT-5.4 and GPT-6.2 Sol.
 - **Claude Agent SDK.** An officer with `"type": "claude-sdk"` passes the
   effort to Stargate's Claude backend as `effort`.
 
 The installer refuses an effort that the officer's harness does not offer.
+
+Captains with crew can use `stargate_model({op: "inspect", target: "codex-1"})`
+to read a worker's selected model and variant. To prepare an idle worker for a
+review, use `stargate_model({op: "effort", target: "codex-1", variant: "high"})`
+and inspect it again before dispatching. Pass the same `project` to both calls
+for a non-default repository. Crew can verify their own variant with
+`stargate_model({op: "get"})`. Follow the repository's review gate when it
+requires a particular model or effort. These grants apply to the captain's
+pinned root on new and existing fleets.
 
 Both the dry run and the install stop if the model proxy has signed-in
 accounts but none can serve an officer's model:

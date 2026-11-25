@@ -336,11 +336,30 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(backend["sessionID"], "ses_fixture")
         self.assertEqual((backend["agent"], backend["enforcePermissions"]), ("build", True))
         self.assertEqual(backend["permissions"][-len(runtime.CREW_GRANTS):], runtime.CREW_GRANTS)
+        self.assertEqual([rule["resource"] for rule in backend["permissions"]
+                          if rule["action"] == "stargate_model"],
+                         ["inspect", "effort", "get"])
+        self.assertEqual([variant["id"] for variant in
+                          engine["providers"]["openai-proxy"]["models"]["gpt-5.4"]["variants"]],
+                         ["low", "medium", "high", "xhigh"])
         self.assertEqual(engine["permissions"], captain["harness"]["permissions"])
         environment = saved["engine-orion"]["environment"]
         self.assertEqual(environment["OPENCODE_AUTHORIZATION"], next(iter(headers.values())))
         self.assertIn("fleet-crew", documents["skills"])
         self.assertIn("stargate_crew", documents["instructions"])
+
+    def test_operator_rules_can_restrict_the_captain_effort_grant(self):
+        config, secrets = example_config(), officer_secrets()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["harness"] = {"captain": {"extraPermissions": [
+            {"action": "stargate_model", "resource": "effort", "effect": "deny"},
+        ]}}
+        cfg = validate(config, secrets)
+        captain = cfg["members"][1]
+        rules = runtime.captain_permissions(cfg, captain)
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["inspect"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["effort"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["switch"]), "deny")
 
     def test_officers_reach_the_api_agent_listener_as_themselves(self):
         config = example_config()
@@ -2222,8 +2241,8 @@ class OfficerModelTests(unittest.TestCase):
 
     def test_an_effort_the_harness_cannot_give_is_refused(self):
         cases = [
-            ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "xhigh"}},
-             "'xhigh' is not available for gpt-5.4 with the opencode harness, which offers low, medium, high"),
+            ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "max"}},
+             "'max' is not available for gpt-5.4 with the opencode harness, which offers low, medium, high, xhigh"),
             ({"captain": {"model": "claude-sonnet-4-6", "effort": "xhigh"}},
              "offers low, medium, high, max"),
             ({"captain": {"model": "claude-sonnet-4-5", "effort": "low"}}, "offers high, max"),
@@ -2244,6 +2263,18 @@ class OfficerModelTests(unittest.TestCase):
             with self.subTest(model):
                 self.assertEqual(self.harnesses(self.config({"captain": {"model": model, "effort": effort}}))["orion"],
                                  ("claude", model, effort))
+
+    def test_codex_extra_high_is_explicit_for_supported_models(self):
+        for model in ("gpt-5.4", "gpt-6.2-sol"):
+            with self.subTest(model):
+                cfg = validate(self.config({"captain": {"model": model, "effort": "xhigh"}}),
+                               officer_secrets("example-vega"))
+                self.assertEqual(cfg["members"][1]["harness"]["effort"], "xhigh")
+                catalogue = runtime.model_provider(cfg, "codex", [model, "custom-review-model"])["models"]
+                self.assertEqual(catalogue[model]["variants"],
+                                 [{"id": effort, "settings": {"reasoningEffort": effort}}
+                                  for effort in ("low", "medium", "high", "xhigh")])
+                self.assertNotIn("variants", catalogue["custom-review-model"])
 
     def test_officers_whose_model_no_signed_in_account_serves_stop_both_runs(self):
         temporary = tempfile.TemporaryDirectory()

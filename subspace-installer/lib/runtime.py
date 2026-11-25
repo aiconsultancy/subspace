@@ -122,6 +122,9 @@ EFFORTS = {
     ("opencode", "codex"): ("low", "medium", "high"),
     ("claude-sdk", "claude"): ("low", "medium", "high", "xhigh", "max"),
 }
+# The compatible Responses provider omits extra-high from its fallback
+# catalogue. These models accept it, so offer it explicitly for them.
+CODEX_XHIGH_MODELS = frozenset(("gpt-5.4", "gpt-6.2-sol"))
 # OpenCode provider IDs per model family, as in Stargate's OpenCode template.
 PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
 USAGE_GUARD_DEFAULTS = {"warning": 20, "cutoff": 10}
@@ -146,6 +149,8 @@ CREW_GRANTS = [
     *({"action": action, "resource": "*", "effect": "allow"} for action in ("stargate_crew", "stargate_mail", "stargate_history")),
     {"action": "stargate_model", "resource": "get", "effect": "allow"},
 ]
+CREW_EFFORT_GRANTS = [{"action": "stargate_model", "resource": operation, "effect": "allow"}
+                     for operation in ("inspect", "effort")]
 
 
 def require(condition, message):
@@ -701,6 +706,8 @@ def harness_config(value, inherited):
         offered = EFFORTS.get((backend, family), ())
         if backend == "opencode" and family == "claude":
             offered = claude_efforts(model)
+        elif backend == "opencode" and model in CODEX_XHIGH_MODELS:
+            offered = (*offered, "xhigh")
         require(effort in offered, f"Reasoning effort {effort!r} is not available for {model} with the {backend} "
                 f"harness, which offers {', '.join(offered) or 'none'}." if offered else
                 f"The {backend} harness cannot set a reasoning effort for the {family} family. Remove harness effort.")
@@ -1735,6 +1742,9 @@ def model_provider(cfg, family, models):
     for model, entry in catalogue.items():
         if model in {"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "gpt-5.4", "gpt-6.2-sol"}:
             entry["capabilities"] = {"input": ["text", "image"]}
+        if family == "codex" and model in CODEX_XHIGH_MODELS:
+            entry["variants"] = [{"id": effort, "settings": {"reasoningEffort": effort}}
+                                 for effort in (*EFFORTS["opencode", "codex"], "xhigh")]
     return {"name": f"Fleet model proxy, {family.title()} family", "package": package, "settings": settings,
             "models": catalogue}
 
@@ -1867,7 +1877,7 @@ def agent_socket_directories(cfg):
     return [agent_socket(person["id"]).parent for person in cfg["members"]]
 
 
-def harness_permissions(cfg, person):
+def harness_permissions(cfg, person, starter_grants=()):
     """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener or a hosted API is
     configured, and with a hosted API the officer's REST command (SUBSPACE_REQUEST).
 
@@ -1877,7 +1887,7 @@ def harness_permissions(cfg, person):
     any operator rule that matches the command, such as a deny of `subspace-*`, decides.
     """
     permissions = person["harness"]["permissions"]
-    commands = []
+    commands = list(starter_grants)
     if cfg.get("captainPeerMessages") and person["crew"]:
         commands.extend({"action": "fleet_peer_message", "resource": peer["id"], "effect": "allow"}
                         for peer in cfg["members"] if peer["crew"] and peer["id"] != person["id"])
@@ -1901,9 +1911,9 @@ def harness_permissions(cfg, person):
 def captain_permissions(cfg, person):
     """The captain root's stored grants: its harness policy plus the crew tools when it hosts crew, and the
     dispatch answer tool when agent dispatch is on."""
-    permissions = harness_permissions(cfg, person)
     if not person["crew"]:
-        return permissions
+        return harness_permissions(cfg, person)
+    permissions = harness_permissions(cfg, person, CREW_EFFORT_GRANTS)
     return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
 
 
