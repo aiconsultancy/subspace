@@ -306,7 +306,11 @@ only the remaining slots' names to `fleet.json`.
 - **Rules.** ASCII letters, digits, spaces, hyphens and underscores,
   shortening to a crew ID of at most 32 characters. A name is unique in the
   fleet, across every ship, compared without case, and is never an officer's
-  ID, account or name. The fleet installer enforces them for any
+  ID, account or name. It is the names that are compared: a crew member's ID
+  need only be unique in its captain's crew, so every ship may have a
+  `claude-1`, as a fleet whose crew were named after installation has (see
+  below). Within a captain's crew a name is also no other member's ID, as
+  Stargate requires. The fleet installer enforces them for any
   `fleet.json`, and setup checks them before it writes anything. Crew have
   no records in the Subspace API, so the API does not check them: a captain
   records a crew member's work with `relayedCrew: {"name", "model"}`, where
@@ -316,7 +320,8 @@ only the remaining slots' names to `fleet.json`.
   crew slot claude-1)"), which the Fleet API returns with its model; the
   captain's instructions list each one as name, ID, family, slot and model;
   and `--dry-run` prints each captain's crew as `Rigel (Claude 1,
-  claude-sonnet-5-5)`.
+  claude-sonnet-5-5)`, adding `ID claude-1` for a crew member that keeps
+  another ID under its name.
 - **Installed fleets keep their crew.** A slot without a name of its own is
   called after its slot, `Claude 1`, on every ship, as in fleets installed
   before crew names; such names may repeat across ships. Stargate keeps a
