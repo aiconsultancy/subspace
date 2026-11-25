@@ -31,8 +31,10 @@ or reconnecting to the fleet also rearms the read. Hidden crew views do
 not start reads; showing a retained view rearms the read and ignores any
 older response. A 404 falls back to the roster without polling. Reload,
 a reconnect or a returning member explicitly probes the route again.
-Task text has no length limit. Control and bidirectional formatting codes
-are written out as code points, except line breaks and tabs.
+Task summaries and progress each carry up to 64,000 characters, the dispatch
+limit. The crew detail response allows up to 16 MiB of JSON; the fleet and
+ship reads still allow 8 MiB. Control and bidirectional formatting codes are
+written out as code points, except line breaks and tabs.
 
 ## Verification
 

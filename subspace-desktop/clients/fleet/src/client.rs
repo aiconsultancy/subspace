@@ -19,6 +19,18 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A fleet with many ships and crew stays far below this.
 const MAX_JSON_BYTES: u64 = 8 * 1024 * 1024;
+// Gateway crew-detail bounds: current, last outcome, five queued and
+// eight recent tasks, each with a summary and progress. Round the maximum
+// escaped text size up to leave headroom for metadata and the JSON envelope.
+const CREW_DETAIL_TASKS: u64 = 1 + 1 + 5 + 8;
+const CREW_TASK_TEXT_FIELDS: u64 = 2;
+const CREW_TASK_TEXT_CODE_POINTS: u64 = 64_000;
+const JSON_BYTES_PER_CODE_POINT: u64 = 6;
+const CREW_DETAIL_TEXT_BYTES: u64 = CREW_DETAIL_TASKS
+    * CREW_TASK_TEXT_FIELDS
+    * CREW_TASK_TEXT_CODE_POINTS
+    * JSON_BYTES_PER_CODE_POINT;
+const MAX_CREW_DETAIL_JSON_BYTES: u64 = CREW_DETAIL_TEXT_BYTES.next_power_of_two();
 pub(crate) const USER_AGENT: &str = concat!("Subspace/", env!("CARGO_PKG_VERSION"));
 
 /// A fleet's address and the token saved for it. Deliberately has no
@@ -46,22 +58,22 @@ impl FleetClient {
 
     /// `GET /api/v1/fleet`: the fleet, its rear admiral, ships and host.
     pub fn fleet(&self) -> Result<FleetOverview, Error> {
-        self.get(&["fleet"])
+        self.get(&["fleet"], MAX_JSON_BYTES)
     }
 
     /// `GET /api/v1/ships/{id}`: one ship with its crew and their work.
     pub fn ship(&self, id: &str) -> Result<ShipDetail, Error> {
-        self.get(&["ships", id])
+        self.get(&["ships", id], MAX_JSON_BYTES)
     }
 
     /// `GET /api/v1/ships/{ship}/crew/{member}`. Run in the background.
     /// `NotFound` can mean an absent member or a gateway without this route.
     pub fn crew(&self, ship: &str, member: &str) -> Result<CrewDetail, Error> {
-        self.get::<CrewDetail>(&["ships", ship, "crew", member])?
+        self.get::<CrewDetail>(&["ships", ship, "crew", member], MAX_CREW_DETAIL_JSON_BYTES)?
             .matching(ship, member)
     }
 
-    fn get<T: DeserializeOwned>(&self, segments: &[&str]) -> Result<T, Error> {
+    fn get<T: DeserializeOwned>(&self, segments: &[&str], limit: u64) -> Result<T, Error> {
         let url = self.address.url(segments)?;
         let response = agent()
             .get(url.as_str())
@@ -69,7 +81,7 @@ impl FleetClient {
             .header("Authorization", format!("Bearer {}", self.token.expose()))
             .call()
             .map_err(|_| Error::Unreachable)?;
-        read_json(check_status(response)?)
+        read_json(check_status(response)?, limit)
     }
 }
 
@@ -127,11 +139,11 @@ fn check_status(response: Response<Body>) -> Result<Response<Body>, Error> {
     }
 }
 
-fn read_json<T: DeserializeOwned>(mut response: Response<Body>) -> Result<T, Error> {
+fn read_json<T: DeserializeOwned>(mut response: Response<Body>, limit: u64) -> Result<T, Error> {
     let text = response
         .body_mut()
         .with_config()
-        .limit(MAX_JSON_BYTES)
+        .limit(limit)
         .read_to_string()
         .map_err(|_| Error::InvalidResponse)?;
     serde_json::from_str(&text).map_err(|_| Error::InvalidResponse)
@@ -139,8 +151,24 @@ fn read_json<T: DeserializeOwned>(mut response: Response<Body>) -> Result<T, Err
 
 #[cfg(test)]
 mod tests {
-    use super::{retry_after, status_error};
+    use super::{
+        CREW_DETAIL_TASKS, CREW_TASK_TEXT_CODE_POINTS, CREW_TASK_TEXT_FIELDS,
+        JSON_BYTES_PER_CODE_POINT, MAX_CREW_DETAIL_JSON_BYTES, MAX_JSON_BYTES, retry_after,
+        status_error,
+    };
     use crate::Error;
+
+    #[test]
+    fn crew_detail_cap_covers_the_gateway_text_bound_with_headroom() {
+        let bound = CREW_DETAIL_TASKS
+            * CREW_TASK_TEXT_FIELDS
+            * CREW_TASK_TEXT_CODE_POINTS
+            * JSON_BYTES_PER_CODE_POINT;
+        assert_eq!(bound, 11_520_000);
+        assert_eq!(MAX_CREW_DETAIL_JSON_BYTES, bound.next_power_of_two());
+        assert_eq!(MAX_CREW_DETAIL_JSON_BYTES, 16 * 1024 * 1024);
+        assert_eq!(MAX_JSON_BYTES, 8 * 1024 * 1024);
+    }
 
     #[test]
     fn statuses_keep_their_meaning() {
