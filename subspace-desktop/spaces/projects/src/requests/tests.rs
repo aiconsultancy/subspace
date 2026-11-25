@@ -4,8 +4,8 @@ use subspace_framework::dashboard::Dashboard;
 
 use crate::{Projects, Record};
 
-fn project(initiative: &str) -> PlanningProject {
-    PlanningProject {
+fn record(initiative: &str) -> Record {
+    let project = PlanningProject {
         id: "project-1".into(),
         key: Some("EX".into()),
         name: "Example project".into(),
@@ -19,6 +19,11 @@ fn project(initiative: &str) -> PlanningProject {
         archived: false,
         initiative_id: Some(initiative.into()),
         initiative: None,
+    };
+    Record {
+        project,
+        milestones: Ok(Vec::new()),
+        update: Ok(None),
     }
 }
 
@@ -34,14 +39,10 @@ fn directory_reload_and_an_initiative_move_disable_milestone_writes(cx: &mut Tes
     board.update(cx, |this, cx| {
         this.initiative_id = Some("initiative-1".into());
         this.initiative_hidden = false;
-        let current = project("initiative-1");
-        this.selected = Some(current.id.clone());
-        this.projects = Ok(vec![current.clone()]);
-        this.record = Some(Ok(Record {
-            project: current,
-            milestones: Ok(Vec::new()),
-            update: Ok(None),
-        }));
+        let current = record("initiative-1");
+        this.selected = Some(current.project.id.clone());
+        this.projects = Ok(vec![current.project.clone()]);
+        this.record = Some(Ok(current));
         assert!(this.may_write());
         this.directory_task = Some(Task::ready(()));
         assert!(
@@ -49,14 +50,7 @@ fn directory_reload_and_an_initiative_move_disable_milestone_writes(cx: &mut Tes
             "wait until the directory refresh has finished"
         );
         this.directory_task = None;
-        this.apply_record(
-            Ok(Record {
-                project: project("initiative-2"),
-                milestones: Ok(Vec::new()),
-                update: Ok(None),
-            }),
-            cx,
-        );
+        this.apply_record(Ok(record("initiative-2")), cx);
         assert!(!this.may_write());
         assert!(this.selected.is_none());
         assert_eq!(this.visible_projects().count(), 0);

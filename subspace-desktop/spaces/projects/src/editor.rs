@@ -242,19 +242,7 @@ pub(super) fn render(
                     .as_ref()
                     .map(|error| fields::field_error(tokens, "milestone-error", error)),
             )
-            .children(
-                this.record
-                    .as_ref()
-                    .and_then(|record| record.as_ref().ok())
-                    .filter(|record| !this.in_scope(&record.project))
-                    .map(|_| {
-                        fields::field_error(
-                            tokens,
-                            "milestone-initiative-changed",
-                            "The selected initiative changed. Copy any edits before closing this form.",
-                        )
-                    }),
-            )
+            .children(initiative_warning(this, tokens))
             .children(
                 busy.then(|| {
                     feedback::loading_line(tokens, "milestone-saving", "Saving milestone…")
@@ -262,6 +250,17 @@ pub(super) fn render(
             )
             .child(footer(this, (action, icon, intent), cx)),
     ))
+}
+
+fn initiative_warning(this: &Projects, tokens: &Tokens) -> Option<Div> {
+    let record = this.record.as_ref()?.as_ref().ok()?;
+    (!this.in_scope(&record.project)).then(|| {
+        fields::field_error(
+            tokens,
+            "milestone-initiative-changed",
+            "The selected initiative changed. Copy any edits before closing this form.",
+        )
+    })
 }
 
 fn footer(
