@@ -576,7 +576,8 @@ def check_shape(phase):
     firewall = (etc / "firewall.nft").read_text()
     operator = pwd.getpwnam("fixture-operator").pw_uid
     assert f'tcp dport 8070 meta skuid != {{ 0, {operator} }}' in firewall
-    assert f'tcp dport 8080 meta skuid != {{ 0, {operator} }}' in firewall
+    view_users = {0, operator, pwd.getpwnam("ss-fleet-view").pw_uid}
+    assert f'tcp dport 8080 meta skuid != {{ {", ".join(map(str, sorted(view_users)))} }}' in firewall
     model_uids = {0, operator, pwd.getpwnam("ss-fleet-gateway").pw_uid, *(pwd.getpwnam(f"ss-{agent}").pw_uid for agent in MEMBERS)}
     for worker in CREW:
         try:
