@@ -6,6 +6,10 @@ use url::Url;
 
 use crate::{Error, FleetAddress, FleetClient};
 
+mod binary;
+
+pub use binary::{DiffContent, DiffSide};
+
 // One list page can carry 1,000 × 64 KiB of patch text before JSON escaping;
 // allow six bytes per input byte plus metadata. File pages hold up to 1 MiB.
 const MAX_DIFF_BYTES: u64 = 400 * 1024 * 1024;
@@ -43,6 +47,7 @@ pub struct DiffFilePage<'a> {
     pub path: &'a str,
     pub page: Option<&'a str>,
     pub at: &'a str,
+    pub side: Option<DiffSide>,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +61,8 @@ pub struct V1Diff {
     pub base: Option<DiffBase>,
     pub head: Option<String>,
     pub fingerprint: String,
+    #[serde(default)]
+    pub unstable: bool,
     pub computed_at: u64,
     pub total: u32,
     pub additions: u32,
@@ -108,7 +115,10 @@ pub enum DiffKind {
 #[derive(Deserialize)]
 pub struct V1DiffFilePage {
     pub fingerprint: String,
+    #[serde(default)]
+    pub unstable: bool,
     pub file: V1DiffFile,
+    pub content: Option<DiffContent>,
 }
 
 // qual:allow(coupling, oi) reason: "These read-only endpoints compose the query encoder with the existing credential-bound transport."
@@ -126,6 +136,7 @@ impl FleetClient {
         match self.get_json(&url, MAX_DIFF_BYTES) {
             Ok(page) => Ok(Some(page)),
             Err(Error::NotFound) if cursor.is_none() => Ok(None),
+            Err(Error::NotFound | Error::UnexpectedStatus(409)) => Err(Error::StaleDiff),
             Err(error) => Err(error),
         }
     }
@@ -143,6 +154,9 @@ impl FleetClient {
             .append_pair("at", request.at);
         if let Some(page) = request.page {
             url.query_pairs_mut().append_pair("page", page);
+        }
+        if let Some(side) = request.side {
+            url.query_pairs_mut().append_pair("side", side.query());
         }
         self.get_json(&url, MAX_FILE_BYTES)
             .map_err(|error| match error {

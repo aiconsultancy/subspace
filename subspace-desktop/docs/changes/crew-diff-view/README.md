@@ -14,7 +14,26 @@ and project. The PRs Space resolves the fleet connection and displays **All
 changes**, **Committed only** or **Uncommitted only**. It reads file-list pages
 for one snapshot; **Load next page** continues a long patch at that snapshot’s
 fingerprint. The shared Fleet feed can also report a new fingerprint for
-that checkout. If it has changed, use **Refresh** to load a new snapshot.
+that checkout. A newly observed fingerprint can mark the open snapshot
+stale; a cached fingerprint from before the list loaded cannot. A conflict
+or missing list continuation also asks for **Refresh**. If a list or file
+page reports an unstable read, the viewer still displays the content and
+shows **Changed while loading · Refresh**. A busy response offers a manual
+refresh rather than promising an automatic retry.
+
+**View binary** opens a readonly hex and ASCII dump. Its pages are read on
+demand at the original fingerprint; modified binaries offer **Old** and
+**New**, and removals show **Old**. PNG, JPEG, GIF and WebP files also offer
+**Preview image**, which assembles the selected side in memory and shows a
+still preview for up to 10 MiB in at most 16 pages, with a maximum width
+and height of 4,096 pixels. **Show bytes** remains
+available; larger or unsupported images can be read as bytes page by page.
+
+The shared unified and split lists keep their fixed-height virtual rows.
+**Read full line** opens a horizontally scrollable reader for a line from
+either layout, including lines without spaces. The virtual list sizes its
+horizontal extent from one measurement item; this avoids a guessed width
+that could still clip one of the split columns, or measuring the whole diff.
 
 The Fleet client does not put diff content in the activity feed. The viewer
 keeps it in memory only, with no viewed marks, search index or notification
@@ -29,7 +48,7 @@ content. The PRs Space’s GitHub path keeps its own account, links and marks.
   runner with `xvfb-run` and the Channels entry wired up.
 - An empty HTTP 404 means either the checkout is unavailable or the gateway
   predates the route. A successful empty snapshot means no changes, including
-  on an unborn branch. Binary files show their metadata only.
+  on an unborn branch.
 
 ## Board checklist: `github`
 

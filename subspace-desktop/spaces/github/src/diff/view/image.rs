@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Div, Image, ImageFormat, InteractiveElement as _,
-    IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, Styled as _, div, img,
-    px,
+    AnyElement, AppContext as _, Context, Div, Image, ImageFormat, ImageSource,
+    InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
+    Styled as _, div, img, px,
 };
 use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::action::{Intent, action_button};
@@ -166,7 +166,7 @@ fn side(label: &'static str, slot: &Slot, tokens: &Tokens) -> Option<Div> {
             .text_color(tokens.muted)
             .child("Cannot show this image. It may be larger than 10 MB or stored in Git LFS.")
             .into_any_element(),
-        Slot::Ready(image, size) => ready_image(image, *size, tokens),
+        Slot::Ready(image, size) => ready_image(image.clone(), *size, tokens),
     };
     Some(
         v_flex()
@@ -177,11 +177,15 @@ fn side(label: &'static str, slot: &Slot, tokens: &Tokens) -> Option<Div> {
 }
 
 /// The loaded image and its size in kilobytes.
-fn ready_image(image: &Arc<Image>, size: usize, tokens: &Tokens) -> AnyElement {
+pub(super) fn ready_image(
+    image: impl Into<ImageSource>,
+    size: usize,
+    tokens: &Tokens,
+) -> AnyElement {
     v_flex()
         .gap_1()
         .child(
-            img(image.clone())
+            img(image)
                 .max_w(px(IMAGE_MAX_PX))
                 .max_h(px(IMAGE_MAX_PX))
                 .bg(tokens.pane)

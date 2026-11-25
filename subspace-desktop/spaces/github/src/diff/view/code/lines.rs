@@ -2,7 +2,7 @@
 
 use gpui_kit::component::h_flex;
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{Div, Hsla, ParentElement as _, Styled as _, StyledText, div, px};
+use gpui_kit::{AnyElement, Div, Hsla, ParentElement as _, Styled as _, StyledText, div, px};
 use subspace_framework::dashboard::Tokens;
 
 use super::super::super::highlight::{Runs, overlay, shown};
@@ -53,7 +53,12 @@ pub(super) fn code_text(line: &DiffLine, syntax: &Runs, word: Hsla) -> StyledTex
     StyledText::new(text).with_highlights(runs)
 }
 
-pub(super) fn unified_line(line: &DiffLine, syntax: &Runs, tokens: &Tokens) -> Div {
+pub(super) fn unified_line(
+    line: &DiffLine,
+    syntax: &Runs,
+    read: AnyElement,
+    tokens: &Tokens,
+) -> Div {
     let (background, word, sign) = line_colors(line.kind, tokens);
     h_flex()
         .h(px(code_row_height(tokens)))
@@ -61,6 +66,7 @@ pub(super) fn unified_line(line: &DiffLine, syntax: &Runs, tokens: &Tokens) -> D
         .whitespace_nowrap()
         .overflow_hidden()
         .when_some(background, |el, bg| el.bg(bg))
+        .child(read)
         .child(number(line.old, tokens))
         .child(number(line.new, tokens))
         .child(
@@ -80,18 +86,23 @@ pub(super) fn unified_line(line: &DiffLine, syntax: &Runs, tokens: &Tokens) -> D
         })
 }
 
-pub(super) fn split_half(line: Option<(&DiffLine, &Runs)>, right: bool, tokens: &Tokens) -> Div {
+pub(super) fn split_half(
+    line: Option<(&DiffLine, &Runs, AnyElement)>,
+    right: bool,
+    tokens: &Tokens,
+) -> Div {
     let base = h_flex()
         .h(px(code_row_height(tokens)))
         .flex_1()
         .min_w_0()
         .whitespace_nowrap()
         .overflow_hidden();
-    let Some((line, syntax)) = line else {
+    let Some((line, syntax, read)) = line else {
         return base.bg(tokens.pane.opacity(EMPTY_HALF_OPACITY));
     };
     let (background, word, sign) = line_colors(line.kind, tokens);
     base.when_some(background, |el, bg| el.bg(bg))
+        .child(read)
         .child(number(if right { line.new } else { line.old }, tokens))
         .child(
             div()

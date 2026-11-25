@@ -1,13 +1,10 @@
 //! Loading the diff and the text behind a hunk gap.
 
-use std::sync::Arc;
-
 use gpui_kit::{AppContext as _, Context};
 use subspace_client_fleet::{
     Error,
     diff::{DiffFilePage, DiffMode, V1DiffFilePage},
 };
-use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::{Toast, prefs};
 
 use super::super::model::{
@@ -15,6 +12,11 @@ use super::super::model::{
 };
 use super::source::{Loaded, fleet_file};
 use super::{DiffEvent, DiffSource, DiffView, Text};
+
+enum LoadError {
+    Message(String),
+    Fleet(Error),
+}
 
 impl DiffView {
     /// Load the diff again (reload).
@@ -38,14 +40,22 @@ impl DiffView {
                 if view.fleet.generation != generation {
                     return;
                 }
-                match result {
-                    Ok(diff) => view.set_diff(diff, cx),
-                    Err(error) => view.error = Some(error),
-                }
+                view.finish_load(result, cx);
                 cx.notify();
             });
         }));
         cx.notify();
+    }
+
+    fn finish_load(&mut self, result: Result<Loaded, LoadError>, cx: &mut Context<Self>) {
+        match result {
+            Ok(diff) => self.set_diff(diff, cx),
+            Err(LoadError::Message(message)) => self.error = Some(message),
+            Err(LoadError::Fleet(error)) => {
+                self.fleet.stale_page = error == Error::StaleDiff;
+                self.error = Some(diff_error(error));
+            }
+        }
     }
 
     fn reset_fleet_load(&mut self) {
@@ -53,7 +63,12 @@ impl DiffView {
         self.fleet.fingerprint = None;
         self.fleet.unavailable = false;
         self.fleet.stale_page = false;
+        self.fleet.unstable = false;
+        self.fleet.live_changed = false;
+        self.fleet.busy = None;
         self.fleet.loading.clear();
+        self.binary = None;
+        self.full_line = None;
         self.loaded = false;
         self.total = 0;
         self.files.clear();
@@ -79,7 +94,9 @@ impl DiffView {
                 diff.files.into_iter().map(FileView::new).collect()
             }
             Loaded::Fleet(diff) => {
+                self.seed_crew_fingerprint(cx);
                 self.fleet.fingerprint = Some(diff.fingerprint);
+                self.fleet.unstable = diff.unstable;
                 self.total = diff.total;
                 diff.files.into_iter().map(fleet_file).collect()
             }
@@ -156,41 +173,53 @@ impl DiffView {
                         path: &path,
                         page: Some(&page),
                         at: &at,
+                        side: None,
                     };
                     let result = client.diff_file(source.request(mode), request)?;
                     validate_page(result, &request)
                 })
                 .await;
             _ = view.update(cx, |view, cx| {
-                if view.fleet.generation == generation {
-                    view.finish_page(index, result, cx);
-                }
+                view.finish_page(generation, index, result, cx);
             });
         })
         .detach();
         cx.notify();
     }
 
-    fn finish_page(
+    pub(super) fn finish_page(
         &mut self,
+        generation: u64,
         index: usize,
         result: Result<V1DiffFilePage, Error>,
         cx: &mut Context<Self>,
     ) {
+        if self.fleet.generation != generation {
+            return;
+        }
         self.fleet.loading.remove(&index);
         match result {
             Ok(page) => {
+                self.fleet.busy = None;
+                self.fleet.unstable |= page.unstable;
                 apply_page(&mut self.files[index], page);
                 self.highlights.remove(&index);
                 self.rebuild();
             }
-            Err(Error::StaleDiff) => self.fleet.stale_page = true,
-            Err(Error::NotFound) => cx.emit(DiffEvent::Toast(Toast::error(
-                "This file is no longer available. Refresh the diff.",
-            ))),
-            Err(error) => cx.emit(DiffEvent::Toast(Toast::error(error.to_string()))),
+            Err(error) => self.fleet_page_error(error, cx),
         }
         cx.notify();
+    }
+
+    pub(super) fn fleet_page_error(&mut self, error: Error, cx: &mut Context<Self>) {
+        match error {
+            Error::StaleDiff => self.fleet.stale_page = true,
+            Error::Busy(_) => self.fleet.busy = Some(diff_error(error)),
+            Error::NotFound => cx.emit(DiffEvent::Toast(Toast::error(
+                "This file is no longer available. Refresh the diff.",
+            ))),
+            other => cx.emit(DiffEvent::Toast(Toast::error(other.to_string()))),
+        }
     }
 
     pub(super) fn rebuild(&mut self) {
@@ -211,58 +240,6 @@ impl DiffView {
         self.rows = rows;
         self.starts = starts;
     }
-
-    // ---- Hunk expansion and images --------------------------------------------------
-
-    pub(super) fn expand(&mut self, file: usize, gap: usize, cx: &mut Context<Self>) {
-        match self.texts.get(&file) {
-            Some(Text::Ready(_)) => {
-                self.expanded.insert((file, gap));
-                self.rebuild();
-                cx.notify();
-            }
-            Some(Text::Loading) => {}
-            None => self.load_text(file, gap, cx),
-        }
-    }
-
-    pub(super) fn load_text(&mut self, file: usize, gap: usize, cx: &mut Context<Self>) {
-        let (Some((client, login, repo)), Some(view)) =
-            (self.github_connection(), self.files.get(file))
-        else {
-            return;
-        };
-        let (sha, path) = if view.file.status == GhFileStatus::Removed {
-            (self.base_sha.clone(), view.file.path.clone())
-        } else {
-            (self.head_sha.clone(), view.file.path.clone())
-        };
-        self.texts.insert(file, Text::Loading);
-        cx.spawn(async move |view, cx| {
-            let shown = path.clone();
-            let result = cx
-                .background_spawn(async move { client.file(&login, &repo, &sha, &path) })
-                .await;
-            _ = view.update(cx, |view, cx| {
-                match result {
-                    Ok(text) => {
-                        let lines: Vec<String> = text.text.lines().map(str::to_string).collect();
-                        view.texts.insert(file, Text::Ready(Arc::new(lines)));
-                        view.expanded.insert((file, gap));
-                        view.rebuild();
-                    }
-                    Err(error) => {
-                        view.texts.remove(&file);
-                        cx.emit(DiffEvent::Toast(Toast::error(format!(
-                            "Cannot load {shown}: {error}"
-                        ))));
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
 }
 
 fn apply_page(file: &mut FileView, page: V1DiffFilePage) {
@@ -281,24 +258,39 @@ fn read_diff(
     source: DiffSource,
     mode: DiffMode,
     fleet_client: Option<Result<subspace_client_fleet::FleetClient, String>>,
-) -> Result<Loaded, String> {
+) -> Result<Loaded, LoadError> {
     match source {
         DiffSource::GitHub(source) => source
             .client
-            .ok_or_else(|| "GitHub is not configured.".to_owned())?
+            .ok_or_else(|| LoadError::Message("GitHub is not configured.".to_owned()))?
             .diff(&source.login, &source.item.key)
             .map(Loaded::GitHub)
-            .map_err(|error| error.to_string()),
+            .map_err(|error| LoadError::Message(error.to_string())),
         DiffSource::Fleet(source) => source
             .load(
-                &fleet_client.ok_or_else(|| "Fleet connections are unavailable.".to_owned())??,
+                &fleet_client
+                    .ok_or_else(|| {
+                        LoadError::Message("Fleet connections are unavailable.".to_owned())
+                    })?
+                    .map_err(LoadError::Message)?,
                 mode,
             )
-            .map_err(|error| error.to_string()),
+            .map_err(LoadError::Fleet),
     }
 }
 
-fn validate_page(
+fn diff_error(error: Error) -> String {
+    match error {
+        Error::Busy(Some(1)) => "Stargate is busy. Wait 1 second, then select Refresh.".to_owned(),
+        Error::Busy(Some(seconds)) => {
+            format!("Stargate is busy. Wait {seconds} seconds, then select Refresh.")
+        }
+        Error::Busy(None) => "Stargate is busy. Select Refresh to try again shortly.".to_owned(),
+        other => other.to_string(),
+    }
+}
+
+pub(super) fn validate_page(
     page: V1DiffFilePage,
     request: &DiffFilePage<'_>,
 ) -> Result<V1DiffFilePage, Error> {
@@ -333,6 +325,7 @@ mod tests {
             path: "notes.txt",
             page: Some("next"),
             at: "snapshot",
+            side: None,
         };
         let mut file = fleet_file(page("snapshot", "@@ -0,0 +1 @@\n+exa", Some("next")).file);
         let mismatch = validate_page(page("new", "mple.com\n", None), &request);

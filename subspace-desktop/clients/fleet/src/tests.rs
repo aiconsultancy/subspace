@@ -124,7 +124,7 @@ mod diff {
     use crate::{Error, FleetClient};
     use subspace_framework::core::Secret;
 
-    const TARGET: DiffTarget<'static> = DiffTarget {
+    pub(super) const TARGET: DiffTarget<'static> = DiffTarget {
         ship: "example-ship",
         member: "example-crew",
         project: Some("example"),
@@ -166,6 +166,7 @@ mod diff {
                     path: "notes & plans.txt",
                     page: Some("file+1"),
                     at: "snapshot",
+                    side: None,
                 },
             )
             .unwrap();
@@ -196,7 +197,8 @@ mod diff {
                     DiffFilePage {
                         path: "gone.txt",
                         page: None,
-                        at: "snapshot"
+                        at: "snapshot",
+                        side: None,
                     }
                 )
                 .err(),
@@ -217,7 +219,8 @@ mod diff {
                     DiffFilePage {
                         path: "notes.txt",
                         page: Some("file+1"),
-                        at: "old"
+                        at: "old",
+                        side: None,
                     }
                 )
                 .err(),
@@ -227,27 +230,31 @@ mod diff {
     }
 
     #[test]
-    fn reads_binary_size_without_decoding_the_content_page() {
-        let (address, server) = answer_once(concat!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
-            r#"{"fingerprint":"snapshot","file":{"path":"icon.png","status":"removed","binary":true,"size":2},"content":{"side":"old","encoding":"base64","offset":0,"size":2,"data":"AAA="}}"#,
-        ));
-        let client = FleetClient::new(address, Secret::new("fixture-token"));
-        let page = client
-            .diff_file(
-                TARGET,
-                DiffFilePage {
-                    path: "icon.png",
-                    at: "snapshot",
-                    page: None,
-                },
-            )
-            .unwrap();
-        assert!(page.file.binary);
-        assert_eq!(page.file.size, Some(2));
-        server.join().unwrap();
+    fn cursor_conflicts_and_missing_cursor_pages_are_stale() {
+        for status in [
+            "HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        ] {
+            let (address, server) = answer_once(status);
+            let client = FleetClient::new(address, Secret::new("fixture-token"));
+            assert_eq!(
+                client.diff(TARGET, Some("more")).err(),
+                Some(Error::StaleDiff)
+            );
+            assert!(
+                server
+                    .join()
+                    .unwrap()
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .contains("&cursor=more ")
+            );
+        }
     }
 }
+
+mod diff_content;
 
 #[test]
 fn a_conflict_on_the_fleet_overview_is_an_unexpected_status() {

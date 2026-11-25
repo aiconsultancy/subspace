@@ -120,15 +120,21 @@ fn code_row_height(tokens: &Tokens) -> f32 {
     scaled_code_row_height(f32::from(tokens.row_font), f32::from(tokens.mono_font))
 }
 
+mod binary;
 mod chrome;
 mod code;
 mod crew_chrome;
 mod crew_watch;
+mod full_line;
+mod hunk;
 mod image;
 mod load;
 mod nav;
 mod source;
 mod toolbar;
+
+#[cfg(test)]
+mod crew_tests;
 
 use image::ImageView;
 use source::FleetState;
@@ -214,6 +220,8 @@ pub struct DiffView {
     search: Entity<InputState>,
     searching: bool,
     image: Option<ImageView>,
+    binary: Option<binary::BinaryView>,
+    full_line: Option<full_line::FullLine>,
     _search_subscription: Subscription,
     _load: Option<Task<()>>,
 }
@@ -261,6 +269,8 @@ impl DiffView {
             search,
             searching: false,
             image: None,
+            binary: None,
+            full_line: None,
             _search_subscription: subscription,
             _load: None,
         };

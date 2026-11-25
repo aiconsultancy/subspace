@@ -19,6 +19,8 @@ impl DiffView {
             return;
         }
         let file = file.min(self.files.len() - 1);
+        self.binary = None;
+        self.full_line = None;
         self.current = file;
         if let Some(&row) = self.starts.get(file) {
             self.scroll.scroll_to_item_strict(row, ScrollStrategy::Top);
@@ -207,7 +209,10 @@ impl DiffView {
     }
 
     pub(super) fn escape(&mut self, _: &DiffEscape, _: &mut Window, cx: &mut Context<Self>) {
-        if self.image.take().is_some() {
+        if self.full_line.take().is_some()
+            || self.binary.take().is_some()
+            || self.image.take().is_some()
+        {
             cx.notify();
             return;
         }

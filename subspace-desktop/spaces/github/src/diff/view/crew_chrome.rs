@@ -2,7 +2,7 @@
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{Context, Div, Entity, ParentElement as _, Styled as _, div, px};
+use gpui_kit::{Context, Div, Entity, ParentElement as _, Styled as _, px};
 use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
@@ -71,14 +71,29 @@ impl DiffView {
                     .border_color(tokens.line)
                     .child(self.mode_control(tokens, cx)),
             )
-            .when(self.fleet.changed(), |bar| {
-                bar.child(
-                    div()
-                        .px(px(BAR_PAD_PX))
-                        .text_color(tokens.muted)
-                        .child("Changed since loaded · Refresh"),
+            .children(self.fleet_notice(tokens, cx))
+    }
+
+    fn fleet_notice(&self, tokens: &Tokens, cx: &Context<Self>) -> Option<Div> {
+        let (message, detail) = notice(self.fleet.banner(), self.fleet.busy.as_deref())?;
+        Some(
+            h_flex()
+                .gap_2()
+                .flex_wrap()
+                .px(px(BAR_PAD_PX))
+                .text_color(tokens.muted)
+                .child(message)
+                .child(
+                    action_button(
+                        "crew-diff-banner-refresh",
+                        Intent::Quiet,
+                        Some(IconName::RefreshCw),
+                        "Refresh",
+                    )
+                    .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
                 )
-            })
+                .when_some(detail, |row, busy| row.child(busy.to_owned())),
+        )
     }
 
     fn mode_control(&self, tokens: &Tokens, cx: &Context<Self>) -> Div {
@@ -98,10 +113,29 @@ impl DiffView {
         )
     }
 
-    fn set_mode(&mut self, mode: DiffMode, cx: &mut Context<Self>) {
+    pub(super) fn set_mode(&mut self, mode: DiffMode, cx: &mut Context<Self>) {
         if self.fleet.mode != mode {
             self.fleet.mode = mode;
             self.load(cx);
         }
+    }
+}
+
+fn notice<'a>(banner: Option<&str>, busy: Option<&'a str>) -> Option<(String, Option<&'a str>)> {
+    banner.map_or_else(
+        || busy.map(|busy| (busy.to_owned(), None)),
+        |message| Some((format!("{message} ·"), busy)),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn an_instability_banner_does_not_hide_retry_after() {
+        let busy = "Stargate is busy. Wait 7 seconds, then select Refresh.";
+        assert_eq!(
+            super::notice(Some("Changed while loading"), Some(busy)),
+            Some(("Changed while loading ·".to_owned(), Some(busy)))
+        );
     }
 }

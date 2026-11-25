@@ -21,7 +21,8 @@ impl DiffView {
         self.fleet.live_fingerprint = fingerprint(api.read(cx), &target);
         let observe = cx.observe(&api, move |view, api, cx| {
             let changed = view.fleet.changed();
-            view.fleet.live_fingerprint = fingerprint(api.read(cx), &target);
+            view.fleet
+                .observe_fingerprint(fingerprint(api.read(cx), &target));
             if changed != view.fleet.changed() {
                 cx.notify();
             }
@@ -32,7 +33,15 @@ impl DiffView {
 
     pub(crate) fn unfollow_crew(&mut self) {
         self.fleet.watch = None;
-        self.fleet.live_fingerprint = None;
+    }
+
+    pub(super) fn seed_crew_fingerprint(&mut self, cx: &gpui_kit::App) {
+        let Some(api) = FleetApi::current(cx) else {
+            return;
+        };
+        if let DiffSource::Fleet(source) = &self.source {
+            self.fleet.live_fingerprint = fingerprint(api.read(cx), &source.target);
+        }
     }
 }
 

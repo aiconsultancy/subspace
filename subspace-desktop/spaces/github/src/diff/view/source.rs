@@ -36,6 +36,9 @@ pub(super) struct FleetState {
     pub mode: DiffMode,
     pub fingerprint: Option<String>,
     pub live_fingerprint: Option<String>,
+    pub live_changed: bool,
+    pub unstable: bool,
+    pub busy: Option<String>,
     pub unavailable: bool,
     pub stale_page: bool,
     pub loading: HashSet<usize>,
@@ -45,8 +48,26 @@ pub(super) struct FleetState {
 
 impl FleetState {
     pub fn changed(&self) -> bool {
-        self.stale_page
-            || matches!((&self.fingerprint, &self.live_fingerprint), (Some(loaded), Some(live)) if loaded != live)
+        self.stale_page || self.live_changed
+    }
+
+    /// A repeat of the cached value (including an unrelated service notify)
+    /// is not evidence of a newer checkout. Missing values prove nothing.
+    pub fn observe_fingerprint(&mut self, live: Option<String>) {
+        if let Some(live) = live
+            && self.live_fingerprint.as_ref() != Some(&live)
+        {
+            self.live_changed = self.fingerprint.as_ref().is_some_and(|at| at != &live);
+            self.live_fingerprint = Some(live);
+        }
+    }
+
+    pub fn banner(&self) -> Option<&'static str> {
+        if self.unstable {
+            Some("Changed while loading")
+        } else {
+            self.changed().then_some("Changed since loaded")
+        }
     }
 }
 
@@ -100,9 +121,7 @@ fn load_pages(
         if diff.files.len() >= diff.total as usize || !cursors.insert(cursor.clone()) {
             return Err(Error::InvalidResponse);
         }
-        let Some(mut page) = read(Some(&cursor))? else {
-            return Err(Error::InvalidResponse);
-        };
+        let mut page = read(Some(&cursor))?.ok_or(Error::StaleDiff)?;
         if page.fingerprint != diff.fingerprint {
             return Err(Error::StaleDiff);
         }
@@ -110,6 +129,7 @@ fn load_pages(
             return Err(Error::InvalidResponse);
         }
         diff.files.append(&mut page.files);
+        diff.unstable |= page.unstable;
         diff.next_cursor = page.next_cursor;
     }
     if diff.files.len() != diff.total as usize {
@@ -209,21 +229,56 @@ mod tests {
     }
 
     #[test]
-    fn banner_needs_a_different_live_fingerprint_or_a_stale_page() {
-        let mut state = FleetState {
-            fingerprint: Some("before".into()),
-            ..FleetState::default()
-        };
-        assert!(!state.changed());
-        state.live_fingerprint = Some("before".into());
-        assert!(!state.changed());
-        state.live_fingerprint = Some("after".into());
+    fn cached_feed_does_not_block_paging_of_a_newer_http_snapshot() {
+        let mut state = FleetState::default();
+        state.observe_fingerprint(Some("A".into()));
+        state.fingerprint = Some("B".into());
+        for live in [None, Some("A"), Some("B")] {
+            state.observe_fingerprint(live.map(str::to_owned));
+            assert!(!state.changed(), "paging must remain enabled");
+            assert_eq!(state.banner(), None);
+        }
+        state.observe_fingerprint(Some("C".into()));
         assert!(state.changed());
-        state.fingerprint = Some("after".into());
-        assert!(!state.changed());
-        state.live_fingerprint = None;
+        state.observe_fingerprint(Some("B".into()));
         state.stale_page = true;
         assert!(state.changed());
+    }
+
+    #[test]
+    fn keeps_content_and_marks_an_unstable_snapshot_on_either_list_page() {
+        for (initial, continuation) in [(true, false), (false, true)] {
+            let loaded = load_pages(|cursor| {
+                let mut page = if cursor.is_none() {
+                    page("a.txt", "snapshot", continuation.then_some("next"))
+                } else {
+                    page("b.txt", "snapshot", None)
+                };
+                if !continuation {
+                    page.total = 1;
+                }
+                page.unstable = if cursor.is_none() {
+                    initial
+                } else {
+                    continuation
+                };
+                Ok(Some(page))
+            })
+            .unwrap();
+            let Loaded::Fleet(diff) = loaded else {
+                panic!("expected Fleet diff")
+            };
+            assert_eq!(diff.files.len(), if continuation { 2 } else { 1 });
+            let state = FleetState {
+                unstable: diff.unstable,
+                ..FleetState::default()
+            };
+            assert_eq!(state.banner(), Some("Changed while loading"));
+            assert!(
+                !state.changed(),
+                "instability alone must not disable paging"
+            );
+        }
     }
 
     #[test]

@@ -9,10 +9,13 @@ use gpui_kit::{
     div, px, uniform_list,
 };
 use subspace_framework::dashboard::Tokens;
+use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::feedback;
+use subspace_framework::dashboard::panel::IconName;
 
 use super::super::highlight::{self, Runs};
 use super::super::model::{DiffLine, DiffRow, Layout, LineKind, file_at};
+use super::full_line::{LineSource, read_line_button};
 use super::{CODE_FONT_PX, DiffView, NO_RUNS, SPLIT_DIVIDER_W_PX, Text, code_row_height};
 
 mod lines;
@@ -84,22 +87,30 @@ impl DiffView {
             DiffRow::Gap { file, gap } => self.gap_row(file, gap, index, tokens, cx),
             DiffRow::Line { file, line } => {
                 let runs = self.patch_runs(file, line);
+                let read = read_line_button(file, LineSource::Patch(line), false, cx);
                 let line = &self.files[file].patch.lines[line];
-                unified_line(line, runs, tokens)
+                unified_line(line, runs, read, tokens)
                     .font_family(cx.theme().mono_font_family.clone())
                     .into_any_element()
             }
             DiffRow::Split { file, left, right } => {
                 let lines = &self.files[file].patch.lines;
-                let half =
-                    |index: Option<usize>| index.map(|i| (&lines[i], self.patch_runs(file, i)));
+                let half = |index: Option<usize>, right| {
+                    index.map(|i| {
+                        (
+                            &lines[i],
+                            self.patch_runs(file, i),
+                            read_line_button(file, LineSource::Patch(i), right, cx),
+                        )
+                    })
+                };
                 h_flex()
                     .font_family(cx.theme().mono_font_family.clone())
                     .h(px(code_row_height(tokens)))
                     .w_full()
-                    .child(split_half(half(left), false, tokens))
+                    .child(split_half(half(left, false), false, tokens))
                     .child(div().w(px(SPLIT_DIVIDER_W_PX)).h_full().bg(tokens.line))
-                    .child(split_half(half(right), true, tokens))
+                    .child(split_half(half(right, true), true, tokens))
                     .into_any_element()
             }
             DiffRow::Context { file, old, new } => self.context_row(file, (old, new), tokens, cx),
@@ -131,22 +142,29 @@ impl DiffView {
             words: Vec::new(),
             no_newline: false,
         };
+        let read = |right| read_line_button(file, LineSource::Context(at), right, cx);
         match self.layout {
-            Layout::Unified => unified_line(&line, runs, tokens)
+            Layout::Unified => unified_line(&line, runs, read(false), tokens)
                 .font_family(cx.theme().mono_font_family.clone())
                 .into_any_element(),
             Layout::Split => h_flex()
                 .font_family(cx.theme().mono_font_family.clone())
                 .h(px(code_row_height(tokens)))
                 .w_full()
-                .child(split_half(Some((&line, runs)), false, tokens))
+                .child(split_half(Some((&line, runs, read(false))), false, tokens))
                 .child(div().w(px(SPLIT_DIVIDER_W_PX)).h_full().bg(tokens.line))
-                .child(split_half(Some((&line, runs)), true, tokens))
+                .child(split_half(Some((&line, runs, read(true))), true, tokens))
                 .into_any_element(),
         }
     }
 
     pub(super) fn code(&mut self, tokens: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(line) = &self.full_line {
+            return line.render(tokens, cx).into_any_element();
+        }
+        if let Some(binary) = &self.binary {
+            return self.binary_view(binary, tokens, cx);
+        }
         if let Some(image) = &self.image {
             return self.image_view(image, tokens, cx);
         }
@@ -181,6 +199,22 @@ impl DiffView {
     /// The skeleton while the diff loads, or the error that stopped it.
     fn code_placeholder(&self, tokens: &Tokens, cx: &mut Context<Self>) -> AnyElement {
         match &self.error {
+            Some(error) if matches!(self.source, super::DiffSource::Fleet(_)) => {
+                feedback::error_box_with_actions(
+                    tokens,
+                    "crew-diff-error",
+                    "Cannot load the diff",
+                    error.clone(),
+                    [action_button(
+                        "crew-diff-error-refresh",
+                        Intent::Neutral,
+                        Some(IconName::RefreshCw),
+                        "Refresh",
+                    )
+                    .on_click(cx.listener(|view, _, _, cx| view.load(cx)))],
+                )
+                .into_any_element()
+            }
             Some(error) => feedback::error_box(
                 tokens,
                 "github-diff-error",

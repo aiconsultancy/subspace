@@ -108,6 +108,17 @@ impl DiffView {
         }
         let too_large = reason == "Diff too large to show here";
         base.child(reason)
+            .when(self.item().is_none() && view.binary, |el| {
+                el.child(
+                    action_button(
+                        ("crew-diff-bytes", file),
+                        Intent::Quiet,
+                        Some(IconName::FileCode),
+                        "View binary",
+                    )
+                    .on_click(cx.listener(move |view, _, _, cx| view.open_binary(file, cx))),
+                )
+            })
             .when_some(view.binary_size, |el, bytes| {
                 el.child(format!("{bytes} bytes"))
             })
@@ -135,25 +146,36 @@ impl DiffView {
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let loading = self.fleet.loading.contains(&file);
-        let label = if loading {
-            "Loading…"
-        } else {
-            "Load next page"
-        };
-        h_flex()
-            .h(px(code_row_height(tokens)))
-            .px(px(BAR_PAD_PX))
-            .child(
-                action_button(
-                    ("crew-diff-more", file),
-                    Intent::Quiet,
-                    Some(IconName::ChevronDown),
-                    label,
+        let row = h_flex().h(px(code_row_height(tokens))).px(px(BAR_PAD_PX));
+        if self.fleet.changed() {
+            return row
+                .child(
+                    action_button(
+                        ("crew-diff-more-refresh", file),
+                        Intent::Quiet,
+                        Some(IconName::RefreshCw),
+                        "Refresh diff",
+                    )
+                    .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
                 )
-                .on_click(cx.listener(move |view, _, _, cx| view.load_more(file, cx))),
+                .into_any_element();
+        }
+        if self.fleet.loading.contains(&file) {
+            return row
+                .text_color(tokens.muted)
+                .child("Loading…")
+                .into_any_element();
+        }
+        row.child(
+            action_button(
+                ("crew-diff-more", file),
+                Intent::Quiet,
+                Some(IconName::ChevronDown),
+                "Load next page",
             )
-            .into_any_element()
+            .on_click(cx.listener(move |view, _, _, cx| view.load_more(file, cx))),
+        )
+        .into_any_element()
     }
 
     pub(super) fn gap_row(
