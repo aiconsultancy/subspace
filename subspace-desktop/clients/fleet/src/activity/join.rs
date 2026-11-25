@@ -95,6 +95,13 @@ pub enum Fetch {
     Failed,
 }
 
+/// Events that wait for a fetch, and the bytes of JSON they were read from.
+#[derive(Default)]
+struct Pending {
+    events: Vec<AgentActivityEvent>,
+    bytes: usize,
+}
+
 /// One officer's turns, kept current from the snapshot and the events.
 pub struct ActivityJoin {
     snapshot: Option<AgentActivity>,
@@ -110,9 +117,7 @@ pub struct ActivityJoin {
     /// The last event's `seq` on this connection, which the next must pass.
     stream_seq: Option<u64>,
     /// Events that wait for the fetch in flight, or for one that succeeds.
-    pending: Vec<AgentActivityEvent>,
-    /// The bytes of JSON the waiting events were read from.
-    pending_bytes: usize,
+    pending: Pending,
     fetch: Fetch,
     /// Fetches that failed since the last that succeeded.
     failures: u32,
@@ -171,8 +176,7 @@ impl ActivityJoin {
             polling: false,
             next: 0,
             stream_seq: None,
-            pending: Vec::new(),
-            pending_bytes: 0,
+            pending: Pending::default(),
             fetch: Fetch::Wanted,
             failures: 0,
         }
@@ -285,8 +289,8 @@ impl ActivityJoin {
                 } else {
                     Fetch::Idle
                 };
-                self.pending_bytes = 0;
-                for event in std::mem::take(&mut self.pending) {
+                self.pending.bytes = 0;
+                for event in std::mem::take(&mut self.pending.events) {
                     self.take_settled(event);
                 }
             }
@@ -321,7 +325,7 @@ impl ActivityJoin {
     /// for the fetch or applies it. A covered event is no live event, so
     /// it neither fetches again nor moves the `seq` the next must pass.
     fn take(&mut self, event: AgentActivityEvent) -> bool {
-        if self.covered(&event) {
+        if covered(self.fetched.as_ref(), &event) {
             return false;
         }
         if self.stream_seq.is_some_and(|last| event.seq <= last) {
@@ -330,15 +334,6 @@ impl ActivityJoin {
         }
         self.stream_seq = Some(event.seq);
         self.take_settled(event)
-    }
-
-    /// Whether the last snapshot fetched already holds `event`: of its
-    /// generation, at or below its cursor as fetched, whatever events
-    /// moved the cursor since.
-    fn covered(&self, event: &AgentActivityEvent) -> bool {
-        self.fetched
-            .as_ref()
-            .is_some_and(|cursor| cursor.generation == event.generation && event.seq <= cursor.seq)
     }
 
     /// Waits for the fetch while one is wanted, runs or failed; else
@@ -365,17 +360,17 @@ impl ActivityJoin {
     /// Keeps `event` for the next snapshot. Past the bounds every waiting
     /// event goes: a snapshot fetched after them covers them all.
     fn hold(&mut self, event: AgentActivityEvent) {
-        self.pending_bytes = self.pending_bytes.saturating_add(event.bytes);
-        self.pending.push(event);
-        if self.pending.len() > MAX_HELD_EVENTS || self.pending_bytes > MAX_HELD_BYTES {
+        self.pending.bytes = self.pending.bytes.saturating_add(event.bytes);
+        self.pending.events.push(event);
+        if self.pending.events.len() > MAX_HELD_EVENTS || self.pending.bytes > MAX_HELD_BYTES {
             self.drop_held();
             self.want();
         }
     }
 
     fn drop_held(&mut self) {
-        self.pending.clear();
-        self.pending_bytes = 0;
+        self.pending.events.clear();
+        self.pending.bytes = 0;
     }
 }
 
@@ -383,7 +378,7 @@ impl ActivityJoin {
 impl ActivityJoin {
     /// How many events wait for a snapshot.
     pub(crate) fn held(&self) -> usize {
-        self.pending.len()
+        self.pending.events.len()
     }
 }
 
@@ -455,4 +450,11 @@ fn upsert_item(turns: &mut [ActivityTurn], turn: &str, item: ActivityEntry) -> b
         None => turn.items.push(item),
     }
     true
+}
+
+/// Whether the last snapshot fetched, at `fetched`, already holds
+/// `event`: of its generation, at or below its cursor as fetched,
+/// whatever events moved the cursor since.
+fn covered(fetched: Option<&ActivityCursor>, event: &AgentActivityEvent) -> bool {
+    fetched.is_some_and(|cursor| cursor.generation == event.generation && event.seq <= cursor.seq)
 }
