@@ -2076,11 +2076,13 @@ pressure. It adds no swap file, saying why, when:
 - the disk is tight: a quarter of the free space is under 1 GiB, or a size
   you set is more than half of it.
 
-When another `sysctl` file sets `vm.swappiness`, the installer leaves it
-and removes its own. A size of your own, such as `"swap": "8G"`, applies
-only when the installer creates the file: it never resizes a swap file in
-use, and says how to (`sudo swapoff /subspace-fleet.swap && sudo rm
-/subspace-fleet.swap`, then run the installer again). `"swap": "none"`
+Whenever the VM has swap, the installer's or another, it sets
+`vm.swappiness` to 10 the same way, unless another `sysctl` file sets it:
+then the installer leaves that one and removes its own. A size of your
+own, such as `"swap": "8G"`, applies only when the installer creates the
+file: it never resizes a swap file in use, and says how to (`sudo swapoff
+/subspace-fleet.swap && sudo rm /subspace-fleet.swap`, then run the
+installer again). `"swap": "none"`
 leaves swap and `vm.swappiness` exactly as they are. Uninstalling leaves the
 swap file, like other system settings. With `--no-systemd` the installer
 does not touch swap.
