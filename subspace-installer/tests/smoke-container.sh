@@ -95,6 +95,7 @@ done
 # then restart that engine so it loads Stargate's crew plugin with the pinned session.
 "$app/lib/runtime.py" commission false
 test "$(stat -c '%U %a' "$etc/sessions/orion.json")" = 'root 600'
+python3 /installer/tests/fixture.py check_shape "$work"
 kill "${pids[-1]}" 2>/dev/null || true
 wait "${pids[-1]}" 2>/dev/null || true
 unset 'pids[-1]'
