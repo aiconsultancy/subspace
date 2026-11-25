@@ -455,7 +455,8 @@ class SetupInputsTests(unittest.TestCase):
             answers_for(base)
         for names, message in (("Orion=Rigel,Deneb", "gives Orion 2 crew names for 4 crew"),
                                ("Lyra=Rigel,Deneb,Mira,Sirius", "not one of the captains"),
-                               ("Orion=Rigel,Deneb,Mira,Sirius;Vega=rigel,Castor,Pollux,Spica", "Rigel and rigel"),
+                               ("Orion=Rigel,Deneb,Mira,Sirius;Vega=rigel,Castor,Pollux,Spica",
+                                "orion's Rigel and vega's rigel are the same"),
                                ("Orion=Rigel,Deneb,Mira,Vega;Vega=Altair,Castor,Pollux,Spica", "is an officer's name"),
                                ("Orion=Rigel,Deneb,Mira,Si/rius;Vega=Altair,Castor,Pollux,Spica", "use ASCII")):
             with self.subTest(names), self.assertRaisesRegex(fleet_setup.SetupError, message):
@@ -502,6 +503,18 @@ class SetupInputsTests(unittest.TestCase):
         with self.assertRaisesRegex(fleet_setup.SetupError, "orion's Claude 1 \\(claude-1 would become rigel\\)"):
             self.rerun({**answers, "crewNames": {}}, config, "--crew-names", "Orion=Rigel,Deneb,Mira,Sirius")
         self.rerun({**answers, "crewNames": {}}, config, "--crew-names", "Orion=Claude 1,Claude 2,Codex 1,Codex 2")
+        # Crew named by rename-officers keep their installed IDs under their names (crewIds), and take the same
+        # names again, as any later run may pass them; another name is still refused.
+        slots = ["claude-1", "claude-2", "codex-1", "codex-2"]
+        config["captains"][0].update(crewNames=dict(zip(slots, ["Rigel", "Deneb", "Mira", "Sirius"], strict=True)),
+                                     crewIds={slot: slot for slot in slots})
+        renamed = {**answers, "crewNames": {"orion": config["captains"][0]["crewNames"]},
+                   "crewIds": {"orion": config["captains"][0]["crewIds"]}}
+        again = self.rerun(renamed, config, "--crew-names", "Orion=rigel,Deneb,Mira,Sirius")
+        self.assertEqual((again["crewNames"]["orion"]["claude-1"], again["crewIds"]["orion"]["claude-1"]),
+                         ("rigel", "claude-1"))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "orion's Claude 1 \\(claude-1 would become canopus\\)"):
+            self.rerun(renamed, config, "--crew-names", "Orion=Canopus,Deneb,Mira,Sirius")
 
     def test_rejects_unsafe_or_ambiguous_answers(self):
         cases = [

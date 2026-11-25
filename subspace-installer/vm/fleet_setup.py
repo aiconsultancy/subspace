@@ -578,10 +578,10 @@ def crew_installed(captain_id):
         isinstance(person, dict) and person.get("id") == captain_id for person in config.get("captains", []))
 
 
-def installed_crew_ids(captain_id):
-    """An installed captain's crew IDs by slot, from the fleet's inputs, or None for a captain whose crew are not
-    installed: the ID Stargate keeps each one's sessions, worktrees and queued tasks under, from crewIds, else its
-    name (crewNames, else the slot's own name, 'Claude 1')."""
+def installed_crew(captain_id):
+    """An installed captain's crew by slot as (ID, name), from the fleet's inputs, or None for a captain whose crew
+    are not installed: the ID Stargate keeps each one's sessions, worktrees and queued tasks under, from crewIds,
+    else its name's; the name from crewNames, else the slot's own name, 'Claude 1'."""
     if not crew_installed(captain_id):
         return None
     config = read_json(INPUTS / "fleet.json", {}) or {}
@@ -591,18 +591,24 @@ def installed_crew_ids(captain_id):
         team = {**((config.get("crew") or {}).get(family) or {}), **((person.get("crew") or {}).get(family) or {})}
         counts[family] = team.get("count", 2)  # The fleet installer's default.
     names, ids = person.get("crewNames") or {}, person.get("crewIds") or {}
-    return {slot: ids.get(slot) or runtime.crew_id(names.get(slot, slot_label(slot))) for slot in crew_slots({"crew": counts})}
+    crew = {}
+    for slot in crew_slots({"crew": counts}):
+        name = names.get(slot, slot_label(slot))
+        crew[slot] = (ids.get(slot) or runtime.crew_id(name), name)
+    return crew
 
 
 def refuse_installed_crew_ids(named):
     """Refuse --crew-names that would give an installed crew member another ID, before anything is saved: its
     sessions, worktrees and queued tasks are kept under its ID, and a captain whose session is pinned refuses any
-    change on every later run. rename-officers --crew-names names them and keeps their IDs."""
+    change on every later run. rename-officers --crew-names names them and keeps their IDs; the name a crew member
+    has is accepted again, also when it keeps another ID under it (crewIds)."""
     changed = []
     for captain_id, names in named.items():
-        installed = installed_crew_ids(captain_id) or {}
-        changed += [f"{captain_id}'s {slot_label(slot)} ({installed[slot]} would become {runtime.crew_id(name)})"
-                    for slot, name in names.items() if slot in installed and runtime.crew_id(name) != installed[slot]]
+        installed = installed_crew(captain_id) or {}
+        changed += [f"{captain_id}'s {slot_label(slot)} ({installed[slot][0]} would become {runtime.crew_id(name)})"
+                    for slot, name in names.items() if slot in installed
+                    and runtime.crew_id(name) not in (installed[slot][0], runtime.crew_id(installed[slot][1]))]
     require(not changed, f"--crew-names would give installed crew new IDs: {'; '.join(changed)}. Stargate keeps a crew "
             "member's sessions, worktrees and queued tasks under its ID, so setup never changes an installed one. "
             "Name an installed fleet's crew with 'sudo subspace-setup rename-officers --crew-names ...', which keeps "
@@ -766,9 +772,9 @@ def check_crew_answers(answers, ids):
             key = runtime.crew_id(name)
             require(key not in officers, f"Crew name {name} for {captain_id} is an officer's name. Crew names are "
                     "unique in the fleet and differ from the officers' names.")
-            require(key not in seen, f"Crew names {seen.get(key)} and {name} are the same, ignoring case. Give each "
-                    "crew member in the fleet its own name.")
-            seen[key] = name
+            require(key not in seen, f"Crew names {seen.get(key)} and {captain_id}'s {name} are the same, ignoring "
+                    "case. Give each crew member in the fleet its own name.")
+            seen[key] = f"{captain_id}'s {name}"
     repositories = answers.get("repositories")
     if repositories is None:
         repositories = (read_json(INPUTS / "fleet.json", {}) or {}).get("repositories") or []

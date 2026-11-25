@@ -335,7 +335,8 @@ only the remaining slots' names to `fleet.json`.
   `sudo subspace-setup rename-officers --crew-names 'Orion=Rigel,...'`
   keeps each crew member's ID (`crewIds`) and gives it the new name, so its
   sessions, worktrees and queued tasks stay. With today's Stargate it stops,
-  saying so, and changes nothing.
+  saying so, and changes nothing. Later runs of setup take the same names
+  again.
 
 ### Captain sessions
 
