@@ -174,6 +174,23 @@ class OverrideTests(unittest.TestCase):
         self.assertIn("  captain orion, crew included: hard cap 24 GiB (memory.captain.max), soft limit 21 GiB, swap "
                       "2 GiB (memory.captain.swapMax), at most 2048 tasks (memory.tasksMax).", lines)
 
+    def test_auto_is_the_sizing_over_a_less_specific_setting(self):
+        sizing = sized(VMS[64], 4)["limits"]
+        # subspace-setup --captain-memory auto on a fleet with a fleet-wide cap: captains get the VM-sized cap, the
+        # rear admiral, whose role sets nothing, the fleet-wide one, and an officer's own cap stays.
+        result = sized(VMS[64], 4, {"max": "16G", "captain": {"max": "auto"}}, own={"rigel": {"max": "24G"}})
+        self.assertEqual(result["limits"]["orion"], sizing["orion"])
+        self.assertEqual(result["sources"]["orion"], {})
+        self.assertEqual(shape(result["limits"]["rigel"]), ("24G", "21G", "5G"))
+        self.assertEqual(shape(result["limits"]["atlas"]), ("16G", "14G", "3G"))
+        self.assertIn("  captains orion, deneb and mira, crew included: hard cap 20 GiB, soft limit 18 GiB, swap 4 GiB, at "
+                      "most 4096 tasks.", memory.plan_lines(result))
+        # auto in an officer's own memory beats its role's, for any limit.
+        result = sized(VMS[64], 4, {"captain": {"max": "12G", "high": "10G", "tasksMax": 1024}},
+                       own={"orion": {"max": "auto", "high": "Auto", "tasksMax": "auto"}})
+        self.assertEqual(result["limits"]["orion"], sizing["orion"])
+        self.assertEqual(shape(result["limits"]["rigel"]), ("12G", "10G", "2G"))
+
     def test_none_or_zero_turns_a_limit_off_and_a_zero_swap_allowance_means_no_swap(self):
         result = sized(VMS[64], 1, {"captain": {"max": "none", "tasksMax": 0}, "rearAdmiral": {"swapMax": 0}})
         self.assertEqual(memory.unit_options(result["limits"]["orion"]), ["OOMPolicy=continue"])

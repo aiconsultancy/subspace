@@ -1076,21 +1076,18 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 "githubPolicy", "dashboard", "proxy", "agentsview", "memory"):
         if key in previous:
             config[key] = previous[key]
-    # Each role's memory hard cap and the VM's swap: this or an earlier run's answer, over one set by hand.
+    # Each role's memory hard cap and the VM's swap: this or an earlier run's answer, over one set by hand. A role's
+    # auto is written as auto, which the installer reads as its sizing over a fleet-wide memory.max (an officer's
+    # own memory still wins); auto is swap's default, so it needs no entry.
     limits = dict(config.get("memory") or {})
     for key, value in answers.get("memory", {}).items():
-        block = limits if key == "swap" else dict(limits.get(key) or {})
-        name = "swap" if key == "swap" else "max"
-        if value == "auto":
-            block.pop(name, None)
-        else:
-            block[name] = value
         if key == "swap":
+            if value == "auto":
+                limits.pop("swap", None)
+            else:
+                limits["swap"] = value
             continue
-        if block:
-            limits[key] = block
-        else:
-            limits.pop(key, None)
+        limits[key] = {**(limits.get(key) or {}), "max": value}
     if limits:
         config["memory"] = limits
     else:

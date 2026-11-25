@@ -16,6 +16,8 @@ import subprocess
 MIB = 1024 * 1024
 GIB = 1024  # MiB
 OFF = "none"
+# The installer's own value for a limit: in a role's block or an officer's own memory, over a less specific one.
+AUTO = "auto"
 
 # What the OS and the fleet's shared services need beside the engines: the gateway, the model proxy, the dashboard
 # and AgentsView; the Subspace API with its PostgreSQL, and Ergo with Docker, when they run on this VM.
@@ -122,7 +124,9 @@ def limits(value, label):
         raise Refused(f"{label} must be an object with any of max, high, swapMax and tasksMax.")
     result = {}
     for key, raw in value.items():
-        if key == "tasksMax":
+        if isinstance(raw, str) and raw.strip().lower() == AUTO:
+            result[key] = AUTO
+        elif key == "tasksMax":
             result[key] = parse_tasks(raw, f"{label}.tasksMax")
         elif key == "swapMax":
             result[key] = parse_size(raw, f"{label}.swapMax", minimum=0, zero=0)
@@ -235,8 +239,8 @@ def plan(settings, officers, total, api_here=False, irc_here=False):
 
     settings is config()'s result; officers lists {"id", "role", "memory"} with the rear admiral first; total is the
     VM's memory in MiB, or None when unknown (then only limits set in fleet.json apply). Each limit resolves from
-    the computed default, then fleet.json's memory, its role block, then the officer's own memory; a soft limit and
-    a swap allowance nobody set follow the hard cap.
+    the computed default, then fleet.json's memory, its role block, then the officer's own memory, where auto
+    returns to the computed default; a soft limit and a swap allowance nobody set follow the hard cap.
     """
     captains = sum(person["role"] == "captain" for person in officers)
     held = reserve(api_here, irc_here)
@@ -252,7 +256,11 @@ def plan(settings, officers, total, api_here=False, irc_here=False):
         for label, level in (("memory", settings["fleet"]), (f"memory.{ROLE_KEYS[role]}", settings[role]),
                              (f"{person['id']}'s memory", person.get("memory") or {})):
             for key, value in level.items():
-                chosen[key], origin[key] = value, f"{label}.{key}"
+                if value == AUTO:
+                    chosen.pop(key, None)
+                    origin.pop(key, None)
+                else:
+                    chosen[key], origin[key] = value, f"{label}.{key}"
         hard = chosen.get("max", computed.get(role, OFF))
         limited = hard != OFF
         result[person["id"]] = {

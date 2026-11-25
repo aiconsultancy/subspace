@@ -2046,11 +2046,16 @@ over the sizing.
   systemd's default applies (no memory limit; for tasks, 15% of the
   system's). The one exception is `swapMax: 0`, which means no swap for that
   engine.
+- `auto` is the installer's own value, over a less specific setting:
+  `"captain": { "max": "auto" }` gives every captain the sizing's hard cap
+  whatever the fleet-wide `max`, and an officer's own `auto` does the same
+  over its role's.
 - `subspace-setup --captain-memory SIZE` and `--rear-admiral-memory SIZE`
-  set each role's hard cap (`none` for no cap, `auto` for the sizing again),
-  and `--swap SIZE` the swap file (`none`, or `auto`). Setup keeps them on
-  later runs, over a value set in `fleet.json` by hand, and leaves the rest
-  of `memory` as you wrote it.
+  set each role's hard cap (`none` for no cap, `auto` for the sizing again,
+  written as `auto` so a fleet-wide `max` does not apply to that role), and
+  `--swap SIZE` the swap file (`none`, or `auto`). Setup keeps them on later
+  runs, over a value set in `fleet.json` by hand, and leaves the rest of
+  `memory` as you wrote it, officers' own included.
 
 A setting that cannot work is warned about, not refused: a cap above the
 VM's memory, which the VM runs out of before the cap takes effect, or a

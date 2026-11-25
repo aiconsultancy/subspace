@@ -184,15 +184,26 @@ class SetupInputsTests(unittest.TestCase):
         config = fleet_setup.fleet_config(kept, members, "a" * 40)
         self.assertEqual(config["memory"], {"captain": {"max": "24G", "high": "15G"}, "rearAdmiral": {"max": "none"},
                                             "swap": "8G", "tasksMax": 2048})
-        # auto returns to the installer's own sizing, removing only what the option sets.
+        # auto returns to the installer's own sizing, changing only what the option sets: a role's hard cap is
+        # written as auto, and swap's default needs no entry.
         args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--captain-memory", "auto",
                                        "--rear-admiral-memory", "", "--swap", "auto"])
         with patch.object(fleet_setup.pwd, "getpwnam"):
             reset = fleet_setup.gather(args, kept)
         self.assertEqual(fleet_setup.fleet_config(reset, members, "a" * 40)["memory"],
-                         {"captain": {"high": "15G"}, "tasksMax": 2048})
-        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {**config, "memory": {"captain": {"max": "16G"}}})
-        self.assertNotIn("memory", fleet_setup.fleet_config(reset, members, "a" * 40))
+                         {"captain": {"max": "auto", "high": "15G"}, "rearAdmiral": {"max": "auto"}, "tasksMax": 2048})
+        # A fleet-wide cap set by hand reaches neither role, whose auto is the sizing for this VM, while an
+        # officer's own cap still wins.
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            **config, "memory": {"max": "16G", "captain": {"max": "12G"}},
+            "captains": [{**config["captains"][0], "memory": {"max": "28G"}}, *config["captains"][1:]]})
+        auto = fleet_setup.fleet_config(reset, members, "a" * 40)
+        self.assertEqual(auto["memory"], {"max": "16G", "captain": {"max": "auto"}, "rearAdmiral": {"max": "auto"}})
+        result = runtime.memory_plan(validate(auto, secrets, check_files=False), 64154)
+        plan = result["limits"]
+        self.assertEqual((plan["orion"]["max"], plan["vega"]["max"], plan["atlas"]["max"]),
+                         (28 * 1024, result["computed"]["captain"], result["computed"]["rear_admiral"]))
+        self.assertEqual((plan["vega"]["max"], plan["atlas"]["max"]), (31 * 1024, 4 * 1024))
         # Bad values stop setup before it saves anything.
         for flag, value, message in (("--captain-memory", "lots", "--captain-memory must be a size such as 20G"),
                                      ("--rear-admiral-memory", "100M", "--rear-admiral-memory must be at least 512M"),
