@@ -424,12 +424,14 @@ none.
 
 ### Send files as attachments
 
-Drop or paste files into the conversation, or choose the paperclip
-(**Send as attachment…**) on the line above the composer to turn the text you
-typed into a Markdown attachment. Each file waits above
-the composer as a small thumbnail; hover it for the name and size, and use its
-**×** to remove it. Removing a text attachment puts its text back when the
-composer is empty.
+Choose the paperclip (**Attach files…**) to browse for one or more files.
+You can also drop files onto the message box or paste them into the
+conversation. The draft stays in the message box. When you want to send the
+draft itself as a Markdown file, choose **Attach draft as Markdown**.
+
+Each file waits above the composer as a small thumbnail. Hover it for the name
+and size, or choose **×** to remove it. Removing a converted draft puts its
+text back when the composer is empty.
 
 A message carries up to 10 attachments, 25 MB (25,000,000 bytes) in total.
 Files are checked in the order they were added: Subspace keeps the files that

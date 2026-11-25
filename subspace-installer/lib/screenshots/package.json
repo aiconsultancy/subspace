@@ -1,8 +1,9 @@
 {
   "name": "subspace-fleet-screenshots",
   "private": true,
-  "description": "The pinned versions of the screenshot tools every fleet VM gets (subspace-installer/README.md, Screenshots). Change them here, deliberately: Playwright in dependencies (then run 'npm install --package-lock-only --ignore-scripts' here and commit package-lock.json), chromiumRevision to the chromium revision in that Playwright's browsers.json, and the Node that runs it.",
+  "description": "Pinned screenshot and diagram tools (subspace-installer/README.md, Screenshots). After changing dependencies, run 'npm install --package-lock-only --ignore-scripts' here and commit package-lock.json. Match chromiumRevision to Playwright's browsers.json.",
   "dependencies": {
+    "mermaid": "12.3.0",
     "playwright": "1.64.1"
   },
   "subspace": {

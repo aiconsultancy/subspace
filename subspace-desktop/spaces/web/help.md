@@ -152,11 +152,19 @@ like other website boards, with these differences:
   first if the site cannot be reached for a moment. If the site
   asks again straight away, or the session cannot be renewed in time, the
   Space says `Your <title> session has ended.` with **Retry**, which reopens
-  the page where you were. If the page's private store does not accept a
-  renewed session, the Space says
+  the page where you were, or, if the page follows a choice you have
+  changed since, the part of the site for your new choice. If the page's
+  private store does not accept a renewed session, the Space says
   `Cannot install the private session for this page. Try again.` with
   **Retry**. Unsaved changes in the page may be lost.
 - **Back.** Back stops at the first page the Space showed.
+- **Following the app.** Its makers can have the page follow a choice you
+  make elsewhere in the app. When you change that choice, the page opens
+  the part of the site that goes with it, even while the Space is hidden,
+  and **Go to the start page** goes there too. It leaves the page you were
+  on, so unsaved changes in it may be lost. Until the session next renews,
+  the reload after the site asks for a new session, and **Retry**, open
+  the new part of the site even if you went back to that page.
 - **Only the site's pages for the app.** The page loads only the part of the
   site made for the app. Other pages are blocked, and the status bar says
   `Blocked a page this Space does not show.`, including frames embedded

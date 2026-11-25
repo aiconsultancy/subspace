@@ -41,6 +41,8 @@ pids+=("$!")
 "$installer" --config "$config" --dry-run --no-systemd
 test ! -e "$etc"
 "$installer" --config "$config" --no-systemd
+zip -q -j "$work/check.zip" "$config"
+unzip -tq "$work/check.zip"
 mapfile -t units < "$etc/units"
 systemd-analyze verify "${units[@]/#//etc/systemd/system/}"
 python3 /installer/tests/fixture.py check_shape "$work" uncommissioned

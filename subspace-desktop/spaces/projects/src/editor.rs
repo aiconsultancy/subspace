@@ -18,15 +18,16 @@ use subspace_framework::dashboard::{
 };
 use subspace_framework::lucide::IconName;
 
-use crate::{Projects, Write};
+use crate::{Projects, Write, project_editor};
 
 const DESCRIPTION_MIN_ROWS: usize = 5;
 const DESCRIPTION_MAX_ROWS: usize = 10;
 const MAX_NAME_LENGTH: usize = 200;
-const MAX_DESCRIPTION_LENGTH: usize = 50_000;
+pub(super) const MAX_DESCRIPTION_LENGTH: usize = 50_000;
 
 pub(super) enum Editor {
     Form(Box<Form>),
+    Project(Box<project_editor::Form>),
     Delete {
         milestone: Milestone,
         focus: FocusHandle,
@@ -122,7 +123,7 @@ fn fields_for(
     })
 }
 
-fn input(
+pub(super) fn input(
     value: &str,
     hint: &str,
     window: &mut Window,
@@ -169,15 +170,19 @@ impl Projects {
 
     pub(super) fn dismiss_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.write_task.is_none() && self.editor.take().is_some() {
+            if !self.blocked_write {
+                self.error = None;
+            }
             self.focus.focus(window, cx);
             self.reconcile_selection(cx);
             cx.notify();
         }
     }
 
-    fn submit_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn submit_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let write = match self.editor.as_ref() {
             Some(Editor::Form(form)) => form.write(cx),
+            Some(Editor::Project(form)) => form.write(cx).map(Write::Project),
             Some(Editor::Delete { milestone, .. }) => {
                 Ok(Write::Change(milestone.clone(), MilestoneChange::Delete))
             }
@@ -201,6 +206,7 @@ pub(super) fn render(
     let editor = this.editor.as_ref()?;
     let busy = this.write_task.is_some();
     let (title, action, icon, intent, body) = match editor {
+        Editor::Project(form) => return Some(project_editor::render(this, form, tokens, cx)),
         Editor::Form(form) => (
             if form.milestone.is_some() {
                 "Edit milestone"
@@ -252,7 +258,7 @@ pub(super) fn render(
     ))
 }
 
-fn initiative_warning(this: &Projects, tokens: &Tokens) -> Option<Div> {
+pub(super) fn initiative_warning(this: &Projects, tokens: &Tokens) -> Option<Div> {
     let record = this.record.as_ref()?.as_ref().ok()?;
     (!this.in_scope(&record.project)).then(|| {
         fields::field_error(

@@ -1,12 +1,36 @@
-//! Files into the tray: drops and pastes take the first ones up to the
+//! Files into the tray: picks, drops and pastes take the first ones up to the
 //! limits and say when some were left out.
 use super::super::intake;
 use super::{ItemState, LIMIT_NOTICE, changed, hold, pending};
 use crate::conversation::Conversation;
-use gpui_kit::{AppContext as _, Context};
+use gpui_kit::{AppContext as _, Context, PathPromptOptions};
+use subspace_api_client::signed_in_generation;
 use subspace_framework::dashboard::chat_input::attachments::{AttachmentSource, IngestionBatch};
 
-/// Dropped files.
+/// Open the system picker for this conversation's tray.
+pub(super) fn pick(this: &mut Conversation, cx: &mut Context<Conversation>) {
+    if !this.tray.idle() || !subspace_api_client::capabilities().chat_uploads {
+        return;
+    }
+    let account = signed_in_generation();
+    let picker = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: true,
+        prompt: None,
+    });
+    cx.spawn(async move |this, cx| {
+        let Ok(Ok(Some(chosen))) = picker.await else {
+            return;
+        };
+        if !chosen.is_empty() && signed_in_generation() == account {
+            _ = this.update(cx, |this, cx| paths(this, chosen, cx));
+        }
+    })
+    .detach();
+}
+
+/// Files from the picker or from a drop.
 pub(crate) fn paths(
     this: &mut Conversation,
     paths: Vec<std::path::PathBuf>,

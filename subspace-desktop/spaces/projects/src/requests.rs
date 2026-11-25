@@ -5,7 +5,7 @@ mod tests;
 
 use gpui_kit::{AppContext as _, Context, Window};
 use subspace_api_client::initiatives::Catalog;
-use subspace_api_client::projects::{MilestoneWriteError, PlanningProject};
+use subspace_api_client::projects::{PlanningProject, PlanningWriteError};
 use subspace_api_client::{Client, Error, signed_in_generation};
 use subspace_framework::dashboard::{DashboardEvent, Toast};
 
@@ -70,7 +70,7 @@ impl Projects {
     fn apply_record(&mut self, result: Result<Record, Error>, cx: &mut Context<Self>) {
         self.record_task = None;
         if let Ok(record) = &result {
-            if record.milestones.is_ok() && self.editor.is_none() {
+            if self.editor.is_none() {
                 self.blocked_write = false;
                 self.error = None;
             }
@@ -86,21 +86,31 @@ impl Projects {
     }
 
     pub(super) fn may_write(&self) -> bool {
-        !self.blocked_write
+        self.writable_record()
+            .is_some_and(|record| record.milestones.is_ok())
+    }
+
+    pub(super) fn editable_project(&self) -> Option<&PlanningProject> {
+        let project = &self.writable_record()?.project;
+        project.version.map(|_| project)
+    }
+
+    fn writable_record(&self) -> Option<&Record> {
+        let ready = !self.blocked_write
             && self.directory_task.is_none()
             && self.record_task.is_none()
-            && self.write_task.is_none()
-            && self.record.as_ref().is_some_and(|record| {
-                record.as_ref().is_ok_and(|record| {
-                    self.in_scope(&record.project)
-                        && !record.project.archived
-                        && record.milestones.is_ok()
-                })
-            })
+            && self.write_task.is_none();
+        ready
+            .then_some(self.record.as_ref()?.as_ref().ok()?)
+            .filter(|record| self.in_scope(&record.project) && !record.project.archived)
     }
 
     pub(super) fn send(&mut self, write: Write, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.may_write() || self.account != signed_in_generation() {
+        let ready = match write {
+            Write::Project(_) => self.editable_project().is_some(),
+            _ => self.may_write(),
+        };
+        if !ready || self.account != signed_in_generation() {
             return;
         }
         let Some(id) = self.selected.clone() else {
@@ -111,14 +121,15 @@ impl Projects {
         let send = cx.background_spawn(async move {
             let client = Client::new()?;
             if account != signed_in_generation() {
-                return Err(MilestoneWriteError::Read(Error::SignInNeeded));
+                return Err(PlanningWriteError::Read(Error::SignInNeeded));
             }
             if let Some(initiative) = initiative
                 && client.planning_project(&id)?.initiative_id.as_ref() != Some(&initiative)
             {
-                return Err(MilestoneWriteError::Conflict);
+                return Err(PlanningWriteError::Conflict);
             }
             match write {
+                Write::Project(fields) => client.change_project(&id, &fields),
                 Write::Add(fields) => client.add_milestone(&id, &fields),
                 Write::Change(row, change) => client.change_milestone(&id, &row, change),
             }
@@ -137,7 +148,7 @@ impl Projects {
 
     fn finish_write(
         &mut self,
-        result: Result<(), MilestoneWriteError>,
+        result: Result<(), PlanningWriteError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -157,7 +168,7 @@ impl Projects {
             Err(error) => {
                 self.blocked_write = matches!(
                     error,
-                    MilestoneWriteError::Conflict | MilestoneWriteError::Unconfirmed
+                    PlanningWriteError::Conflict | PlanningWriteError::Unconfirmed
                 );
                 self.reconcile_selection(cx);
                 if self.selected == previous {

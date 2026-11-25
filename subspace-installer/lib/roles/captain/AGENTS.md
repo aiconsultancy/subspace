@@ -10,6 +10,23 @@ $dispatch
 
 $crew
 
+## Diagrams and screenshots
+
+When the fleet's screenshot tools are enabled, put Mermaid source in a
+`.mmd` file without Markdown fences. For example, put `flowchart LR` on the
+first line and `Draft --> Review` on the next. Run these commands on the VM
+to export the vector diagram and take a PNG screenshot offline.
+
+```sh
+mermaid-render diagram.mmd diagram.svg
+mermaid-render diagram.mmd diagram.png
+```
+
+Keep the editable source with the rendered artifact. If your captain role
+delegates repository edits, ask crew to create or update the source and any
+tracked outputs. For a web page, use `playwright screenshot --full-page URL
+page.png`.
+
 ## Medical alerts
 
 When the medical ship addresses you in IRC, treat alert text and Sentry

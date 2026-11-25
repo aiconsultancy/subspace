@@ -301,6 +301,8 @@ def parse_args(argv):
                         "records the SSH tunnel's end on the desktop, http://127.0.0.1:8484")
     parser.add_argument("--stargate-ref", help="'latest' (the default: Stargate's newest release, looked up on "
                         "every run) or a full commit SHA to pin")
+    parser.add_argument("--captain-peer-messages", action=argparse.BooleanOptionalAction, default=None,
+                        help="Enable cross-ship messages between pinned crew-hosting captains.")
     parser.add_argument("--agent-dispatch", dest="agent_dispatch", action="store_true", default=None,
                         help="switch on Stargate's agent dispatch: " + DISPATCH_SUMMARY + " (default off; needs the API)")
     parser.add_argument("--no-agent-dispatch", dest="agent_dispatch", action="store_false")
@@ -424,6 +426,8 @@ def gather(args, saved):
                 given = prompt(f"Names for {name}'s crew ({', '.join(slot_label(slot) for slot in slots)}), "
                                "comma-separated", None, interactive) or ""
                 named.update(parse_crew_names(f"{name}={given}", answers))
+    if args.captain_peer_messages is not None:
+        answers["captainPeerMessages"] = args.captain_peer_messages
     if args.captain_tools is not None:
         answers["captainTools"] = args.captain_tools
     elif not saved and not (INPUTS / "fleet.json").exists() and not (FLEET_ETC / "fleet.json").exists():
@@ -1141,6 +1145,8 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
     previous = read_json(INPUTS / "fleet.json", {})
+    if answers.get("captainPeerMessages", previous.get("captainPeerMessages", False)):
+        config["captainPeerMessages"] = True
     if policy := answers.get("captainTools", previous.get("captainTools")):
         config["captainTools"] = policy
     config["toolchains"], packages = toolchain_settings(read_json(INPUTS / TOOLCHAIN_RECORD), previous)
@@ -1763,6 +1769,13 @@ def stargate_release(answers):
 def check_usage_guard_source(answers, rear, ref):
     # Setup changes officer models and effort, while the saved harness types stay in effect.
     previous = read_json(INPUTS / "fleet.json", {})
+    try:
+        runtime.require_peer_message_source({
+            "captainPeerMessages": answers.get("captainPeerMessages", previous.get("captainPeerMessages")),
+            "stargate": {"repo": STARGATE_REPO, "ref": ref},
+        })
+    except runtime.Invalid as error:
+        raise SetupError(str(error)) from None
     harness = previous.get("harness") or {}
     officer = previous.get("rearAdmiral") or {}
     role_type = (harness.get("rearAdmiral") or {}).get("type", harness.get("type", "opencode"))

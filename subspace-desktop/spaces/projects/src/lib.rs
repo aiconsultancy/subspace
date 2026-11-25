@@ -2,6 +2,8 @@
 
 mod editor;
 mod initiative;
+mod milestone_page;
+mod project_editor;
 mod requests;
 mod view;
 
@@ -13,11 +15,12 @@ use gpui_kit::{
 };
 use subspace_api_client::initiatives::Catalog;
 use subspace_api_client::projects::{
-    Milestone, MilestoneChange, MilestoneFields, PlanningProject, ProjectUpdate,
+    Milestone, MilestoneChange, MilestoneFields, PlanningProject, ProjectFields, ProjectUpdate,
 };
 use subspace_api_client::{Error, signed_in_generation};
 use subspace_framework::dashboard::{
-    Dashboard, DashboardEvent, Modal,
+    Dashboard, DashboardEvent, Modal, ReturnLocation,
+    contracts::BoardContracts,
     menu::{Menu, MenuAnchors},
     settings::BoardSettings,
 };
@@ -39,6 +42,7 @@ struct Record {
 }
 
 enum Write {
+    Project(ProjectFields),
     Add(MilestoneFields),
     Change(Milestone, MilestoneChange),
 }
@@ -56,6 +60,7 @@ pub struct Projects {
     selected: Option<String>,
     record: Option<Result<Record, Error>>,
     tab: Tab,
+    milestone_pages: milestone_page::Pages,
     editor: Option<editor::Editor>,
     error: Option<String>,
     blocked_write: bool,
@@ -108,6 +113,7 @@ impl Dashboard for Projects {
             selected: None,
             record: None,
             tab: Tab::Overview,
+            milestone_pages: milestone_page::Pages::default(),
             editor: None,
             error: None,
             blocked_write: false,
@@ -136,8 +142,21 @@ impl Dashboard for Projects {
 
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active = false;
+        self.milestone_pages.preview = None;
         self.menu_anchors.dismiss(window, cx);
         self.initiative_menu = None;
+    }
+
+    fn contracts() -> BoardContracts {
+        milestone_page::CONTRACTS
+    }
+
+    fn return_location(&self, _: &App) -> Option<ReturnLocation> {
+        self.milestone_place()
+    }
+
+    fn return_to(&mut self, key: &str, _: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.return_to_milestone(key, cx)
     }
 
     fn busy(&self, _: &App) -> bool {
@@ -150,7 +169,10 @@ impl Dashboard for Projects {
             Err(Error::SignInNeeded) => format!("{service} · Sign in required"),
             Err(_) => format!("{service} · Projects unavailable"),
             Ok(_) if self.directory_task.is_some() => format!("{service} · Loading projects"),
-            Ok(_) => format!("{service} · {} projects", self.visible_projects().count()),
+            Ok(_) => match self.visible_projects().count() {
+                1 => format!("{service} · 1 project"),
+                count => format!("{service} · {count} projects"),
+            },
         };
         Some(status.into())
     }
@@ -158,6 +180,7 @@ impl Dashboard for Projects {
     fn reload(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if self.write_task.is_none() {
             self.refresh(cx);
+            self.reload_milestone_issues(cx);
         }
     }
 
@@ -204,6 +227,7 @@ impl Projects {
         self.error = None;
         self.blocked_write = false;
         self.tab = Tab::Overview;
+        self.milestone_pages = milestone_page::Pages::default();
         self.initiative_menu = None;
         if self.active {
             self.refresh(cx);
@@ -230,6 +254,7 @@ impl Projects {
         self.error = None;
         self.blocked_write = false;
         self.tab = Tab::Overview;
+        self.milestone_pages = milestone_page::Pages::default();
         self.read_record(cx);
     }
 
@@ -260,6 +285,7 @@ impl Projects {
         self.error = None;
         self.blocked_write = false;
         self.tab = Tab::Overview;
+        self.milestone_pages = milestone_page::Pages::default();
         self.read_record(cx);
         cx.notify();
     }

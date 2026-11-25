@@ -19,6 +19,7 @@ fn record(initiative: &str) -> Record {
         archived: false,
         initiative_id: Some(initiative.into()),
         initiative: None,
+        version: Some(1),
     };
     Record {
         project,

@@ -366,10 +366,10 @@ class FleetPolicyTests(unittest.TestCase):
                     cfg, person, home, home / "workspace/project", 4097, b"seed", documents, "ses_fixture")
             engine = saved[f"opencode-{person['id']}"]
             # The officer, and crew sessions on its server, act as the officer's agent record, with no token.
-            self.assertEqual(engine["mcp"], {"servers": {"subspace": {
+            self.assertEqual(engine["mcp"]["servers"]["subspace"], {
                 "type": "remote", "url": "http://127.0.0.1:3001/mcp",
                 "headers": {"X-Subspace-Agent": person["account"]},
-            }}})
+            })
             self.assertNotIn("Authorization", json.dumps(engine["mcp"]))
             self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
             self.assertIn(runtime.SUBSPACE_MCP_GRANT, backend["permissions"])
@@ -815,6 +815,16 @@ class CaptainPolicyTests(unittest.TestCase):
         self.assertEqual(fixture.opencode_decision(rules, "read", ["deploy/.env"]), "deny")
         self.assertEqual(fixture.opencode_decision(rules, "external_directory", ["/tmp/*"]), "allow")
 
+    def test_the_rear_admiral_can_render_a_diagram_from_standard_input(self):
+        config = captain_fleet()
+        rear = config["members"][0]
+        rules = rear["harness"]["permissions"]
+        command = 'mermaid-render - "${TMPDIR:-/tmp}/diagram.png"'
+        instructions = roles.role_documents(config, rear, Path("/references/example"), Path("/example"))["instructions"]
+        self.assertIn(command, instructions)
+        self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["diagram.mmd"]), "deny")
+
     def test_a_standard_captain_keeps_its_policy_and_reads_its_crews_worktrees(self):
         cfg = captain_fleet()
         self.assertEqual(cfg["captainTools"], "standard")
@@ -824,6 +834,9 @@ class CaptainPolicyTests(unittest.TestCase):
         self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "allow")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git add -A", "git commit -m wip"]), "allow")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git push origin HEAD"]), "deny")
+        for command in ("mermaid-render diagram.mmd diagram.png", "playwright screenshot URL page.png"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["playwright test"]), "deny")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git status", "head -20"]), "deny")
         # Its crew's worktrees, and nothing else outside its workspace (the read tool and a shell's directory).
         for directory in (f"{self.worktrees}/claude-1/project/*", f"{self.worktrees}/codex-2/project/src/*"):
@@ -1297,7 +1310,7 @@ class AgentDispatchTests(unittest.TestCase):
         with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
                 patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine-orion.service"):
             _, backend, _, _ = runtime.render_engine(cfg, captain, home, home / "workspace/project", 4097, b"seed",
-                                                     documents, "ses_captain", answers_offers=True)
+                                                     documents, "ses_captain", fleet_tools=True)
             crew_plugin, fleet_plugin = saved["opencode-orion"]["plugins"]
             self.assertEqual(fleet_plugin, {
                 "package": f"/opt/subspace-fleet/src/stargate-{runtime.STARGATE_REF}/src/fleet",
@@ -1311,6 +1324,11 @@ class AgentDispatchTests(unittest.TestCase):
                                                      "ses_rear")
             self.assertEqual(backend["sessionID"], "ses_rear")
             self.assertNotIn("plugins", saved["opencode-atlas"])
+            self.assertNotIn("repo_refresh", saved["opencode-orion"].get("mcp", {}).get("servers", {}))
+            tool = saved["opencode-atlas"]["mcp"]["servers"]["repo_refresh"]
+            self.assertEqual(tool["command"], runtime.repository_refresh_command())
+            self.assertIn({"action": "repo_refresh_refresh_origin", "resource": "*", "effect": "allow"},
+                          backend["permissions"])
         runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
 
     def test_the_delegate_policy_and_extra_permissions_meet_stargates_fleet_tool_check(self):

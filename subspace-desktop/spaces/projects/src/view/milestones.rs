@@ -15,7 +15,7 @@ use subspace_framework::dashboard::{
 };
 use subspace_framework::lucide::IconName;
 
-use super::{date_label, failure, prose};
+use super::{date_label, failure, linked_issues, prose};
 use crate::{Projects, Record, Write};
 
 pub(super) fn render(
@@ -59,12 +59,18 @@ pub(super) fn render(
             let actions = this
                 .may_write()
                 .then(|| milestone_actions(row, index, rows.len(), cx));
-            milestone_row(row, actions, tokens)
+            milestone_row(row, actions, tokens, cx)
         }))
         .into_any_element()
 }
 
-fn milestone_row(row: &Milestone, actions: Option<Div>, tokens: &Tokens) -> Div {
+fn milestone_row(
+    row: &Milestone,
+    actions: Option<Div>,
+    tokens: &Tokens,
+    cx: &Context<Projects>,
+) -> Div {
+    let id = row.id.clone();
     v_flex()
         .gap_2()
         .py_3()
@@ -80,10 +86,17 @@ fn milestone_row(row: &Milestone, actions: Option<Div>, tokens: &Tokens) -> Div 
                         .min_w_0()
                         .gap_1()
                         .child(
-                            div()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(tokens.fg_strong)
-                                .child(row.name.clone()),
+                            action_button(
+                                format!("milestone-open:{id}"),
+                                Intent::Quiet,
+                                Some(IconName::Flag),
+                                row.name.clone(),
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.open_milestone(&id, cx);
+                                },
+                            )),
                         )
                         .child(status_line(row, tokens)),
                 )
@@ -102,7 +115,54 @@ fn milestone_row(row: &Milestone, actions: Option<Div>, tokens: &Tokens) -> Div 
         )
 }
 
-fn status_line(row: &Milestone, tokens: &Tokens) -> Div {
+pub(super) fn detail(
+    this: &Projects,
+    id: &str,
+    project: &str,
+    tokens: &Tokens,
+    cx: &Context<Projects>,
+) -> AnyElement {
+    let Some(row) = this.milestone(id) else {
+        return div()
+            .text_color(tokens.muted)
+            .child(if this.record_task.is_some() {
+                "Loading milestone…"
+            } else {
+                "Milestone unavailable."
+            })
+            .into_any_element();
+    };
+    v_flex()
+        .gap_4()
+        .child(
+            div()
+                .text_color(tokens.muted)
+                .text_sm()
+                .child(project.to_owned()),
+        )
+        .child(
+            div()
+                .text_xl()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(tokens.fg_strong)
+                .child(row.name.clone()),
+        )
+        .child(status_line(row, tokens))
+        .children(
+            row.description
+                .as_deref()
+                .map(|text| prose("milestone-detail-description", text)),
+        )
+        .children(
+            row.issue_progress
+                .as_ref()
+                .map(|progress| issue_progress(id, progress, tokens)),
+        )
+        .child(linked_issues::detail(this, id, tokens, cx))
+        .into_any_element()
+}
+
+pub(super) fn status_line(row: &Milestone, tokens: &Tokens) -> Div {
     let (status, color) = match row.status {
         MilestoneStatus::Unstarted => ("Not started", tokens.muted),
         MilestoneStatus::Next => ("Next", tokens.accent),

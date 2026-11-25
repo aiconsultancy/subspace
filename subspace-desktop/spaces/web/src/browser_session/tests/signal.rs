@@ -25,7 +25,7 @@ fn a_signal_after_a_failed_renewal_waits_for_the_retry() {
     session.acquired(3, Ok(grant(retried)), retried);
     assert_eq!(
         session.installed(3, Stored::Confirmed, retried, Some(PAGE.into())),
-        [Effect::Return(PAGE.into())],
+        [Effect::Load(PAGE.into())],
         "the signal waited for the retry, so the page returns"
     );
     assert_eq!(
@@ -51,7 +51,7 @@ fn a_signalled_renewal_that_fails_returns_to_the_page_once_its_retry_succeeds() 
     session.acquired(3, Ok(grant(retried)), retried);
     assert_eq!(
         session.installed(3, Stored::Confirmed, retried, Some(PAGE.into())),
-        [Effect::Return(PAGE.into())]
+        [Effect::Load(PAGE.into())]
     );
 
     let renew_at = later(retried, 780);
@@ -89,7 +89,7 @@ fn the_signal_renews_at_once_and_returns_to_the_page() {
     );
     assert_eq!(
         session.installed(2, Stored::Confirmed, signalled, Some(PAGE.into())),
-        [Effect::Return(PAGE.into())]
+        [Effect::Load(PAGE.into())]
     );
     assert_eq!(
         session.signal(later(signalled, 5), None),
@@ -121,7 +121,7 @@ fn a_signal_during_a_renewal_returns_to_the_page_once_it_is_installed() {
     assert_eq!(session.signal(renew_at, None), []);
     assert_eq!(
         session.installed(2, Stored::Confirmed, renew_at, None),
-        [Effect::Return(HOME.into())],
+        [Effect::Load(HOME.into())],
         "a view outside the scope returns home"
     );
 }

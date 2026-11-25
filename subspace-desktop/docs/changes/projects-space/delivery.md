@@ -8,3 +8,8 @@ The native Twilight Two capture uses an isolated Subspace API fixture and fictio
 - [Switching initiatives in the early layout](evidence/initiative.png)
 
 The live Subspace API returned the project list, project details, milestone list and latest update routes. Milestone changes are exercised against fixture HTTP endpoints for both API backends.
+
+The native follow-up fixture saved Started → Paused, previewed linked issues on the timeline, opened a milestone and its linked issue, and returned through Back to the milestone and then the list. The client tests cover the versioned project PUT on both backends and paging through linked issues with their statuses.
+
+- [Edit project](evidence/project-editor.png) and [saved status](evidence/project-paused.png)
+- [Timeline preview](evidence/timeline-preview.png) and [milestone detail after Back](evidence/milestone-detail.png)
