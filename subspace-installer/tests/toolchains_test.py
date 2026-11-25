@@ -10,8 +10,9 @@ import contextlib
 import io
 import json
 from pathlib import Path
-import sys
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -670,6 +671,23 @@ class SystemPackageInstallTests(unittest.TestCase):
             self.assertEqual(toolchains.package_state("zsh"), "available")
             self.assertEqual(toolchains.package_state("zs"), "missing")
         self.assertEqual({cwd for _, cwd in calls}, {"/"})
+
+
+@unittest.skipUnless(shutil.which("pwsh"), "PowerShell (pwsh) is not installed")
+class PowerShellArgumentTests(unittest.TestCase):
+    def test_an_unquoted_comma_separated_list_keeps_its_commas(self):
+        # PowerShell passes node@24,pnpm@9.12.3 to a script as an array; install.ps1 joins it with commas again,
+        # as setup on the VM expects, where [string] would have joined it with spaces.
+        script = Path(__file__).resolve().parents[2] / "install.ps1"
+        line = next(line for line in script.read_text().splitlines() if line.startswith("$list = @("))
+        with tempfile.TemporaryDirectory() as directory:
+            probe = Path(directory) / "arguments.ps1"
+            probe.write_text(line + "\n$list | ForEach-Object { [string]$_ }\n")
+            result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command",
+                                     f"& '{probe}' --toolchains node@24,pnpm@9.12.3 --captains 'Orion,Vega' "
+                                     "--name 'Example Fleet'"], capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), ["--toolchains", "node@24,pnpm@9.12.3", "--captains",
+                                                      "Orion,Vega", "--name", "Example Fleet"])
 
 
 class EnvironmentTests(unittest.TestCase):

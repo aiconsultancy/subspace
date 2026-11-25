@@ -34,7 +34,8 @@ for a server that admits only signed-in connections (require-sasl).
 host), gives the fleet's enrolment token; it too is removed from the VM after
 the run.
 Every other option goes to subspace-setup on the VM, for example
-  --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega --admin admiral --demo
+  --name "Example Fleet" --rear-admiral Atlas --captains 'Orion,Vega' --admin admiral --demo
+Quote comma-separated lists, such as --toolchains 'node@24,pnpm@9.12.3'.
 #>
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3
@@ -61,7 +62,9 @@ function Confirm-Step([string]$Question) {
 
 # Arguments ------------------------------------------------------------------
 
-$list = @($args)
+# PowerShell passes an unquoted comma-separated value (--toolchains node@24,pnpm@9.12.3) to a script as an array,
+# which [string] would join with spaces; setup on the VM wants the commas back.
+$list = @(foreach ($value in $args) { if ($value -is [array]) { ($value | ForEach-Object { [string]$_ }) -join ',' } else { $value } })
 $i = 0
 if ($list.Count -gt 0 -and $list[0] -in @('install', 'irc-server', 'tunnel', 'providers', 'skills', 'desktop', 'ssh', 'status', 'audit', 'stop', 'start', 'destroy')) {
     $Command = $list[0]; $i = 1

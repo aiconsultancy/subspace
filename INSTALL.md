@@ -609,9 +609,14 @@ Windows, in PowerShell from the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-deps `
-  --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega `
+  --name "Example Fleet" --rear-admiral Atlas --captains 'Orion,Vega' `
   --admin admiral --demo
 ```
+
+In PowerShell, quote every comma-separated list, as `--captains 'Orion,Vega'`
+above, or `--toolchains 'node@22.11.0,pnpm@9.12.3' --system-packages
+'zsh,clang'`: PowerShell otherwise reads one as an array. (`install.ps1`
+joins such an array with commas again, but other commands may not.)
 
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
 optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`,
