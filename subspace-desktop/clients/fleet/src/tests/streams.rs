@@ -123,6 +123,63 @@ fn a_stream_that_refuses_the_officer_opens_again_without_it() {
     );
 }
 
+/// A stream asked for `example-a` is refused late, after the watch moved
+/// to `example-b`: the refusal is about `example-a` only, so the stream
+/// asks for `example-b` next and carries it live.
+#[test]
+fn a_late_refusal_never_refuses_the_officer_watched_since() {
+    let (listener, address) = loopback();
+    let targets = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&targets);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let seen = std::sync::Arc::clone(&seen);
+            std::thread::spawn(move || {
+                let target = request_target(&stream);
+                seen.lock().unwrap().push(target.clone());
+                if target.contains("agent=example-a") {
+                    std::thread::sleep(Duration::from_millis(500));
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                    return;
+                }
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
+                      event: heartbeat\ndata: {\"at\":1}\n\n",
+                );
+                std::thread::sleep(Duration::from_secs(30));
+            });
+        }
+    });
+    let feed = Feed::start_with(FleetClient::new(address, Secret::new(TOKEN)), quick());
+    feed.set_agents(["example-a".to_owned()].into());
+    assert!(eventually(|| {
+        targets
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|target| target.contains("agent=example-a"))
+    }));
+    // Replaced while the stream that asked for A still waits on its answer.
+    feed.set_agents(["example-b".to_owned()].into());
+    assert!(eventually(|| {
+        feed.activity_news("example-b", 0)
+            .is_some_and(|news| news.connection.is_some() && !news.refused)
+    }));
+    assert!(
+        targets
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|target| target == "/api/v1/events?agent=example-b"),
+        "{:?}",
+        targets.lock().unwrap()
+    );
+    assert_eq!(feed.link(), Link::Live);
+}
+
 /// A loopback server whose streams that subscribe to an officer hold back
 /// their headers for a while and close soon after sending them, so the
 /// feed reconnects. It records, in order, each such stream's headers as

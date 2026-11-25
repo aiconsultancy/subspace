@@ -101,16 +101,20 @@ impl Agents {
         }
     }
 
-    /// When Stargate refused a stream that subscribed to officers with 400
-    /// or 404 (an officer it does not know), leaves them out of the next
-    /// one; whether it did, so the stream opens again at once.
-    pub(crate) fn refuse(&mut self, error: Error) -> bool {
+    /// When Stargate refused with 400 or 404 (an officer it does not know)
+    /// a stream that asked for the officers `attempted`, leaves those still
+    /// watched out of the next one; whether the stream asked for any, so it
+    /// opens again at once. The refusal is about the officers that stream
+    /// asked for, never those watched since: they are asked for next.
+    pub(crate) fn refuse(&mut self, error: Error, attempted: &[String]) -> bool {
         if !matches!(error, Error::NotFound | Error::UnexpectedStatus(400)) {
             return false;
         }
-        let subscribed = self.subscribed();
-        self.refused.extend(subscribed.iter().cloned());
-        !subscribed.is_empty()
+        let still = attempted
+            .iter()
+            .filter(|agent| self.wanted.contains(*agent));
+        self.refused.extend(still.cloned());
+        !attempted.is_empty()
     }
 
     /// Keeps `event` for its officer while watched; whether it was kept.
@@ -173,13 +177,17 @@ mod tests {
         let mut agents = Agents::default();
         assert!(agents.set(set(&["example-lyra"])));
         assert!(!agents.set(set(&["example-lyra"])));
+        let asked = agents.subscribed();
         assert!(
-            !agents.refuse(Error::UnexpectedStatus(503)),
+            !agents.refuse(Error::UnexpectedStatus(503), &asked),
             "only 400 or 404"
         );
-        assert!(agents.refuse(Error::NotFound));
+        assert!(agents.refuse(Error::NotFound, &asked));
         assert!(agents.subscribed().is_empty());
-        assert!(!agents.refuse(Error::NotFound), "nothing left to refuse");
+        assert!(
+            !agents.refuse(Error::NotFound, &agents.subscribed()),
+            "nothing left to refuse"
+        );
         assert!(agents.news("example-lyra", 0).unwrap().refused);
         let many: Vec<String> = (0..10).map(|n| format!("example-{n}")).collect();
         assert!(agents.set(many.iter().cloned().collect()));
@@ -187,6 +195,25 @@ mod tests {
         assert!(agents.news("example-9", 0).is_some_and(|news| news.refused));
         assert!(agents.set(BTreeSet::new()));
         assert!(agents.news("example-0", 0).is_none());
+    }
+
+    /// A stream that asked for A is refused only after A was replaced by
+    /// B: the refusal is about A, and B is asked for next.
+    #[test]
+    fn a_late_refusal_leaves_out_only_the_officers_its_stream_asked_for() {
+        let mut agents = Agents::default();
+        agents.set(set(&["example-a"]));
+        let asked = agents.subscribed();
+        assert!(agents.set(set(&["example-b"])));
+        assert!(
+            agents.refuse(Error::NotFound, &asked),
+            "opens again at once"
+        );
+        assert_eq!(agents.subscribed(), ["example-b"]);
+        assert!(!agents.news("example-b", 0).unwrap().refused);
+        // Watched again, A is asked for again: its refusal went with it.
+        agents.set(set(&["example-a", "example-b"]));
+        assert_eq!(agents.subscribed(), ["example-a", "example-b"]);
     }
 
     #[test]

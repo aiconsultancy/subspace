@@ -145,7 +145,8 @@ async fn run(shared: &Arc<Shared>, client: &FleetClient, pace: Pace) {
     };
     let mut backoff = Backoff::new(pace);
     loop {
-        let Some((end, stable)) = until_stopped(shared, follow(shared, &http, client, pace)).await
+        let Some((end, stable, attempted)) =
+            until_stopped(shared, follow(shared, &http, client, pace)).await
         else {
             return;
         };
@@ -156,7 +157,7 @@ async fn run(shared: &Arc<Shared>, client: &FleetClient, pace: Pace) {
         bump(shared);
         let next = match end {
             StreamEnd::Retarget => Some(()),
-            StreamEnd::Refused(error) if lock(&shared.agents).refuse(error) => Some(()),
+            StreamEnd::Refused(error) if lock(&shared.agents).refuse(error, &attempted) => Some(()),
             StreamEnd::Refused(error) => refused(shared, client, pace, error).await,
             StreamEnd::Network => wait_to_retry(shared, &mut backoff, Link::Unreachable).await,
             StreamEnd::Protocol | StreamEnd::Closed => {
@@ -170,17 +171,18 @@ async fn run(shared: &Arc<Shared>, client: &FleetClient, pace: Pace) {
 }
 
 /// Streams until the stream ends; whether it stayed up long enough to
-/// count as stable.
+/// count as stable, and the officers it asked for, which a refusal is
+/// about: the set may have changed while it connected.
 async fn follow(
     shared: &Shared,
     http: &reqwest::Client,
     client: &FleetClient,
     pace: Pace,
-) -> (StreamEnd, bool) {
+) -> (StreamEnd, bool, Vec<String>) {
     let subscribed = lock(&shared.agents).subscribed();
     let mut events = match stream::connect(http, client, &subscribed).await {
         Ok(events) => events,
-        Err(end) => return (end, false),
+        Err(end) => return (end, false, subscribed),
     };
     lock(&shared.agents).connected(&subscribed);
     set_link(shared, Link::Live);
@@ -198,7 +200,7 @@ async fn follow(
         };
         match next {
             Ok(event) => apply(shared, event),
-            Err(end) => return (end, opened.elapsed() >= pace.stable),
+            Err(end) => return (end, opened.elapsed() >= pace.stable, subscribed),
         }
     }
 }
