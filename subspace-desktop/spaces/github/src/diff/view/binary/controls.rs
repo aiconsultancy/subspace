@@ -105,11 +105,12 @@ fn paging_controls(
             })
             .child(div().text_color(tokens.muted).child("Loading…"));
     }
-    if let Some((retry, wait)) = &binary.retry {
+    if let Some((retry, busy)) = &binary.retry {
+        let remaining = busy.remaining(cx);
         let bytes_busy = matches!(retry, Retry::Bytes(_));
         return row
             .when(!bytes_busy || binary.page.is_some(), |row| {
-                row.children(binary_actions(binary, bytes_busy, cx))
+                row.children(binary_actions(binary, bytes_busy || remaining > 0, cx))
             })
             .child(
                 action_button(
@@ -118,10 +119,11 @@ fn paging_controls(
                     Some(IconName::RefreshCw),
                     "Retry page",
                 )
+                .disabled(remaining > 0)
                 .on_click(cx.listener(|view, _, _, cx| view.retry_binary(cx))),
             )
             .text_color(tokens.muted)
-            .child(busy_message(*wait));
+            .child(busy_message(remaining));
     }
     if binary.preview.is_some() {
         return row.child(preview::bytes_button(cx));

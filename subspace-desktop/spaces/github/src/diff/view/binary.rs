@@ -49,12 +49,18 @@ pub(super) struct BinaryView {
     page: Option<DiffContent>,
     scroll: UniformListScrollHandle,
     read: Option<Task<()>>,
-    retry: Option<(Retry, Option<u64>)>,
+    retry: Option<(Retry, super::pages::PageBusy)>,
     preview: Option<Preview>,
     closed: DiffRead,
 }
 
 impl BinaryView {
+    fn retry_held(&self, cx: &gpui_kit::App) -> bool {
+        self.retry
+            .as_ref()
+            .is_some_and(|(_, busy)| busy.remaining(cx) > 0)
+    }
+
     fn side_index(&self) -> usize {
         match self.side {
             DiffSide::Old => 0,
@@ -250,7 +256,12 @@ impl DiffView {
 
 impl DiffView {
     fn retry_binary(&mut self, cx: &mut Context<Self>) {
-        if self.fleet.changed() {
+        if self.fleet.changed()
+            || self
+                .binary
+                .as_ref()
+                .is_some_and(|binary| binary.retry_held(cx))
+        {
             return;
         }
         let Some((retry, _)) = self.binary.as_mut().and_then(|binary| binary.retry.take()) else {

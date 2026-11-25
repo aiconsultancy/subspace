@@ -1,6 +1,8 @@
 //! Loading and validating pinned file continuations.
 
-use gpui_kit::{AppContext as _, Context};
+use std::time::{Duration, Instant};
+
+use gpui_kit::{App, AppContext as _, Context, Task};
 use subspace_client_fleet::{
     Error,
     diff::{DiffFilePage, V1DiffFilePage},
@@ -22,7 +24,14 @@ impl DiffView {
         let Some(page) = file.next_page.clone() else {
             return;
         };
-        if self.fleet.changed() || self.fleet.loading.contains(&index) {
+        if self.fleet.changed()
+            || self.fleet.loading.contains(&index)
+            || self
+                .fleet
+                .busy_pages
+                .get(&index)
+                .is_some_and(|busy| busy.remaining(cx) > 0)
+        {
             return;
         }
         let client = match source.client(cx) {
@@ -80,7 +89,7 @@ impl DiffView {
                 self.rebuild();
             }
             Err(Error::Busy(wait)) => {
-                self.fleet.busy_pages.insert(index, wait);
+                self.fleet.busy_pages.insert(index, PageBusy::new(wait, cx));
             }
             Err(error) => self.fleet_page_error(error, cx),
         }
@@ -110,13 +119,51 @@ impl DiffView {
     }
 }
 
-pub(super) fn busy_message(wait: Option<u64>) -> String {
-    match wait {
-        Some(1) => "Stargate is busy. Wait 1 second before retrying.".to_owned(),
-        Some(seconds) if seconds > 1 => {
-            format!("Stargate is busy. Wait {seconds} seconds before retrying.")
+pub(super) struct PageBusy {
+    since: Instant,
+    wait: u64,
+    _clock: Option<Task<()>>,
+}
+
+impl PageBusy {
+    pub(super) fn new(wait: Option<u64>, cx: &mut Context<DiffView>) -> Self {
+        let since = cx.background_executor().now();
+        let wait = wait.unwrap_or_default();
+        let clock = (wait > 0).then(|| {
+            cx.spawn(async move |view, cx| {
+                let executor = cx.background_executor().clone();
+                while executor.now().saturating_duration_since(since).as_secs() < wait {
+                    executor.timer(Duration::from_secs(1)).await;
+                    if view.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            })
+        });
+        Self {
+            since,
+            wait,
+            _clock: clock,
         }
-        _ => "Stargate is busy.".to_owned(),
+    }
+
+    pub(super) fn remaining(&self, cx: &App) -> u64 {
+        self.wait.saturating_sub(
+            cx.background_executor()
+                .now()
+                .saturating_duration_since(self.since)
+                .as_secs(),
+        )
+    }
+}
+
+pub(super) fn busy_message(remaining: u64) -> String {
+    match remaining {
+        0 => "Stargate is busy.".to_owned(),
+        1 => "Stargate is busy. Try again in 1 second.".to_owned(),
+        seconds => {
+            format!("Stargate is busy. Try again in {seconds} seconds.")
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 //! The non-code rows of the diff list: file headers, notes and hunk gaps.
 
-use gpui_kit::component::{Selectable as _, h_flex};
+use gpui_kit::component::{Disableable as _, Selectable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -168,7 +168,11 @@ impl DiffView {
                 .child("Loading…")
                 .into_any_element();
         }
-        let busy = self.fleet.busy_pages.get(&file).copied();
+        let busy = self
+            .fleet
+            .busy_pages
+            .get(&file)
+            .map(|busy| busy.remaining(cx));
         let (id, icon, label) = if busy.is_some() {
             ("crew-diff-retry-page", IconName::RefreshCw, "Retry page")
         } else {
@@ -177,6 +181,7 @@ impl DiffView {
         row.gap_2()
             .child(
                 action_button((id, file), Intent::Quiet, Some(icon), label)
+                    .disabled(busy.is_some_and(|remaining| remaining > 0))
                     .on_click(cx.listener(move |view, _, _, cx| view.load_more(file, cx))),
             )
             .when_some(busy, |row, wait| {

@@ -25,7 +25,8 @@ and preview reads but leaves already loaded content visible. Busy requests retry
 the same page up to twice, respecting a numeric `Retry-After`. If the wait is
 over ten seconds or the retries run out, **Retry page** repeats the failed file,
 binary or preview page without reloading the file list or discarding loaded
-pages. A stale snapshot or a failed file-list load still uses **Refresh**.
+pages. A positive `Retry-After` disables that control until the countdown
+ends. A stale snapshot or a failed file-list load still uses **Refresh**.
 
 **View binary** opens a readonly hex and ASCII dump. Its pages are read on
 demand at the original fingerprint; modified binaries offer **Old** and
@@ -38,9 +39,10 @@ Leaving or replacing a preview removes its texture from the window atlas.
 
 The shared unified and split lists keep their fixed-height virtual rows.
 **Read full line** opens a horizontally scrollable reader for a line from
-either layout, including lines without spaces. The virtual list sizes its
-horizontal extent from one measurement item; this avoids a guessed width
-that could still clip one of the split columns, or measuring the whole diff.
+either layout, including lines without spaces. Tabs show as `⇥` and carriage
+returns as `␍`. The virtual list sizes its horizontal extent from one
+measurement item; this avoids a guessed width that could still clip one of
+the split columns, or measuring the whole diff.
 
 The Fleet client does not put diff content in the activity feed. The viewer
 keeps it in memory only, with no viewed marks, search index or notification

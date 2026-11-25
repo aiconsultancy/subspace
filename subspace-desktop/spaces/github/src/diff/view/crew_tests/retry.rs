@@ -121,7 +121,7 @@ fn retry_page_repeats_only_the_failed_continuation_and_keeps_loaded_patches(
         window.run_until_parked();
     }
     let before = view.read_with(window, |view, _| {
-        assert_eq!(view.fleet.busy_pages.get(&0), Some(&Some(0)));
+        assert!(view.fleet.busy_pages.contains_key(&0));
         let patch = view.files[0].file.patch.clone().unwrap();
         assert!(patch.contains("FIRST-CONTINUATION"));
         patch
@@ -130,6 +130,10 @@ fn retry_page_repeats_only_the_failed_continuation_and_keeps_loaded_patches(
         window.draw(cx).clear(cx);
         assert!(window.find("crew-diff-banner-refresh").visible());
         assert!(window.find(("crew-diff-retry-page", 0usize)).visible());
+        assert_eq!(
+            window.find(("crew-diff-retry-page", 0usize)).disabled(),
+            Some(false)
+        );
         window.click(("crew-diff-retry-page", 0usize), cx);
     });
     window.run_until_parked();
@@ -151,6 +155,51 @@ fn retry_page_repeats_only_the_failed_continuation_and_keeps_loaded_patches(
             .count(),
         1
     );
+}
+
+#[gpui_kit::test]
+fn text_retry_after_ten_disables_retry_and_blocks_reads_until_due(cx: &mut TestAppContext) {
+    let attempts = AtomicUsize::new(0);
+    let mock = Mock::with_headers(move |request| {
+        if request.path.contains("/diff/file?") {
+            let attempt = attempts.fetch_add(1, Ordering::Relaxed);
+            if attempt < 3 {
+                let wait = if attempt == 2 { "10" } else { "0" };
+                return (
+                    503,
+                    vec![("Retry-After".into(), wait.into())],
+                    String::new(),
+                );
+            }
+            return (200, vec![], patch_page("+AFTER-RETRY\n", None));
+        }
+        (200, vec![], fixture(false))
+    });
+    let (view, window) = mount(cx, &mock);
+    view.update(window, |view, cx| view.load_more(0, cx));
+    window.run_until_parked();
+    window.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        assert_eq!(
+            window.find(("crew-diff-retry-page", 0usize)).disabled(),
+            Some(true)
+        );
+    });
+    window.executor().advance_clock(Duration::from_secs(9));
+    view.update(window, |view, cx| view.load_more(0, cx));
+    window.run_until_parked();
+    assert_eq!(file_requests(&mock).len(), 3);
+    window.executor().advance_clock(Duration::from_secs(1));
+    window.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        assert_eq!(
+            window.find(("crew-diff-retry-page", 0usize)).disabled(),
+            Some(false)
+        );
+        window.click(("crew-diff-retry-page", 0usize), cx);
+    });
+    window.run_until_parked();
+    assert_eq!(file_requests(&mock).len(), 4);
 }
 
 fn patch_page(patch: &str, next: Option<&str>) -> String {

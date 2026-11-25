@@ -8,7 +8,10 @@ use subspace_client_fleet::{
 use subspace_framework::dashboard::Toast;
 
 use super::{DiffView, Move, Position, Retry};
-use crate::diff::view::{DiffEvent, DiffSource, pages::validate_page};
+use crate::diff::view::{
+    DiffEvent, DiffSource,
+    pages::{PageBusy, validate_page},
+};
 
 impl DiffView {
     pub(super) fn read_binary(&mut self, direction: Move, cx: &mut Context<Self>) {
@@ -19,7 +22,7 @@ impl DiffView {
         ) else {
             return;
         };
-        if self.fleet.changed() || binary.read.is_some() {
+        if self.fleet.changed() || binary.read.is_some() || binary.retry_held(cx) {
             return;
         }
         let Some(position) = binary.destination(&direction) else {
@@ -75,7 +78,7 @@ impl DiffView {
                 self.fleet.unstable |= unstable;
             }
             Err(Error::Busy(wait)) => {
-                binary.retry = Some((Retry::Bytes(direction), wait));
+                binary.retry = Some((Retry::Bytes(direction), PageBusy::new(wait, cx)));
             }
             Err(error) => self.fleet_page_error(error, cx),
         }

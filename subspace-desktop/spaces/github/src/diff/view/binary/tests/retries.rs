@@ -66,24 +66,29 @@ fn a_live_change_cancels_a_preview_between_pages(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn retry_page_resumes_a_busy_preview_without_fetching_its_prefix_again(cx: &mut TestAppContext) {
-    let mock = busy_tail();
+    let mock = busy_tail("0");
     let (view, window) = mount(cx, &mock);
     click(window, ("crew-diff-bytes", 0usize));
     click(window, "crew-binary-preview");
     assert_page(&view, window, DiffSide::New, 0);
-    window.update(|window, _| assert!(window.find("crew-binary-retry-page").visible()));
+    window.update(|window, _| {
+        assert_eq!(
+            window.find("crew-binary-retry-page").disabled(),
+            Some(false)
+        );
+    });
     click(window, "crew-binary-retry-page");
     view.read_with(window, |view, _| {
         let binary = view.binary.as_ref().unwrap();
         assert!(binary.preview.is_some());
         assert!(binary.retry.is_none());
     });
-    assert_tail_was_retried(&mock, 4);
+    assert_tail_was_retried(&mock, 6);
 }
 
 #[gpui_kit::test]
-fn retry_page_keeps_the_current_bytes_until_the_failed_page_arrives(cx: &mut TestAppContext) {
-    let mock = busy_tail();
+fn binary_retry_after_ten_keeps_the_current_bytes_until_due(cx: &mut TestAppContext) {
+    let mock = busy_tail("10");
     let (view, window) = mount(cx, &mock);
     click(window, ("crew-diff-bytes", 0usize));
     click(window, "crew-binary-next");
@@ -92,23 +97,33 @@ fn retry_page_keeps_the_current_bytes_until_the_failed_page_arrives(cx: &mut Tes
         let next = window.find("crew-binary-next");
         assert!(next.visible());
         assert_eq!(next.disabled(), Some(true));
+        assert_eq!(window.find("crew-binary-retry-page").disabled(), Some(true));
     });
+    window.executor().advance_clock(Duration::from_secs(9));
+    view.update(window, |view, cx| view.retry_binary(cx));
+    window.run_until_parked();
+    assert_page(&view, window, DiffSide::New, 0);
+    window.executor().advance_clock(Duration::from_secs(1));
     click(window, "crew-binary-retry-page");
     assert_page(&view, window, DiffSide::New, 3);
-    assert_tail_was_retried(&mock, 3);
+    assert_tail_was_retried(&mock, 5);
     click(window, "crew-binary-previous");
     assert_page(&view, window, DiffSide::New, 0);
 }
 
-fn busy_tail() -> Mock {
+fn busy_tail(last_wait: &'static str) -> Mock {
     let tail = AtomicUsize::new(0);
     Mock::with_headers(move |request| {
-        if request.path.contains("&page=png-tail") && tail.fetch_add(1, Ordering::Relaxed) == 0 {
-            return (
-                503,
-                vec![("Retry-After".into(), "11".into())],
-                String::new(),
-            );
+        if request.path.contains("&page=png-tail") {
+            let attempt = tail.fetch_add(1, Ordering::Relaxed);
+            if attempt < 3 {
+                let wait = if attempt == 2 { last_wait } else { "0" };
+                return (
+                    503,
+                    vec![("Retry-After".into(), wait.into())],
+                    String::new(),
+                );
+            }
         }
         let (status, body) = binary_response(request);
         (status, vec![], body)
