@@ -49,13 +49,16 @@ fleet_setup.agent_reader = lambda answers, members: (None, "the tests reach no S
 # OutboundTests checks the real lookup.
 latest_stargate = fleet_setup.latest_stargate
 fleet_setup.latest_stargate = lambda: ("v0.0.0", "d" * 40)
+# Guided setup preflights the explicit source before saving answers. Use the real check in its dedicated test.
+check_usage_guard_source = fleet_setup.check_usage_guard_source
+fleet_setup.check_usage_guard_source = lambda *_args: None
 
 
 def fleet_installer(root, output=None):
     """subspace-setup's 'installer' as the fleet installer's checks, in this process, on a VM with nothing installed
     but what the test puts under root (etc, state, sessions): install.sh --dry-run runs 'runtime.py plan', and a
     real run's 'prepare' makes the same checks before it installs anything, which here it never does. Git's reading
-    of public repositories and the installed Stargate's crew rule are left out. Each run's (dry_run, quiet, plan
+    of public repositories and the fixture Stargate's feature checks are left out. Each run's (dry_run, quiet, plan
     text) goes to output."""
     def installer(config_path, dry_run=False, secrets_dir=None, quiet=False):
         if secrets_dir is None and (beside := Path(config_path).with_name("fleet.secrets")).is_dir():
@@ -64,6 +67,7 @@ def fleet_installer(root, output=None):
         with patch.object(runtime, "ETC", root / "etc"), patch.object(runtime, "STATE", root / "state"), \
                 patch.object(runtime, "SESSIONS", root / "sessions"), patch.object(runtime, "IRC_CERTS", root / "certs"), \
                 patch.object(runtime, "readable_without_credentials", return_value=True), \
+                patch.object(runtime, "require_usage_guard_source"), \
                 patch.object(runtime, "stargate_crew_names_free", return_value=True), contextlib.redirect_stdout(text):
             try:
                 runtime.main(["plan", str(config_path), str(Path(config_path).with_name("fleet.secrets.json")),
@@ -90,6 +94,60 @@ def answers_for(argv):
 
 # A new fleet names every crew member: here the example captain's four, Claude-family first.
 CREW = ["--crew-names", "Orion=Rigel,Deneb,Mira,Sirius"]
+
+
+class UsageGuardAnswersTests(unittest.TestCase):
+    def test_an_incompatible_pin_without_a_local_api_is_refused_before_saving(self):
+        with tempfile.TemporaryDirectory() as root:
+            args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
+                                           "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                                           "--captains", "Orion", "--no-api", "--stargate-ref", "a" * 40])
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "check_usage_guard_source", check_usage_guard_source), \
+                    patch.object(runtime, "require_usage_guard_source",
+                                 side_effect=runtime.Invalid("Usage guard requires a newer Stargate")) as check, \
+                    patch.object(fleet_setup, "run") as run, \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "requires a newer Stargate"):
+                fleet_setup.setup(args)
+            self.assertEqual(check.call_args.args[0]["stargate"]["ref"], "a" * 40)
+            run.assert_not_called()
+            self.assertEqual(list(Path(root).iterdir()), [])
+
+    def test_default_custom_and_off_options(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
+            defaults = fleet_setup.usage_guard_answers(fleet_setup.parse_args([]), {})
+            self.assertEqual(defaults, {"enabled": True, "claude": {"warning": 20, "cutoff": 10},
+                                        "codex": {"warning": 20, "cutoff": 10}})
+            args = fleet_setup.parse_args(["--usage-guard-warning", "35", "--usage-guard-cutoff", "codex=15",
+                                           "--no-usage-guard"])
+            off = fleet_setup.usage_guard_answers(args, {})
+            self.assertEqual(off, {"enabled": False, "claude": {"warning": 35, "cutoff": 10},
+                                   "codex": {"warning": 35, "cutoff": 15}})
+            (Path(root) / "fleet.json").write_text(json.dumps({"usageGuard": off}))
+            on = fleet_setup.usage_guard_answers(fleet_setup.parse_args(["--usage-guard"]), {})
+            self.assertEqual(on, {**off, "enabled": True})
+            self.assertIn("Codex 35% warning / 15% cutoff", runtime.usage_guard_line(on, {"account": "atlas"}))
+
+    def test_cli_overrides_can_repair_a_saved_partial_policy(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
+            (Path(root) / "fleet.json").write_text(json.dumps({"usageGuard": {"claude": {"cutoff": 22}}}))
+            with self.assertRaisesRegex(fleet_setup.SetupError, "must be lower"):
+                fleet_setup.usage_guard_answers(fleet_setup.parse_args([]), {})
+            args = fleet_setup.parse_args(["--usage-guard-warning", "claude=25"])
+            limits = fleet_setup.usage_guard_answers(args, {})
+            self.assertEqual(limits["claude"], {"warning": 25, "cutoff": 22})
+            self.assertEqual(limits["codex"], {"warning": 20, "cutoff": 10})
+
+    def test_bad_provider_range_and_order_are_rejected(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
+            for argument, value, message in (
+                ("--usage-guard-warning", "other=30", "expects"),
+                ("--usage-guard-warning", "100", "expects"),
+                ("--usage-guard-cutoff", "claude=20", "must be lower"),
+            ):
+                args = fleet_setup.parse_args([argument, value])
+                with self.subTest(value=value), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                    fleet_setup.usage_guard_answers(args, {})
 
 
 class SetupInputsTests(unittest.TestCase):

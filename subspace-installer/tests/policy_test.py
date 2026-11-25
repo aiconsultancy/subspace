@@ -1934,6 +1934,7 @@ class PlainNamesTests(unittest.TestCase):
         runtime.check_new_crew_named(validate(*fixture_legacy()), {})
 
     def test_an_installed_crew_member_keeps_its_id_under_a_new_name_only_where_stargate_allows(self):
+        self.config["usageGuard"] = {"enabled": False}
         self.config["captains"][0]["crewNames"] = {"claude-1": "Rigel"}
         self.config["captains"][0]["crewIds"] = {"claude-1": "claude-1"}
         cfg = validate(self.config, self.secrets)

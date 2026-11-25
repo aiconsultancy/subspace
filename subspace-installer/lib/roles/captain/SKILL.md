@@ -15,3 +15,8 @@ description: Plan a change, delegate bounded parts to your crew through Stargate
    member's final answer is its result. Answer questions that arrive through
    `stargate_dm` and read `stargate_mail` when a notice points you there.
 $completion
+
+## Provider quota
+
+Follow the usage guard guidance in your officer instructions when a ship
+notice names a provider.
