@@ -108,11 +108,17 @@ fn thread_tab_pauses_refresh_until_the_ship_tab_returns(cx: &mut TestAppContext)
 #[gpui_kit::test]
 fn crew_detail_explains_the_missing_token_even_without_a_roster(cx: &mut TestAppContext) {
     let (_, hub, cx) = ship(cx);
-    let record = FleetRecord::new("aurora", "Aurora", Some("http://127.0.0.1:9".into()));
-    cx.update(|_, cx| FleetApi::install_new(TokenStore::memory(), vec![record], cx));
-    settle(cx);
     set_fleet(&hub, live(), cx);
-    cx.update(|window, cx| window.click(ROW, cx));
+    let api = cx.update(|window, cx| {
+        let api = FleetApi::install_new(TokenStore::memory(), vec![], cx);
+        window.render_frame(cx);
+        window.click(ROW, cx);
+        assert!(window.find(BACK).visible());
+        api
+    });
+    let record = FleetRecord::new("aurora", "Aurora", Some("http://127.0.0.1:9".into()));
+    api.update(cx, |api, cx| api.set_fleets(vec![record], cx));
+    settle(cx);
     set_fleet(&hub, FleetState::NoToken, cx);
     cx.update(|window, _| {
         assert!(window.find(BACK).visible());
