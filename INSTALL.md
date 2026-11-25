@@ -294,8 +294,8 @@ answer it now.
    install, in their browser; see [Bring the agents online](#bring-the-agents-online).
    Ask whether they will be there at the end to do it. If not, finish the
    install and leave them the sign-in commands.
-10. **Which limits should the usage guard use?** (**On, 25% warning and
-    20% cutoff** for Claude and Codex, or **off**.) At the warning, the
+10. **Which limits should the usage guard use?** (**On, 20% warning and
+    10% cutoff** for Claude and Codex, or **off**.) At the warning, the
     rear admiral asks captains in their own ship channels to stand down
     extra crew of the affected provider. At the cutoff, Stargate blocks
     new starts and resumptions for that provider. Active crew can finish,

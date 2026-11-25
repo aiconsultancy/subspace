@@ -291,9 +291,9 @@ def parse_args(argv):
     parser.add_argument("--usage-guard", action=argparse.BooleanOptionalAction, default=None,
                         help="enable Claude and Codex quota notices and crew cutoffs (default on)")
     parser.add_argument("--usage-guard-warning", action="append", default=[], metavar="[PROVIDER=]PERCENT",
-                        help="quota warning for Claude and Codex, or one provider (default 25)")
+                        help=f"quota warning for Claude and Codex, or one provider (default {runtime.USAGE_GUARD_DEFAULTS['warning']})")
     parser.add_argument("--usage-guard-cutoff", action="append", default=[], metavar="[PROVIDER=]PERCENT",
-                        help="block crew starts and resumptions at this quota (default 20)")
+                        help=f"block crew starts and resumptions at this quota (default {runtime.USAGE_GUARD_DEFAULTS['cutoff']})")
     parser.add_argument("--stargate-api", choices=["auto", "on", "off"],
                         help="enable Stargate's Fleet API (default auto: when the pinned Stargate has it)")
     parser.add_argument("--fleet-api-url", help="the HTTPS address at which a desktop reaches Stargate's Fleet API, "

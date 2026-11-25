@@ -1787,7 +1787,7 @@ calling the tools through the bridge have not run against one.
 
 The installer enables the guard for Claude and Codex. It asks each captain
 in its own ship channel to stand down extra crew of the affected provider
-at **25% remaining**. At **20% remaining**, Stargate refuses new starts and
+at **20% remaining**. At **10% remaining**, Stargate refuses new starts and
 resumptions of that kind. Active crew can finish or checkpoint and push.
 The rear admiral posts the notices and reports verified recovery.
 
@@ -1808,7 +1808,7 @@ individual values:
 {
   "usageGuard": {
     "enabled": true,
-    "claude": { "warning": 25, "cutoff": 20 },
+    "claude": { "warning": 20, "cutoff": 10 },
     "codex": { "warning": 30, "cutoff": 20 }
   }
 }

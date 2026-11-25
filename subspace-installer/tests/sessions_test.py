@@ -1112,7 +1112,7 @@ class InstalledFleet(unittest.TestCase):
         self.assertEqual(guard["sender"], "atlas")
         self.assertEqual({target["account"] for target in guard["captains"]}, {"example-orion", "example-vega"})
         self.assertEqual(guard["providers"]["claude"]["limits"], [
-            {"remainingPercent": 25, "action": "warn"}, {"remainingPercent": 20, "action": "pause"},
+            {"remainingPercent": 20, "action": "warn"}, {"remainingPercent": 10, "action": "pause"},
         ])
         cfg = runtime.validate(config, private)
         self.assertEqual(runtime.crew_options(cfg, cfg["members"][1], self.state, 4097, "ses_fixture")["usageGuardFile"],

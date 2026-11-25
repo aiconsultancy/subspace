@@ -123,7 +123,7 @@ EFFORTS = {
 }
 # OpenCode provider IDs per model family, as in Stargate's OpenCode template.
 PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
-USAGE_GUARD_DEFAULTS = {"warning": 25, "cutoff": 20}
+USAGE_GUARD_DEFAULTS = {"warning": 20, "cutoff": 10}
 USAGE_GUARD_MODELS = {
     "claude": ["claude/", "claude-proxy/", "anthropic/"],
     "codex": ["codex/", "codex-proxy/", "openai-proxy/", "openai/gpt-", "openai/codex"],

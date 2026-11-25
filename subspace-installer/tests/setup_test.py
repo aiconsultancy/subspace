@@ -97,12 +97,12 @@ class UsageGuardAnswersTests(unittest.TestCase):
     def test_default_custom_and_off_options(self):
         with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
             defaults = fleet_setup.usage_guard_answers(fleet_setup.parse_args([]), {})
-            self.assertEqual(defaults, {"enabled": True, "claude": {"warning": 25, "cutoff": 20},
-                                        "codex": {"warning": 25, "cutoff": 20}})
+            self.assertEqual(defaults, {"enabled": True, "claude": {"warning": 20, "cutoff": 10},
+                                        "codex": {"warning": 20, "cutoff": 10}})
             args = fleet_setup.parse_args(["--usage-guard-warning", "35", "--usage-guard-cutoff", "codex=15",
                                            "--no-usage-guard"])
             off = fleet_setup.usage_guard_answers(args, {})
-            self.assertEqual(off, {"enabled": False, "claude": {"warning": 35, "cutoff": 20},
+            self.assertEqual(off, {"enabled": False, "claude": {"warning": 35, "cutoff": 10},
                                    "codex": {"warning": 35, "cutoff": 15}})
             (Path(root) / "fleet.json").write_text(json.dumps({"usageGuard": off}))
             on = fleet_setup.usage_guard_answers(fleet_setup.parse_args(["--usage-guard"]), {})
@@ -114,7 +114,7 @@ class UsageGuardAnswersTests(unittest.TestCase):
             for argument, value, message in (
                 ("--usage-guard-warning", "other=30", "expects"),
                 ("--usage-guard-warning", "100", "expects"),
-                ("--usage-guard-cutoff", "claude=25", "must be lower"),
+                ("--usage-guard-cutoff", "claude=20", "must be lower"),
             ):
                 args = fleet_setup.parse_args([argument, value])
                 with self.subTest(value=value), self.assertRaisesRegex(fleet_setup.SetupError, message):
