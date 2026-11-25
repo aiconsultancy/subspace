@@ -157,7 +157,7 @@ impl Client {
             query.extend_from_slice(extra);
             let page: Page<T> = self.get(path, &query)?;
             items.extend(page.items);
-            let Some(cursor) = page.next_cursor else {
+            let Some(cursor) = page.next_cursor.filter(|cursor| !cursor.is_empty()) else {
                 return Ok(items);
             };
             if !cursors.insert(cursor.clone()) {

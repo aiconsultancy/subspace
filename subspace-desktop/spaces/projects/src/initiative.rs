@@ -3,6 +3,7 @@
 use gpui_kit::component::Disableable as _;
 use gpui_kit::{AnyElement, Context, Window};
 use subspace_api_client::initiatives::{Catalog, not_a_member};
+use subspace_api_client::may_serve_initiative_channels;
 use subspace_framework::dashboard::menu::MenuEvent;
 
 use crate::Projects;
@@ -12,7 +13,9 @@ const ANCHOR: &str = "projects-initiative";
 pub(super) fn scope(catalog: &Catalog) -> (Option<String>, bool) {
     let selected = catalog.selected().map(|initiative| initiative.id.clone());
     let hidden = not_a_member(subspace_api_client::capabilities(), catalog)
-        || (selected.is_none() && catalog.reading());
+        || (selected.is_none()
+            && (catalog.reading()
+                || (may_serve_initiative_channels() && !catalog.memberships_known())));
     (selected, hidden)
 }
 

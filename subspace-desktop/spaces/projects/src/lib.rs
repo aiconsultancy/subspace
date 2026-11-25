@@ -212,6 +212,9 @@ impl Projects {
     }
 
     fn reconcile_selection(&mut self, cx: &mut Context<Self>) {
+        if self.editor.is_some() || self.write_task.is_some() {
+            return;
+        }
         let mut rows = self.visible_projects();
         let first = rows.next();
         let selected = self.selected.as_ref();
@@ -224,22 +227,25 @@ impl Projects {
         }
         self.selected = first.map(|row| row.id.clone());
         self.record = None;
-        self.editor = None;
         self.error = None;
         self.blocked_write = false;
-        self.write_task = None;
         self.tab = Tab::Overview;
         self.read_record(cx);
     }
 
+    fn in_scope(&self, project: &PlanningProject) -> bool {
+        !self.initiative_hidden
+            && self
+                .initiative_id
+                .as_ref()
+                .is_none_or(|id| project.initiative_id.as_ref() == Some(id))
+    }
+
     fn visible_projects(&self) -> impl Iterator<Item = &PlanningProject> {
-        self.projects.iter().flatten().filter(|project| {
-            !self.initiative_hidden
-                && self
-                    .initiative_id
-                    .as_ref()
-                    .is_none_or(|id| project.initiative_id.as_ref() == Some(id))
-        })
+        self.projects
+            .iter()
+            .flatten()
+            .filter(|project| self.in_scope(project))
     }
 
     fn select(&mut self, id: &str, cx: &mut Context<Self>) {

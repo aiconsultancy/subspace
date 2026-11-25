@@ -11,6 +11,7 @@ use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div, px,
 };
+use subspace_api_client::initiatives::{NO_MEMBERSHIPS, not_a_member};
 use subspace_framework::dashboard::{
     Tokens,
     action::{Intent, action_button, main_action},
@@ -94,8 +95,9 @@ fn toolbar(this: &Projects, cx: &mut Context<Projects>) -> workspace::Toolbar {
 
 fn content(this: &Projects, tokens: &Tokens, cx: &mut Context<Projects>) -> AnyElement {
     let body = match &this.record {
-        Some(Ok(record)) => record_body(this, record, tokens, cx),
+        Some(Ok(record)) if this.in_scope(&record.project) => record_body(this, record, tokens, cx),
         Some(Err(error)) => failure(&error.to_string(), tokens, cx),
+        Some(Ok(_)) => div().into_any_element(),
         None if this.directory_task.is_some()
             || this.record_task.is_some()
             || this.initiatives.read(cx).reading() =>
@@ -105,6 +107,17 @@ fn content(this: &Projects, tokens: &Tokens, cx: &mut Context<Projects>) -> AnyE
         }
         None => match &this.projects {
             Err(error) => failure(&error.to_string(), tokens, cx),
+            Ok(_) if this.initiative_hidden => {
+                let catalog = this.initiatives.read(cx);
+                if not_a_member(subspace_api_client::capabilities(), catalog) {
+                    div()
+                        .text_color(tokens.muted)
+                        .child(NO_MEMBERSHIPS)
+                        .into_any_element()
+                } else {
+                    failure("Initiatives are unavailable.", tokens, cx)
+                }
+            }
             Ok(_) => div()
                 .text_color(tokens.muted)
                 .child("No projects in this initiative.")

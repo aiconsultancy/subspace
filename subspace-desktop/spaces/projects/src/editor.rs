@@ -170,6 +170,7 @@ impl Projects {
     pub(super) fn dismiss_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.write_task.is_none() && self.editor.take().is_some() {
             self.focus.focus(window, cx);
+            self.reconcile_selection(cx);
             cx.notify();
         }
     }
@@ -240,6 +241,19 @@ pub(super) fn render(
                 this.error
                     .as_ref()
                     .map(|error| fields::field_error(tokens, "milestone-error", error)),
+            )
+            .children(
+                this.record
+                    .as_ref()
+                    .and_then(|record| record.as_ref().ok())
+                    .filter(|record| !this.in_scope(&record.project))
+                    .map(|_| {
+                        fields::field_error(
+                            tokens,
+                            "milestone-initiative-changed",
+                            "The selected initiative changed. Copy any edits before closing this form.",
+                        )
+                    }),
             )
             .children(
                 busy.then(|| {
