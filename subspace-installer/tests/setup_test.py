@@ -23,22 +23,56 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
+import fleet_records  # noqa: E402
 import fleet_setup  # noqa: E402
 import irc_accounts  # noqa: E402
 import roles  # noqa: E402
 import runtime  # noqa: E402
 from runtime import irc_officer, validate  # noqa: E402
+import sessions  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
 
 
 # Tests never reach the network: setup's outbound check is replaced here, and OutboundTests checks the real one.
 check_outbound = fleet_setup.check_outbound
 fleet_setup.check_outbound = lambda answers: None
+# Nor do they read a fleet's tracker as its rear admiral: TrackerOwnershipTests checks the real reader.
+agent_reader = fleet_setup.agent_reader
+fleet_setup.agent_reader = lambda answers, members: (None, "the tests reach no Subspace API")
+# Nor do they look up Stargate's newest release: a run without --stargate-ref installs this one here, and
+# OutboundTests checks the real lookup.
+latest_stargate = fleet_setup.latest_stargate
+fleet_setup.latest_stargate = lambda: ("v0.0.0", "d" * 40)
+
+
+def fleet_installer(root, output=None):
+    """subspace-setup's 'installer' as the fleet installer's checks, in this process, on a VM with nothing installed
+    but what the test puts under root (etc, state, sessions): install.sh --dry-run runs 'runtime.py plan', and a
+    real run's 'prepare' makes the same checks before it installs anything, which here it never does. Git's reading
+    of public repositories and the installed Stargate's crew rule are left out. Each run's (dry_run, quiet, plan
+    text) goes to output."""
+    def installer(config_path, dry_run=False, secrets_dir=None, quiet=False):
+        if secrets_dir is None and (beside := Path(config_path).with_name("fleet.secrets")).is_dir():
+            secrets_dir = beside  # As install.sh takes the secrets directory beside the configuration.
+        text = io.StringIO()
+        with patch.object(runtime, "ETC", root / "etc"), patch.object(runtime, "STATE", root / "state"), \
+                patch.object(runtime, "SESSIONS", root / "sessions"), patch.object(runtime, "IRC_CERTS", root / "certs"), \
+                patch.object(runtime, "readable_without_credentials", return_value=True), \
+                patch.object(runtime, "stargate_crew_names_free", return_value=True), contextlib.redirect_stdout(text):
+            try:
+                runtime.main(["plan", str(config_path), str(Path(config_path).with_name("fleet.secrets.json")),
+                              str(secrets_dir or ""), "false"])
+            except runtime.Invalid as error:
+                raise fleet_setup.SetupError(f"subspace-fleet: {error}") from None
+        if output is not None:
+            output.append((dry_run, quiet, text.getvalue()))
+    return patch.object(fleet_setup, "installer", side_effect=installer)
 
 
 def fake_api(api):
@@ -52,6 +86,10 @@ def answers_for(argv):
         answers = fleet_setup.gather(args, {})
         rear, captains = fleet_setup.check_answers(answers)
     return answers, rear, captains
+
+
+# A new fleet names every crew member: here the example captain's four, Claude-family first.
+CREW = ["--crew-names", "Orion=Rigel,Deneb,Mira,Sirius"]
 
 
 class SetupInputsTests(unittest.TestCase):
@@ -80,9 +118,11 @@ class SetupInputsTests(unittest.TestCase):
              "--admin", "admiral", "--demo"], api_block=api)
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(answers["slug"], "example-fleet")
-        self.assertEqual([m["account"] for m in members], ["example-fleet-atlas", "example-fleet-orion", "example-fleet-vega"])
+        # A new fleet's officers have plain names: each one's ID is its IRC account, API name and Stargate ID.
+        self.assertEqual(config["officerNames"], "plain")
+        self.assertEqual([m["account"] for m in members], ["atlas", "orion", "vega"])
         # Crew have no IRC accounts; without repositories they have no worktrees either.
-        self.assertEqual(set(secrets["ircPasswords"]), {"example-fleet-atlas", "example-fleet-orion", "example-fleet-vega", "admiral"})
+        self.assertEqual(set(secrets["ircPasswords"]), {"atlas", "orion", "vega", "admiral"})
         self.assertEqual(config["crew"], {"claude": {"count": 2}, "codex": {"count": 2}})
         self.assertEqual(config["repositories"], [])
         # Setup names no channels: the installer makes the standard set, with a separate command channel.
@@ -91,10 +131,11 @@ class SetupInputsTests(unittest.TestCase):
         command = f"#example-fleet-{COMMAND_SUFFIX}"
         self.assertEqual(cfg["irc"]["starbaseChannel"], "#example-fleet-starbase")
         self.assertEqual(cfg["irc"]["commandChannel"], command)
-        standard = ["#example-fleet-starbase", command, "#example-fleet-orion", "#example-fleet-vega"]
+        # Starbase and fleet command keep the fleet's name; a ship channel is named after its captain.
+        standard = ["#example-fleet-starbase", command, "#orion", "#vega"]
         self.assertEqual(cfg["irc"]["channels"], standard)
         self.assertEqual(fleet_setup.fleet_channels(answers, members), standard)
-        rear = irc_officer(cfg, cfg["members"][0], {"account": "example-fleet-atlas", "backend": {"directory": "/w"}})
+        rear = irc_officer(cfg, cfg["members"][0], {"account": "atlas", "backend": {"directory": "/w"}})
         self.assertEqual(rear["channels"], standard)
         self.assertEqual(rear["access"]["humanWakeChannels"], [{"channel": "#example-fleet-starbase", "replies": "all"}])
         self.assertIn("#aurora-lyra", config["irc"]["compose"]["channels"])
@@ -115,13 +156,83 @@ class SetupInputsTests(unittest.TestCase):
         self.assertNotIn("admiral", secrets["ircPasswords"])
         members = fleet_setup.roster(answers, "atlas", ["orion"])
         bundle = fleet_setup.irc_bundle(answers, members, store)
-        self.assertEqual({row["name"] for row in bundle["accounts"]}, {"fleet-one-atlas", "fleet-one-orion"})
+        self.assertEqual({row["name"] for row in bundle["accounts"]}, {"atlas", "orion"})
         self.assertEqual({row["name"] for row in bundle["accounts"]}, set(secrets["ircPasswords"]))
         self.assertEqual([row["name"] for row in bundle["channels"]],
-                         ["#fleet-one-starbase", f"#fleet-one-{COMMAND_SUFFIX}", "#fleet-one-orion"])
+                         ["#fleet-one-starbase", f"#fleet-one-{COMMAND_SUFFIX}", "#orion"])
         self.assertEqual(cfg["irc"]["channels"], [row["name"] for row in bundle["channels"]])
         self.assertIn("dispatch", bundle["channels"][1]["topic"])
         self.assertEqual(bundle["humans"], ["admiral"])
+
+    def test_the_sizing_counts_the_api_setup_runs_on_this_vm_whatever_its_sign_in(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        local = runtime.memory.reserve(api_here=True, irc_here=True)
+        # With development sign-in setup writes the API's block, and without it (WorkOS or Entra) none: either way
+        # the API runs here, and the engines leave it its room.
+        for block in ({"url": "http://127.0.0.1:3000", "initiatives": []}, None):
+            with self.subTest(block=block):
+                _, _, config, secrets, _ = self.generate(base, api_block=block)
+                self.assertEqual(config["memory"], {"localApi": True})
+                cfg = validate(config, secrets, check_files=False)
+                self.assertEqual(runtime.memory_plan(cfg, 16036)["reserve"], local)
+        # A hosted API, or none: nothing runs here for it.
+        for flags in (["--api-url", "https://subspace.example.com"], ["--no-api"]):
+            with self.subTest(flags=flags):
+                _, _, config, secrets, _ = self.generate([*base, *flags])
+                self.assertNotIn("memory", config)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"memory": {"localApi": True, "swap": "4G"}})
+        _, _, config, _, _ = self.generate([*base, "--no-api"])
+        self.assertEqual(config["memory"], {"swap": "4G"})
+
+    def test_memory_options_reach_fleet_json_and_are_kept(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
+        answers, members, config, secrets, _ = self.generate(
+            [*base, "--captain-memory", "24G", "--rear-admiral-memory", "none", "--swap", "8G"])
+        self.assertEqual(config["memory"], {"captain": {"max": "24G"}, "rearAdmiral": {"max": "none"}, "swap": "8G",
+                                            "localApi": True})
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual(cfg["memory"]["captain"], {"max": 24 * 1024})
+        self.assertEqual(cfg["memory"]["rear_admiral"], {"max": "none"})
+        plan = runtime.memory_plan(cfg, 64154)["limits"]
+        self.assertEqual((plan["orion"]["max"], plan["orion"]["high"], plan["atlas"]["max"]), (24 * 1024, 21 * 1024,
+                                                                                            "none"))
+        # Later runs keep the answers; what the operator added to fleet.json by hand stays beside them.
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            **config, "memory": {**config["memory"], "tasksMax": 2048, "captain": {"max": "16G", "high": "15G"}}})
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            kept = fleet_setup.gather(args, answers)
+        config = fleet_setup.fleet_config(kept, members, "a" * 40)
+        self.assertEqual(config["memory"], {"captain": {"max": "24G", "high": "15G"}, "rearAdmiral": {"max": "none"},
+                                            "swap": "8G", "tasksMax": 2048, "localApi": True})
+        # auto returns to the installer's own sizing, changing only what the option sets: a role's hard cap is
+        # written as auto, and swap's default needs no entry.
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--captain-memory", "auto",
+                                       "--rear-admiral-memory", "", "--swap", "auto"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            reset = fleet_setup.gather(args, kept)
+        self.assertEqual(fleet_setup.fleet_config(reset, members, "a" * 40)["memory"],
+                         {"captain": {"max": "auto", "high": "15G"}, "rearAdmiral": {"max": "auto"}, "tasksMax": 2048,
+                          "localApi": True})
+        # A fleet-wide cap set by hand reaches neither role, whose auto is the sizing for this VM, while an
+        # officer's own cap still wins.
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            **config, "memory": {"max": "16G", "captain": {"max": "12G"}},
+            "captains": [{**config["captains"][0], "memory": {"max": "28G"}}, *config["captains"][1:]]})
+        auto = fleet_setup.fleet_config(reset, members, "a" * 40)
+        self.assertEqual(auto["memory"], {"max": "16G", "captain": {"max": "auto"}, "rearAdmiral": {"max": "auto"},
+                                          "localApi": True})
+        result = runtime.memory_plan(validate(auto, secrets, check_files=False), 64154)
+        plan = result["limits"]
+        self.assertEqual((plan["orion"]["max"], plan["vega"]["max"], plan["atlas"]["max"]),
+                         (28 * 1024, result["computed"]["captain"], result["computed"]["rear_admiral"]))
+        self.assertEqual((plan["vega"]["max"], plan["atlas"]["max"]), (31 * 1024, 4 * 1024))
+        # Bad values stop setup before it saves anything.
+        for flag, value, message in (("--captain-memory", "lots", "--captain-memory must be a size such as 20G"),
+                                     ("--rear-admiral-memory", "100M", "--rear-admiral-memory must be at least 512M"),
+                                     ("--swap", "big", "--swap must be a size")):
+            with self.subTest(flag), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                answers_for([*base, flag, value])
 
     def test_stargate_api_and_secrets_are_stable(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
@@ -155,7 +266,7 @@ class SetupInputsTests(unittest.TestCase):
 
     def test_crew_models_are_set_by_option_and_kept_on_a_rerun(self):
         base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
-                "--repositories", "https://github.com/example/project.git"]
+                "--repositories", "https://github.com/example/project.git", *CREW]
         answers, members, config, secrets, _ = self.generate(
             [*base, "--crew-claude-model", "claude-opus-5-5", "--crew-codex-model", "gpt-6.2-sol"])
         self.assertEqual(config["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"},
@@ -200,21 +311,71 @@ class SetupInputsTests(unittest.TestCase):
 
     def test_captain_delegate_policy_grants_pull_requests_and_leaves_coding_to_crew(self):
         args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
-                "--no-demo", "--repositories", "https://github.com/example/project.git", "--captain-tools", "delegate"]
+                "--no-demo", "--repositories", "https://github.com/example/project.git", "--captain-tools", "delegate",
+                *CREW]
         answers, members, config, secrets, _ = self.generate(args)
         cfg = validate(config, secrets, check_files=False)
         rear, captain = cfg["members"]
         self.assertFalse(rear.get("delegatesCoding"))
         self.assertTrue(captain["delegatesCoding"])
-        grants = {(rule["action"], rule["resource"]) for rule in captain["harness"]["permissions"]
-                  if rule["effect"] == "allow"}
-        self.assertIn(("shell", "subspace-github gh pr create *"), grants)
-        self.assertIn(("shell", "git diff *"), grants)
-        self.assertNotIn(("edit", "*"), grants)
-        self.assertNotIn(("shell", "git commit *"), grants)
-        self.assertNotIn(("shell", "make *"), grants)
+        rules = captain["harness"]["permissions"]
+        for command in ("subspace-github gh pr create --fill", "git diff main", "git fetch origin", "make test", "pwd"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow", command)
+        for command in ("git commit -m wip", "git push origin HEAD"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "deny", command)
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "deny")
         again = self.rerun(answers, config)
         self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "delegate")
+
+    def test_a_new_fleet_delegates_and_an_existing_one_keeps_its_captain_tools(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        repositories = ["--repositories", "https://github.com/example/project.git", *CREW]
+        answers, members, config, secrets, _ = self.generate([*base, *repositories])
+        self.assertEqual((answers["captainTools"], config["captainTools"]), ("delegate", "delegate"))
+        self.assertTrue(validate(config, secrets, check_files=False)["members"][1]["delegatesCoding"])
+        # Without repositories the captains have no crew, so they keep the standard policy until crew come.
+        _, _, bare, bare_secrets, _ = self.generate(base)
+        self.assertEqual(bare["captainTools"], "delegate")
+        captain = validate(bare, bare_secrets, check_files=False)["members"][1]
+        self.assertFalse(captain.get("delegatesCoding"))
+        self.assertEqual(captain["harness"]["permissions"], roles.default_permissions("captain", None))
+        # A rerun keeps the answer, and --captain-tools changes it.
+        self.assertEqual(fleet_setup.fleet_config(self.rerun(answers, config), members, "a" * 40)["captainTools"],
+                         "delegate")
+        again = self.rerun(answers, config, "--captain-tools", "standard")
+        self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "standard")
+        # A fleet set up before captainTools existed has neither the answer nor the key, and gets neither: a
+        # fleet.json without captainTools means standard, as its captains were installed to code.
+        legacy = {key: value for key, value in answers.items() if key != "captainTools"}
+        config.pop("captainTools")
+        again = self.rerun(legacy, config)
+        self.assertNotIn("captainTools", again)
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertNotIn("captainTools", rebuilt)
+        self.assertEqual(validate(rebuilt, secrets, check_files=False)["captainTools"], "standard")
+        # So does a fleet the fleet installer set up alone, which setup has no answers or inputs for.
+        (fleet_setup.INPUTS / "answers.json").unlink()
+        (fleet_setup.INPUTS / "fleet.json").unlink()
+        etc = Path(self.directory.name) / "etc"
+        etc.mkdir()
+        (etc / "fleet.json").write_text("{}")
+        with patch.object(fleet_setup, "FLEET_ETC", etc):
+            self.assertNotIn("captainTools", answers_for([*base, *repositories])[0])
+
+    def test_extra_permissions_written_by_hand_are_kept_on_a_rerun(self):
+        args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--repositories", "https://github.com/example/project.git", *CREW]
+        answers, members, config, _, _ = self.generate(args)
+        rule = {"action": "shell", "resource": "kubectl get *", "effect": "allow"}
+        config["harness"] = {"extraPermissions": [rule], "captain": {"extraPermissions": [rule]}}
+        config["captains"][0]["harness"] = {"extraPermissions": [rule]}
+        # A rerun that also changes the captains' model keeps every level's rules.
+        again = self.rerun(answers, config, "--captain-model", "gpt-6.2-sol")
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"]["extraPermissions"], [rule])
+        self.assertEqual(rebuilt["harness"]["captain"], {"extraPermissions": [rule], "model": "gpt-6.2-sol",
+                                                         "family": "codex"})
+        self.assertEqual(rebuilt["captains"][0]["harness"], {"extraPermissions": [rule]})
 
     def test_officer_models_are_set_by_option_and_kept_on_a_rerun(self):
         base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
@@ -314,7 +475,7 @@ class SetupInputsTests(unittest.TestCase):
                          [("codex", "gpt-6.2-sol", None), ("codex", "gpt-6.2-sol", None)])
 
     def test_repositories_answer_fills_the_fleet_list_and_gives_captains_crew(self):
-        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo", *CREW,
                 "--repositories", "https://github.com/example/project.git, library=https://github.com/example/lib.git"]
         _, members, config, secrets, _ = self.generate(argv)
         self.assertEqual(config["repositories"], [
@@ -322,22 +483,25 @@ class SetupInputsTests(unittest.TestCase):
             {"id": "library", "url": "https://github.com/example/lib.git"},
         ])
         cfg = validate(config, secrets, check_files=False)
-        self.assertEqual([worker["id"] for worker in cfg["members"][1]["crew"]], ["claude-1", "claude-2", "codex-1", "codex-2"])
-        self.assertEqual(set(secrets["ircPasswords"]), {"example-fleet-atlas", "example-fleet-orion", "admiral"})
+        # Every crew member has the name it was given; its family and slot stay beside it.
+        self.assertEqual([(worker["id"], worker["name"], worker["slot"]) for worker in cfg["members"][1]["crew"]],
+                         [("rigel", "Rigel", "claude-1"), ("deneb", "Deneb", "claude-2"), ("mira", "Mira", "codex-1"),
+                          ("sirius", "Sirius", "codex-2")])
+        self.assertEqual(set(secrets["ircPasswords"]), {"atlas", "orion", "admiral"})
         # The list lives in fleet.json: a later run without the flag keeps it, including hand edits.
         config["repositories"][1]["private"] = True
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
-        answers, rear, captains = answers_for(argv[:7])
+        answers, rear, captains = answers_for(argv[:9])
         kept = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
         self.assertEqual(kept["repositories"], config["repositories"])
         # A new answer replaces the list; a repository that stays keeps its ID and visibility.
-        answers, rear, captains = answers_for([*argv[:7], "--repositories", "https://github.com/example/lib.git"])
+        answers, rear, captains = answers_for([*argv[:9], "--repositories", "https://github.com/example/lib.git"])
         replaced = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
         self.assertEqual(replaced["repositories"], [config["repositories"][1]])
         fleet_setup.save_answers(answers)
         self.assertNotIn("repositories", fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
         # An explicit ID=URL answer renames a known repository and keeps its visibility.
-        answers, rear, captains = answers_for([*argv[:7], "--repositories", "shared=https://github.com/example/lib.git"])
+        answers, rear, captains = answers_for([*argv[:9], "--repositories", "shared=https://github.com/example/lib.git"])
         renamed = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
         self.assertEqual(renamed["repositories"], [{"id": "shared", "url": "https://github.com/example/lib.git",
                                                     "private": True}])
@@ -382,17 +546,88 @@ class SetupInputsTests(unittest.TestCase):
             self.assertNotIn(fixture, str(raised.exception))
             self.assertIn("Repository 2 (example.com)", str(raised.exception))
 
+    def test_every_new_crew_member_is_named(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion, Vega",
+                "--repositories", "https://github.com/example/project.git"]
+        with self.assertRaisesRegex(fleet_setup.SetupError, "Name every crew member of orion, vega: pass --crew-names "
+                                    "with 4 names per captain, in slot order \\(Claude 1, Claude 2, Codex 1, Codex 2\\)"):
+            answers_for(base)
+        for names, message in (("Orion=Rigel,Deneb", "gives Orion 2 crew names for 4 crew"),
+                               ("Lyra=Rigel,Deneb,Mira,Sirius", "not one of the captains"),
+                               ("Orion=Rigel,Deneb,Mira,Sirius;Vega=rigel,Castor,Pollux,Spica",
+                                "orion's Rigel and vega's rigel are the same"),
+                               ("Orion=Rigel,Deneb,Mira,Vega;Vega=Altair,Castor,Pollux,Spica", "is an officer's name"),
+                               ("Orion=Rigel,Deneb,Mira,Si/rius;Vega=Altair,Castor,Pollux,Spica", "use ASCII")):
+            with self.subTest(names), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                answers_for([*base, "--crew-names", names])
+        answers, rear, captains = answers_for([*base, "--crew-names",
+                                               "Orion=Rigel,Deneb,Mira,Sirius;Vega=Altair,Castor,Pollux,Spica"])
+        members = fleet_setup.roster(answers, rear, captains)
+        self.assertEqual(members[2]["crewNames"], {"claude-1": "Altair", "claude-2": "Castor", "codex-1": "Pollux",
+                                                   "codex-2": "Spica"})
+        # A captain already installed keeps its crew as installed, named or not.
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"captains": [{"id": "orion"}, {"id": "vega"}],
+                                                                  "repositories": [{"id": "project"}]})
+        answers_for(base[:6])
+
+    def test_saved_crew_names_follow_the_roster_and_installed_crew_keep_their_ids(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion, Vega", "--no-demo",
+                "--repositories", "https://github.com/example/project.git"]
+        answers, _, config, secrets, _ = self.generate(
+            [*base, "--crew-names", "Orion=Rigel,Deneb,Mira,Sirius;Vega=Altair,Castor,Pollux,Spica"])
+
+        def rebuilt(*argv):
+            again = self.rerun(answers, config, *argv)
+            with patch.object(fleet_setup.pwd, "getpwnam"):
+                rear, captains = fleet_setup.check_answers(again)
+            return again, fleet_setup.fleet_config(again, fleet_setup.roster(again, rear, captains), "a" * 40)
+        # A captain taken out of the roster takes its crew's names along, so later runs still pass.
+        again, fewer = rebuilt("--captains", "Orion")
+        self.assertEqual(set(again["crewNames"]), {"orion"})
+        # With fewer crew, only the remaining slots' names reach fleet.json, which the fleet installer takes.
+        again, fewer = rebuilt("--crew-codex", "0")
+        self.assertEqual(fewer["captains"][1]["crewNames"], {"claude-1": "Altair", "claude-2": "Castor"})
+        validate(fewer, secrets, check_files=False)
+        self.assertEqual(again["crewNames"]["vega"]["codex-1"], "Pollux")  # Kept for when the slot comes back.
+        # Names that would give installed crew new IDs are refused before anything is saved, pointing to the
+        # rename; the names they have already are accepted.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "would give installed crew new IDs: vega's Claude 1 "
+                                    "\\(altair would become lyra\\).*rename-officers --crew-names.*Nothing was "
+                                    "changed"):
+            self.rerun(answers, config, "--crew-names", "Vega=Lyra,Castor,Pollux,Spica")
+        self.rerun(answers, config, "--crew-names", "Vega=ALTAIR,Castor,Pollux,Spica")
+        # A fleet installed before crew names keeps its slot names, which it may also give.
+        for captain in config["captains"]:
+            captain.pop("crewNames")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "orion's Claude 1 \\(claude-1 would become rigel\\)"):
+            self.rerun({**answers, "crewNames": {}}, config, "--crew-names", "Orion=Rigel,Deneb,Mira,Sirius")
+        self.rerun({**answers, "crewNames": {}}, config, "--crew-names", "Orion=Claude 1,Claude 2,Codex 1,Codex 2")
+        # Crew named by rename-officers keep their installed IDs under their names (crewIds), and take the same
+        # names again, as any later run may pass them; another name is still refused.
+        slots = ["claude-1", "claude-2", "codex-1", "codex-2"]
+        config["captains"][0].update(crewNames=dict(zip(slots, ["Rigel", "Deneb", "Mira", "Sirius"], strict=True)),
+                                     crewIds={slot: slot for slot in slots})
+        renamed = {**answers, "crewNames": {"orion": config["captains"][0]["crewNames"]},
+                   "crewIds": {"orion": config["captains"][0]["crewIds"]}}
+        again = self.rerun(renamed, config, "--crew-names", "Orion=rigel,Deneb,Mira,Sirius")
+        self.assertEqual((again["crewNames"]["orion"]["claude-1"], again["crewIds"]["orion"]["claude-1"]),
+                         ("rigel", "claude-1"))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "orion's Claude 1 \\(claude-1 would become canopus\\)"):
+            self.rerun(renamed, config, "--crew-names", "Orion=Canopus,Deneb,Mira,Sirius")
+
     def test_rejects_unsafe_or_ambiguous_answers(self):
         cases = [
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Atlas"],
-            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "x-orion"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "orion"],
+            # Names that differ only by case are one name on IRC and in the API.
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion, ORION"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "NickServ"],
-            ["--name", "X", "--rear-admiral", "Atlas", "--captains", f"Orion, {COMMAND_SUFFIX.title()}"],
-            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Starbase"],
-            ["--name", "A very long fleet name indeed", "--rear-admiral", "Atlas", "--captains", "Andromeda Galaxy"],
+            # A ship channel, #<captain-id>, may not be one of the fleet's own standard channels.
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", f"Orion, X {COMMAND_SUFFIX.title()}"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "X Starbase"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "NickServ"],
             ["--name", "X", "--rear-admiral", "9lives", "--captains", "Orion"],
-            # The rear admiral's name is its API agent name, and a ship's name is at most 64 characters.
-            ["--name", "X", "--rear-admiral", "Atlas Prime", "--captains", "Orion"],
+            # A ship's name is at most 64 characters.
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion" + "!" * 60],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "remote", "--irc-host", "localhost"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--ssh-from", "0.0.0.0/0; rm"],
@@ -492,6 +727,61 @@ class SetupInputsTests(unittest.TestCase):
         self.assertNotIn("AGENT_ORGANISATION", env())
         self.assertFalse(published())
 
+    def test_the_dry_run_previews_the_api_settings_the_real_run_uses(self):
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40, "--no-demo"]
+        payload = Path(self.directory.name) / "payload"
+        (payload / "subspace-api").mkdir(parents=True)
+        (payload / "subspace-api" / "compose.yaml").write_text("services: {}\n")
+        api_env = fleet_setup.INPUTS / "api.env"
+
+        def dry_run():
+            seen = []
+
+            def installer(config_path, dry_run=False, secrets_dir=None, quiet=False):
+                self.assertTrue(dry_run)
+                folder = Path(config_path).parent
+                seen.append((json.loads(Path(config_path).read_text()),
+                             json.loads((folder / "fleet.secrets.json").read_text())))
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "say"), \
+                    patch.object(fleet_setup, "installer", side_effect=installer):
+                fleet_setup.setup(fleet_setup.parse_args([*argv, "--dry-run"]))
+            config, secrets = seen[-1]
+            return config, validate(config, secrets, check_files=False)
+
+        def mcp(cfg):
+            return [runtime.SUBSPACE_MCP_GRANT in runtime.harness_permissions(cfg, person) for person in cfg["members"]]
+
+        # A new fleet: the real run starts the API with development sign-in and the agent listener.
+        config, cfg = dry_run()
+        self.assertEqual(config["api"], {"url": "http://127.0.0.1:3000", "initiatives": [],
+                                         "agentUrl": "http://127.0.0.1:3001"})
+        self.assertEqual(mcp(cfg), [True, True])
+        # An installed fleet, unchanged: its saved initiative and the api.env the real run keeps.
+        answers, _, _ = answers_for(argv[3:])
+        answers["initiativeId"] = "00000000-0000-4000-8000-000000000001"
+        fleet_setup.save_answers(answers)
+        with patch.object(fleet_setup, "PAYLOAD", payload), \
+                patch.object(fleet_setup, "API_DIR", Path(self.directory.name) / "api"), \
+                patch.object(fleet_setup, "compose"):
+            fleet_setup.api_up(answers, fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None))
+        config, cfg = dry_run()
+        self.assertEqual(config["api"]["initiatives"], [answers["initiativeId"]])
+        real = runtime.validate(*self.generate(argv[3:], fleet_setup.local_api_block(
+            answers, [answers["initiativeId"]], fleet_setup.agent_listener_enabled()))[2:4], check_files=False)
+        for planned, person in zip(cfg["members"], real["members"]):
+            self.assertEqual(runtime.harness_permissions(cfg, planned), runtime.harness_permissions(real, person))
+        self.assertEqual(mcp(cfg), [True, True])
+        # The operator turned the listener off: the officers lose the API's tools in both runs.
+        api_env.write_text(api_env.read_text().replace("AGENT_PORT=3001\n", "AGENT_PORT=\n"))
+        config, cfg = dry_run()
+        self.assertNotIn("agentUrl", config["api"])
+        self.assertEqual(mcp(cfg), [False, False])
+        # Without development sign-in the real run writes no API settings, nor does the dry run.
+        api_env.write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\n")
+        config, cfg = dry_run()
+        self.assertNotIn("api", config)
+
     def test_further_fleet_registration_carries_its_records_and_is_checked(self):
         argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra, Vega",
                 "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"]
@@ -503,13 +793,14 @@ class SetupInputsTests(unittest.TestCase):
                          ("irc.example.com", 6697, True))
         self.assertEqual((registration["starbaseChannel"], registration["commandChannel"]),
                          ("#fleet-two-starbase", f"#fleet-two-{COMMAND_SUFFIX}"))
+        # One name per officer: its ID is its agent name and IRC nick, and a ship's channel is its captain's.
         self.assertEqual(registration["rearAdmiral"], {
-            "name": "Nova", "ircNick": "fleet-two-nova", "defaultModel": "claude-fable-5-2",
-            "serviceTokenClientId": "fleet-two-nova@agents.example.com"})
-        self.assertEqual([(row["ship"], row["channel"], row["ircNick"], row["defaultModel"])
+            "name": "nova", "ircNick": "nova", "defaultModel": "claude-fable-5-2",
+            "serviceTokenClientId": "nova@agents.example.com"})
+        self.assertEqual([(row["name"], row["ship"], row["channel"], row["ircNick"], row["defaultModel"])
                           for row in registration["captains"]],
-                         [("Lyra", "#fleet-two-lyra", "fleet-two-lyra", "claude-opus-5-5"),
-                          ("Vega", "#fleet-two-vega", "fleet-two-vega", "claude-opus-5-5")])
+                         [("lyra", "Lyra", "#lyra", "lyra", "claude-opus-5-5"),
+                          ("vega", "Vega", "#vega", "vega", "claude-opus-5-5")])
         self.assertNotIn("Password", fleet_setup.json.dumps(registration))
         # Its Fleet API is off, so the bundle says it has no address.
         self.assertIsNone(registration["fleetApiUrl"])
@@ -523,10 +814,9 @@ class SetupInputsTests(unittest.TestCase):
             fleet_setup.register_fleet(registration)
         self.assertEqual(len(api.writes), writes)
         self.assertEqual(api.summary()["fleets"]["fleet-two"]["commandChannel"], f"#fleet-two-{COMMAND_SUFFIX}")
-        self.assertEqual(api.summary()["ships"], [("Lyra", "#fleet-two-lyra"), ("Vega", "#fleet-two-vega")])
+        self.assertEqual(api.summary()["ships"], [("Lyra", "#lyra"), ("Vega", "#vega")])
         self.assertEqual([row[:3] for row in api.summary()["agents"]], [
-            ("Nova", "rearAdmiral", "fleet-two-nova"), ("fleet-two-lyra", "captain", "fleet-two-lyra"),
-            ("fleet-two-vega", "captain", "fleet-two-vega")])
+            ("lyra", "captain", "lyra"), ("nova", "rearAdmiral", "nova"), ("vega", "captain", "vega")])
         [initiative] = [row for row in api.initiatives.values() if row["name"] == "Fleet Two"]
         self.assertEqual((initiative["channels"], initiative["fleetId"]), ("", api.fleet_by("fleet-two")["id"]))
         captain = registration["captains"][0]
@@ -537,7 +827,8 @@ class SetupInputsTests(unittest.TestCase):
             {**registration, "starbaseChannel": "#fleet-one-starbase"},
             {**registration, "commandChannel": None},
             {**registration, "captains": [{**captain, "channel": "#fleet-two-command"}]},
-            {**registration, "captains": [{**captain, "channel": "#lyra"}]},
+            {**registration, "captains": [{**captain, "channel": "#vega"}]},
+            {**registration, "captains": [{**captain, "name": "Lyra-Prime"}]},
             {**registration, "captains": [captain, captain]},
             {**registration, "rearAdmiral": {**registration["rearAdmiral"], "name": "Rear Admiral Nova"}},
             {**registration, "rearAdmiral": {**registration["rearAdmiral"], "ircNick": "9nova"}},
@@ -623,11 +914,10 @@ class SetupInputsTests(unittest.TestCase):
             writes = len(api.writes)
             fleet_setup.register_own("admin", config, secrets)
         self.assertEqual(len(api.writes), writes)
-        self.assertEqual(records["rearAdmiral"]["ircNick"], "example-fleet-atlas")
+        self.assertEqual(records["rearAdmiral"]["ircNick"], "atlas")
         self.assertEqual(api.summary()["fleets"]["example-fleet"]["starbaseChannel"], "#example-fleet-starbase")
         self.assertEqual(api.summary()["agents"], [
-            ("Atlas", "rearAdmiral", "example-fleet-atlas", None, True),
-            ("example-fleet-orion", "captain", "example-fleet-orion", "Orion", True)])
+            ("atlas", "rearAdmiral", "atlas", None, True), ("orion", "captain", "orion", "Orion", True)])
         # The desktop's local IRC endpoint is what the fleet records.
         self.assertEqual((api.fleet_by("example-fleet")["ircHost"], api.fleet_by("example-fleet")["ircTls"]),
                          ("127.0.0.1", False))
@@ -645,6 +935,125 @@ class SetupInputsTests(unittest.TestCase):
             self.assertNotEqual(fleet_setup.fleet_initiative("t", "Fleet", "f"), created)
         self.assertNotIn("PATCH", api.counts)
 
+    def test_an_adopted_initiative_is_kept_as_the_fleets_by_its_id(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        adopted = "0000000A-0000-4000-8000-00000000000B"
+        answers, _, _ = answers_for([*base, "--initiative", adopted])
+        self.assertEqual(answers["initiativeId"], adopted.lower())
+        with self.assertRaisesRegex(fleet_setup.SetupError, "must be an initiative's UUID"):
+            answers_for([*base, "--initiative", "Local workspace"])
+        # Kept on later runs, and '' goes back to finding one by the fleet's name.
+        fleet_setup.save_answers(answers)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+            self.assertEqual(fleet_setup.gather(args, saved)["initiativeId"], adopted.lower())
+            args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--initiative", ""])
+            self.assertNotIn("initiativeId", fleet_setup.gather(args, saved))
+        # Only --initiative on the run adopts: setup takes the initiative it names though the admin is not a member
+        # and another fleet has it, and moves it once the fleet is registered. A recorded one that another fleet
+        # has since taken stays there, with a warning; one that is gone is replaced by the name search.
+        api = fixture.Subspace()
+        api.call("POST", "/fleets", {"slug": "local", "name": "Local fleet"})
+        api.call("POST", "/fleets", {"slug": "example-fleet", "name": "Example Fleet"})
+        adopted, local = adopted.lower(), api.fleet_by("local")["id"]
+        api.initiatives[adopted] = {"id": adopted, "name": "Local workspace", "fleetId": local, "channels": ""}
+
+        def call(_token, method, path, body=None):
+            if path == "/me/initiatives":
+                return {"items": []}
+            try:
+                return api.call(method, path, body)
+            except fixture.Refusal as refusal:
+                raise fleet_setup.ApiError("refused", refusal.status) from None
+
+        said = []
+        with patch.object(fleet_setup, "api_call", side_effect=call), \
+                patch.object(fleet_setup, "say", side_effect=said.append):
+            self.assertEqual(fleet_setup.fleet_initiative("t", "Example Fleet", "example-fleet", adopted, adopt=True),
+                             adopted)
+            self.assertIsNone(fleet_setup.fleet_initiative("t", "Example Fleet", "example-fleet", adopted,
+                                                           hint="; or not"))
+            self.assertEqual(said[-1], f"WARNING: initiative Local workspace ({adopted}), recorded as fleet "
+                             "example-fleet's, now belongs to fleet Local fleet (local). Setup leaves it there and "
+                             "registers no initiative for example-fleet on this run: only an explicit adoption moves "
+                             f"one. To move it back, run 'sudo subspace-fleetctl assign {adopted} example-fleet'; or "
+                             "not.")
+            self.assertEqual((api.initiatives[adopted]["fleetId"], api.counts["PUT"]), (local, 0))
+            fleet_setup.adopt_initiative("t", "example-fleet", adopted)
+            self.assertEqual(api.initiatives[adopted]["fleetId"], ours := api.fleet_by("example-fleet")["id"])
+            self.assertEqual(said[-1], f"assigned initiative Local workspace ({adopted}) to this fleet, moving it "
+                             "from fleet Local fleet (local)")
+            fleet_setup.adopt_initiative("t", "example-fleet", adopted)
+            self.assertEqual(api.counts["PUT"], 1)
+            # Now the fleet's own, the recorded ID stands, with no move.
+            self.assertEqual(fleet_setup.fleet_initiative("t", "Example Fleet", "example-fleet", adopted), adopted)
+            self.assertEqual(api.initiatives[adopted]["fleetId"], ours)
+            gone = "00000000-0000-4000-8000-00000000dead"
+            self.assertNotIn(fleet_setup.fleet_initiative("t", "Example Fleet", "example-fleet", gone),
+                             (gone, adopted))
+
+    def test_only_initiative_on_the_run_adopts_and_only_one_that_exists(self):
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40]
+        api = fixture.Subspace()
+        api.call("POST", "/fleets", {"slug": "local", "name": "Local fleet"})
+        local, workspace = api.fleet_by("local")["id"], "00000000-0000-4000-8000-0000000000a1"
+        missing = "00000000-0000-4000-8000-00000000dead"
+        api.initiatives[workspace] = {"id": workspace, "name": "Local workspace", "fleetId": local, "channels": ""}
+
+        def call(_token, method, path, body=None):
+            try:
+                return api.call(method, path, body)
+            except fixture.Refusal as refusal:
+                raise fleet_setup.ApiError("refused", refusal.status) from None
+
+        def setup(*extra):
+            """A real run, with the API, the installer and the VM's commands stubbed, up to its summary."""
+            said = []
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "installer"), patch.object(fleet_setup, "run"), \
+                    patch.object(fleet_setup, "api_up", return_value=True), \
+                    patch.object(fleet_setup, "history_database", return_value=None), \
+                    patch.object(fleet_setup, "agent_listener_enabled", return_value=False), \
+                    patch.object(fleet_setup, "api_token", return_value="header.payload.signature"), \
+                    patch.object(fleet_setup, "api_call", side_effect=call), \
+                    patch.object(fleet_setup, "seed_demo") as seed, \
+                    patch.object(fleet_setup, "irc_source", return_value="a" * 40), \
+                    patch.object(fleet_setup, "say", side_effect=said.append), \
+                    patch.object(fleet_setup, "summary", side_effect=fleet_setup.SetupError("stop here")), \
+                    self.assertRaises(fleet_setup.SetupError) as stopped:
+                fleet_setup.setup(fleet_setup.parse_args([*argv, *extra]))
+            answers = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+            return str(stopped.exception), answers.get("initiativeId"), said, seed.called
+
+        # An --initiative that does not exist stops the run before any tracker record changes, and is not recorded.
+        writes = list(api.writes)
+        error, recorded, _, seeded = setup("--initiative", missing)
+        self.assertIn(f"There is no initiative {missing} in the development organisation", error)
+        self.assertEqual((recorded, seeded, api.writes), (None, False, writes))
+        # One that exists is adopted, moved from the fleet that had it once this fleet is registered.
+        error, recorded, said, _ = setup("--initiative", workspace)
+        ours = api.fleet_by("example-fleet")["id"]
+        self.assertEqual((error, recorded, api.initiatives[workspace]["fleetId"]), ("stop here", workspace, ours))
+        self.assertIn(f"assigned initiative Local workspace ({workspace}) to this fleet, moving it from fleet Local "
+                      "fleet (local)", said)
+        self.assertEqual(fleet_setup.read_json(fleet_setup.INPUTS / "fleet.json")["api"]["initiatives"], [workspace])
+        # Taken back by the other fleet, a routine rerun leaves it there, registers none and keeps the answer.
+        api.initiatives[workspace]["fleetId"] = local
+        puts = api.counts["PUT"]
+        error, recorded, said, _ = setup()
+        self.assertEqual((error, recorded, api.initiatives[workspace]["fleetId"], api.counts["PUT"]),
+                         ("stop here", workspace, local, puts))
+        self.assertEqual(fleet_setup.read_json(fleet_setup.INPUTS / "fleet.json")["api"]["initiatives"], [])
+        self.assertTrue(any(line.startswith(f"WARNING: initiative Local workspace ({workspace}), recorded as fleet "
+                                            "example-fleet's, now belongs to fleet Local fleet (local).")
+                            and f"or setup with --initiative {workspace}; to have setup find or create one by the "
+                            "fleet's name instead, pass --initiative ''." in line for line in said))
+        # A mistyped --initiative on a fleet with one keeps the recorded one.
+        error, recorded, _, _ = setup("--initiative", missing)
+        self.assertEqual((error.startswith(f"There is no initiative {missing}"), recorded), (True, workspace))
+
     def test_teams_with_key_vault_needs_a_separate_gateway_user(self):
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"stakeholders": {"teams": {"botClientId": "x"}}})
         etc = Path(self.directory.name) / "etc"
@@ -659,6 +1068,211 @@ class SetupInputsTests(unittest.TestCase):
             self.assertEqual(fleet_setup.metadata_users({"metadataUsers": []}), ["ss-fleet-gateway"])
 
 
+class TrackerOwnershipTests(unittest.TestCase):
+    """The warning when a fleet's tracker projects belong to another fleet, whose officers alone may assign them."""
+
+    FLEET, LOCAL = "00000000-0000-4000-8000-0000000000f1", "00000000-0000-4000-8000-0000000000f2"
+    WORKSPACE, CHILD, OWN = ("00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2",
+                             "00000000-0000-4000-8000-0000000000a3")
+
+    def api(self, projects, kind="agent"):
+        """GETs as the API answers them to the fleet's rear admiral (subspace-api src/api.ts, src/github.ts)."""
+        fleets = {self.FLEET: {"slug": "example-fleet", "name": "Example Fleet"},
+                  self.LOCAL: {"slug": "local", "name": "Local fleet"}}
+        initiatives = {
+            self.WORKSPACE: {"name": "Local workspace", "fleetId": self.LOCAL, "parentId": None},
+            self.CHILD: {"name": "Gateway work", "fleetId": None, "parentId": self.WORKSPACE},
+            self.OWN: {"name": "Example Fleet", "fleetId": self.FLEET, "parentId": None},
+        }
+        calls = []
+
+        def get(path):
+            calls.append(path)
+            route, _, query = path.partition("?")
+            if route == "/me":
+                return {"kind": kind, "fleetId": self.FLEET if kind == "agent" else None}
+            if route == "/repositories/projects":
+                repository = parse_qs(query)["repository"][0]
+                return {"items": [row for row in projects if row["repository"] == repository], "nextCursor": None}
+            initiative = route.removeprefix("/initiatives/")
+            row = initiatives[initiative]
+            return {"id": initiative, **row, "fleet": fleets.get(row["fleetId"])}
+        return get, calls
+
+    def project(self, key, repository, initiative):
+        return {"id": f"project-{key}", "key": key, "repository": repository, "initiativeId": initiative}
+
+    def test_another_fleets_projects_are_named_with_the_initiative_to_adopt(self):
+        projects = [self.project("WEB", "example/project", self.WORKSPACE),
+                    self.project("GATE", "example/gateway", self.CHILD),
+                    self.project("WEB", "example/library", self.WORKSPACE),
+                    self.project("DOC", "example/library", None),
+                    self.project("OWN", "example/library", self.OWN)]
+        get, calls = self.api(projects)
+        repositories = ["example/project", "example/gateway", "example/library"]
+        lines = fleet_setup.ownership_lines(get, repositories, assigns=True)
+        warning = ("WARNING: tracker project {} ({}) belongs to fleet Local fleet (local) through initiative Local "
+                   "workspace ({}), so this fleet's officers are refused when they assign its issues or mark them "
+                   "Ready for agents. To make it this fleet's, run setup again with --initiative {}, which assigns "
+                   "it, and all below it, to this fleet.")
+        # GATE's own initiative has no fleet, so its nearest ancestor with one decides; WEB is named once.
+        self.assertEqual(lines, [
+            warning.format("WEB", "example/project", self.WORKSPACE, self.WORKSPACE),
+            warning.format("GATE", "example/gateway", self.WORKSPACE, self.WORKSPACE),
+            "tracker projects DOC, OWN belong to this fleet or to none, so its officers may assign their issues",
+        ])
+        self.assertTrue(all(path.startswith(("/me", "/repositories/projects?repository=example%2F", "/initiatives/"))
+                            for path in calls))
+        # Adopted with --initiative on this run, setup assigns it; the parent's adoption also covers the child's
+        # project.
+        lines = fleet_setup.ownership_lines(get, repositories, self.WORKSPACE, assigns=True, adopt=True)
+        self.assertIn(f"tracker project GATE (example/gateway) belongs to fleet Local fleet (local) through initiative "
+                      f"Local workspace ({self.WORKSPACE}); setup assigns the fleet's initiative {self.WORKSPACE}, on "
+                      "that path, to this fleet, which makes it this fleet's.", lines)
+        self.assertIn(f"setup assigns the fleet's initiative Local workspace ({self.WORKSPACE}) to this fleet, moving "
+                      "it from fleet Local fleet (local).", lines)
+        self.assertFalse(any(line.startswith("WARNING") for line in lines))
+        # Recorded on an earlier run, it stays with the fleet that has it now: only --initiative moves it.
+        lines = fleet_setup.ownership_lines(get, repositories, self.WORKSPACE, assigns=True)
+        self.assertEqual(lines[:2], [warning.format("WEB", "example/project", self.WORKSPACE, self.WORKSPACE),
+                                     warning.format("GATE", "example/gateway", self.WORKSPACE, self.WORKSPACE)])
+        self.assertEqual(lines[2], f"WARNING: the fleet's initiative Local workspace ({self.WORKSPACE}) belongs to "
+                         "fleet Local fleet (local), and setup leaves it there. To make it this fleet's, run setup "
+                         f"again with --initiative {self.WORKSPACE}, which assigns it, and all below it, to this fleet.")
+        # One of no fleet the installer assigns, which makes the child's project this fleet's.
+        lines = fleet_setup.ownership_lines(get, ["example/gateway"], self.CHILD, assigns=True)
+        self.assertEqual(lines, [
+            f"tracker project GATE (example/gateway) belongs to fleet Local fleet (local) through initiative Local "
+            f"workspace ({self.WORKSPACE}); setup assigns the fleet's initiative {self.CHILD}, on that path, to this "
+            "fleet, which makes it this fleet's.",
+            f"setup assigns the fleet's initiative Gateway work ({self.CHILD}) to this fleet."])
+        # A hosted API, or one without development sign-in: only its administrator can assign the initiative.
+        lines = fleet_setup.ownership_lines(get, repositories, self.WORKSPACE, assigns=False)
+        put = f'PUT /api/v1/initiatives/{self.WORKSPACE}/fleet with {{"fleetId": "{self.FLEET}"}}'
+        self.assertIn(f"ask an administrator of the Subspace API to assign it to this fleet ({put}), and pass "
+                      f"--initiative {self.WORKSPACE} to record it as the fleet's.", lines[0])
+        self.assertEqual(lines[-2], f"WARNING: the fleet's initiative Local workspace ({self.WORKSPACE}) is not "
+                         f"assigned to it but to fleet Local fleet (local): ask an administrator of the Subspace API "
+                         f"to assign it to this fleet ({put}).")
+
+    def test_an_initiative_that_does_not_exist_is_named(self):
+        get, _ = self.api([self.project("OWN", "example/project", self.OWN)])
+
+        def missing(path):
+            if path.startswith("/initiatives/00000000-0000-4000-8000-00000000dead"):
+                raise fleet_setup.ApiError("The Subspace API returned HTTP 404.", 404)
+            return get(path)
+        gone = "00000000-0000-4000-8000-00000000dead"
+        self.assertEqual(fleet_setup.ownership_lines(missing, ["example/project"], gone, assigns=True, adopt=True), [
+            f"WARNING: the tracker has no initiative {gone}: check the ID given with --initiative; a real run stops "
+            "before changing any tracker record."])
+        self.assertEqual(fleet_setup.ownership_lines(missing, ["example/project"], gone, assigns=True), [
+            f"WARNING: the tracker has no initiative {gone}, which setup recorded as the fleet's; a real run finds or "
+            "creates one by the fleet's name."])
+
+    def test_an_adoption_setup_cannot_make_prints_the_administrators_request(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        inputs = Path(directory.name)
+        members = [{"id": "atlas", "name": "Atlas", "account": "example-fleet-atlas"}]
+        initiative = self.WORKSPACE
+        said = []
+        request = (f"PUT /api/v1/initiatives/{initiative}/fleet with {{\"fleetId\": \"<the fleet's ID>\"}}, where "
+                   "the fleet's ID is the \"id\" that GET /api/v1/fleets/example-fleet returns.")
+
+        def check(answers, adopt=True):
+            said.clear()
+            fleet_setup.ownership_check({"slug": "example-fleet", "initiativeId": initiative, **answers}, members, {},
+                                        adopt=adopt)
+            return said
+
+        with patch.object(fleet_setup, "INPUTS", inputs), patch.object(fleet_setup, "say", side_effect=said.append), \
+                patch.object(fleet_setup, "agent_reader", agent_reader):
+            # Development sign-in off turns the agent listener off too, so no check runs: the request still follows.
+            (inputs / "api.env").write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\nAGENT_PORT=\n")
+            self.assertEqual(check({"api": True}), [
+                "not checking which fleet owns this fleet's tracker projects: this VM's API has no agent listener",
+                f"WARNING: setup cannot assign the initiative given with --initiative ({initiative}) to this fleet, as "
+                "this VM's API no longer offers development sign-in, through which setup acts as its administrator. "
+                f"Ask an administrator of the Subspace API to assign it: {request}"])
+            # A hosted API's officers that have not enrolled yet.
+            with patch.object(runtime, "AGENT_SOCKETS", inputs / "agents"), \
+                    patch.object(fleet_setup, "installed_stargate_source", return_value=inputs / "stargate"):
+                self.assertIn("as a hosted API's administrators keep its records. Ask an administrator of the "
+                              f"Subspace API to assign it: {request}",
+                              check({"api": False, "apiUrl": "https://subspace.example.com"})[-1])
+            # Without --initiative on this run, or with development sign-in, which setup assigns through, none.
+            self.assertEqual(len(check({"api": True}, adopt=False)), 1)
+            (inputs / "api.env").write_text("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\nAGENT_PORT=\n")
+            self.assertEqual(len(check({"api": True})), 1)
+
+    def test_nothing_to_warn_about_or_nothing_to_check(self):
+        get, _ = self.api([self.project("OWN", "example/project", self.OWN)])
+        self.assertEqual(fleet_setup.ownership_lines(get, ["example/project"], self.OWN, assigns=False),
+                         ["tracker projects OWN belong to this fleet or to none, so its officers may assign their issues"])
+        get, _ = self.api([])
+        self.assertEqual(fleet_setup.ownership_lines(get, ["example/project"]), [
+            "no tracker project lists this fleet's GitHub repositories, so setup cannot tell which fleet owns its work"])
+        get, calls = self.api([], kind="human")
+        self.assertIn("is not yet a registered agent", fleet_setup.ownership_lines(get, ["example/project"])[0])
+        self.assertEqual(calls, ["/me"])
+
+    def test_the_check_reads_as_the_rear_admiral_and_never_stops_setup(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        inputs = Path(directory.name)
+        members = [{"id": "atlas", "name": "Atlas", "account": "example-fleet-atlas"}]
+        config = {"repositories": [{"id": "project", "url": "https://github.com/example/project.git"},
+                                   {"id": "tool", "url": "https://git.example.com/team/tool.git"}]}
+        said = []
+        with patch.object(fleet_setup, "INPUTS", inputs), patch.object(fleet_setup, "say", side_effect=said.append), \
+                patch.object(fleet_setup, "agent_reader", agent_reader):
+            # An API on this VM is read through its agent listener, naming the rear admiral in its header.
+            (inputs / "api.env").write_text("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\nAGENT_PORT=3001\n")
+            seen = []
+
+            def urlopen(request, timeout):
+                seen.append((request.full_url, request.get_header("X-subspace-agent")))
+                raise URLError("refused")
+            with patch.object(fleet_setup, "urlopen", side_effect=urlopen):
+                fleet_setup.ownership_check({"api": True}, members, config)
+            self.assertEqual(seen, [("http://127.0.0.1:3001/api/v1/me", "example-fleet-atlas")])
+            self.assertEqual(said, ["could not check which fleet owns this fleet's tracker projects: Could not reach "
+                                    "the Subspace API's agent listener for GET /me."])
+            (inputs / "api.env").write_text("AGENT_PORT=\n")
+            said.clear()
+            fleet_setup.ownership_check({"api": True}, members, config)
+            self.assertEqual(said, ["not checking which fleet owns this fleet's tracker projects: this VM's API has no "
+                                    "agent listener"])
+            # A hosted API is read through the rear admiral's signing-proxy socket, once it has enrolled.
+            hosted = {"apiUrl": "https://subspace.example.com", "api": False}
+            sockets, source = inputs / "agents", inputs / "stargate"
+            said.clear()
+            with patch.object(runtime, "AGENT_SOCKETS", sockets), \
+                    patch.object(fleet_setup, "installed_stargate_source", return_value=source):
+                fleet_setup.ownership_check(hosted, members, config)
+                self.assertEqual(said, ["not checking which fleet owns this fleet's tracker projects: the officers "
+                                        "have not enrolled with the hosted API yet"])
+                (sockets / "atlas").mkdir(parents=True)
+                listener = socket.socket(socket.AF_UNIX)
+                self.addCleanup(listener.close)
+                listener.bind(str(sockets / "atlas/api.sock"))
+                answers = {"/api/v1/me": {"kind": "agent", "fleetId": self.FLEET},
+                           "/api/v1/repositories/projects?repository=example%2Fproject&limit=100": {"items": []}}
+                commands = []
+
+                def run(command, **_options):
+                    commands.append(command)
+                    return subprocess.CompletedProcess(command, 0, json.dumps(answers[command[-1]]), "")
+                said.clear()
+                with patch.object(fleet_setup.subprocess, "run", side_effect=run):
+                    fleet_setup.ownership_check(hosted, members, config)
+            self.assertEqual(commands[0], [fleet_setup.FLEET_APP / "bin/bun", source / "src/main.ts", "subspace",
+                                           "request", "--socket", sockets / "atlas/api.sock", "/api/v1/me"])
+            self.assertEqual(said, ["no tracker project lists this fleet's GitHub repositories, so setup cannot tell "
+                                    "which fleet owns its work"])
+
+
 class AgentDispatchSetupTests(unittest.TestCase):
     """Setup asks whether to switch on agent dispatch; unattended, it stays off."""
 
@@ -667,7 +1281,7 @@ class AgentDispatchSetupTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         fleet_setup.INPUTS = Path(self.directory.name)
         self.argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
-                     "--repositories", "https://github.com/example/project.git", "--no-demo"]
+                     "--repositories", "https://github.com/example/project.git", "--no-demo", *CREW]
         self.api = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"]}
 
     def config(self, argv, api_block):
@@ -729,12 +1343,12 @@ class AgentDispatchSetupTests(unittest.TestCase):
                                          side_effect=lambda _answers, email=None: f"token-for-{email}"):
             records = fleet_setup.register_own("header.payload.admin", config, secrets)
             self.assertEqual(fleet_setup.rear_admiral_token(answers, records),
-                             "token-for-example-fleet-atlas@agents.example.com")
+                             "token-for-atlas@agents.example.com")
         rear = next(row for row in api.agents.values() if row["rank"] == "rearAdmiral")
         self.assertEqual((rear["serviceTokenClientId"], rear["fleetId"], rear["ircNick"]),
-                         ("example-fleet-atlas@agents.example.com", fixture.FLEET, "example-fleet-atlas"))
+                         ("atlas@agents.example.com", fixture.FLEET, "atlas"))
         captains = [row for row in api.agents.values() if row["rank"] == "captain"]
-        self.assertEqual([(row["name"], row["fleetId"]) for row in captains], [("example-fleet-orion", fixture.FLEET)])
+        self.assertEqual([(row["name"], row["fleetId"]) for row in captains], [("orion", fixture.FLEET)])
         rear["fleetId"] = "another-fleet"
         with fake_api(api), self.assertRaisesRegex(fleet_setup.SetupError, "belongs to another fleet"):
             fleet_setup.register_own("header.payload.admin", config, secrets)
@@ -1104,7 +1718,7 @@ class ExternalDatabaseTests(unittest.TestCase):
                 "--database-url-file", self.url_file, "--migrate"]
         checks = []
 
-        def refuse(config_path, dry_run=False, secrets_dir=None):
+        def refuse(config_path, dry_run=False, secrets_dir=None, quiet=False):
             checks.append((dry_run, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
             raise fleet_setup.SetupError("Supply slack-app-token in captain orion's secrets directory.")
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
@@ -1287,6 +1901,8 @@ class FakeIrcServer:
 
     def __init__(self, work, client_bundles, operator=("ircop", "fixture-operator-password")):
         self.accounts, self.operator, self.requests = {}, operator, []
+        # An account whose SAREGISTER the server answers, then drops the connection before anything else.
+        self.drop_after = None
         # Ergo's require-sasl: only connections signed in to an account (passwords here) get past registration.
         self.require_sasl, self.passwords = False, {}
         subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
@@ -1360,6 +1976,17 @@ class FakeIrcServer:
                 oper = tuple(words[1:3]) == self.operator
                 send(":irc.example.test 381 you :You are now an operator" if oper else
                      ":irc.example.test 464 you :Password incorrect")
+            elif command == "PING":
+                send(f":irc.example.test PONG irc.example.test :{words[1].lstrip(':')}")
+            elif command == "PRIVMSG" and words[1] == "NickServ" and line.split(" :", 1)[1].split()[0] == "INFO":
+                # Anyone may ask; Ergo answers with several lines for a registered account.
+                name = line.split(" :", 1)[1].split()[1]
+                self.requests.append(["INFO", name])
+                if name.lower() in {account.lower() for account in self.accounts}:
+                    send(f":NickServ!NickServ@services NOTICE you :Account: {name}")
+                    send(":NickServ!NickServ@services NOTICE you :Registered at: 2026-01-01")
+                else:
+                    send(":NickServ!NickServ@services NOTICE you :Account does not exist")
             elif command == "PRIVMSG" and words[1] == "NickServ":
                 request = line.split(" :", 1)[1].split()
                 self.requests.append(request)
@@ -1370,6 +1997,9 @@ class FakeIrcServer:
                 elif request[0] == "SAREGISTER":
                     send(f":NickServ!NickServ@services NOTICE you :Successfully registered account {request[1]}")
                     self.accounts[request[1]] = set()
+                    if request[1] == self.drop_after:
+                        self.drop_after = None
+                        break
                 elif request[:2] == ["CERT", "ADD"] and request[2] in self.accounts:
                     self.accounts[request[2]].add(request[3])
                     send(":NickServ!NickServ@services NOTICE you :Certificate fingerprint successfully added")
@@ -1382,6 +2012,7 @@ class FakeIrcServer:
                 send("AUTHENTICATE +")
             elif line == "AUTHENTICATE +":
                 account = next((name for name, prints in self.accounts.items() if fingerprint in prints), None)
+                state["account"] = account or state["account"]
                 send(f":irc.example.test 900 you you!u@h {account} :You are now logged in" if account else
                      ":irc.example.test 904 you :SASL authentication failed")
             elif command == "QUIT":
@@ -1527,6 +2158,245 @@ class IrcCertificateSetupTests(unittest.TestCase):
         self.assertFalse({"ircOperator", "ircOperatorPasswordFile"} & answers.keys())
         self.assertNotIn(secret, json.dumps(answers))
 
+    def test_names_taken_on_the_irc_server_stop_setup_before_it_changes_anything(self):
+        answers, _ = self.answers()
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        certificates = fleet_setup.officer_certificates(members, generate=True)
+        server = FakeIrcServer(self.root, [path.read_text() for path, _ in certificates.values()])
+        self.addCleanup(server.listener.close)
+        answers.update(ircHost="localhost", ircPort=server.port, ircCa=server.ca)
+        # orion is someone else's account; atlas is the officer's own, as its certificate signs in to it.
+        server.accounts = {"orion": {"0" * 64}, "atlas": {certificates["atlas"][1]}}
+        with patch.object(fleet_setup, "say"):
+            problems = fleet_setup.irc_name_problems(answers, members, certificates, None)
+        self.assertEqual(problems, ["orion is taken on localhost: NickServ knows it as account orion, which the "
+                                    "officer's certificate does not sign in to"])
+        self.assertIn(["INFO", "orion"], server.requests)
+        server.accounts.pop("orion")
+        with patch.object(fleet_setup, "say"):
+            self.assertEqual(fleet_setup.irc_name_problems(answers, members, certificates, None), [])
+        # A server that admits only signed-in connections is asked through an officer certificate that signs in.
+        server.require_sasl = True
+        server.accounts["orion"] = {"1" * 64}
+        with patch.object(fleet_setup, "say"):
+            self.assertEqual(len(fleet_setup.irc_name_problems(answers, members, certificates, None)), 1)
+
+    def installed_prefixed(self, server=None):
+        """A fleet subspace-setup installed with fleet-prefixed names on a remote server with certificates."""
+        answers, _ = self.answers(saved={"slug": "example-fleet"})
+        self.assertEqual(answers["officerNames"], "prefixed")
+        if server:
+            answers.update(ircHost="localhost", ircPort=server.port, ircCa=server.ca)
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        self.assertEqual([person["account"] for person in members], ["example-fleet-atlas", "example-fleet-orion"])
+        certificates = fleet_setup.officer_certificates(members, generate=True)
+        config = fleet_setup.fleet_config(answers, members, "a" * 40)
+        self.assertEqual(config["officerNames"], "prefixed")
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        fleet_setup.save_answers(answers)
+        return answers, members, certificates
+
+    def test_an_installed_fleet_keeps_its_prefixed_names_on_a_rerun(self):
+        answers, members, _ = self.installed_prefixed()
+        again, _ = self.answers(saved=fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+        self.assertEqual(again["officerNames"], "prefixed")
+        self.assertEqual(fleet_setup.fleet_channels(again, members),
+                         ["#example-fleet-starbase", "#example-fleet-command", "#example-fleet-orion"])
+
+    def test_rename_officers_moves_a_prefixed_fleet_to_plain_names(self):
+        answers, members, certificates = self.installed_prefixed()
+        # The new certificates the rename makes, made here so that the test server trusts them.
+        staged = {}
+        for agent in ("atlas", "orion"):
+            staged[agent] = fleet_setup.INPUTS / "rename" / agent / "irc-client.pem"
+            staged[agent].parent.mkdir(mode=0o700, parents=True)
+            fleet_setup.write_private(staged[agent], runtime.new_irc_bundle(agent))
+        server = FakeIrcServer(self.root, [path.read_text() for path, _ in certificates.values()]
+                               + [path.read_text() for path in staged.values()])
+        self.addCleanup(server.listener.close)
+        answers.update(ircHost="localhost", ircPort=server.port, ircCa=server.ca)
+        fleet_setup.save_answers(answers)
+        server.accounts = {account: {fingerprint} for account, (_, fingerprint) in certificates.items()}
+        # The API on this VM, with the fleet registered under its prefixed names.
+        (fleet_setup.INPUTS / "api.env").write_text("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\n")
+        api = fixture.Subspace()
+        config = {**fleet_setup.read_json(fleet_setup.INPUTS / "fleet.json"),
+                  "api": {"url": "http://127.0.0.1:3000", "initiatives": []}}
+        cfg = validate(config, {"proxyKey": "fixture-model-proxy-key", "apiToken": "a.b.c"}, check_files=False)
+        fleet_records.register(api.call, fleet_records.fleet_fields(cfg), fleet_records.roster(cfg), lambda _: None)
+        ids = sorted(api.agents)
+        output = []
+        # The fleet's answers are checked as setup reads them, with the test server's name standing in for a DNS one.
+        check_answers = fleet_setup.check_answers
+        patches = [patch.object(fleet_setup, "say", side_effect=output.append), fake_api(api),
+                   patch.object(fleet_setup.os, "geteuid", return_value=0),
+                   patch.object(fleet_setup, "api_token", return_value="admin"),
+                   patch.object(fleet_setup, "api_healthy", return_value=True),
+                   patch.object(fleet_setup.pwd, "getpwnam"), fleet_installer(self.root),
+                   patch.object(fleet_setup, "check_answers",
+                                side_effect=lambda answers: check_answers({**answers, "ircHost": "irc.example.com"}))]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # The dry run checks the new names on the IRC server and in the API and changes nothing. A server that
+        # admits only signed-in connections is asked through the officers' current certificates.
+        server.require_sasl = True
+        fleet_setup.rename_officers(["--dry-run", "--inputs", str(fleet_setup.INPUTS)])
+        self.assertIn("dry run: the names are free", "\n".join(output))
+        self.assertIn(["INFO", "orion"], server.requests)
+        server.require_sasl = False
+        self.assertEqual(sorted(server.accounts), ["example-fleet-atlas", "example-fleet-orion"])
+        self.assertEqual(sorted(path.name for path in (fleet_setup.INPUTS / "rename").rglob("*.pem")),
+                         ["irc-client.pem", "irc-client.pem"])
+        # Without an operator, the real run makes the new certificates, prints the lines that bind them and stops.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "not registered yet.*keep signing in to their old"):
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        self.assertTrue(any(line.strip().startswith("/NS CERT ADD orion ") for line in output))
+        self.assertEqual(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerNames"], "prefixed")
+        self.assertEqual({row["ircNick"] for row in api.agents.values()}, {"example-fleet-atlas", "example-fleet-orion"})
+        # With an operator it registers them. The connection drops after atlas's SAREGISTER, before its CERT ADD:
+        # the run stops, and the next one recognises the account it made and only binds the certificate.
+        operator = self.root / "operator-password"
+        operator.write_text("fixture-operator-password\n")
+        operator.chmod(0o600)
+        rename = ["--inputs", str(fleet_setup.INPUTS), "--irc-operator", "ircop", "--irc-operator-password-file",
+                  str(operator)]
+        fingerprints = {agent: runtime.irc_fingerprint(path.read_text(), agent) for agent, path in staged.items()}
+        server.drop_after = "atlas"
+        with patch.object(fleet_setup, "configure") as configure, \
+                self.assertRaisesRegex(fleet_setup.SetupError, "closed the connection"):
+            fleet_setup.rename_officers(rename)
+        configure.assert_not_called()
+        self.assertEqual(server.accounts["atlas"], set())
+        self.assertEqual(fleet_setup.registered_accounts(), {"atlas": fingerprints["atlas"]})
+        # Setup itself then stops part-way through the switch to the new names.
+        output.clear()
+        with patch.object(fleet_setup, "configure", side_effect=fleet_setup.SetupError("setup stopped")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "setup stopped"):
+            fleet_setup.rename_officers(rename)
+        self.assertIn(f"/NS CERT ADD atlas {fingerprints['atlas']}", "\n".join(output))
+        self.assertEqual(server.requests.count(["SAREGISTER", "atlas"]), 1)
+        self.assertEqual(server.requests.count(["CERT", "ADD", "atlas", fingerprints["atlas"]]), 1)
+        self.assertEqual(fleet_setup.registered_accounts(), {})
+        self.assertEqual(sorted(server.accounts), ["atlas", "example-fleet-atlas", "example-fleet-orion", "orion"])
+        self.assertEqual(server.accounts["example-fleet-orion"], {certificates["example-fleet-orion"][1]})
+        # The API's records are renamed in place: the same IDs, account subjects kept, the ship's channel moved.
+        self.assertEqual(sorted(api.agents), ids)
+        self.assertEqual(api.summary()["agents"], [("atlas", "rearAdmiral", "atlas", None, True),
+                                                   ("orion", "captain", "orion", "Orion", True)])
+        self.assertEqual(api.summary()["ships"], [("Orion", "#orion")])
+        saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+        self.assertEqual(saved["officerNames"], "plain")
+        self.assertEqual(saved["officerRename"]["from"], {"atlas": "example-fleet-atlas", "orion": "example-fleet-orion"})
+        self.assertNotIn("switched", saved["officerRename"])
+        self.assertEqual(saved["officerRename"]["subjects"]["orion"], "example-fleet-orion@agents.example.com")
+        renamed = fleet_setup.roster(saved, "atlas", ["orion"])
+        self.assertEqual([(person["account"], person["serviceTokenClientId"]) for person in renamed],
+                         [("atlas", "example-fleet-atlas@agents.example.com"),
+                          ("orion", "example-fleet-orion@agents.example.com")])
+        # The new certificate is the fleet's, and the old one is kept beside it.
+        for agent in ("atlas", "orion"):
+            self.assertEqual((fleet_setup.INPUTS / "fleet.secrets" / agent / "irc-client.pem").read_text(),
+                             (fleet_setup.INPUTS / "rename" / agent / "irc-client.pem").read_text())
+            self.assertTrue((fleet_setup.INPUTS / "rename" / agent / "irc-client.previous.pem").is_file())
+        self.assertNotIn("/NS ERASE", "\n".join(output))
+        # The next run resumes at the switch. While the installed certificates do not sign in as the new accounts,
+        # the rename is not finished, and nothing says to drop the old ones.
+        output.clear()
+        with patch.object(fleet_setup, "configure") as configure, \
+                self.assertRaisesRegex(fleet_setup.SetupError, "atlas, orion does not sign in as the new account.*"
+                                       "not finished"):
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        configure.assert_called_once()
+        self.assertIn("have their plain names on IRC and in the API, but setup has not yet finished",
+                      "\n".join(output))
+        self.assertNotIn("/NS ERASE", "\n".join(output))
+        self.assertNotIn("switched", fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerRename"])
+        # Once setup has installed the new certificates, the rename is done and says what is left.
+
+        def install(_args):
+            (fleet_setup.FLEET_ETC / "irc-certs").mkdir(parents=True, exist_ok=True)
+            for agent in ("atlas", "orion"):
+                shutil.copy(fleet_setup.INPUTS / "fleet.secrets" / agent / "irc-client.pem",
+                            fleet_setup.FLEET_ETC / "irc-certs" / f"{agent}.pem")
+        output.clear()
+        fleet_setup.rename_officers(["--dry-run", "--inputs", str(fleet_setup.INPUTS)])
+        self.assertIn("dry run: the real run runs setup again with the new names", "\n".join(output))
+        with patch.object(fleet_setup, "configure", side_effect=install) as configure:
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        configure.assert_called_once()
+        self.assertTrue(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerRename"]["switched"])
+        cleanup = "\n".join(output)
+        self.assertIn("atlas: the installed certificate signs in as atlas", cleanup)
+        self.assertIn("/NS ERASE example-fleet-atlas; /NS ERASE example-fleet-orion", cleanup)
+        self.assertIn("IRC_AUTH_LOCAL_ACCOUNTS), add atlas orion", cleanup)
+        self.assertIn("old ship channels (#example-fleet-orion)", cleanup)
+        # Run again, it says the fleet is renamed and repeats what is left.
+        output.clear()
+        with patch.object(fleet_setup, "configure") as configure:
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        configure.assert_not_called()
+        self.assertIn("already have plain names (renamed from example-fleet-atlas, example-fleet-orion)",
+                      "\n".join(output))
+
+    def test_the_rename_checks_the_plain_names_before_it_changes_anything(self):
+        # A captain whose fleet-prefixed account was fine, but whose plain name the IRC server keeps for itself.
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Global", "--irc", "remote",
+                                       "--irc-host", "irc.example.com"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            answers = fleet_setup.gather(args, {"slug": "example-fleet"})
+            fleet_setup.check_answers(answers)
+        members = fleet_setup.roster(answers, "atlas", ["global"])
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", fleet_setup.fleet_config(answers, members, "a" * 40))
+        fleet_setup.save_answers({**answers, "api": False})
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        with patch.object(fleet_setup, "say"), patch.object(fleet_setup.pwd, "getpwnam"), \
+                patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                patch.object(fleet_setup, "irc_name_problems") as irc, \
+                self.assertRaisesRegex(fleet_setup.SetupError, "global is a name the IRC server"):
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), "--no-api-records"])
+        irc.assert_not_called()
+        self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before)
+
+    def test_a_fleet_whose_records_are_in_another_fleets_api_is_not_renamed(self):
+        # Installed with --api-target: the host keeps the API target, and this VM has no API of its own.
+        answers, _, _ = self.installed_prefixed()
+        fleet_setup.save_answers({**answers, "api": False})
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        for dry in ([], ["--dry-run"]):
+            with self.subTest(dry=bool(dry)), patch.object(fleet_setup, "say"), \
+                    patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "irc_name_problems") as irc, \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "no Subspace API on this VM and no hosted API.*"
+                                           "--api-target.*keep this fleet's fleet-prefixed names.*--no-api-records"):
+                fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), *dry])
+            irc.assert_not_called()
+            self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before)
+        # A fleet that no API keeps records of says so, and its IRC names are renamed.
+        with patch.object(fleet_setup, "say") as say, patch.object(fleet_setup.pwd, "getpwnam"), \
+                patch.object(fleet_setup, "irc_name_problems", return_value=[]), fleet_installer(self.root):
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), "--dry-run", "--no-api-records"])
+        self.assertIn("dry run: the names are free", "\n".join(call.args[0] for call in say.call_args_list))
+
+    def test_installed_crew_are_named_only_where_stargate_allows(self):
+        self.installed_prefixed()
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            **fleet_setup.read_json(fleet_setup.INPUTS / "fleet.json"),
+            "repositories": [{"id": "project", "url": "https://github.com/example/project.git"}]})
+        with patch.object(fleet_setup, "say"), patch.object(fleet_setup, "installed_stargate_source", return_value=None), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "crew plugin requires a crew member's name to match "
+                                       "its ID.*orion claude-1.*Nothing was changed"):
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), "--dry-run",
+                                         "--crew-names", "Orion=Rigel,Deneb,Mira,Sirius"])
+        with patch.object(fleet_setup, "crew_names_supported", return_value=True):
+            crew = fleet_setup.rename_crew(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"),
+                                           "Orion=Rigel,Deneb,Mira,Sirius")
+        # Each crew member keeps its installed ID, so its sessions, worktrees and queued tasks stay.
+        self.assertEqual(crew["crewIds"], {"orion": {"claude-1": "claude-1", "claude-2": "claude-2",
+                                                     "codex-1": "codex-1", "codex-2": "codex-2"}})
+        self.assertEqual(crew["crewNames"]["orion"]["claude-1"], "Rigel")
+
     def test_with_an_operator_setup_registers_binds_and_checks_each_certificate(self):
         answers, _ = self.answers()
         members = fleet_setup.roster(answers, "atlas", ["orion"])
@@ -1617,8 +2487,19 @@ class HostedApi(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    # The enrolment check's answer by agent name, or None for an API that predates the route.
+    checks = None
+
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if self.path == "/api/v1/agents/enrol/check":
+            if self.checks is None:
+                return self.reply(404, {"detail": "Not found."})
+            if self.headers.get("Authorization") != f"Bearer {self.token}":
+                return self.reply(401, {"detail": "This enrolment token has expired."})
+            self.server.checked = body["agents"]
+            return self.reply(200, {"items": [{"name": row["name"], **self.checks.get(
+                row["name"], {"outcome": "new", "detail": None})} for row in body["agents"]]})
         self.server.enrolments += 1
         if self.redirect:
             return self.moved()
@@ -1745,11 +2626,309 @@ class HostedApiSetupTests(unittest.TestCase):
                     self.assertRaisesRegex(fleet_setup.SetupError, "redirect \\(302\\) to elsewhere.example.net"):
                 fleet_setup.hosted_checks(answers, token)
 
+    def test_the_officers_names_are_checked_with_the_enrolment_token(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), HostedApi)
+        server.enrolments = 0
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        answers, _ = self.answers("--api-url", "https://subspace.example.com")
+        answers["apiUrl"] = f"http://127.0.0.1:{server.server_port}"
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        HostedApi.checks = {"orion": {"outcome": "refused", "detail": "The name orion is taken: agent orion of "
+                                      "fleet other-fleet has it, and agent names are unique in an organisation."}}
+        self.addCleanup(setattr, HostedApi, "checks", None)
+        output = []
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            problems = fleet_setup.hosted_name_problems(answers, members, HostedApi.token)
+        self.assertEqual(server.checked, [
+            {"name": "atlas", "rank": "rearAdmiral", "ircNick": "atlas"},
+            {"name": "orion", "rank": "captain", "ircNick": "orion", "ship": "Orion"}])
+        self.assertEqual(server.enrolments, 0)
+        self.assertEqual(problems, ["orion: The name orion is taken: agent orion of fleet other-fleet has it, and "
+                                    "agent names are unique in an organisation."])
+        with self.assertRaisesRegex(fleet_setup.SetupError, "Pick another name for that officer.*Nothing was changed"):
+            fleet_setup.require_names(problems)
+        # A spent token, or an API without the route, checks nothing and says so; enrolment still refuses.
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            self.assertEqual(fleet_setup.hosted_name_problems(answers, members, "senr1." + "C" * 64), [])
+            HostedApi.checks = None
+            self.assertEqual(fleet_setup.hosted_name_problems(answers, members, HostedApi.token), [])
+        self.assertIn("This enrolment token has expired.", "\n".join(output))
+        self.assertIn("predates POST /api/v1/agents/enrol/check", "\n".join(output))
+
+    def test_a_hosted_fleet_is_renamed_with_an_administrators_access_token(self):
+        # A fleet installed with fleet-prefixed names against a hosted API, its IRC on this VM. Enrolment made its
+        # records: the rear admiral by its name, the captain by its account, the ship with no channel.
+        answers, _ = self.answers("--api-url", "https://subspace.example.com", saved={"slug": "example-fleet"})
+        self.assertEqual(answers["officerNames"], "prefixed")
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, stargate_ref=runtime.SUBSPACE_AGENTS_COMMIT)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        fleet_setup.save_answers(answers)
+        fleet_setup.store_enrolment_token(HostedApi.token)
+        api = fixture.Subspace()
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"])
+        cfg = validate({key: value for key, value in config.items() if key != "api"}, secrets, check_files=False)
+        fleet_records.register(api.call, fleet_records.fleet_fields(cfg), fleet_records.roster(cfg), lambda _: None)
+        for ship in api.ships.values():
+            ship["channel"] = None
+        ids = sorted(api.agents)
+        api.people = ["orion"]  # A person whose username is the captain's plain name.
+        keys = self.root / "subspace-agents"
+        keys.mkdir()
+        for name in ("Atlas", "example-fleet-orion"):
+            (keys / f"{name}.pem").write_text(f"{name} key\n")
+            (keys / f"{name}.pem").chmod(0o600)
+        # An identity provider's access token, longer than any password the installer reads.
+        token = "eyJ" + "x" * 1997
+        token_file = self.root / "admin-token"
+        token_file.write_text(token + "\n")
+        token_file.chmod(0o600)
+
+        def hosted(_origin, bearer, method, path, body=None):
+            self.assertEqual(bearer, token)
+            return api.call(method, path, body)
+        output = []
+        for patcher in (patch.object(fleet_setup, "say", side_effect=output.append),
+                        patch.object(fleet_setup, "hosted_call", side_effect=hosted),
+                        patch.object(fleet_setup, "GATEWAY_KEYS", keys), patch.object(fleet_setup.pwd, "getpwnam"),
+                        patch.object(fleet_setup.os, "geteuid", return_value=0), fleet_installer(self.root)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        rename = ["--inputs", str(fleet_setup.INPUTS)]
+        # Without an administrator's token the dry run cannot ask the API, and says so; the real run stops.
+        fleet_setup.rename_officers([*rename, "--dry-run"])
+        text = "\n".join(output)
+        self.assertIn("without --api-admin-token-file the hosted Subspace API was not asked", text)
+        self.assertIn("dry run: the API was not asked, so its names are unchecked", text)
+        self.assertNotIn("the names are free", text)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "pass --api-admin-token-file"):
+            fleet_setup.rename_officers(rename)
+        # With it, a person's username is found before anything changes, and no person is named.
+        rename += ["--api-admin-token-file", str(token_file)]
+        writes = list(api.writes)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "orion is taken in the Subspace API: a person in the "
+                                    "organisation has it as their username.*Nothing was changed"):
+            fleet_setup.rename_officers(rename)
+        self.assertEqual(api.writes, writes)
+        api.people = []
+        with patch.object(fleet_setup, "configure") as configure:
+            fleet_setup.rename_officers(rename)
+        configure.assert_called_once()
+        # The records are renamed in place, and the ship enrolment left without a channel gets its new one.
+        self.assertEqual(sorted(api.agents), ids)
+        self.assertEqual(api.summary()["agents"], [("atlas", "rearAdmiral", "atlas", None, True),
+                                                   ("orion", "captain", "orion", "Orion", True)])
+        self.assertEqual(api.summary()["ships"], [("Orion", "#orion")])
+        # Stargate's enrolled keys are kept under the new names (atlas.pem is Atlas.pem on a case-blind disk).
+        self.assertEqual(((keys / "atlas.pem").read_text(), (keys / "orion.pem").read_text()),
+                         ("Atlas key\n", "example-fleet-orion key\n"))
+        self.assertTrue(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerRename"]["switched"])
+        self.assertIn("Stargate kept the old key files", "\n".join(output))
+        self.assertNotIn(token, "\n".join(output))
+        # The token file is checked as a password file is, and may be as long as the API reads.
+        for text, mode, message in ((token, 0o644, "mode 0600"), ("two words", 0o600, "one bearer token"),
+                                    ("x" * (fleet_setup.API_TOKEN_LIMIT + 1), 0o600, "at most 16,384")):
+            token_file.write_text(text)
+            token_file.chmod(mode)
+            with self.subTest(message), self.assertRaisesRegex(fleet_setup.SetupError, message) as refused:
+                fleet_setup.bearer_token_file(str(token_file), "--api-admin-token-file", "API administrator token")
+            self.assertNotIn(text, str(refused.exception))
+        token_file.write_text("x" * fleet_setup.API_TOKEN_LIMIT)
+        self.assertEqual(len(fleet_setup.bearer_token_file(str(token_file), "--api-admin-token-file", "token")),
+                         fleet_setup.API_TOKEN_LIMIT)
+
+    CAPTAINS = ["draco", "cygnus", "pavo"]
+    SLOTS = ["claude-1", "claude-2", "codex-1", "codex-2"]
+    CREW = {"draco": ["Kestrel", "Heron", "Wren", "Finch"], "cygnus": ["Osprey", "Plover", "Linnet", "Swift"],
+            "pavo": ["Merlin", "Egret", "Robin", "Siskin"]}
+    CREW_NAMES = ";".join(f"{captain.title()}={','.join(names)}" for captain, names in CREW.items())
+
+    def installed_crew_fleet(self):
+        """A fleet installed before plain officer names and crew names, enrolled with a hosted API, its IRC on this
+        VM: three captains, each with the default four crew under their slot names, so that every ship has a
+        claude-1, a codex-1 and so on, and each captain's root session pinned with that roster. Returns the API,
+        the setup run's patches and what they record: setup's lines, and each fleet installer run."""
+        repositories = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            "captains": [{"id": captain} for captain in self.CAPTAINS], "repositories": repositories})
+        answers, _ = self.answers("--api-url", "https://subspace.example.com", "--captains", "Draco,Cygnus,Pavo",
+                                  "--stargate-ref", runtime.SUBSPACE_AGENTS_COMMIT, saved={"slug": "example-fleet"})
+        self.assertEqual(answers["officerNames"], "prefixed")
+        members = fleet_setup.roster(answers, "atlas", self.CAPTAINS)
+        config = fleet_setup.fleet_config(answers, members, "a" * 40)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        fleet_setup.save_answers(answers)
+        fleet_setup.store_enrolment_token(HostedApi.token)
+        # The fleet installer's record of the installed fleet, and each captain's pinned root session.
+        fleet_setup.FLEET_ETC.mkdir()
+        fleet_setup.write_json(fleet_setup.FLEET_ETC / "fleet.json", config)
+        for captain in self.CAPTAINS:
+            workspace = self.root / "state/agents" / captain / "workspace"
+            sessions.SessionRecord(self.root / "sessions", captain).save({
+                "sessionID": "ses_fixture", "directory": str(workspace), "project": str(workspace / "project"),
+                "crew": self.SLOTS, "confirmed": True})
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"])
+        cfg = validate({key: value for key, value in config.items() if key != "api"}, secrets, check_files=False)
+        self.assertEqual([[worker["id"] for worker in person["crew"]] for person in cfg["members"][1:]],
+                         [self.SLOTS] * 3)
+        api = fixture.Subspace()
+        fleet_records.register(api.call, fleet_records.fleet_fields(cfg), fleet_records.roster(cfg), lambda _: None)
+        token = "eyJ" + "x" * 97
+        token_file = self.root / "admin-token"
+        token_file.write_text(token + "\n")
+        token_file.chmod(0o600)
+        self.rename = ["--inputs", str(fleet_setup.INPUTS), "--api-admin-token-file", str(token_file)]
+        output, plans = [], []
+
+        def hosted(_origin, bearer, method, path, body=None):
+            self.assertEqual(bearer, token)
+            return api.call(method, path, body)
+        patches = [
+            patch.object(fleet_setup, "say", side_effect=output.append),
+            patch.object(fleet_setup, "hosted_call", side_effect=hosted), fleet_installer(self.root, plans),
+            patch.object(fleet_setup, "GATEWAY_KEYS", self.root / "subspace-agents"),
+            patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0),
+            patch.object(fleet_setup, "crew_names_supported", return_value=True),
+            # The switch is setup's real run, with the VM's commands and the hosted API's own checks stubbed.
+            patch.object(fleet_setup, "run", return_value=""), patch.object(fleet_setup, "irc_source", return_value="b" * 40),
+            patch.object(fleet_setup, "api_down"), patch.object(fleet_setup, "stargate_agents", return_value=True),
+            patch.object(fleet_setup, "hosted_checks"), patch.object(fleet_setup, "hosted_name_problems", return_value=[])]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return api, output, plans
+
+    def crew_after_the_switch(self):
+        """Each captain's crew as (ID, name) in the fleet.json that setup last handed the fleet installer."""
+        config = fleet_setup.read_json(fleet_setup.INPUTS / "fleet.json")
+        cfg = validate(config, fleet_setup.read_json(fleet_setup.INPUTS / "fleet.secrets.json"), check_files=False)
+        return {person["id"]: [(worker["id"], worker["name"]) for worker in person["crew"]]
+                for person in cfg["members"][1:]}
+
+    def test_a_fleet_whose_crew_share_ids_across_ships_is_renamed_with_names_unique_in_the_fleet(self):
+        api, output, plans = self.installed_crew_fleet()
+        snapshot = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        writes = list(api.writes)
+        # The dry run checks what the switch hands the fleet installer, crew names included, and shows each ship's
+        # crew as the switch installs them: the new names, each under its installed ID.
+        fleet_setup.rename_officers([*self.rename, "--crew-names", self.CREW_NAMES, "--dry-run"])
+        text = "\n".join(output)
+        self.assertIn("crew after the switch, by ship (name, ID, model family and slot):\n"
+                      "  Draco: Kestrel (claude-1, Claude 1); Heron (claude-2, Claude 2); Wren (codex-1, Codex 1); "
+                      "Finch (codex-2, Codex 2)\n  Cygnus: Osprey (claude-1, Claude 1); ", text)
+        self.assertIn("dry run: the names are free", text)
+        # The fleet installer's dry run takes the switch's fleet.json, and keeps its plan to itself.
+        self.assertEqual([run[:2] for run in plans], [(True, True)])
+        self.assertIn("crew: Merlin (Claude 1, claude-sonnet-5-5, ID claude-1); Egret (Claude 2", plans[0][2])
+        self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, snapshot)
+        self.assertEqual(api.writes, writes)
+        # A name the fleet installer refuses stops the dry run, and the real run before anything changes: here a
+        # name that is another member's ID in the same crew, which Stargate's team refuses.
+        clash = self.CREW_NAMES.replace("Kestrel", "Codex 1")
+        for dry in (["--dry-run"], []):
+            with self.subTest(dry=bool(dry)), self.assertRaisesRegex(
+                    fleet_setup.SetupError, "Captain draco's crew member Codex 1 \\(claude-1\\) has the same name as "
+                    "the ID of Wren \\(codex-1\\).*Nothing was changed"):
+                fleet_setup.rename_officers([*self.rename, "--crew-names", clash, *dry])
+            self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, snapshot)
+            self.assertEqual(api.writes, writes)
+        # A name on two ships is refused, naming both.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "draco's Heron and pavo's heron are the same"):
+            fleet_setup.rename_officers([*self.rename, "--crew-names", self.CREW_NAMES.replace("Siskin", "heron")])
+        # The real run renames the officers, then switches: setup runs with the new names, and the fleet installer
+        # takes every ship's claude-1 under its own name, its pinned session keeping its roster of IDs.
+        plans.clear()
+        fleet_setup.rename_officers([*self.rename, "--crew-names", self.CREW_NAMES])
+        self.assertEqual([run[:2] for run in plans], [(True, True), (False, False)])
+        saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+        self.assertEqual((saved["officerNames"], saved["officerRename"]["switched"]), ("plain", True))
+        self.assertEqual(saved["crewIds"], {captain: {slot: slot for slot in self.SLOTS} for captain in self.CAPTAINS})
+        self.assertEqual(self.crew_after_the_switch(),
+                         {captain: list(zip(self.SLOTS, names, strict=True)) for captain, names in self.CREW.items()})
+        self.assertEqual([row[0] for row in api.summary()["agents"]], ["atlas", "cygnus", "draco", "pavo"])
+
+    def stuck_fleet(self):
+        """The fleet as a rename-officers run with --crew-names left it before this fix: the officers renamed on
+        IRC and in the API, the plain names and crew names saved, and the switch refused by the fleet installer,
+        whose crew-name check then compared IDs, so that every ship's claude-1 had the same 'name'."""
+        api, output, plans = self.installed_crew_fleet()
+
+        def check_crew_names_by_id(agents):
+            seen = {}
+            for person in agents:
+                for worker in (worker for worker in person["crew"] if worker["named"]):
+                    other = seen.get(worker["id"])
+                    runtime.require(other is None, f"Crew member {worker['name']} of captain {person['id']} has the "
+                                    f"same name as {other}, ignoring case.")
+                    seen[worker["id"]] = f"captain {person['id']}'s {worker['name']}"
+        # That release had no check of the switch before the rename changed anything.
+        with patch.object(runtime, "check_crew_names", side_effect=check_crew_names_by_id), \
+                patch.object(fleet_setup, "check_switch", return_value=[]), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "Crew member Osprey of captain cygnus has the same "
+                                       "name as captain draco's Kestrel, ignoring case"):
+            fleet_setup.rename_officers([*self.rename, "--crew-names", self.CREW_NAMES])
+        saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+        self.assertEqual(saved["officerNames"], "plain")
+        self.assertEqual(saved["officerRename"]["from"], {
+            officer: f"example-fleet-{officer}" for officer in ["atlas", *self.CAPTAINS]})
+        self.assertNotIn("switched", saved["officerRename"])
+        self.assertEqual(saved["crewNames"]["cygnus"], dict(zip(self.SLOTS, self.CREW["cygnus"], strict=True)))
+        self.assertEqual([row[0] for row in api.summary()["agents"]], ["atlas", "cygnus", "draco", "pavo"])
+        output.clear()
+        plans.clear()
+        return api, output, plans
+
+    def test_a_rename_stopped_at_the_switch_resumes_there_with_no_options(self):
+        api, output, plans = self.stuck_fleet()
+        writes = list(api.writes)
+        # The dry run now checks the switch, and passes.
+        fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), "--dry-run"])
+        self.assertIn("  Pavo: Merlin (claude-1, Claude 1); Egret (claude-2, Claude 2); Robin (codex-1, Codex 1); "
+                      "Siskin (codex-2, Codex 2)", output)
+        self.assertIn("dry run: the real run runs setup again with the new names", "\n".join(output))
+        # The real run resumes at the switch: it renames nothing again, runs setup, and records the rename as done.
+        output.clear()
+        fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        self.assertIn("have their plain names on IRC and in the API, but setup has not yet finished", "\n".join(output))
+        self.assertEqual([run[0] for run in plans], [True, True, False])
+        self.assertEqual(api.writes, writes)
+        saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+        self.assertTrue(saved["officerRename"]["switched"])
+        self.assertEqual(self.crew_after_the_switch()["cygnus"], list(zip(self.SLOTS, self.CREW["cygnus"], strict=True)))
+        self.assertIn("desktops: run the host installer again", "\n".join(output))
+
+    def test_an_ordinary_setup_run_on_a_stuck_rename_installs_the_same_and_leaves_the_rename_to_finish(self):
+        api, output, plans = self.stuck_fleet()
+        writes = list(api.writes)
+        stuck = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+        # A plain re-run, and one that passes the crew's new names again, install what the switch installs: the
+        # plain names and each crew member's new name under its installed ID. Neither renames anything, nor
+        # records the rename as done, which only rename-officers checks and records.
+        for extra in ([], ["--crew-names", self.CREW_NAMES]):
+            with self.subTest(extra=bool(extra)):
+                fleet_setup.setup(fleet_setup.parse_args(["--non-interactive", "--inputs", str(fleet_setup.INPUTS),
+                                                          *extra]))
+                self.assertEqual(plans[-1][0], False)
+                self.assertEqual(self.crew_after_the_switch(),
+                                 {captain: list(zip(self.SLOTS, names, strict=True))
+                                  for captain, names in self.CREW.items()})
+                saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+                self.assertEqual({key: saved[key] for key in ("officerNames", "officerRename", "crewNames", "crewIds")},
+                                 {key: stuck[key] for key in ("officerNames", "officerRename", "crewNames", "crewIds")})
+                self.assertEqual(api.writes, writes)
+        # rename-officers then finishes it.
+        fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        self.assertTrue(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerRename"]["switched"])
+
     def test_the_hosted_paths_are_the_apis_own(self):
         # The health check, the enrolment check and the REST examples in the officers' instructions name paths
         # the API serves, as its OpenAPI document lists them.
         document = json.loads((Path(fleet_setup.HERE).parents[1] / "subspace-api/openapi.json").read_text())
-        for path, method in (("/health", "get"), ("/api/v1/agents/enrol", "post"), ("/api/v1/me", "get"),
+        for path, method in (("/health", "get"), ("/api/v1/agents/enrol", "post"),
+                             ("/api/v1/agents/enrol/check", "post"), ("/api/v1/me", "get"),
                              ("/api/v1/issues", "post"), ("/api/v1/fleets/{reference}/enrolment-tokens", "post")):
             self.assertIn(method, document["paths"].get(path, {}), path)
         source = Path(fleet_setup.__file__).read_text()
@@ -2079,7 +3258,7 @@ class OutboundTests(unittest.TestCase):
     def test_the_release_lookup_says_why_it_failed(self):
         with patch.object(fleet_setup, "run", side_effect=fleet_setup.SetupError("git ls-remote did not finish")), \
                 self.assertRaisesRegex(fleet_setup.SetupError, "no outbound access to GitHub.*--stargate-ref"):
-            fleet_setup.latest_stargate()
+            latest_stargate()
 
 
 class HostInstallerTests(unittest.TestCase):

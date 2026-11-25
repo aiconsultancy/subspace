@@ -37,6 +37,16 @@ SENTRY_TOKEN = "fixture-sentry-read-token"
 MEDICAL_ACCOUNT = "example-medical"
 
 
+def legacy_names(config):
+    """The example fleet as subspace-setup installed fleets before plain officer names: fleet-prefixed accounts
+    (example-<id>), slot-named crew and no officerNames, which keeps those accounts and #<slug>-<id> ship channels."""
+    config.pop("officerNames", None)
+    for person in [config["rearAdmiral"], *config["captains"]]:
+        person["account"] = f"example-{person['id']}"
+        person.pop("crewNames", None)
+    return config
+
+
 class IRC(socketserver.StreamRequestHandler):
     def handle(self):
         nick = "*"
@@ -104,6 +114,7 @@ class Refusal(Exception):
     def __init__(self, status, message=""):
         super().__init__(message or f"HTTP {status}")
         self.status = status
+        self.detail = message
 
 
 class Subspace:
@@ -121,6 +132,8 @@ class Subspace:
 
     def __init__(self, provider="dev", page=200):
         self.fleets, self.ships, self.agents = {}, {}, {}
+        # People's usernames: each is their IRC account, which no agent's name or nick may take.
+        self.people = []
         self.initiatives = {INITIATIVE: {"id": INITIATIVE, "name": "Example initiative", "fleetId": None, "channels": ""}}
         self.provider, self.page, self.admin = provider, page, True
         self.counts, self.writes, self.serial = Counter(), [], 0
@@ -190,6 +203,14 @@ class Subspace:
                 following = start + limit
                 return {"items": [dict(row) for row in rows[start:following]],
                         "nextCursor": str(following) if following < len(rows) else None}
+            case "GET", ["users"]:
+                rows = [{"username": name, "kind": "human"} for name in self.people] + [
+                    {"username": row.get("ircNick"), "kind": "agent"} for row in self.agents.values()]
+                start = int(query.get("cursor", ["0"])[0])
+                limit = min(int(query.get("limit", ["50"])[0]), self.page)
+                following = start + limit
+                return {"items": rows[start:following],
+                        "nextCursor": str(following) if following < len(rows) else None}
             case "POST", ["agents"]:
                 self.administrator()
                 agent = self.registration(body)
@@ -226,7 +247,7 @@ class Subspace:
                 self.initiatives[row["id"]] = row
                 return self.initiative(row)
             case "GET", ["initiatives", initiative]:
-                return dict(self.initiatives.get(initiative) or self.missing())
+                return self.initiative(self.initiatives.get(initiative) or self.missing())
             case "PUT", ["initiatives", initiative, "fleet"]:
                 row = self.initiatives.get(initiative) or self.missing()
                 assert body["fleetId"] is None or any(fleet["id"] == body["fleetId"] for fleet in self.fleets.values())
@@ -236,7 +257,7 @@ class Subspace:
 
     def initiative(self, row):
         fleet = next((fleet for fleet in self.fleets.values() if fleet["id"] == row["fleetId"]), None)
-        return {**row, "version": 1, "fleet": fleet and {"slug": fleet["slug"]}}
+        return {**row, "version": 1, "fleet": fleet and {key: fleet[key] for key in ("id", "slug", "name")}}
 
     def missing(self):
         raise Refusal(404, "Not found.")
@@ -282,14 +303,24 @@ class Subspace:
         if (body["rank"] == "captain") != bool(ship) and body["rank"] != "crew":
             raise Refusal(400, "A captain needs a ship; a rear admiral must not supply one.")
         nick = body["ircNick"] if "ircNick" in body else (old or {}).get("ircNick")
+        # An agent has one name: a new or changed name may not be another's nick, nor a new nick another's name.
+        new_name = old is None or old["name"].lower() != body["name"].lower()
+        new_nick = bool(nick) and (old is None or (old.get("ircNick") or "").lower() != nick.lower())
         for row in self.agents.values():
             if row is old:
                 continue
+            row_nick = (row.get("ircNick") or "").lower()
             if (row["serviceTokenClientId"] == subject or row["name"].lower() == body["name"].lower()
-                    or (nick and (row.get("ircNick") or "").lower() == nick.lower())):
-                raise Refusal(409, "An account subject, agent name or IRC nick is already registered.")
-        return {"name": body["name"], "rank": body["rank"], "fleetId": fleet["id"], "shipId": body.get("shipId"),
-                "defaultModel": body["defaultModel"], "serviceTokenClientId": subject, "ircNick": nick}
+                    or (nick and row_nick == nick.lower()) or (new_name and row_nick == body["name"].lower())
+                    or (new_nick and row["name"].lower() == nick.lower())):
+                raise Refusal(409, f"An account subject, agent name or IRC nick is already registered: agent "
+                                   f"{row['name']} of fleet {row['fleet']} has it.")
+        for username in self.people:
+            if (nick and username.lower() == nick.lower()) or (new_name and username.lower() == body["name"].lower()):
+                raise Refusal(409, "The name is taken: a person in this organisation has it as their username.")
+        return {"name": body["name"], "rank": body["rank"], "fleetId": fleet["id"], "fleet": fleet["slug"],
+                "shipId": body.get("shipId"), "defaultModel": body["defaultModel"], "serviceTokenClientId": subject,
+                "ircNick": nick}
 
     def summary(self):
         """The records a desktop reads: the fleets' channels, ships and active officers."""
@@ -392,7 +423,9 @@ class Sentry(BaseHTTPRequestHandler):
 
 
 def write(example):
-    cfg = json.loads(Path(example).read_text())
+    # The container smoke keeps the fleet-prefixed accounts its checks name (example-<id>): a fleet installed
+    # before plain officer names, which the installer keeps as it was.
+    cfg = legacy_names(json.loads(Path(example).read_text()))
     cfg["irc"].update(host="127.0.0.1", caFile=str(WORK / "irc.pem"))
     # The fixture IRC server takes SASL PLAIN only; policy_test.py covers certificates (SASL EXTERNAL).
     cfg["irc"]["auth"] = "password"
@@ -566,17 +599,28 @@ def check_shape():
         assert engine["mcp"]["servers"]["subspace"]["url"] == "http://127.0.0.1:3001/mcp"
         assert {"action": "subspace_*", "resource": "*", "effect": "allow"} in permissions
         assert (opencode / "skills/subspace-tracker/SKILL.md").is_file()
-        assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role != "rear-admiral")
+        # The example's captains delegate: no edit tool, and an open shell that refuses Git's writes.
+        delegate = role == "captain" and json.loads((etc / "fleet.json").read_text()).get("captainTools") == "delegate"
+        assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role == "captain" and not delegate)
+        assert ({"action": "shell", "resource": "*", "effect": "allow"} in permissions) == delegate
+        assert ({"action": "shell", "resource": "*git push *", "effect": "deny"} in permissions) == delegate
     ref = Path("/var/lib/subspace-fleet/references/atlas/sample")
     assert subprocess.check_output(["runuser", "-u", "ss-atlas", "--", "git", "-C", ref, "show", "HEAD:README.md"], text=True).strip() == "sample"
     for user in ("ss-atlas", "ss-orion"):
         assert subprocess.run(["runuser", "-u", user, "--", "test", "-w", ref]).returncode == 1
         assert subprocess.run(["runuser", "-u", user, "--", "test", "-w", ref / "README.md"]).returncode == 1
     assert subprocess.run(["runuser", "-u", "ss-orion", "--", "test", "-r", ref / "README.md"]).returncode == 1
-    command = ["runuser", "-u", "ss-orion", "--", "env", "MISE_DATA_DIR=/opt/subspace-fleet/toolchains",
-               "MISE_GLOBAL_CONFIG_FILE=/etc/subspace-fleet/toolchains.toml",
-               "/opt/subspace-fleet/toolchains/shims/node", "--version"]
-    assert subprocess.check_output(command, text=True).startswith("v24.")
+    # The captain's tools, with its engine's environment: the shared Node through mise's system data directory,
+    # from its workspace, and its own mise data directory under its home.
+    environment = json.loads((etc / "engine-orion.json").read_text())["environment"]
+    tools = {key: value for key, value in environment.items() if key.startswith("MISE_") or key == "PATH"}
+    assert tools["MISE_DATA_DIR"] == str(CAPTAIN_HOME / ".local/share/mise")
+    assert environment["TMPDIR"] == "/tmp/ss-orion"
+    command = ["runuser", "-u", "ss-orion", "--", "env", *(f"{key}={value}" for key, value in tools.items()),
+               f"HOME={CAPTAIN_HOME}", "sh", "-c", f"cd {CAPTAIN_HOME / 'workspace'} && node --version && mise which node"]
+    output = subprocess.check_output(command, text=True).splitlines()
+    assert output[0].startswith("v24."), output
+    assert output[1].startswith("/opt/subspace-fleet/toolchains/installs/node/24."), output
     captain = pwd.getpwnam("ss-orion")
     # The captain's workspace instructions sit beside its checkouts, written as the captain.
     workspace = CAPTAIN_HOME / "workspace"
@@ -765,6 +809,24 @@ def api():
     }, results
     print("API creation, update, idempotent registration of the fleet's channels, ship and officers, unassign "
           "and reassign passed.")
+
+
+def opencode_match(value, pattern):
+    """OpenCode 2.3.2's Wildcard.match on Linux (packages/core/src/util/wildcard.ts): `*` is any text, `?` one
+    character, and a trailing " *" also matches nothing."""
+    escaped = re.sub(r"[.+^${}()|\[\]\\]", lambda found: "\\" + found.group(0), pattern.replace("\\", "/"))
+    escaped = escaped.replace("*", ".*").replace("?", ".")
+    if escaped.endswith(" .*"):
+        escaped = escaped[:-3] + "( .*)?"
+    return re.fullmatch(escaped, value.replace("\\", "/"), re.S) is not None
+
+
+def opencode_decision(rules, action, resources):
+    """What OpenCode 2.3.2 decides for one tool call (packages/core/src/permission.ts, evaluateInput): each
+    resource takes its last matching rule, or ask; any deny refuses the call, else any ask asks."""
+    effects = [next((rule["effect"] for rule in reversed(rules) if opencode_match(action, rule["action"])
+                     and opencode_match(resource, rule["resource"])), "ask") for resource in resources]
+    return "deny" if "deny" in effects else "ask" if "ask" in effects else "allow"
 
 
 if __name__ == "__main__":

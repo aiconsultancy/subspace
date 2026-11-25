@@ -67,6 +67,8 @@ fn seed(board: &mut Github, cx: &mut Context<Github>) {
             viewer_can_review: true,
             viewer_can_comment: true,
             changed_files: Some(1),
+            merge_target: None,
+            viewer_approved: false,
         },
     );
     board.rebuild(cx);

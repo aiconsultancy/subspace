@@ -95,7 +95,7 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
 
 | Board | In-app guide | Developer page |
 | --- | --- | --- |
-| PRs | [GitHub pull requests](../spaces/github/help.md) | |
+| PRs | [GitHub pull requests](../spaces/github/help.md) | [Merge and refresh](changes/github-pr-merge/README.md) |
 | Copilot Agents | [Copilot agent tasks](../spaces/github-copilot-agents/help.md) | [Copilot Agents dashboard](github-copilot-agents.md) |
 | Channels | [IRC networks, channels and private messages](../spaces/irc/help.md) | [Channels](irc.md): configuration, protocol support, initiatives and fleets, agent tools |
 | Issues | [Subspace API issues and comments](../spaces/issues/help.md) | [Issues and Subspace API](issues.md): connection, shared hub and offline fixtures |
@@ -228,6 +228,7 @@ record. [Change records](changes/README.md) explains the convention.
   ranks from the API's agent nicks and the fleet's recorded channels, agent
   avatars and coloured marks, no private conversation with an agent, and
   the base pull request's review fixes.
+- [Connection guidance](changes/connection-guidance/README.md) explains what to check when a service is unreachable.
 - [Channels navigator, request lines and composer hints](changes/channels-navigator-and-requests/README.md):
   the navigator grouped by fleet with a People section, request status lines
   that settle into `Done in …`, and the composer's hint row with `/ask`.
@@ -240,6 +241,8 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels reactions](changes/channels-reactions/README.md): message
   reactions as pills in Channels, toggling yours, the stop reactions on a
   running request, and the client layer's review findings closed.
+- [Channels preview status colour](changes/irc-preview-status-colour/README.md)
+  keeps issue and pull request status in their badges.
 - [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
   pull request tile only under the first message that names it, and fuller
   two-line tiles of a fixed size for both.

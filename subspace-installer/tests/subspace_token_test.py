@@ -281,6 +281,54 @@ class TokenTest(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("MCP URL changed", result.stderr)
 
+    def test_a_named_settings_file_binds_the_api_and_its_own_session(self):
+        # A deployment repository's agent-kit/agent.json wins over ~/.subspace/agent.json and the environment.
+        self.write_config(identity_provider="workos", api_url="https://other.example.com", workos_client_id="client_OTHER")
+        bound = self.home / "example-deployment" / "agent.json"
+        bound.parent.mkdir()
+        bound.write_text(json.dumps({"identity_provider": "workos", "api_url": HOSTED.api_url,
+                                     "workos_client_id": HOSTED.workos_client_id}))
+        with patch.dict(os.environ, SUBSPACE_API_URL="https://elsewhere.example.com"):
+            config = token.load_config(str(bound))
+        self.assertEqual((config.api_url, config.workos_client_id), (HOSTED.api_url, HOSTED.workos_client_id))
+        with self.assertRaisesRegex(token.TokenError, "Cannot find"):
+            token.load_config(str(bound.with_name("missing.json")))
+        store = token.SessionStore(config)
+        with store.locked():
+            store.write_file(b"null")  # signed out for this API, and off the real Keychain
+        result = self.run_helper("--config", str(bound), "--header", "--mcp-endpoint", f"{HOSTED.api_url}/mcp")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, f"subspace: WorkOS session unavailable. Run subspace_token.py --config {bound} --login.\n")
+        result = self.run_helper("--config", str(bound), "--header", "--mcp-endpoint", "https://other.example.com/mcp")
+        self.assertIn(f"not the one in {bound}", result.stderr)
+        with store.locked():
+            store.save({"access_token": "fixture-bound", "refresh_token": "fixture", "expires": int(time.time()) + 600})
+        self.assertEqual(self.invoke("--config", str(bound), "--header"), '{"Authorization": "Bearer fixture-bound"}\n')
+        message = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        output = io.StringIO()
+        with patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(message).encode()))), \
+                patch.object(sys, "stdout", output), patch.object(token, "workos_token",
+                                                                  side_effect=token.TokenError(token.SIGN_IN_REQUIRED)):
+            token.mcp_stdio(config, store, str(bound))
+        self.assertIn(f"--config {bound} --login", json.loads(output.getvalue())["error"]["message"])
+
+    def test_a_loopback_api_is_never_reached_through_a_proxy(self):
+        def proxied(url):
+            return [handler.proxies for handler in token.opener(url).handlers if isinstance(handler, token.ProxyHandler)]
+
+        with patch.dict(os.environ, http_proxy="http://127.0.0.1:9", https_proxy="http://127.0.0.1:9"):
+            os.environ.pop("no_proxy", None)
+            # An opener keeps only handlers that open something: none carries a proxy for this computer.
+            for url in ("http://127.0.0.1:3000", "http://[::1]:3000", "http://localhost:3000"):
+                self.assertEqual(proxied(url), [], url)
+            self.assertIn("https", proxied("https://api.example.com")[0])
+            with local_http(FixtureApi) as server:
+                server.requests, server.reject = [], False
+                url = f"http://127.0.0.1:{server.server_port}"
+                config = token.Config(url, "workos", "client_EXAMPLE", url)
+                self.assertEqual(token.call(config, "GET", "/me", token="fixture-access")["displayName"], "Example Person")
+            self.assertEqual(server.requests, [("/api/v1/me", None, "Bearer fixture-access")])
+
     def test_development_login_and_token_behave_as_before(self):
         self.assertEqual(self.run_helper("--login").stdout, "Development sign-in needs no login.\n")
         target = self.home / "targets" / "example-fleet"

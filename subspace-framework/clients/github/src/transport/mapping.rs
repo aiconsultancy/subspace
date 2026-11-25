@@ -129,6 +129,9 @@ pub fn http_failure(account: &str, api: Api, failure: Failure<'_>) -> Error {
             "GitHub took too long to answer (its 10-second query limit); try again.",
         ),
         (Api::Rest, http_status::NOT_FOUND) => not_found(),
+        (Api::Rest, http_status::CONFLICT) => {
+            status(http_status::CONFLICT, "GitHub reported a conflict.")
+        }
         // Lost or missing access: kept as 403 so callers can tell it from
         // a transient failure. Rate limits and SSO are classified above.
         (_, http_status::FORBIDDEN) => status(http_status::FORBIDDEN, ACCESS_REFUSED),

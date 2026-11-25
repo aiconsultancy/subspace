@@ -1,7 +1,7 @@
 //! Apply a completed close attempt to its frozen account and visible state.
 use super::write::{Outcome, failure_message};
 use super::{dismiss, show_error};
-use crate::{Github, emit_toast, model};
+use crate::{Github, emit_toast};
 use gpui_kit::{Context, Window};
 use subspace_framework::client_github::model::{GhItemDetail, PrState};
 use subspace_framework::core::http::Error;
@@ -45,16 +45,7 @@ fn apply_closed(board: &mut Github, fresh: Option<GhItemDetail>, cx: &mut Contex
         .map_or_else(|| pending.item.clone(), |detail| detail.item.clone());
     item.state = PrState::Closed;
     if let Some(account) = board.data.get_mut(&pending.login.to_lowercase()) {
-        account
-            .closed_at
-            .insert(item.key.clone(), std::time::Instant::now());
-        model::patch_sections(&mut account.sections, &item);
-        if let Some(mut detail) = fresh {
-            detail.item = item.clone();
-            account.details.insert(item.key.clone(), detail);
-        } else if let Some(detail) = account.details.get_mut(&item.key) {
-            detail.item = item.clone();
-        }
+        account.apply_written_state(&item, fresh);
     }
     if let Some((diff, _)) = &board.diff {
         diff.update(cx, |diff, cx| diff.update_item(&item, cx));

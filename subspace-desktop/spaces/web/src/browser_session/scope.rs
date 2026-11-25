@@ -22,8 +22,8 @@ pub struct SessionScope {
     home: Url,
     /// The signal's absolute path, in lower case.
     signal: Option<String>,
-    /// Absolute paths, in lower case, the view never loads, nor anything
-    /// under them.
+    /// Absolute paths, in lower case, the view never loads, nor the same
+    /// path with a format suffix, nor anything under them.
     reserved: Vec<String>,
 }
 
@@ -79,9 +79,11 @@ impl SessionScope {
     }
 
     /// A route under the home, such as the site's own session endpoints,
-    /// that the view never navigates to, nor anything under it, ignoring
-    /// ASCII case. It limits navigations only: a page in the scope can
-    /// still `fetch` it, with the session cookie.
+    /// that the view never navigates to, ignoring ASCII case. Nor does it
+    /// go to anything under it, or to the route with a format suffix, such
+    /// as `session.json`, which many web frameworks send to the same
+    /// handler. It limits navigations only: a page in the scope can still
+    /// `fetch` it, with the session cookie.
     // qual:api — a product declares its site's own routes; the tests cover them.
     pub fn with_reserved(mut self, route: &str) -> Result<Self, InvalidScope> {
         let path = self.absolute(route)?;
@@ -137,11 +139,13 @@ impl SessionScope {
         path_is_plain(path) && path.starts_with(self.path())
     }
 
+    /// Whether `lower` is a reserved route, the route with a format suffix
+    /// (`.json`, `.html`, …), or anything under either.
     fn is_reserved(&self, lower: &str) -> bool {
         self.reserved.iter().any(|reserved| {
             lower
                 .strip_prefix(reserved.as_str())
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '.']))
         })
     }
 
@@ -333,6 +337,27 @@ mod tests {
             scope.admit("https://other.example.com/desktop/session/required"),
             Admission::Refuse
         );
+    }
+
+    #[test]
+    fn a_reserved_route_with_a_format_suffix_never_loads() {
+        let scope = scope();
+        for reserved in [
+            "https://app.example.com/desktop/session.json",
+            "https://app.example.com/desktop/Session.HTML",
+            "https://app.example.com/desktop/session.",
+            "https://app.example.com/desktop/session.json/redeem",
+        ] {
+            assert_eq!(scope.admit(reserved), Admission::Refuse, "{reserved}");
+        }
+        for loaded in [
+            "https://app.example.com/desktop/sessions",
+            "https://app.example.com/desktop/session-notes",
+            "https://app.example.com/desktop/sessionjson",
+            "https://app.example.com/desktop/reports/session.json",
+        ] {
+            assert_eq!(scope.admit(loaded), Admission::Load, "{loaded}");
+        }
     }
 
     #[test]

@@ -263,6 +263,60 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     expect(bryony.username).toBe("bryonyl");
   });
 
+  test("a person never takes an agent's name either, nor is given one later", async () => {
+    // Lowena signed in before any agent had her name: her username stays as it was issued.
+    const lowena = await signIn({ given_name: "Lowena", family_name: "Carne" });
+    expect(lowena.username).toBe("lowena");
+    const [{ organisation_id: org }] = (
+      await database.client.query("SELECT organisation_id FROM users WHERE id = $1", [
+        lowena.userId,
+      ])
+    ).rows;
+    // Officers from before plain names: named Tegen and Lowena, on IRC under fleet-prefixed nicks.
+    const agent = async (name: string, nick: string) => {
+      const subject = crypto.randomUUID();
+      await database.client.query(
+        `INSERT INTO users (organisation_id, subject, display_name, agent_rank, agent_fleet, agent_model, registered_by_id, agent_irc_nick)
+         VALUES ($1, $2, $3, 'crew', 'alpha', 'example-model', $4, $5)`,
+        [org, subject, name, lowena.userId, nick],
+      );
+      return subject;
+    };
+    const tegenAgent = await agent("Tegen", "alpha-tegen");
+    await agent("Lowena", "alpha-lowena");
+    const tegen = await signIn({ given_name: "Tegen", family_name: "Hosking" });
+    expect(tegen.username).toBe("tegenh");
+
+    const set = async (subject: string, name: string) => {
+      const result = await Effect.runPromise(
+        Effect.result(
+          Effect.flatMap(Database, (db) =>
+            setUsername(
+              db,
+              { provider: "entra", externalOrganisation: tenant.tenant, subject },
+              name,
+            ),
+          ).pipe(Effect.provide(databaseLayer(database.url, 2))),
+        ),
+      );
+      return "failure" in result && result.failure
+        ? (result.failure as Error).message
+        : (result as { success: { username: string } }).success.username;
+    };
+    const subjectOf = async (userId: string) =>
+      (await database.client.query("SELECT subject FROM users WHERE id = $1", [userId])).rows[0]
+        .subject as string;
+    const taken = "Another member or agent has that name.";
+    // An explicit username may not be another agent's name or IRC nick, ignoring case.
+    expect(await set(await subjectOf(tegen.userId), "TEGEN")).toBe(taken);
+    expect(await set(await subjectOf(tegen.userId), "Alpha-Tegen")).toBe(taken);
+    // Nor may an agent's nick become another agent's name.
+    expect(await set(tegenAgent, "lowena")).toBe(taken);
+    // A username issued before the clash stays, and may be set again.
+    expect(await set(await subjectOf(lowena.userId), "Lowena")).toBe("Lowena");
+    expect(await stored(tegen.userId)).toBe("tegenh");
+  });
+
   test("reserved names are skipped: IRC services, guest and the operator's names", async () => {
     expect((await signIn({ given_name: "Global", family_name: "Smith" })).username).toBe("globals");
     expect((await signIn({ given_name: "NickServ", family_name: "Jones" })).username).toBe(
@@ -341,8 +395,8 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     expect(created.status).toBe(201);
     const agent = await created.json();
     expect(await stored(agent.userId)).toBe("Vega-1");
-    // A person now registering as Vega is not given the agent's name.
-    expect((await signIn({ given_name: "Vega", family_name: "Lyra" })).username).toBe("vega");
+    // A person now registering as Vega is given neither the agent's nick nor its name.
+    expect((await signIn({ given_name: "Vega", family_name: "Lyra" })).username).toBe("vegal");
     expect((await signIn({ given_name: "Vega1" })).username).toBe("vega1");
 
     const edit = await api.call(`/api/v1/agents/${agent.userId}`, admin, "PUT", {
@@ -682,9 +736,10 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
         : (result as { success: { username: string } }).success.username;
     };
 
-    // The agent's account subject changed, so it is registered again and its old record cleared.
+    // The agent's account subject changed, so it is registered again and its old record cleared and
+    // renamed: an agent has one name, so its nick may not be another agent's name.
     const old = await register("Gwavas", "Gwavas");
-    expect((await edit(old, "Gwavas", null)).status).toBe(200);
+    expect((await edit(old, "Gwavas-old", null)).status).toBe(200);
     const renewed = await register("Gwavas-renewed", null);
     expect((await edit(renewed, "Gwavas-renewed", "Gwavas")).status).toBe(409);
     expect(await give(renewed.serviceTokenClientId, "Gwavas", false)).toContain("stays retired");
@@ -723,10 +778,11 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
       },
     ]);
 
-    // Two agents swap nicks: one gives its nick up, then each takes the other's.
-    const first = await register("Kitto", "Kitto");
-    const second = await register("Pascoe", "Pascoe");
-    expect((await edit(first, "Kitto", null)).status).toBe(200);
+    // Two agents swap nicks: one gives its nick up, then each takes the other's. Neither nick is
+    // an agent's name, as an agent has one name.
+    const first = await register("Kitto-agent", "Kitto");
+    const second = await register("Pascoe-agent", "Pascoe");
+    expect((await edit(first, "Kitto-agent", null)).status).toBe(200);
     expect(await give(second.serviceTokenClientId, "Kitto")).toBe("Kitto");
     expect(await give(first.serviceTokenClientId, "Pascoe")).toBe("Pascoe");
     expect((await rows(first.userId)).agent_irc_nick).toBe("Pascoe");

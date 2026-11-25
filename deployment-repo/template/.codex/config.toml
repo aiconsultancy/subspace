@@ -1,0 +1,7 @@
+# The Subspace API's MCP server for Codex in this repository (trusted projects only).
+# The helper forwards MCP to the hosted /mcp with your own session for this repository's API
+# (agent-kit/bin/subspace_token.py --config agent-kit/agent.json --login).
+# Codex starts it in the session's directory, so it finds the helper from the repository root.
+[mcp_servers.subspace]
+command = "sh"
+args = ["-c", "top=$(git rev-parse --show-toplevel) && exec python3 \"$top/agent-kit/bin/subspace_token.py\" --config \"$top/agent-kit/agent.json\" --mcp-stdio --mcp-endpoint @@API_URL@@/mcp"]

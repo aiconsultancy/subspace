@@ -10,6 +10,7 @@ mod diff;
 mod favourites;
 mod inspector;
 mod layout;
+mod merge_pull_request;
 mod model;
 mod navigation;
 mod page;
@@ -36,7 +37,7 @@ use gpui_kit::{
 };
 use subspace_client_fleet::{FleetApi, navigation::OpenCrewDiff};
 use subspace_framework::client_github::model::{
-    GhItem, GhItemDetail, GhUser, ItemKind, ReviewEvent, SECTIONS, SectionDef, short_login,
+    GhItem, GhItemDetail, GhUser, ItemKind, PrState, ReviewEvent, SECTIONS, SectionDef, short_login,
 };
 use subspace_framework::client_github::{Client, lifecycle::REFRESH_INTERVAL};
 use subspace_framework::core::http::Error;
@@ -217,8 +218,8 @@ struct Account {
     sections: HashMap<&'static str, SectionData>,
     status: HashMap<&'static str, SectionStatus>,
     details: HashMap<String, GhItemDetail>,
-    // A confirmed local close wins over reads that started before it completed.
-    closed_at: HashMap<String, Instant>,
+    // A confirmed local write wins over reads that started before it completed.
+    state_writes: HashMap<String, (PrState, Instant)>,
     detail_errors: HashMap<String, String>,
     assignable: HashMap<String, Vec<GhUser>>,
     loaded_at: Option<Instant>,
@@ -235,7 +236,7 @@ impl Account {
         mut response: subspace_framework::client_github::model::SectionResponse,
         started: Instant,
     ) {
-        model::preserve_closed(&mut response.items, &self.closed_at, started);
+        model::preserve_written_state(&mut response.items, &self.state_writes, started);
         self.sections.insert(
             section,
             SectionData {
@@ -267,13 +268,28 @@ impl Account {
     }
 
     fn apply_read_detail(&mut self, mut detail: GhItemDetail, started: Instant) {
-        model::preserve_closed(
+        model::preserve_written_state(
             std::slice::from_mut(&mut detail.item),
-            &self.closed_at,
+            &self.state_writes,
             started,
         );
         self.detail_errors.remove(&detail.item.key);
+        patch_sections(&mut self.sections, &detail.item);
         self.details.insert(detail.item.key.clone(), detail);
+    }
+
+    fn apply_written_state(&mut self, item: &GhItem, fresh: Option<GhItemDetail>) {
+        self.state_writes
+            .insert(item.key.clone(), (item.state, Instant::now()));
+        patch_sections(&mut self.sections, item);
+        if let Some(detail) = fresh {
+            self.details.insert(item.key.clone(), detail);
+        }
+        if let Some(detail) = self.details.get_mut(&item.key) {
+            detail.item = item.clone();
+            detail.merge_target = None;
+            detail.viewer_can_review = false;
+        }
     }
 
     fn loading(&self) -> bool {
@@ -329,9 +345,12 @@ pub struct Github {
     detail_key: Option<String>,
     navigation: Option<navigation::Target>,
     detail_generation: u64,
+    detail_poll: Option<Task<()>>,
+    covered: bool,
     checks_open: HashSet<String>,
     composer: Option<ComposerState>,
     close_confirmation: Option<close_pull_request::Confirmation>,
+    merge_confirmation: Option<merge_pull_request::Confirmation>,
     writing: bool,
     menu: Option<(Entity<Menu>, MenuTarget, Subscription)>,
     menu_anchors: MenuAnchors,
@@ -369,13 +388,6 @@ pub struct Github {
 
 fn error_text(error: &Error) -> String {
     error.to_string()
-}
-
-fn github_client(cx: &App) -> Option<Arc<Client>> {
-    let credentials = services(cx)?.credentials.clone();
-    Some(Arc::new(
-        Client::new(credentials).with_work_account(prefs::get(cx, ACCOUNT_KEY)),
-    ))
 }
 
 impl Github {
@@ -740,12 +752,7 @@ impl Github {
                 .as_ref()
                 .and_then(|_| diff.read(cx).item())
                 .map(|item| item.key.clone()),
-            // The page, else the inspector's selection while it shows.
-            None => self
-                .list
-                .open_row()
-                .or_else(|| self.list.selected_row().filter(|_| self.inspector_open))
-                .map(|row| row.key.to_string()),
+            None => self.visible_detail_key().map(str::to_owned),
         };
         let Some(key) = open else {
             self.detail_key = None;
@@ -762,6 +769,50 @@ impl Github {
         });
         if !fresh {
             self.fetch_detail(key, true, cx);
+        }
+    }
+
+    fn visible_detail_key(&self) -> Option<&str> {
+        if self.diff.is_some() {
+            return None;
+        }
+        self.list
+            .open_row()
+            .or_else(|| self.list.selected_row().filter(|_| self.inspector_open))
+            .map(|row| row.key.as_ref())
+    }
+
+    fn start_detail_poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.detail_poll = Some(cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(25))
+                    .await;
+                if this
+                    .update_in(cx, |board, window, cx| {
+                        if window.is_visible() && !board.covered {
+                            board.poll_visible_detail(cx);
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn poll_visible_detail(&mut self, cx: &mut Context<Self>) {
+        if self.writing
+            || self
+                ._detail_task
+                .as_ref()
+                .is_some_and(|task| !task.is_ready())
+        {
+            return;
+        }
+        if let Some(key) = self.visible_detail_key().map(str::to_owned) {
+            self.fetch_detail(key, false, cx);
         }
     }
 
@@ -1145,6 +1196,15 @@ impl Github {
     /// account has changed since.
     fn apply_detail(&mut self, detail: GhItemDetail, login: &str, cx: &mut Context<Self>) {
         let item = model::row_of(&detail);
+        if self.detail_key.as_deref() == Some(&item.key)
+            && self
+                .account
+                .as_deref()
+                .is_some_and(|active| same_login(active, login))
+        {
+            self.detail_generation = self.detail_generation.wrapping_add(1);
+            self._detail_task = None;
+        }
         let account = self.data.entry(login.to_lowercase()).or_default();
         patch_sections(&mut account.sections, &item);
         account.details.insert(item.key.clone(), detail);
@@ -1453,6 +1513,14 @@ impl Github {
 
 impl EventEmitter<DashboardEvent> for Github {}
 
+fn configured_client(cx: &App) -> Option<Arc<Client>> {
+    services(cx).map(|services| {
+        let client = Client::new(services.credentials.clone())
+            .with_work_account(prefs::get(cx, ACCOUNT_KEY));
+        Arc::new(client)
+    })
+}
+
 impl Dashboard for Github {
     const ID: &'static str = "github";
     const SEARCHABLE: bool = true;
@@ -1527,7 +1595,6 @@ impl Dashboard for Github {
     }
 
     fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let client = github_client(cx);
         let section = prefs::get(cx, SECTION_KEY)
             .filter(|id| is_pr_section(id))
             .and_then(|id| section_by_id(&id))
@@ -1538,7 +1605,7 @@ impl Dashboard for Github {
         Self {
             focus: cx.focus_handle(),
             weak: cx.entity().downgrade(),
-            client,
+            client: configured_client(cx),
             favourites: favourites::Favourites::new(cx),
             started: false,
             accounts: Vec::new(),
@@ -1554,9 +1621,12 @@ impl Dashboard for Github {
             detail_key: None,
             navigation: None,
             detail_generation: 0,
+            detail_poll: None,
+            covered: false,
             checks_open: HashSet::new(),
             composer: None,
             close_confirmation: None,
+            merge_confirmation: None,
             writing: false,
             menu: None,
             menu_anchors,
@@ -1609,10 +1679,12 @@ impl Dashboard for Github {
         ]);
         diff::view::bind_keys(cx);
         close_pull_request::bind_keys(cx);
+        merge_pull_request::bind_keys(cx);
     }
 
-    fn activate(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.arrival = None;
+        self.start_detail_poll(window, cx);
         if let Some((diff, _)) = &self.diff {
             diff.update(cx, DiffView::follow_crew);
         }
@@ -1650,7 +1722,12 @@ impl Dashboard for Github {
         }
     }
 
+    fn covered(&mut self, covered: bool, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.covered = covered;
+    }
+
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.detail_poll = None;
         if let Some((diff, _)) = &self.diff {
             diff.update(cx, |diff, cx| diff.unfollow_crew(window, cx));
         }
@@ -1751,7 +1828,7 @@ impl Dashboard for Github {
     }
 
     fn modal(&self, _cx: &App) -> Option<Modal> {
-        if self.close_confirmation.is_some() {
+        if self.close_confirmation.is_some() || self.merge_confirmation.is_some() {
             return Some(Modal::Dialog);
         }
         (self.menu.is_some() || self.favourites.is_open()).then_some(Modal::Menu)
@@ -1759,6 +1836,7 @@ impl Dashboard for Github {
 
     fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         close_pull_request::cancel(self, window, cx);
+        merge_pull_request::cancel(self, window, cx);
         self.menu_anchors.dismiss(window, cx);
         self.favourites.close();
         if self.menu.take().is_some() {
@@ -2083,6 +2161,7 @@ impl Render for Github {
         self.ensure_detail(cx);
         let menu = self.menu_anchors.view();
         let close_dialog = close_pull_request::render(self, cx);
+        let merge_dialog = merge_pull_request::render(self, cx);
         let root = match self.diff.as_ref().map(|(diff, _)| diff.clone()) {
             Some(diff) => self.diff_root(diff, window, cx),
             None => self.list_root(window, cx),
@@ -2127,6 +2206,7 @@ impl Render for Github {
             .on_action(cx.listener(Self::expand_group))
             .children(menu)
             .children(close_dialog)
+            .children(merge_dialog)
     }
 }
 

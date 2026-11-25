@@ -198,12 +198,18 @@ pub struct RawDetail {
     pub locked: bool,
     #[serde(default)]
     pub changed_files: Option<u32>,
+    pub head_ref_oid: Option<String>,
+    pub mergeable: Option<String>,
+    pub merge_state_status: Option<String>,
+    #[serde(default)]
+    pub is_merge_queue_enabled: bool,
     #[serde(default)]
     pub comment_events: Option<Nodes<RawComment>>,
     #[serde(default)]
     pub latest_reviews: Option<Nodes<RawReview>>,
     #[serde(default)]
     pub latest_opinionated_reviews: Option<Nodes<RawReview>>,
+    pub viewer_latest_review: Option<RawReview>,
     #[serde(default)]
     pub review_requests: Option<Nodes<RawRequest>>,
     #[serde(default)]

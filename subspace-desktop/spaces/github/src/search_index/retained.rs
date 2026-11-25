@@ -150,6 +150,8 @@ mod tests {
             viewer_can_review: false,
             viewer_can_comment: false,
             changed_files: None,
+            merge_target: None,
+            viewer_approved: false,
         };
         assert!(is_pr_detail(&detail_of(pr)));
         assert!(!is_pr_detail(&detail_of(issue)));

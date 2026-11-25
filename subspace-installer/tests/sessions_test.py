@@ -9,7 +9,9 @@ import io
 import json
 import os
 from pathlib import Path
+import pwd
 import stat
+import subprocess
 import sys
 import tempfile
 from threading import Thread
@@ -18,6 +20,8 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture  # noqa: E402
 import runtime  # noqa: E402
 import sessions  # noqa: E402
 
@@ -347,9 +351,11 @@ def secrets_for(*accounts):
 
 
 def crew_fleet(*captains):
-    config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+    config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
     config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
     config["irc"]["auth"] = "password"
+    # Without captainTools, as a fleet installed before it existed: captains keep the standard policy.
+    config.pop("captainTools")
     config["captains"] = [{"id": name, "name": name.title(), "account": f"example-{name}"} for name in captains]
     secrets = secrets_for("example-atlas", *(f"example-{name}" for name in captains))
     return config, secrets
@@ -388,7 +394,7 @@ class InstalledFleet(unittest.TestCase):
             self.start(patch.object(runtime, name, value))
         self.start(patch.object(runtime, "write", side_effect=write))
         self.start(patch.object(runtime.sessions, "write_durable", side_effect=durable))
-        for name in ("directory", "run", "configure_git", "toolchains"):
+        for name in ("directory", "run", "configure_git", "install_toolchains", "install_screenshots"):
             self.start(patch.object(runtime, name))
         self.start(patch.object(runtime.subprocess, "run"))
         self.start(patch.object(runtime, "account", side_effect=lambda user, home, mode=0o700: home))
@@ -402,6 +408,8 @@ class InstalledFleet(unittest.TestCase):
                                        side_effect=lambda cfg: {person["id"]: 4096 + index
                                                                 for index, person in enumerate(cfg["members"])}))
         self.start(patch.object(sys, "stdout", io.StringIO()))
+        # The engines' limits are sized from the VM's memory: a 64 GB VM, as /proc/meminfo reports one.
+        self.start(patch.object(runtime.memory, "total_memory", return_value=64154))
         self.store = sessions.SessionRecord(self.etc / "sessions", "orion")
         self.workspace = str(self.state / "agents/orion/workspace/project")
 
@@ -461,6 +469,89 @@ class InstalledFleet(unittest.TestCase):
         self.render(config, secrets)
         self.assertEqual(self.events, [])
         self.assertEqual(marker.read_text(), f"{session_id}\n")
+
+    def test_the_dry_run_prints_each_officers_policy_changes_against_the_installed_one(self):
+        config, secrets = crew_fleet("orion")
+        self.render(config, secrets)
+        self.assertEqual(runtime.policy_lines(runtime.validate(config, secrets)),
+                         ["Tool policy unchanged: atlas, orion."])
+        # Delegate captains, a new captain and an extra rule for every officer.
+        config["captainTools"] = "delegate"
+        config["harness"] = {**config["harness"],
+                             "extraPermissions": [{"action": "shell", "resource": "kubectl get *", "effect": "allow"}]}
+        config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra"})
+        cfg = runtime.validate(config, {**secrets, "ircPasswords": {**secrets["ircPasswords"],
+                                                                    "example-lyra": "fixture-password"}})
+        lines = runtime.policy_lines(cfg)
+        orion = lines.index(next(line for line in lines if line.startswith("Tool policy of orion changes:")))
+        changes = lines[orion + 1:lines.index(next(line for line in lines[orion + 1:] if not line.startswith("  ")))]
+        self.assertIn('  - edit "*" allow', changes)
+        self.assertIn('  - shell "git commit *" allow', changes)
+        self.assertIn('  + external_directory "*" allow', changes)
+        self.assertIn('  + shell "*" allow', changes)
+        self.assertIn('  + shell "*git push *" deny', changes)
+        self.assertEqual(changes[-1], '  + shell "kubectl get *" allow')
+        added = sum(line.startswith("  +") for line in changes)
+        self.assertEqual(lines[orion], f"Tool policy of orion changes: {added} rules added and {len(changes) - added} "
+                         "removed (OpenCode permissions; the last matching rule wins):")
+        self.assertIn("Tool policy of atlas changes: 1 rules added and 0 removed (OpenCode permissions; the last "
+                      "matching rule wins):", lines)
+        self.assertIn('  + shell "kubectl get *" allow', lines[lines.index(next(
+            line for line in lines if line.startswith("Tool policy of atlas"))) + 1])
+        lyra = len(runtime.harness_permissions(cfg, cfg["members"][2]))
+        self.assertEqual(lines[-1], f"Tool policy of officers with none installed yet: lyra ({lyra} rules).")
+        # One whose installed policy this user cannot read is named.
+        with patch.object(runtime.os, "access", side_effect=lambda path, mode: not str(path).endswith("orion.json")):
+            lines = runtime.policy_lines(cfg)
+        self.assertEqual(lines[-1], "Run the dry run as root to compare the tool policy of orion with the installed one.")
+
+    def test_the_fleet_api_looks_up_pull_requests_for_each_crew_worktree_of_a_github_repository(self):
+        config, secrets = crew_fleet("orion", "vega")
+        config["captains"][1]["crew"] = {"claude": {"count": 1}, "codex": {"count": 0}}
+        config["repositories"] += [{"id": "tool", "url": "https://git.example.com/team/tool.git"},
+                                   {"id": "library", "url": "https://github.com/example/library"}]
+        config["stargate"] = {"api": {"port": 8484}}
+        # Only a Stargate whose Fleet API takes the key gets it: v0.40 and v0.41 refuse it in their config check.
+        app = Path(self.root.name) / "app"
+        self.start(patch.object(runtime, "APP", app))
+        checkout = app / "src" / f"stargate-{runtime.STARGATE_REF}"
+        schema = checkout / "src/api/v1/config.ts"
+        schema.parent.mkdir(parents=True)
+        schema.write_text("const ApiConfig = Schema.Struct({ listen: Schema.String })\n")
+        self.render(config, secrets)
+        self.assertNotIn("pullRequestRepositories", json.loads((self.etc / "stargate.json").read_text())["api"])
+        # v0.42 and v0.43 keep it in src/api/v1, v0.44 on in src/observability/dashboard/api/v1.
+        schema.write_text("  pullRequestRepositories: Schema.optional(pullRequestRepositories),\n")
+        cfg = runtime.validate(config, secrets)
+        self.assertTrue(runtime.stargate_has_pull_request_repositories(cfg))
+        schema.unlink()
+        self.assertFalse(runtime.stargate_has_pull_request_repositories(cfg))
+        schema = checkout / "src/observability/dashboard/api/v1/config.ts"
+        schema.parent.mkdir(parents=True)
+        schema.write_text("  pullRequestRepositories: Schema.optional(pullRequestRepositories),\n")
+        self.assertTrue(runtime.stargate_has_pull_request_repositories(cfg))
+        self.render(config, secrets)
+        api = json.loads((self.etc / "stargate.json").read_text())["api"]
+        worktrees = {captain: self.state / "agents" / captain / "worktrees" for captain in ("orion", "vega")}
+        self.assertEqual(api["pullRequestRepositories"], {
+            **{str(worktrees["orion"] / crew / "project"): "example/project" for crew in fixture.CREW},
+            **{str(worktrees["orion"] / crew / "library"): "example/library" for crew in fixture.CREW},
+            str(worktrees["vega"] / "claude-1/project"): "example/project",
+            str(worktrees["vega"] / "claude-1/library"): "example/library",
+        })
+        # Keyed by the worktree paths the crew plugin is given.
+        cfg = runtime.validate(config, secrets)
+        options = runtime.crew_options(cfg, cfg["members"][1], self.state / "agents/orion", 4097, "ses_fixture")
+        self.assertEqual(options["projects"]["library"]["worktrees"]["claude-1"],
+                         str(worktrees["orion"] / "claude-1/library"))
+        self.assertEqual([runtime.github_repository(url) for url in (
+            "https://github.com/example/project.git", "https://GitHub.com/example/project/", "http://github.com/a/b",
+            "https://github.com/example", "https://github.com/example/..", "https://gitlab.com/example/project")],
+            ["example/project", "example/project", None, None, None, None])
+        # Without the Fleet API there is nothing to configure.
+        config.pop("stargate")
+        self.render(config, secrets)
+        self.assertNotIn("api", json.loads((self.etc / "stargate.json").read_text()))
 
     def test_a_marker_without_a_confirmed_record_is_withdrawn_before_anything_is_written(self):
         config, secrets = crew_fleet("orion")
@@ -842,8 +933,15 @@ class InstalledFleet(unittest.TestCase):
                                      crew={"claude": {"count": 0}, "codex": {"count": 0}})
         api = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"],
                "agentUrl": "http://127.0.0.1:3001"}
+        # The same fleet as a new one is set up now: plain officer names and named crew.
+        plain = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        plain.update(repositories=config["repositories"], irc={**plain["irc"], "auth": "password"},
+                     captains=[plain["captains"][0], {"id": "vega", "name": "Vega", **{
+                         key: config["captains"][1][key] for key in ("harness", "crew")}}])
         return {"local-api": ({**config, "api": api}, {**secrets, "apiToken": "aaa.bbb.admin"}),
-                "no-api": (config, secrets)}
+                "no-api": (config, secrets),
+                "plain-names": ({**plain, "api": api},
+                                {**secrets_for("atlas", "orion", "vega"), "apiToken": "aaa.bbb.admin"})}
 
     def render_mode(self, config, secrets):
         servers = {4096 + index: FakeOpenCode() for index in range(3)}
@@ -873,7 +971,8 @@ class InstalledFleet(unittest.TestCase):
             (self.etc / name).write_text(json.dumps(value))
             (self.etc / name).chmod(0o600)
         sockets, tmpfiles = Path(self.root.name) / "run/agents", self.etc / "tmpfiles.conf"
-        for name, value in (("AGENT_SOCKETS", sockets), ("AGENT_TMPFILES", tmpfiles)):
+        self.request = Path(self.root.name) / "bin/subspace-request"
+        for name, value in (("AGENT_SOCKETS", sockets), ("AGENT_TMPFILES", tmpfiles), ("SUBSPACE_REQUEST", self.request)):
             self.start(patch.object(runtime, name, value))
         self.start(patch.object(runtime, "stargate_has_subspace_agents", return_value=True))
         (self.state / "gateway").mkdir()  # account() makes it on a VM
@@ -938,20 +1037,37 @@ class InstalledFleet(unittest.TestCase):
                 self.assertFalse({runtime.AGENT_HEADER, "headersHelper", "http://127.0.0.1:3001/mcp"} & found, path)
                 self.assertNotIn(token, path.read_text())
         self.assertFalse(any("agent-header" in path.read_text() for path in self.systemd.iterdir()))
-        # The officers' instructions say how REST calls reach the API.
+        # The officers' instructions name one stable REST command, which every OpenCode officer's policy allows,
+        # the rear admiral's included, and which runs Stargate's request command on the caller's own socket.
         roles_input = [json.loads(call.kwargs["input"]) for call in runtime.subprocess.run.call_args_list
                        if call.args[0][-1] == "role"]
-        self.assertTrue(all("subspace request --socket" in document["instructions"] for document in roles_input))
-        self.assertIn(f"subspace request --socket {sockets / 'orion/api.sock'} /api/v1/me",
-                      json.dumps(roles_input))
+        self.assertEqual({document["role"] for document in roles_input}, {"rear-admiral", "captain"})
+        for document in roles_input:
+            self.assertIn("subspace-request /api/v1/me\nsubspace-request --method POST", document["instructions"])
+            self.assertNotIn("--socket", document["instructions"])
+        for officer in ("atlas", "orion"):
+            rules = json.loads((self.etc / f"opencode-{officer}.json").read_text())["permissions"]
+            self.assertEqual(rules[-2:], [runtime.SUBSPACE_REQUEST_GRANT, runtime.SUBSPACE_MCP_GRANT])
+            self.assertEqual(fixture.opencode_decision(rules, "shell", ["subspace-request /api/v1/me"]), "allow")
+        script = self.request.read_text()
+        self.assertEqual(script.splitlines()[-1], f'exec {bridge[0]} {bridge[1]} subspace request --socket "$socket" "$@"')
+        self.assertIn(f'socket="{sockets}/$officer/api.sock"', script)
+        # Run by a user that is not an officer's (subprocess.run is this suite's mock), it refuses.
+        self.assertFalse(pwd.getpwuid(os.getuid()).pw_name.startswith("ss-"))
+        shell = subprocess.Popen(["sh", str(self.request), "/api/v1/me"], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        _, error = shell.communicate(timeout=30)
+        self.assertEqual(shell.returncode, 2, error)
+        self.assertIn("run it as a fleet officer", error)
         # Registration is left to the hosted API's administrators: no request, no token.
         import fleetctl
         with patch.object(fleetctl, "Api") as api:
             fleetctl.register(cfg)
         api.assert_not_called()
-        # Back to an API on this VM, the tmpfiles entry goes.
+        # Back to an API on this VM, the tmpfiles entry and the REST command go.
         runtime.render(runtime.validate(*self.fleets()["local-api"]), {"tokens": {}, "cloud": {}})
         self.assertFalse(tmpfiles.exists())
+        self.assertFalse(self.request.exists())
 
     def test_a_hosted_api_refuses_what_it_cannot_serve(self):
         config, secrets, extra, token, _, _ = self.hosted()
@@ -974,10 +1090,97 @@ class InstalledFleet(unittest.TestCase):
             runtime.render(cfg, extra)
         self.assertFalse((self.etc / "stargate.json").exists())
 
-    def test_the_default_modes_render_byte_for_byte_as_before(self):
-        """The modes that existed before the hosted API render exactly what they rendered then.
+    def test_memory_limits_reach_every_unit_and_hand_made_ones_stay_and_are_reported(self):
+        config, secrets = crew_fleet("orion", "vega")
+        config["captains"][1].update(harness={"type": "claude-sdk", "family": "claude"},
+                                     crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        config["memory"] = {"captain": {"max": "24G"}, "rearAdmiral": {"tasksMax": 1024}}
+        config["captains"][0]["memory"] = {"max": "28G", "swapMax": 0}
+        # Limits set by hand before this installer had its own: systemctl set-property, and a drop-in file.
+        root = Path(self.root.name)
+        control, system = root / "system.control", root / "system"
+        orion = "subspace-fleet-engine-orion.service"
+        hand = {
+            control / f"{orion}.d/50-MemoryMax.conf": f"[Service]\nMemoryMax={20 * 1024 ** 3}\n",
+            control / f"{orion}.d/50-TasksMax.conf": "[Service]\nTasksMax=4096\n",
+            system / f"{orion}.d/60-oom.conf": "[Service]\nOOMPolicy=continue\n",
+        }
+        for path, text in hand.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.start(patch.object(runtime.memory, "DROPIN_DIRS", (control, system)))
+        self.render(config, secrets)
 
-        tests/golden/default-render.json holds those files as main rendered them before the hosted-API mode.
+        def service(unit):
+            return (self.systemd / unit).read_text().splitlines()
+
+        # The officer's own setting, its role's, the sizing: each unit has its officer's limits.
+        self.assertEqual(service(orion)[-8:-3], ["OOMPolicy=continue", "MemoryHigh=25G", "MemoryMax=28G",
+                                                  "MemorySwapMax=0", "TasksMax=4096"])
+        # A Claude Agent SDK captain's work runs in its own gateway, which takes the captain's limits.
+        self.assertIn("MemoryMax=24G", service("subspace-fleet-gateway-agent-vega.service"))
+        self.assertIn("MemoryHigh=21G", service("subspace-fleet-gateway-agent-vega.service"))
+        self.assertIn("TasksMax=1024", service("subspace-fleet-engine-atlas.service"))
+        self.assertIn("MemoryMax=4G", service("subspace-fleet-engine-atlas.service"))
+        # The shared gateway has no cap and a lowered OOM score.
+        gateway = service("subspace-fleet-gateway.service")
+        self.assertIn("OOMScoreAdjust=-500", gateway)
+        self.assertFalse([line for line in gateway if line.startswith(("Memory", "TasksMax", "OOMPolicy"))])
+        # The hand-made limits are neither removed nor loosened nor repeated: the installer writes no drop-in.
+        self.assertEqual({path: path.read_text() for path in hand}, hand)
+        self.assertEqual(sorted(path for path in root.rglob("*.conf") if path.is_file()), sorted(hand))
+        # The dry run and the summary say which win, against the installer's values, and how to hand them over.
+        with patch.object(runtime.memory, "swap_state", return_value={
+                "active": [{"name": "/swapfile", "size": 8192, "used": 0}], "configured": [], "agent": None,
+                "filesystem": "ext4", "mount": "/", "free": 102400, "swappiness": 10,
+                "swappinessFiles": [(Path("/etc/sysctl.d/99-swap.conf"), "10")], "own": False, "ownSettings": False}):
+            lines = runtime.memory_lines(runtime.validate(config, secrets))
+        [entry] = [line for line in lines if line.startswith("  orion: ")]
+        self.assertEqual(entry, f"  orion: MemoryMax=20G (the installer's: 28G), TasksMax=4096 in {control / orion}.d; "
+                                f"OOMPolicy=continue in {system / orion}.d/60-oom.conf.")
+        self.assertEqual(lines[-3:-1], [f"  sudo rm -- {control / orion}.d/50-MemoryMax.conf "
+                                        f"{control / orion}.d/50-TasksMax.conf {system / orion}.d/60-oom.conf",
+                                        "  sudo systemctl daemon-reload"])
+        self.assertEqual(lines[-1], "Swap: this VM already has swap: /swapfile (8 GiB). The kernel's vm.swappiness is "
+                                    "10, set to 10 in /etc/sysctl.d/99-swap.conf, which the installer leaves.")
+        # After the install, the summary says what the VM has, once.
+        with patch.object(runtime.memory, "swap_state", return_value={
+                "active": [{"name": "/swapfile", "size": 8192, "used": 512}], "configured": [], "agent": None,
+                "filesystem": "ext4", "mount": "/", "free": 102400, "swappiness": 10, "swappinessFiles": [],
+                "own": False, "ownSettings": True}):
+            summary = runtime.memory_lines(runtime.validate(config, secrets), installed=True)
+        self.assertEqual(summary[-1], "Swap: this VM has swap: /swapfile, 8 GiB with 512 MiB in use. The kernel's "
+                                      "vm.swappiness is 10, the installer's setting "
+                                      "(/etc/sysctl.d/60-subspace-fleet-swap.conf), so it swaps only under pressure.")
+
+    def test_a_claude_agent_sdk_rear_admirals_gateway_takes_its_limits_as_the_dry_run_says(self):
+        config, secrets = crew_fleet("orion")
+        config["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        config["rearAdmiral"]["harness"] = {"type": "claude-sdk", "family": "claude"}
+        self.render(config, secrets)
+        gateway = (self.systemd / "subspace-fleet-gateway.service").read_text().splitlines()
+        shared = (self.systemd / "subspace-fleet-gateway-opencode.service").read_text().splitlines()
+        self.assertIn("MemoryMax=4G", gateway)
+        self.assertNotIn("OOMScoreAdjust=-500", gateway)
+        self.assertIn("OOMScoreAdjust=-500", shared)
+        self.assertFalse([line for line in shared if line.startswith(("Memory", "TasksMax", "OOMPolicy"))])
+        with patch.object(runtime.memory, "swap_state", return_value={
+                "active": [], "configured": [], "agent": None, "filesystem": "ext4", "mount": "/", "free": 102400,
+                "swappiness": 60, "swappinessFiles": [], "own": False, "ownSettings": False}), \
+                patch.object(runtime.memory, "DROPIN_DIRS", ()):
+            lines = runtime.memory_lines(runtime.validate(config, secrets))
+        self.assertIn("  The rear admiral's work runs in the fleet's gateway, subspace-fleet-gateway.service, which "
+                      "takes the rear admiral's limits. The model proxy and the OpenCode officers' gateway, "
+                      "subspace-fleet-gateway-opencode.service, have no cap, so a leak there cannot take the fleet down "
+                      "by itself; OOMScoreAdjust=-500 has the kernel kill an agent's process before them if the whole "
+                      "VM runs out of memory.", lines)
+
+    def test_the_default_modes_render_byte_for_byte_as_before(self):
+        """The modes that existed before the hosted API render exactly what they rendered then, and a fleet with
+        plain officer names and named crew renders as recorded.
+
+        tests/golden/default-render.json holds those files as main rendered them before the hosted-API mode, with
+        each crew member's model family and slot beside its name, and the plain-names fleet as first recorded.
         Write it again only for an intended change to these modes:
         SUBSPACE_UPDATE_GOLDEN=1 python3 -B subspace-installer/tests/sessions_test.py
         """

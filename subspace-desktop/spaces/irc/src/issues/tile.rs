@@ -1,9 +1,9 @@
 //! Stateless issue compositions. Session ownership stays in IssueReferences.
-mod accent;
 mod activity;
 mod compact;
 mod facts;
 mod label;
+mod ordinary;
 mod tracker;
 pub(crate) use activity::relative;
 pub(super) use compact::tile;
@@ -23,7 +23,7 @@ use subspace_framework::dashboard::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Variant {
-    Accent,
+    Ordinary,
     Tracker,
 }
 const CARD_WIDTH_REM: f32 = 400. / subspace_framework::dashboard::density::REFERENCE_REM;
@@ -34,10 +34,10 @@ pub(super) fn variant(summary: &IssueSummary) -> Variant {
     if summary.tracker {
         Variant::Tracker
     } else {
-        Variant::Accent
+        Variant::Ordinary
     }
 }
-/// The A/B compositions only appear in this passive hover surface.
+/// The two issue compositions share the same passive popover frame.
 pub(super) fn hover_card(
     summary: &IssueSummary,
     now: DateTime<Utc>,
@@ -47,19 +47,13 @@ pub(super) fn hover_card(
     let variant = variant(summary);
     reference_card::frame(
         content(summary, variant, now, tokens, cx),
-        treatment(summary, variant),
+        Treatment::Outline,
         tokens,
         cx,
     )
     .w(gpui_kit::rems(CARD_WIDTH_REM))
 }
 
-pub(super) fn treatment(summary: &IssueSummary, variant: Variant) -> Treatment {
-    match variant {
-        Variant::Accent => Treatment::Accent(state_glyph(summary.state.kind).1),
-        Variant::Tracker => Treatment::Outline,
-    }
-}
 pub(super) fn content(
     summary: &IssueSummary,
     variant: Variant,
@@ -68,7 +62,7 @@ pub(super) fn content(
     cx: &App,
 ) -> AnyElement {
     match variant {
-        Variant::Accent => accent::card(summary, now, tokens, cx).into_any_element(),
+        Variant::Ordinary => ordinary::card(summary, now, tokens, cx).into_any_element(),
         Variant::Tracker => tracker::card(summary, now, tokens, cx).into_any_element(),
     }
 }

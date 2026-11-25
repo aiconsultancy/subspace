@@ -56,12 +56,15 @@ pub fn detail_query() -> String {
     format!(
         "query Item($owner: String!, $name: String!, $number: Int!) {{
   repository(owner: $owner, name: $name) {{
+    viewerPermission mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
     issueOrPullRequest(number: $number) {{
       __typename
       ... on PullRequest {{ {common}
         isDraft additions deletions headRefName baseRefName reviewDecision
+        headRefOid mergeable mergeStateStatus isMergeQueueEnabled
         bodyHTML viewerDidAuthor viewerCanReact locked changedFiles
         latestReviews(first: 100) {{ nodes {{ author {{ {ACTOR} }} state }} }}
+        viewerLatestReview {{ state author {{ {ACTOR} }} }}
         latestOpinionatedReviews(first: 100) {{ nodes {{ author {{ {ACTOR} }} state }} }}
         reviewRequests(first: 100) {{ nodes {{ requestedReviewer {{
           __typename ... on User {{ login name }} ... on Bot {{ login }} ... on Mannequin {{ login }}

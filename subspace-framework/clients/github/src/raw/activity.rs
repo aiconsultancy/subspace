@@ -35,6 +35,21 @@ fn reviewer_state(state: &str) -> Option<ReviewerState> {
     }
 }
 
+/// A new request to review does not dismiss an already submitted approval.
+pub fn viewer_approved(node: &RawDetail, login: &str) -> bool {
+    node.latest_opinionated_reviews
+        .iter()
+        .flat_map(Nodes::present)
+        .chain(node.viewer_latest_review.as_ref())
+        .find(|review| {
+            review
+                .author
+                .as_ref()
+                .is_some_and(|actor| actor.login.eq_ignore_ascii_case(login))
+        })
+        .is_some_and(|review| review.state == "APPROVED")
+}
+
 pub fn map_reviewers(node: &RawDetail) -> Vec<GhReviewer> {
     let mut reviewers = Vec::new();
     let mut put = |user: GhUser, state: Option<ReviewerState>| {
@@ -218,6 +233,8 @@ pub fn to_detail(node: &RawDetail) -> GhItemDetail {
         viewer_can_review: is_pr && open && !node.viewer_did_author,
         viewer_can_comment: node.viewer_can_react && !node.locked,
         changed_files: if is_pr { node.changed_files } else { None },
+        merge_target: None,
+        viewer_approved: false,
         item,
     }
 }

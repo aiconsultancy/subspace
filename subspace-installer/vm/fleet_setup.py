@@ -54,9 +54,11 @@ INSTALLER = PAYLOAD / "subspace-installer"
 sys.path.insert(0, str(HERE.parent / "lib"))
 import fleet_records  # noqa: E402
 import irc_accounts  # noqa: E402
+import memory  # noqa: E402
 import postgres_check  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
+import toolchains  # noqa: E402
 INPUTS = Path("/root/fleet")
 API_DIR = Path("/opt/subspace/api")
 FLEET_APP = Path("/opt/subspace-fleet")
@@ -89,11 +91,15 @@ EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 ORG = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 SHA = re.compile(r"[0-9a-f]{40}")
 JWT = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 VAULT = re.compile(r"[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]")
 GATEWAY_USER = "ss-fleet-gateway"  # The fleet installer's shared Stargate gateway user (runtime.GATEWAY).
 LINUX_USER = re.compile(r"[a-z_][a-z0-9_.-]{0,31}")
 # Development sign-in is only the default: an operator who switches the API to WorkOS or Entra keeps it.
 DEV_AUTH = {"AUTH_PROVIDERS": "dev", "ENABLE_DEV_AUTH": "true", "NODE_ENV": "development"}
+# Stand-ins, shaped as bearer JWTs, for the tokens a real run gets from the API: the installer checks inputs that
+# name the API before the API runs (planned_inputs), and the dry run never signs in.
+PLANNED_TOKENS = {"apiToken": "planned.administrator.token", "rearAdmiralApiToken": "planned.rear-admiral.token"}
 CIDR = re.compile(r"[0-9a-fA-F:.]+(?:/[0-9]{1,3})?")
 # Agent dispatch: what switching it on does, in the words the prompt and the summary use.
 DISPATCH_SUMMARY = ("issues flagged Ready for agents are offered to the captains in fleet command, and issues "
@@ -118,6 +124,14 @@ SECRET_OWNER = 0  # root
 DATABASE_CA = "/etc/subspace/database-ca.pem"
 # The exit code of the API's `scripts/migrate.ts --check` when the database lacks migrations the API needs.
 MIGRATIONS_PENDING = 3
+# The fleet's toolchains as the person confirmed them, each with where it came from, beside answers.json: what
+# fleet.json's toolchains and systemPackages are written from, the repositories detection has proposed from, what
+# was declined, and a proposal waiting for an answer.
+TOOLCHAIN_RECORD = "toolchains.json"
+# Where detection reads the repositories: the rear admiral's reference checkouts, which hold every repository,
+# private ones included, as the mirror service refreshes them. Officers' homes hold their per-user tools.
+REFERENCES = Path("/var/lib/subspace-fleet/references")
+AGENT_HOMES = Path("/var/lib/subspace-fleet/agents")
 
 
 class SetupError(Exception):
@@ -125,9 +139,19 @@ class SetupError(Exception):
 
 
 class ApiError(SetupError):
-    def __init__(self, message, status):
-        super().__init__(message)
+    def __init__(self, message, status, detail=""):
+        super().__init__(message + (f" {detail}" if detail else ""))
         self.status = status
+        self.detail = detail
+
+
+def problem_detail(error):
+    """The detail of an API problem response, one line of at most 400 characters, or ''."""
+    try:
+        detail = json.load(error).get("detail")
+    except (ValueError, AttributeError, OSError):
+        return ""
+    return " ".join(str(detail).split())[:400] if isinstance(detail, str) else ""
 
 
 def say(message):
@@ -189,7 +213,13 @@ def parse_args(argv):
     parser.add_argument("--name", help="fleet display name, for example 'Example Fleet'")
     parser.add_argument("--slug", help="stable fleet ID; defaults to the name in lower case")
     parser.add_argument("--rear-admiral", help="the rear admiral's name, for example Atlas")
-    parser.add_argument("--captains", help="comma-separated captain (ship) names, for example 'Orion,Vega'")
+    parser.add_argument("--captains", help="comma-separated captain (ship) names, for example 'Orion,Vega'. Each "
+                        "officer's name in lower case is its one name: IRC account and nick, Subspace API agent name "
+                        "and Stargate ID, unique on the IRC server and in the API's organisation")
+    parser.add_argument("--crew-names", help="names for each captain's crew, in slot order (Claude-family crew, then "
+                        "Codex-family), as 'CAPTAIN=NAME,NAME,...;CAPTAIN=...', for example "
+                        "'Orion=Rigel,Deneb,Mira,Sirius'. Required for a new captain with crew; unique in the fleet "
+                        "ignoring case, and none an officer's name. Kept on later runs")
     parser.add_argument("--admin", help="your IRC account and nickname (default admiral)")
     parser.add_argument("--admin-email", help="development sign-in email (default developer@example.com)")
     parser.add_argument("--organisation", help="development sign-in organisation (default local)")
@@ -211,6 +241,14 @@ def parse_args(argv):
         parser.add_argument(f"--{flag}-effort", help=f"reasoning effort of {who}: {', '.join(EFFORTS)} (default "
                             f"{default['effort']} on {default['model']}, else the provider's; kept on later runs; '' "
                             "returns to the default)")
+    parser.add_argument("--captain-memory", help="each captain's memory hard cap, its crew included, such as 24G: "
+                        "'auto' (the default) sizes it from the VM's memory and the fleet, 'none' sets no cap. Kept on "
+                        "later runs (installer README, 'Memory limits and swap')")
+    parser.add_argument("--rear-admiral-memory", help="the rear admiral's memory hard cap, such as 4G, 'auto' (the "
+                        "default) or 'none'. Kept on later runs")
+    parser.add_argument("--swap", help="the VM's swap: 'auto' (the default: a swap file of an eighth of the VM's "
+                        "memory, 2 to 16 GiB, when it has no swap), a size such as 8G, or 'none' to leave swap as it "
+                        "is. Kept on later runs")
     parser.add_argument("--demo", dest="demo", action="store_true", default=None, help="seed fictional demo data")
     parser.add_argument("--no-demo", dest="demo", action="store_false")
     parser.add_argument("--irc", choices=["local", "remote"],
@@ -274,9 +312,25 @@ def parse_args(argv):
     parser.add_argument("--inputs", default=str(INPUTS), help=argparse.SUPPRESS)
     parser.add_argument("--dry-run", action="store_true", help="validate the inputs only, changing nothing")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt; fail on missing answers")
+    parser.add_argument("--initiative", help="adopt an existing initiative, by its UUID, as the fleet's, instead of "
+                        "the one setup finds or creates by the fleet's name. With the API on this VM setup assigns it "
+                        "to this fleet, moving it from any other; a hosted API's administrator assigns it. '' goes "
+                        "back to finding one by name. Kept on later runs")
     parser.add_argument("--captain-tools", choices=["standard", "delegate"],
-                        help="standard lets captains code; delegate reserves coding for crew and lets captains "
-                        "inspect changes, create GitHub PRs and use the Subspace API. Kept on later runs")
+                        help="delegate (the default for a new fleet) leaves edits, commits and pushes to the crew and "
+                        "gives captains an open shell without them; standard lets captains code. Kept on later runs; "
+                        "a fleet set up before this option keeps standard")
+    parser.add_argument("--toolchains", help="the toolchains the repositories need: 'derive' (after cloning, setup "
+                        "reads the repositories and proposes what they need, installing nothing until you confirm "
+                        "it), 'none' (the default: Node 24 and the base tools), or tools as TOOL@VERSION, "
+                        "comma-separated, such as node@22.11.0,pnpm@9.12.3,cargo:cargo-nextest@0.9.100, which "
+                        "confirms them; --toolchains=-TOOL or =-TOOL@VERSION removes one. Kept on later runs")
+    parser.add_argument("--system-packages", help="Debian packages the repositories need, installed with apt, "
+                        "comma-separated, such as zsh,clang,libssl-dev; --system-packages=-PACKAGE takes one off the "
+                        "list (it stays installed). Kept on later runs")
+    parser.add_argument("--verify-toolchains", action="store_true", help="after installing, run each repository's "
+                        "basic check as a crew member would and report pass or fail per repository; never stops the "
+                        "install")
     return parser.parse_args(argv)
 
 
@@ -322,6 +376,9 @@ def gather(args, saved):
         captains = [name.strip() for name in captains.split(",") if name.strip()]
     require(captains, "Name at least one captain with --captains.")
     answers["captains"] = captains
+    if "officerNames" not in answers:
+        # A fleet set up before plain names keeps its fleet-prefixed accounts until 'rename-officers' changes them.
+        answers["officerNames"] = "prefixed" if saved.get("slug") else "plain"
     pick("admin", args.admin, "Your IRC account name", "admiral")
     pick("adminEmail", args.admin_email, "Development sign-in email", "developer@example.com")
     pick("organisation", args.organisation, "Development sign-in organisation", "local")
@@ -337,13 +394,60 @@ def gather(args, saved):
             crew[family] = flag
         elif family not in crew:
             crew[family] = int(prompt(f"{family.title()}-family crew per captain", "2", interactive) or 2)
+    named = answers.setdefault("crewNames", {})
+    # A captain taken out of the roster takes its crew's saved names and IDs along; one added again names its crew
+    # anew, as a new captain does.
+    captain_ids = {ident(name, "Captain") for name in answers["captains"]}
+    for key in ("crewNames", "crewIds"):
+        for captain_id in [captain_id for captain_id in answers.get(key) or {} if captain_id not in captain_ids]:
+            del answers[key][captain_id]
+    if args.crew_names is not None:
+        given = parse_crew_names(args.crew_names, answers)
+        refuse_installed_crew_ids(given)
+        named.update(given)
+    repositories = answers.get("repositories") or (read_json(INPUTS / "fleet.json", {}) or {}).get("repositories")
+    if interactive and repositories:
+        # Crew need a repository; ask for their names once a captain has any.
+        for name in answers["captains"]:
+            captain_id = ident(name, "Captain")
+            slots = crew_slots(answers)
+            if slots and captain_id not in named and not crew_installed(captain_id):
+                given = prompt(f"Names for {name}'s crew ({', '.join(slot_label(slot) for slot in slots)}), "
+                               "comma-separated", None, interactive) or ""
+                named.update(parse_crew_names(f"{name}={given}", answers))
     if args.captain_tools is not None:
         answers["captainTools"] = args.captain_tools
-    elif interactive and not saved and not (INPUTS / "fleet.json").exists():
-        policy = prompt("Captain tools: standard (captains can code) or delegate (crew code; captains manage work, PRs and issues)",
-                        "standard", interactive)
+    elif not saved and not (INPUTS / "fleet.json").exists() and not (FLEET_ETC / "fleet.json").exists():
+        # A new fleet: captains with crew leave coding to them. A fleet set up before captainTools existed has no
+        # answer and keeps the standard policy, which a fleet.json without captainTools means.
+        policy = prompt("Captain tools: delegate (crew edit, commit and push; captains plan, review and open pull "
+                        "requests) or standard (captains code too)", "delegate", interactive)
         require(policy in ("standard", "delegate"), "Choose standard or delegate for --captain-tools.")
         answers["captainTools"] = policy
+    if args.toolchains in ("derive", "none"):
+        answers["toolchains"] = args.toolchains
+    elif args.toolchains is not None:
+        # Tools listed by hand: a fleet that derives keeps deriving for repositories added later.
+        if answers.get("toolchains") != "derive":
+            answers["toolchains"] = "list"
+    elif "toolchains" not in answers:
+        if interactive and not saved and repositories:
+            # The default is the documented one, none, as for unattended runs (INSTALL.md, question 20).
+            choice = prompt("Toolchains the repositories need: derive (setup reads them after cloning and proposes "
+                            "what they need, for you to confirm), none, or tools as TOOL@VERSION,...", "none",
+                            interactive) or "none"
+            if choice not in ("derive", "none"):
+                args.toolchains, choice = choice, "list"
+            answers["toolchains"] = choice
+        else:
+            # Unattended, and fleets set up before the question: no detection; Node 24 and the base tools.
+            answers["toolchains"] = "none"
+    if args.initiative == "":
+        answers.pop("initiativeId", None)
+    elif args.initiative is not None:
+        require(UUID.fullmatch(args.initiative), "--initiative must be an initiative's UUID, such as "
+                "00000000-0000-4000-8000-000000000001 (the desktop shows it, as does GET /api/v1/initiatives).")
+        answers["initiativeId"] = args.initiative.lower()
     models = answers.setdefault("crewModels", {})
     for family, flag in (("claude", args.crew_claude_model), ("codex", args.crew_codex_model)):
         if flag == "":
@@ -378,6 +482,22 @@ def gather(args, saved):
             require(effort == "" or effort in EFFORTS, f"--{flag}-effort must be one of {', '.join(EFFORTS)}.")
             choice["effort"] = effort
     answers["officerModels"] = officers
+    # Memory: each role's hard cap and the VM's swap. auto is the fleet installer's own sizing, even over a value
+    # set in fleet.json by hand; the soft limit and the swap allowance follow the hard cap (lib/memory.py).
+    chosen = answers.setdefault("memory", {})
+    for key, value, flag in (("captain", args.captain_memory, "--captain-memory"),
+                             ("rearAdmiral", args.rear_admiral_memory, "--rear-admiral-memory"),
+                             ("swap", args.swap, "--swap")):
+        if value is None:
+            continue
+        value = value.strip() or "auto"
+        check = memory.swap_setting if key == "swap" else memory.parse_size
+        try:
+            if value != "auto":
+                check(value, flag)
+        except memory.Refused as error:
+            raise SetupError(f"{error} 'auto' is the installer's own sizing.") from None
+        chosen[key] = value
     answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
         pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
@@ -482,6 +602,83 @@ def gather(args, saved):
     return answers
 
 
+def crew_slots(answers):
+    """Each captain's crew slots in order, Claude-family first: claude-1, claude-2, codex-1, ..."""
+    return [f"{family}-{slot}" for family in ("claude", "codex")
+            for slot in range(1, int(answers.get("crew", {}).get(family, 0) or 0) + 1)]
+
+
+def slot_label(slot):
+    family, _, number = slot.partition("-")
+    return f"{family.title()} {number}"
+
+
+def parse_crew_names(value, answers):
+    """--crew-names 'CAPTAIN=NAME,NAME,...;CAPTAIN=...' as {captain ID: {slot: name}}, names in slot order."""
+    result = {}
+    slots = crew_slots(answers)
+    for part in (item.strip() for item in value.split(";")):
+        if not part:
+            continue
+        captain, equals, names = part.partition("=")
+        require(equals and captain.strip(), f"--crew-names takes CAPTAIN=NAME,NAME,... for each captain, separated by "
+                f"semicolons, not {part!r}.")
+        captain_id = ident(captain, "Captain")
+        require(captain_id in [ident(name, "Captain") for name in answers["captains"]],
+                f"--crew-names names {captain.strip()}, which is not one of the captains.")
+        listed = [name.strip() for name in names.split(",") if name.strip()]
+        require(len(listed) == len(slots), f"--crew-names gives {captain.strip()} {len(listed)} crew names for "
+                f"{len(slots)} crew ({', '.join(slot_label(slot) for slot in slots)}): name each one, in that order.")
+        result[captain_id] = dict(zip(slots, listed, strict=True))
+    return result
+
+
+def crew_installed(captain_id):
+    """Whether this captain's crew are installed: the fleet's inputs have the captain and repositories, so its crew
+    exist (with names or slot names) and keep them; a captain without crew yet names them when they first come."""
+    config = read_json(INPUTS / "fleet.json", {}) or {}
+    return bool(config.get("repositories")) and any(
+        isinstance(person, dict) and person.get("id") == captain_id for person in config.get("captains", []))
+
+
+def installed_crew(captain_id):
+    """An installed captain's crew by slot as (ID, name), from the fleet's inputs, or None for a captain whose crew
+    are not installed: the ID Stargate keeps each one's sessions, worktrees and queued tasks under, from crewIds,
+    else its name's; the name from crewNames, else the slot's own name, 'Claude 1'."""
+    if not crew_installed(captain_id):
+        return None
+    config = read_json(INPUTS / "fleet.json", {}) or {}
+    person = next(person for person in config["captains"] if isinstance(person, dict) and person.get("id") == captain_id)
+    counts = {}
+    for family in ("claude", "codex"):
+        team = {**((config.get("crew") or {}).get(family) or {}), **((person.get("crew") or {}).get(family) or {})}
+        counts[family] = team.get("count", 2)  # The fleet installer's default.
+    names, ids = person.get("crewNames") or {}, person.get("crewIds") or {}
+    crew = {}
+    for slot in crew_slots({"crew": counts}):
+        name = names.get(slot, slot_label(slot))
+        crew[slot] = (ids.get(slot) or runtime.crew_id(name), name)
+    return crew
+
+
+def refuse_installed_crew_ids(named):
+    """Refuse --crew-names that would give an installed crew member another ID, before anything is saved: its
+    sessions, worktrees and queued tasks are kept under its ID, and a captain whose session is pinned refuses any
+    change on every later run. rename-officers --crew-names names them and keeps their IDs; the name a crew member
+    has is accepted again, also when it keeps another ID under it (crewIds)."""
+    changed = []
+    for captain_id, names in named.items():
+        installed = installed_crew(captain_id) or {}
+        changed += [f"{captain_id}'s {slot_label(slot)} ({installed[slot][0]} would become {runtime.crew_id(name)})"
+                    for slot, name in names.items() if slot in installed
+                    and runtime.crew_id(name) not in (installed[slot][0], runtime.crew_id(installed[slot][1]))]
+    require(not changed, f"--crew-names would give installed crew new IDs: {'; '.join(changed)}. Stargate keeps a crew "
+            "member's sessions, worktrees and queued tasks under its ID, so setup never changes an installed one. "
+            "Name an installed fleet's crew with 'sudo subspace-setup rename-officers --crew-names ...', which keeps "
+            "their IDs (installer README, 'Crew names'), or give these captains their installed names. Nothing was "
+            "changed.")
+
+
 def parse_repositories(value):
     """'URL' or 'ID=URL' items as [ID, URL, named]. The ID defaults to the repository's name."""
     rows = []
@@ -524,19 +721,31 @@ def check_answers(answers):
     require(SLUG.fullmatch(answers["slug"]), "The fleet ID must be at most 20 lower-case letters, digits or hyphens.")
     rear = ident(answers["rearAdmiral"], "Rear admiral")
     ids = [rear] + [ident(name, "Captain") for name in answers["captains"]]
-    require(len(set(ids)) == len(ids), "The rear admiral and captains need distinct names.")
+    names = [answers["rearAdmiral"], *answers["captains"]]
+    for index, agent in enumerate(ids):
+        for other in range(index):
+            require(ids[other] != agent,
+                    f"{names[other]} and {names[index]} differ only by case or punctuation, but each officer's name is "
+                    "its IRC account and its agent name in the Subspace API, which compare names without case. Give "
+                    "the rear admiral and every captain a distinct name." if names[other] != names[index] else
+                    "The rear admiral and captains need distinct names.")
     require(len(answers["captains"]) <= 12, "Use at most 12 captains.")
     admin = answers["admin"]
     require(ACCOUNT.fullmatch(admin) and admin not in RESERVED and not admin.startswith("guest-"),
             "Choose an IRC account of lower-case letters, digits or hyphens that starts with a letter, such as 'admiral'.")
-    agent_accounts = [f"{answers['slug']}-{agent}" for agent in ids]
+    plain = answers.get("officerNames") == "plain"
+    agent_accounts = [officer_account(answers, agent) for agent in ids]
     require(admin not in ids and admin not in agent_accounts
-            and not any(admin.startswith(f"{account}-") for account in agent_accounts[1:]),
+            and not any(admin.startswith(f"{account}-") for account in agent_accounts[1:] if not plain),
             "Your IRC account must differ from the agents' names and accounts.")
     for agent in ids:
-        require(len(f"{answers['slug']}-{agent}") <= standard_channels.MAX_ACCOUNT,
-                f"'{answers['slug']}-{agent}' is too long for its IRC account. Use a shorter fleet ID or name.")
-    trouble = standard_channels.problem(answers["slug"], ids[1:])
+        # With plain names an officer's ID is its IRC account and API username, which these may not be.
+        require(not plain or agent not in RESERVED | {"botserv", "guest"} and not agent.startswith("guest-"),
+                f"{agent} is a name the IRC server, the Subspace API or the installer keeps for itself. Choose "
+                "another name for that officer.")
+        require(len(officer_account(answers, agent)) <= standard_channels.MAX_ACCOUNT,
+                f"'{officer_account(answers, agent)}' is too long for its IRC account. Use a shorter fleet ID or name.")
+    trouble = standard_channels.problem(answers["slug"], ids[1:], plain)
     require(trouble is None, trouble)
     require(EMAIL.fullmatch(answers["adminEmail"]), "Use a valid sign-in email address.")
     if answers["irc"] == "remote":
@@ -584,8 +793,9 @@ def check_answers(answers):
                 f"--metadata-user {user} is a fleet agent's account; agents never reach cloud metadata.")
     for name in [answers["name"], *answers["captains"], answers["rearAdmiral"]]:
         require("\n" not in name and len(name) <= 100, "Names must be single lines of at most 100 characters.")
-    # The API keeps the rear admiral's name as its agent name and each captain's as its ship's name.
-    require(fleet_records.AGENT_NAME.fullmatch(answers["rearAdmiral"]),
+    # The API keeps each captain's name as its ship's name, and with fleet-prefixed names the rear admiral's as its
+    # agent name; with plain names every officer's agent name is its ID.
+    require(plain or fleet_records.AGENT_NAME.fullmatch(answers["rearAdmiral"]),
             "The rear admiral's name is also its agent name in the Subspace API: use letters, digits and hyphens, "
             "at most 64, such as Atlas.")
     require(all(len(name) <= 64 for name in answers["captains"]), "Ship names must be at most 64 characters.")
@@ -597,7 +807,47 @@ def check_answers(answers):
                 "create: drop --demo with --database-url-file.")
         if answers.get("databaseCaFile"):
             database_ca(answers["databaseCaFile"])
+    check_crew_answers(answers, ids)
     return rear, ids[1:]
+
+
+def officer_account(answers, agent_id):
+    """An officer's IRC account: its ID with plain names, else <slug>-<ID> as setup named them before."""
+    return agent_id if answers.get("officerNames") == "plain" else f"{answers['slug']}-{agent_id}"
+
+
+def check_crew_answers(answers, ids):
+    """Crew names from --crew-names: as the fleet installer takes them (runtime.crew_roster), unique in the fleet
+    ignoring case, none an officer's name, and one for every crew member of a captain not yet installed."""
+    officers = {runtime.crew_id(value) for value in [*ids, answers["rearAdmiral"], *answers["captains"]]}
+    seen = {}
+    slots = crew_slots(answers)
+    # Only the enabled slots: names saved for crew a later run no longer has stay unused (roster() passes none).
+    named = {captain_id: {slot: name for slot, name in names.items() if slot in slots}
+             for captain_id, names in (answers.get("crewNames") or {}).items()}
+    for captain_id, names in named.items():
+        require(captain_id in ids[1:], f"Crew names are given for {captain_id}, which is not one of the captains.")
+        for slot, name in names.items():
+            require(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9 _-]{1,64}", name.strip())
+                    and re.fullmatch(runtime.CREW_ID, runtime.crew_id(name)),
+                    f"Crew name {name!r} for {captain_id}: use ASCII letters, digits, spaces, hyphens and "
+                    "underscores, which shorten to an ID of at most 32 characters.")
+            key = runtime.crew_id(name)
+            require(key not in officers, f"Crew name {name} for {captain_id} is an officer's name. Crew names are "
+                    "unique in the fleet and differ from the officers' names.")
+            require(key not in seen, f"Crew names {seen.get(key)} and {captain_id}'s {name} are the same, ignoring "
+                    "case. Give each crew member in the fleet its own name.")
+            seen[key] = f"{captain_id}'s {name}"
+    repositories = answers.get("repositories")
+    if repositories is None:
+        repositories = (read_json(INPUTS / "fleet.json", {}) or {}).get("repositories") or []
+    if not (repositories and slots):
+        return  # Without repositories, captains have no crew.
+    missing = [captain_id for captain_id in ids[1:] if not crew_installed(captain_id)
+               and set(named.get(captain_id, {})) != set(slots)]
+    require(not missing, f"Name every crew member of {', '.join(missing)}: pass --crew-names with "
+            f"{len(slots)} names per captain, in slot order ({', '.join(slot_label(slot) for slot in slots)}), "
+            "such as 'Orion=Rigel,Deneb,Mira,Sirius' (INSTALL.md, question 3). Crew names are unique in the fleet.")
 
 
 # Secrets ---------------------------------------------------------------------
@@ -675,11 +925,24 @@ def roster(answers, rear, captains):
 
     Crew run as their captain through Stargate's crew plugin and have no IRC account.
     """
-    # Accounts carry the fleet ID so that several fleets can share one IRC server.
-    slug = answers["slug"]
-    members = [{"id": rear, "name": answers["rearAdmiral"], "account": f"{slug}-{rear}"}]
+    # With plain names (new fleets) an officer's ID is its one name; a fleet set up before them keeps accounts that
+    # carry the fleet ID until 'rename-officers' changes them.
+    members = [{"id": rear, "name": answers["rearAdmiral"], "account": officer_account(answers, rear)}]
+    slots = set(crew_slots(answers))
     for captain_id, name in zip(captains, answers["captains"], strict=True):
-        members.append({"id": captain_id, "name": name, "account": f"{slug}-{captain_id}"})
+        person = {"id": captain_id, "name": name, "account": officer_account(answers, captain_id)}
+        # Names and IDs for the crew slots this run has: a slot taken away keeps its saved name for later.
+        for key in ("crewNames", "crewIds"):
+            given = {slot: value for slot, value in ((answers.get(key) or {}).get(captain_id) or {}).items()
+                     if slot in slots}
+            if given:
+                person[key] = given
+        members.append(person)
+    # A renamed fleet's officers keep the account subjects the API bound their records to (rename-officers).
+    for person in members:
+        subject = ((answers.get("officerRename") or {}).get("subjects") or {}).get(person["id"])
+        if subject:
+            person["serviceTokenClientId"] = subject
     return members
 
 
@@ -812,11 +1075,11 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     config = {
         "slug": slug,
         "name": answers["name"],
+        "officerNames": answers.get("officerNames", "prefixed"),
         "rearAdmiral": members[0],
         "captains": members[1:],
         "crew": {family: {"count": count} for family, count in answers["crew"].items()},
         "operatorUsers": [answers["operator"]],
-        "toolchains": {"node": "24"},
         "irc": {
             "mode": "local",
             "allowedAccounts": [answers["admin"]],
@@ -839,6 +1102,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     previous = read_json(INPUTS / "fleet.json", {})
     if policy := answers.get("captainTools", previous.get("captainTools")):
         config["captainTools"] = policy
+    config["toolchains"], packages = toolchain_settings(read_json(INPUTS / TOOLCHAIN_RECORD), previous)
+    if packages:
+        config["systemPackages"] = packages
     # Each crew family's model: this or an earlier run's answer, else one set in fleet.json by hand.
     for family, crew in config["crew"].items():
         chosen = answers.get("crewModels", {})
@@ -846,10 +1112,32 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         if model:
             crew["model"] = model
     # Keep anything the operator added by hand, such as private repositories, GitHub Apps or stakeholders.
-    for key in ("harness", "stakeholders", "usage", "medical", "toolchains", "maintenance",
-                "githubPolicy", "dashboard", "proxy", "agentsview"):
+    for key in ("harness", "stakeholders", "usage", "medical", "maintenance",
+                "githubPolicy", "dashboard", "proxy", "agentsview", "screenshots", "memory"):
         if key in previous:
             config[key] = previous[key]
+    # Each role's memory hard cap and the VM's swap: this or an earlier run's answer, over one set by hand. A role's
+    # auto is written as auto, which the installer reads as its sizing over a fleet-wide memory.max (an officer's
+    # own memory still wins); auto is swap's default, so it needs no entry.
+    limits = dict(config.get("memory") or {})
+    for key, value in answers.get("memory", {}).items():
+        if key == "swap":
+            if value == "auto":
+                limits.pop("swap", None)
+            else:
+                limits["swap"] = value
+            continue
+        limits[key] = {**(limits.get(key) or {}), "max": value}
+    # Whether setup runs the API and its PostgreSQL on this VM, for which the installer's sizing leaves room. The api
+    # block cannot say so: setup writes it only while the API offers development sign-in, not with WorkOS or Entra.
+    if answers.get("api"):
+        limits["localApi"] = True
+    else:
+        limits.pop("localApi", None)
+    if limits:
+        config["memory"] = limits
+    else:
+        config.pop("memory", None)
     # Each role's model and effort: this or an earlier run's answer, over one set in fleet.json by hand.
     harness = dict(config.get("harness") or {})
     officers = answers.get("officerModels", {})
@@ -931,6 +1219,407 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
 OFFICER_ROLES = {"captain": "the captains", "rearAdmiral": "the rear admiral"}
 
 
+# Toolchains ------------------------------------------------------------------
+
+def blank_record():
+    return {"tools": [], "packages": [], "declined": {"tools": [], "packages": []}, "examined": [], "proposal": None}
+
+
+def configured_rows(value):
+    """fleet.json's toolchains as one row per tool version, Node 24 included unless node is false."""
+    try:
+        tools = runtime.toolchain_config(value if isinstance(value, dict) else {})
+    except runtime.Invalid as error:
+        raise SetupError(f"fleet.json's toolchains: {error}") from None
+    return [{"tool": spec, "version": version, "install": entry["install"], "options": entry["options"]}
+            for spec, entry in tools.items() for version in entry["versions"]]
+
+
+def configured_packages(value):
+    try:
+        return runtime.toolchains.package_config(value if value is not None else [])
+    except runtime.Invalid as error:
+        raise SetupError(f"fleet.json's systemPackages: {error}") from None
+
+
+def source_text(sources):
+    """Where a confirmed item came from, in a few words."""
+    if not sources:
+        return "no recorded source"
+    first = sources[0]
+    if "by" in first:
+        return {"default": "the installer's default", "fleet.json": "fleet.json", "listed": "listed by hand"}.get(
+            first["by"], first["by"])
+    more = f" and {len(sources) - 1} more" if len(sources) > 1 else ""
+    return f"{toolchains.source_label(first)}{more}"
+
+
+def parse_toolchain_items(value):
+    """--toolchains TOOL@VERSION,-TOOL,-TOOL@VERSION as (remove, tool, version or None) triples."""
+    items = []
+    for raw in (part.strip() for part in value.split(",")):
+        if not raw:
+            continue
+        remove, text = raw.startswith("-"), raw.removeprefix("-")
+        tool, version = text, None
+        match = re.fullmatch(r"(.+)@([A-Za-z0-9][A-Za-z0-9._+-]*)", text)
+        if match and not match.group(1).endswith(":"):
+            tool, version = match.groups()
+        try:
+            runtime.toolchains.tool_name(tool)
+            if version is not None:
+                runtime.toolchains.tool_version(version, tool)
+        except runtime.Invalid as error:
+            raise SetupError(f"--toolchains: {error}") from None
+        require(remove or version, f"--toolchains: name {tool}'s version, as {tool}@VERSION (such as node@24).")
+        items.append((remove, tool, version))
+    return items
+
+
+def parse_package_items(value):
+    items = []
+    for raw in (part.strip() for part in value.split(",")):
+        if not raw:
+            continue
+        remove, name = raw.startswith("-"), raw.removeprefix("-")
+        require(re.fullmatch(toolchains.PACKAGE, name), f"--system-packages: {name!r} is not a Debian package name "
+                "apt installs, such as libssl-dev: no version, release, pattern or trailing minus (which apt reads "
+                "as a removal).")
+        items.append((remove, name))
+    return items
+
+
+def proposed_items(record, kind, name, version=None):
+    """The pending proposal's items for a tool version or a package: more than one when repositories ask for the
+    same version with different options."""
+    proposal = record.get("proposal") or {}
+    return [item for item in proposal.get("items", []) if item["kind"] == kind and item["name"] == name
+            and item["version"] == version]
+
+
+def proposed_item(record, kind, name, version=None):
+    return next(iter(proposed_items(record, kind, name, version)), None)
+
+
+def confirm_tool(record, tool, version, today):
+    """Add a confirmed tool version to the record, with the proposal's sources and options. mise applies one set
+    of options to every version of a tool, so the new version's options are joined with those already confirmed
+    for the tool (toolchains.merge_options), and every version gets the result; a disagreement stops setup with
+    a message saying what to choose. Returns the line for the operator."""
+    proposed = proposed_items(record, "tool", tool, version)
+    existing = [item for item in record["tools"] if item["tool"] == tool]
+    try:
+        options = {}
+        for item in proposed:
+            options = toolchains.merge_options(options, item["options"], tool)
+        merged = options
+        for item in existing:
+            merged = toolchains.merge_options(item["options"], merged, tool)
+    except runtime.Invalid as error:
+        raise SetupError(f"--toolchains {tool}@{version}: {error}") from None
+    changed = [item for item in existing if item["options"] != merged]
+    for item in existing:
+        item["options"] = merged
+    sources = [source for item in proposed for source in item["sources"]]
+    if any(item["version"] == version for item in existing):
+        # Confirmed already; a proposal asking for it with other options still adds them.
+        line = f"{tool}@{version} is already in the toolchains"
+    else:
+        install = existing[0]["install"] if existing else proposed[0]["where"] if proposed and proposed[0].get(
+            "where") in ("shared", "user") else toolchains.default_install(tool)
+        record["tools"].append({"tool": tool, "version": version, "install": install, "options": merged,
+                                "sources": list({json.dumps(source, sort_keys=True): source
+                                                 for source in sources}.values()) or [{"by": "listed"}],
+                                "confirmed": today})
+        line = f"confirmed {tool}@{version}" + (f", from {source_text(sources)}" if proposed else ", listed by hand")
+    if changed or merged != options:
+        line += (f"; mise applies {tool}'s options to every version, so every {tool} version now has "
+                 f"{toolchains.options_label(merged)}")
+    return line
+
+
+def hand_edits(record, rows, packages, previous, today):
+    """Record the operator's hand edits to fleet.json's toolchains and systemPackages, and return lines saying so.
+
+    A hand edit is a difference between fleet.json now and what setup last wrote into it (the record's
+    "generated", saved only once fleet.json is written: write_fleet). Comparing with the record instead would take
+    a run that stopped between writing the record and writing fleet.json for hand edits, and undo what that run
+    did, such as restoring a tool it had just removed."""
+    lines = []
+    baseline = record.get("generated")
+    if baseline is None:
+        # A record from before setup kept what it wrote: fleet.json as the record would have it written.
+        baseline = dict(zip(("toolchains", "systemPackages"), toolchain_settings(record, previous)))
+    before = {(row["tool"], row["version"]): row for row in configured_rows(baseline.get("toolchains", {}))}
+    before_packages = configured_packages(baseline.get("systemPackages"))
+    now = {(row["tool"], row["version"]): row for row in rows}
+    for key, row in now.items():
+        kept = next((item for item in record["tools"] if (item["tool"], item["version"]) == key), None)
+        if key not in before:
+            if kept is None:
+                record["tools"].append({**row, "sources": [{"by": "fleet.json"}], "confirmed": today})
+                lines.append(f"recorded {row['tool']}@{row['version']}, which fleet.json lists")
+        elif (before[key]["install"], before[key]["options"]) != (row["install"], row["options"]) \
+                and kept is not None and (kept["install"], kept["options"]) != (row["install"], row["options"]):
+            kept.update(install=row["install"], options=row["options"])
+            lines.append(f"recorded {row['tool']}@{row['version']}'s install and options from fleet.json")
+    for key in [key for key in before if key not in now]:
+        item = next((item for item in record["tools"] if (item["tool"], item["version"]) == key), None)
+        if item is not None:
+            lines.append(f"kept {item['tool']}@{item['version']} (confirmed {item['confirmed']}, from "
+                         f"{source_text(item['sources'])}), which fleet.json no longer lists; "
+                         f"'subspace-setup --toolchains=-{item['tool']}@{item['version']}' removes it")
+    recorded = {item["package"]: item for item in record["packages"]}
+    for name in packages:
+        if name not in before_packages and name not in recorded:
+            record["packages"].append({"package": name, "sources": [{"by": "fleet.json"}], "confirmed": today})
+            lines.append(f"recorded the system package {name}, which fleet.json lists")
+    for name in before_packages:
+        if name not in packages and name in recorded:
+            lines.append(f"kept the system package {name} (confirmed {recorded[name]['confirmed']}), which "
+                         f"fleet.json no longer lists; 'subspace-setup --system-packages=-{name}' removes it")
+    return lines
+
+
+def write_fleet(config_path, config):
+    """Write fleet.json, then note in the toolchains record the toolchains and systemPackages it was written with:
+    the baseline for the next run's hand edits (hand_edits). Each write is atomic; if setup stops between the two,
+    the next run sees the difference as setup's own, not the operator's."""
+    write_json(config_path, config)
+    record = read_json(INPUTS / TOOLCHAIN_RECORD)
+    if record is not None:
+        record["generated"] = {"toolchains": config.get("toolchains", {}),
+                               "systemPackages": config.get("systemPackages", [])}
+        write_json(INPUTS / TOOLCHAIN_RECORD, record)
+
+
+def update_toolchains(args, answers):
+    """Bring the recorded toolchains up to date and return what changed, as lines for the operator.
+
+    The record starts from fleet.json (or the installer's default, Node 24), so an existing fleet's toolchains keep
+    working; later hand edits to fleet.json are recorded too. --toolchains and --system-packages confirm or remove
+    items, a confirmed item taking its sources from the pending proposal. Answering a proposal settles it: its
+    repositories count as examined and what was not confirmed is recorded as declined. Nothing confirmed is dropped
+    unless this run removes it by name, and nothing is added that nobody named."""
+    lines = []
+    path = INPUTS / "fleet.json"
+    previous = read_json(path, {}) or {}
+    rows = configured_rows(previous.get("toolchains", {}))
+    packages = configured_packages(previous.get("systemPackages"))
+    listed = previous.get("toolchains") if isinstance(previous.get("toolchains"), dict) else {}
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    record = read_json(INPUTS / TOOLCHAIN_RECORD)
+    if record is None:
+        record = blank_record()
+        for row in rows:
+            by = "fleet.json" if row["tool"] in listed else "default"
+            record["tools"].append({**row, "sources": [{"by": by}], "confirmed": today})
+        record["packages"] = [{"package": name, "sources": [{"by": "fleet.json"}], "confirmed": today}
+                              for name in packages]
+        # What fleet.json has now is the baseline for telling hand edits from setup's own writes.
+        record["generated"] = {"toolchains": previous.get("toolchains", {}),
+                               "systemPackages": previous.get("systemPackages", [])}
+        if previous:
+            lines.append("recorded the fleet's toolchains from fleet.json: " + (", ".join(
+                f"{row['tool']}@{row['version']}" for row in record["tools"]) or "none") + (
+                f"; system packages {', '.join(packages)}" if packages else ""))
+    elif path.exists():
+        lines += hand_edits(record, rows, packages, previous, today)
+    confirmed = set()
+    if args.toolchains not in (None, "derive", "none"):
+        for remove, tool, version in parse_toolchain_items(args.toolchains):
+            matching = [item for item in record["tools"] if item["tool"] == tool and version in (None, item["version"])]
+            if remove:
+                for item in matching:
+                    record["tools"].remove(item)
+                    lines.append(f"removed {tool}@{item['version']} from the toolchains (it stays installed)")
+                if not matching:
+                    lines.append(f"{tool}{'@' + version if version else ''} is not in the toolchains")
+                continue
+            confirmed.add(("tool", tool, version))
+            lines.append(confirm_tool(record, tool, version, today))
+    if args.system_packages is not None:
+        for remove, name in parse_package_items(args.system_packages):
+            matching = [item for item in record["packages"] if item["package"] == name]
+            if remove:
+                for item in matching:
+                    record["packages"].remove(item)
+                    lines.append(f"took the system package {name} off the list (it stays installed)")
+                continue
+            confirmed.add(("package", name, None))
+            if not matching:
+                proposed = proposed_item(record, "package", name)
+                record["packages"].append({"package": name, "sources": proposed["sources"] if proposed
+                                           else [{"by": "listed"}], "confirmed": today})
+                lines.append(f"confirmed the system package {name}" + (
+                    f", from {source_text(proposed['sources'])}" if proposed else ", listed by hand"))
+    proposal = record.get("proposal")
+    if proposal and (args.toolchains not in (None, "derive") or args.system_packages is not None):
+        if args.toolchains == "none":
+            lines.append(f"dropped the unanswered toolchain proposal from {', '.join(proposal['repositories'])}")
+        else:
+            declined = [item for item in proposal["items"] if not item.get("configured")
+                        and (item["kind"], item["name"], item["version"]) not in confirmed]
+            for item in declined:
+                kind = "tools" if item["kind"] == "tool" else "packages"
+                record["declined"][kind].append({"name": item["name"], "version": item["version"],
+                                                 "sources": item["sources"], "declined": today})
+            record["examined"] = list(dict.fromkeys([*record["examined"], *proposal["repositories"]]))
+            lines.append(f"answered the toolchain proposal from {', '.join(proposal['repositories'])}"
+                         + (f"; not confirmed, so recorded as declined: "
+                            f"{', '.join(toolchains.item_label(item) for item in declined)}" if declined else ""))
+        record["proposal"] = None
+    write_json(INPUTS / TOOLCHAIN_RECORD, record)
+    return record, lines
+
+
+def toolchain_settings(record, previous):
+    """fleet.json's toolchains and systemPackages, from the record (before one exists, as fleet.json has them)."""
+    if record is None:
+        return previous.get("toolchains", dict(toolchains.DEFAULT_TOOLS)), list(previous.get("systemPackages", []))
+    tools = {}
+    for row in record["tools"]:
+        entry = tools.setdefault(row["tool"], {"versions": [], "install": row["install"], "options": {}})
+        entry["versions"].append(row["version"])
+        try:
+            # Confirming keeps one set of options per tool; a record edited by hand is checked the same way.
+            entry["options"] = toolchains.merge_options(entry["options"], row["options"], row["tool"])
+        except runtime.Invalid as error:
+            raise SetupError(f"{INPUTS / TOOLCHAIN_RECORD}: {error}") from None
+    result = {} if "node" in tools else {"node": False}
+    for spec, entry in tools.items():
+        versions = entry["versions"][0] if len(entry["versions"]) == 1 else entry["versions"]
+        if entry["install"] == toolchains.default_install(spec) and not entry["options"]:
+            result[spec] = versions
+        else:
+            result[spec] = {"version": versions,
+                            **({"install": entry["install"]} if entry["install"] != toolchains.default_install(spec)
+                               else {}),
+                            **({"options": entry["options"]} if entry["options"] else {})}
+    return result, [row["package"] for row in record["packages"]]
+
+
+def propose_toolchains(config, record, everything=False):
+    """Detect what the repositories need, from those not examined yet (every one with everything), as an annotated
+    proposal; None when there is no such repository."""
+    repositories = [row["id"] for row in config.get("repositories", []) if isinstance(row, dict) and "id" in row]
+    examined = set() if everything else set(record.get("examined", []))
+    new = [repository for repository in repositories if repository not in examined]
+    if not new:
+        return None
+    rear = config["rearAdmiral"]["id"]
+    proposal = toolchains.detect({repository: REFERENCES / rear / repository for repository in new})
+    try:
+        tools = runtime.toolchain_config(config.get("toolchains", {}))
+    except runtime.Invalid as error:
+        raise SetupError(f"fleet.json's toolchains: {error}") from None
+    homes = [AGENT_HOMES / person["id"] for person in [config["rearAdmiral"], *config.get("captains", [])]]
+    return toolchains.annotate(proposal, tools, config.get("systemPackages", []), homes)
+
+
+def uncloned(proposal):
+    """The proposal's repositories that are not cloned on this VM yet."""
+    return [entry["repository"] for entry in proposal["unknown"] if not entry["file"]]
+
+
+def record_proposal(record, proposal):
+    """Keep a proposal for the person to answer. One with nothing to confirm (everything configured already, or
+    named only by documentation, which the confirming command leaves out) is answered at once: its repositories
+    count as examined, and its documentation-only items are recorded as declined, as when a person answers."""
+    cloned = [repository for repository in proposal["repositories"] if repository not in uncloned(proposal)]
+    proposal = {**proposal, "repositories": cloned}
+    if toolchains.confirmable(proposal["items"]):
+        record["proposal"] = proposal
+    else:
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        for item in proposal["items"]:
+            if not item.get("configured"):
+                kind = "tools" if item["kind"] == "tool" else "packages"
+                record["declined"][kind].append({"name": item["name"], "version": item["version"],
+                                                 "sources": item["sources"], "declined": today})
+        record["examined"] = list(dict.fromkeys([*record["examined"], *cloned]))
+        record["proposal"] = None
+    write_json(INPUTS / TOOLCHAIN_RECORD, record)
+
+
+def show_proposal(proposal, save, record=None):
+    """Print a proposal; with save, record it for the person to answer."""
+    if uncloned(proposal) == proposal["repositories"]:
+        say("the repositories are not cloned on this VM yet: setup proposes their toolchains after the install "
+            "clones them")
+        return
+    say("toolchain proposal" + ("" if save else " (dry run: not recorded)") + ":")
+    print("\n".join(toolchains.proposal_lines(proposal)), flush=True)
+    if save:
+        record_proposal(record, proposal)
+
+
+def propose_safely(config, record, save):
+    """Detect and show (with save, record) a proposal from the repositories not examined yet. Repositories are less
+    trusted than the operator, and detection reads them: whatever goes wrong here is reported, and setup carries on
+    to the lockdown."""
+    try:
+        if proposal := propose_toolchains(config, record):
+            show_proposal(proposal, save, record)
+    except Exception as error:  # Detection never stops setup, so it never leaves a fleet without its lockdown.
+        say(f"WARNING: the toolchain proposal failed ({type(error).__name__}: {error}); setup carries on without it. "
+            "Run 'sudo subspace-setup toolchains detect' to try again.")
+
+
+def record_lines(record):
+    """'subspace-setup toolchains': the recorded toolchains, with their sources, and what waits for an answer."""
+    lines = ["Toolchains, as confirmed:"]
+    lines += [f"  {row['tool']}@{row['version']}: {toolchains.where_label(row['install'])}"
+              + (f", options {row['options']}" if row["options"] else "")
+              + f"; confirmed {row['confirmed']}, from {source_text(row['sources'])}" for row in record["tools"]] \
+        or ["  none"]
+    if record["packages"]:
+        lines.append("System packages, as confirmed:")
+        lines += [f"  {row['package']}: confirmed {row['confirmed']}, from {source_text(row['sources'])}"
+                  for row in record["packages"]]
+    declined = [*record["declined"]["tools"], *record["declined"]["packages"]]
+    if declined:
+        lines.append("Declined (not proposed again; 'subspace-setup toolchains detect --all' proposes them again): "
+                     + ", ".join(f"{row['name']}" + (f"@{row['version']}" if row["version"] else "")
+                                 for row in declined))
+    lines.append("Repositories examined: " + (", ".join(record["examined"]) or "none"))
+    if record.get("proposal"):
+        lines.append("Waiting for an answer:")
+        lines += toolchains.proposal_lines(record["proposal"])
+    return lines
+
+
+def toolchains_command(argv):
+    """subspace-setup toolchains [detect [--all]] [--json]"""
+    parser = argparse.ArgumentParser(prog="subspace-setup toolchains", description="Show the fleet's recorded "
+                                     "toolchains, or propose what its repositories need (detect).")
+    parser.add_argument("action", nargs="?", choices=["show", "detect"], default="show")
+    parser.add_argument("--all", action="store_true", help="detect: read every repository again, not only those "
+                        "added since the last answered proposal, and propose again what was declined")
+    parser.add_argument("--json", action="store_true", help="print JSON")
+    args = parser.parse_args(argv)
+    config = read_json(INPUTS / "fleet.json")
+    require(config, "Set the fleet up first: subspace-setup has no fleet.json on this VM.")
+    record = read_json(INPUTS / TOOLCHAIN_RECORD)
+    if args.action == "show":
+        require(record is not None, "No toolchains are recorded yet: the next 'subspace-setup' run records "
+                "fleet.json's.")
+        print(json.dumps(record, indent=2) if args.json else "\n".join(record_lines(record)))
+        return
+    require(os.geteuid() == 0, "Run 'subspace-setup toolchains detect' as root: it reads the repositories the rear "
+            "admiral's reference checkouts hold.")
+    record = record or blank_record()
+    proposal = propose_toolchains(config, record, args.all)
+    if proposal is None:
+        say("every repository has been examined: nothing new to propose ('--all' reads them all again)")
+        return
+    if args.json:
+        print(json.dumps(proposal, indent=2))
+        record_proposal(record, proposal)
+        return
+    show_proposal(proposal, True, record)
+
+
 def resolved_officer(harness, role):
     """The family, model and effort a role runs with fleet.json's harness, as the fleet installer resolves it."""
     key = "captain" if role == "captain" else "rear_admiral"
@@ -994,17 +1683,19 @@ def irc_source():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def installer(config_path, dry_run=False, secrets_dir=None):
+def installer(config_path, dry_run=False, secrets_dir=None, quiet=False):
+    """Run the fleet installer. quiet keeps its plan to itself, as a check whose plan would mislead does; what it
+    refuses still reaches the terminal."""
     args = [INSTALLER / "install.sh", "--config", config_path]
     if secrets_dir:
         args += ["--secrets-dir", secrets_dir]
     if dry_run:
         args.append("--dry-run")
     say("running the fleet installer" + (" (dry run)" if dry_run else ""))
-    run(*args)
+    run(*args, capture=quiet)
 
 
-def preflight(config, private):
+def preflight(config, private, before="the API changes", quiet=False):
     """Check the fleet's inputs as the installer will (configuration, credentials, the secrets directory and
     pinned sessions), before setup changes the API or its database. A run the installer would refuse then
     migrates nothing and restarts nothing."""
@@ -1013,8 +1704,36 @@ def preflight(config, private):
         config_path = Path(scratch) / "fleet.json"
         write_json(config_path, config)
         write_json(Path(scratch) / "fleet.secrets.json", private)
-        say("checking the fleet's configuration before the API changes")
-        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None)
+        say(f"checking the fleet's configuration before {before}")
+        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None, quiet=quiet)
+
+
+def stargate_release(answers):
+    """The Stargate a run installs, as (tag, commit): the pinned --stargate-ref, else the newest release."""
+    if answers.get("stargateRef"):
+        return "pinned", answers["stargateRef"]
+    return latest_stargate()
+
+
+def run_inputs(answers, members, secret_store, stargate_ref, irc_ref, api_block=None, stargate_api=False, token="",
+               history=None, dispatch_token=""):
+    """The fleet installer's inputs, fleet.json and its secrets, as a run writes them."""
+    config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
+    private = fleet_secrets(secret_store, members, answers["admin"], token, answers["irc"] == "local",
+                            certificates=answers.get("ircAuth") == "certificate",
+                            dispatch_token=dispatch_token if api_block else "")
+    if history:
+        private["ircHistoryPassword"] = secret_store.password("ergo-history")
+    return config, private
+
+
+def planned_run_inputs(answers, members, secret_store, stargate_ref):
+    """The inputs a real run writes, as far as is known before the API runs, for the installer's check: the
+    API settings it will have (planned_api_block), with stand-ins for the tokens it will get."""
+    block = planned_api_block(answers)
+    dispatch = PLANNED_TOKENS["rearAdmiralApiToken"] if block and answers["agentDispatch"] else ""
+    return run_inputs(answers, members, secret_store, stargate_ref, hashlib.sha1(b"dry-run").hexdigest(), block,
+                      False, PLANNED_TOKENS["apiToken"] if block else "", dispatch_token=dispatch)
 
 
 def installed_stargate_source():
@@ -1183,6 +1902,181 @@ def hosted_checks(answers, token):
     say("hosted API: the enrolment token is valid, so its fleet exists (checked without using it)")
 
 
+# Names -----------------------------------------------------------------------
+
+def hosted_call(origin, token, method, path, body=None):
+    """One request to a hosted API under /api/v1 with a bearer token, no redirects followed; errors carry the
+    status and the API's detail (ApiError)."""
+    data = None if body is None else json.dumps(body).encode()
+    request = Request(f"{origin}/api/v1{path}", data=data, method=method, headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"})
+    try:
+        with build_opener(NoRedirect).open(request, timeout=30) as response:
+            text = response.read().decode()
+    except HTTPError as error:
+        detail = problem_detail(error)
+        error.close()
+        raise ApiError(f"The hosted Subspace API returned HTTP {error.code} for {method} {path}.", error.code,
+                       detail) from None
+    except (URLError, OSError):
+        raise SetupError(f"Could not reach the hosted Subspace API at {origin} for {method} {path}.") from None
+    return json.loads(text) if text else {}
+
+
+def officer_records(answers, members):
+    """Each officer as the API knows it with this fleet's naming: (rank, agent name, IRC nick, ship)."""
+    plain = answers.get("officerNames") == "plain"
+    rows = []
+    for index, person in enumerate(members):
+        rank = "rearAdmiral" if index == 0 else "captain"
+        name = person["account"] if plain or index else person["name"]
+        rows.append((rank, name, person["account"], None if index == 0 else person["name"]))
+    return rows
+
+
+def stored_enrolment_token():
+    try:
+        return (INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN).read_text().strip() or None
+    except OSError:
+        return None
+
+
+def hosted_name_problems(answers, members, token):
+    """With the fleet's enrolment token, ask the hosted API what enrolling each officer would do (POST
+    /api/v1/agents/enrol/check), which uses nothing and changes nothing. Returns the refusals; says why when it
+    cannot ask."""
+    token = token or stored_enrolment_token()
+    if not token:
+        say("names: no enrolment token, so the hosted API was not asked about the officers' names")
+        return []
+    agents = [{"name": name, "rank": rank, "ircNick": nick, **({"ship": ship} if ship else {})}
+              for rank, name, nick, ship in officer_records(answers, members)]
+    try:
+        items = hosted_call(answers["apiUrl"], token, "POST", "/agents/enrol/check", {"agents": agents})["items"]
+    except ApiError as error:
+        if error.status == 404:
+            say("names: this hosted API predates POST /api/v1/agents/enrol/check, so it was not asked about the "
+                "officers' names; enrolment still refuses a taken name")
+        elif error.status == 401:
+            say(f"names: the hosted API did not accept the enrolment token ({error.detail or 'refused'}), so it was "
+                "not asked about the officers' names. A new officer needs a fresh token "
+                "(--api-enrolment-token-file) anyway")
+        else:
+            raise
+        return []
+    except (KeyError, TypeError):
+        raise SetupError("The hosted Subspace API answered the name check with an unexpected body.") from None
+    except SetupError as error:
+        say(f"names: {error} The officers' names were not checked; enrolment still refuses a taken name")
+        return []
+    problems = [f"{item.get('name')}: {item.get('detail')}" for item in items if item.get("outcome") == "refused"]
+    if not problems:
+        say("names: the hosted API would enrol every officer under its name ("
+            + ", ".join(f"{item.get('name')} {item.get('outcome')}" for item in items) + ")")
+    return problems
+
+
+def api_reader(answers):
+    """The admin's development token for reading the running API on this VM, signing in only as someone already
+    there, or None when that fails."""
+    try:
+        return api_token(answers, existing_only=True)
+    except SetupError:
+        return None
+
+
+def local_name_problems(answers, members, token, own=None):
+    """With the API on this VM (an administrator's token): officers whose name or IRC nick another agent, or a
+    person as their username, holds. own: {officer ID: nicks its own record may have now}, beside its new nick."""
+    if not token:
+        say("names: could not sign in to the API on this VM to read its agents; registration still refuses a taken "
+            "name")
+        return []
+    call = lambda method, path, body: api_call(token, method, path, body)  # noqa: E731
+    try:
+        rows, people = fleet_records.agents(call), fleet_records.usernames(call)
+    except SetupError as error:
+        say(f"names: could not list the API's agents and people ({error}); registration still refuses a taken name")
+        return []
+    officers = [(name, nick, {nick, *(own or {}).get(person["id"], ())})
+                for (_, name, nick, _), person in zip(officer_records(answers, members), members, strict=True)]
+    problems = fleet_records.taken_names(rows, answers["slug"], officers, people)
+    if not problems:
+        say("names: no other agent or person in the Subspace API on this VM has an officer's name or IRC nick")
+    return problems
+
+
+def irc_name_problems(answers, members, certificates, operator, staged=None, connect_with=()):
+    """On a remote IRC server with certificate sign-in: officers whose account NickServ knows as another's.
+    An account counts as the officer's own when the officer's certificate (or, during a rename, its new staged
+    one) signs in to it. Read-only. Signs in, for a server that admits only signed-in connections, with the
+    operator's account when given, else with an officer certificate that already signs in (connect_with: more
+    bundles to try, such as the officers' current ones during a rename)."""
+    if answers.get("irc") != "remote" or answers.get("ircAuth") != "certificate":
+        return []
+    host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+    bundles = {person["account"]: path for person in members
+               for path in [(staged or {}).get(person["id"]) or (certificates or {}).get(person["account"], (None,))[0]]
+               if path and Path(path).is_file()}
+    signed_in = {}
+    for account, path in bundles.items():
+        try:
+            signed_in[account] = irc_accounts.check_login(host, port, ca, str(path))
+        except irc_accounts.IrcError:
+            signed_in[account] = None
+    account = operator[2] if operator else None
+    client = None if account else next((str(bundles[name]) for name, as_ in signed_in.items() if as_), None)
+    for path in connect_with if not (account or client) else ():
+        try:
+            if Path(path).is_file() and irc_accounts.check_login(host, port, ca, str(path)):
+                client = str(path)
+                break
+        except irc_accounts.IrcError:
+            continue
+    try:
+        taken = irc_accounts.accounts_taken(host, port, ca, [person["account"] for person in members], client, account)
+    except irc_accounts.IrcError as error:
+        say(f"names: could not ask {host}'s NickServ about the officers' accounts ({error}); registration there still "
+            "refuses a taken account")
+        return []
+    # An account an earlier run registered for this very certificate, and stopped before binding, is the officer's.
+    registered = registered_accounts()
+    problems = []
+    for person in members:
+        name = person["account"]
+        holder = taken.get(name)
+        if not holder:
+            continue
+        signs_in = (signed_in.get(name) or "").lower() == name.lower()
+        fingerprint = registered.get(name) if holder.lower() == name.lower() and not signs_in else None
+        if fingerprint and fingerprint != bundle_fingerprint(bundles.get(name)):
+            fingerprint = None
+        if fingerprint:
+            say(f"names: {name} on {host} was registered by an earlier run that stopped before binding its "
+                f"certificate; --irc-operator finishes it, or an IRC operator runs: /NS CERT ADD {name} {fingerprint}")
+        elif not (holder.lower() == name.lower() and signs_in):
+            problems.append(f"{name} is taken on {host}: NickServ knows it as account {holder}, which the officer's "
+                            "certificate does not sign in to")
+    if not problems:
+        say(f"names: {host}'s NickServ has none of the officers' accounts under another owner")
+    return problems
+
+
+def bundle_fingerprint(path):
+    """The SHA-256 fingerprint of a certificate bundle's certificate, or None when there is no valid bundle."""
+    try:
+        return runtime.irc_fingerprint(Path(path).read_text(), str(path)) if path else None
+    except (OSError, UnicodeDecodeError, runtime.Invalid):
+        return None
+
+
+def require_names(problems):
+    require(not problems, "An officer's name is taken: " + "; ".join(problems) + ". Each officer's name is its IRC "
+            "account and its agent name in the Subspace API, which must be unique on the IRC server and in the "
+            "API's organisation. Pick another name for that officer (--rear-admiral, --captains), or free the name "
+            "there, then run setup again. Nothing was changed.")
+
+
 def stargate_agents(ref):
     """Whether Stargate at ref has the subspaceAgents section a hosted API needs: fetch that one commit, without
     history, and look for runtime.SUBSPACE_AGENTS_FILE in it."""
@@ -1341,26 +2235,18 @@ def external_plan(answers, migrate):
     return lines
 
 
-def api_up(answers, secret_store, migrate=False):
-    source = PAYLOAD / "subspace-api"
-    require((source / "compose.yaml").is_file(), "The payload has no subspace-api/compose.yaml.")
-    API_DIR.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-    staging = API_DIR.with_name("api.new")
-    shutil.rmtree(staging, ignore_errors=True)
-    shutil.copytree(source, staging, ignore=shutil.ignore_patterns("node_modules", ".data", ".env", "__pycache__"))
-    shutil.rmtree(API_DIR, ignore_errors=True)
-    staging.rename(API_DIR)
-    slug = answers["slug"]
-    external = database_url(answers["databaseUrlFile"]) if external_database(answers) else None
-    environment = {
-        # An existing PostgreSQL's URL goes only into this root-only file, single-quoted so Compose takes it
-        # literally; the API's own PostgreSQL gets a generated password instead.
-        **({"DATABASE_URL": f"'{external}'"} if external else {"POSTGRES_PASSWORD": secret_store.password("postgres")}),
-        "API_PORT": API_PORT,
-        "DEV_CHANNELS": f"#{slug}-starbase",
-        "DEV_IRC_HOST": irc_endpoint(answers)[0],
-        "DEV_IRC_PORT": irc_endpoint(answers)[1],
-    }
+def dev_sign_in(environment):
+    """Whether api.env's settings offer development sign-in, which setup uses to act as the admin."""
+    providers = [value.strip() for value in environment.get("AUTH_PROVIDERS", "").split(",")]
+    return environment.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
+
+
+def api_environment(answers, environment, external=False):
+    """api.env as api_up writes it: environment (setup's own settings) over what an earlier run wrote there and
+    the operator kept or changed. Returns the settings and whether the agent listener is on.
+
+    external says the API uses an existing PostgreSQL, whose URL api_up passes in environment.
+    """
     previous = INPUTS / "api.env"
     kept = {}
     offered = False
@@ -1385,16 +2271,60 @@ def api_up(answers, secret_store, migrate=False):
     if re.fullmatch(r"dev:[a-z0-9][a-z0-9-]{0,62}", merged.get("AGENT_ORGANISATION", "")):
         # The installer's own form follows the fleet's development sign-in organisation.
         merged["AGENT_ORGANISATION"] = f"dev:{answers['organisation']}"
-    providers = [value.strip() for value in merged.get("AUTH_PROVIDERS", "").split(",")]
-    dev_sign_in = merged.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
-    if not dev_sign_in and merged.get("AGENT_ORGANISATION", "").startswith("dev:"):
+    if not dev_sign_in(merged) and merged.get("AGENT_ORGANISATION", "").startswith("dev:"):
         # The listener answers for development sign-in's organisation and trusts the network as it does:
         # an operator who turns development sign-in off turns it off too.
         merged["AGENT_PORT"] = ""
         merged.pop("AGENT_ORGANISATION", None)
     if merged.get("NODE_ENV") == "production":
         merged["AGENT_PORT"] = ""
-    listener = str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+    return merged, str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+
+
+def local_api_block(answers, initiatives, listener):
+    """The fleet installer's api block for the API on this VM, which setup registers with as its admin."""
+    block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": initiatives}
+    if answers.get("vmHost"):
+        block["vmHost"] = answers["vmHost"]  # The fleet's record in the API names the VM.
+    if listener:
+        # Officers get the API's MCP server at the agent listener, as their own agent records.
+        block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"
+    return block
+
+
+def planned_api_block(answers):
+    """The api block a real run writes, as far as is known before the API runs: for the dry run, and the check
+    before the API changes, so the installer previews the officers' tool policy with the API's MCP tools a real
+    run gives them. None when a real run writes none: no API on this VM, or one without development sign-in."""
+    if not answers.get("api"):
+        return None
+    environment, listener = api_environment(answers, {})
+    if not dev_sign_in(environment):
+        return None
+    return local_api_block(answers, [answers["initiativeId"]] if answers.get("initiativeId") else [], listener)
+
+
+def api_up(answers, secret_store, migrate=False):
+    source = PAYLOAD / "subspace-api"
+    require((source / "compose.yaml").is_file(), "The payload has no subspace-api/compose.yaml.")
+    API_DIR.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    staging = API_DIR.with_name("api.new")
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.copytree(source, staging, ignore=shutil.ignore_patterns("node_modules", ".data", ".env", "__pycache__"))
+    shutil.rmtree(API_DIR, ignore_errors=True)
+    staging.rename(API_DIR)
+    slug = answers["slug"]
+    external = database_url(answers["databaseUrlFile"]) if external_database(answers) else None
+    environment = {
+        # An existing PostgreSQL's URL goes only into this root-only file, single-quoted so Compose takes it
+        # literally; the API's own PostgreSQL gets a generated password instead.
+        **({"DATABASE_URL": f"'{external}'"} if external else {"POSTGRES_PASSWORD": secret_store.password("postgres")}),
+        "API_PORT": API_PORT,
+        "DEV_CHANNELS": f"#{slug}-starbase",
+        "DEV_IRC_HOST": irc_endpoint(answers)[0],
+        "DEV_IRC_PORT": irc_endpoint(answers)[1],
+    }
+    merged, listener = api_environment(answers, environment, external=bool(external))
     write_private(INPUTS / "api.env", AGENT_OFFERED + "\n" + "".join(
         f"{key}={value}\n" for key, value in merged.items()))
     if external:
@@ -1487,14 +2417,22 @@ def external_schema(answers, migrate):
         say("the existing PostgreSQL already has every migration this API needs; nothing to apply")
 
 
+def api_healthy():
+    """Whether the API on this VM answers GET /health, so a dry run can read it without starting it."""
+    try:
+        with urlopen(Request(f"http://{LOOPBACK}:{API_PORT}/health"), timeout=5) as response:
+            return json.load(response).get("status") == "ok"
+    except (HTTPError, URLError, OSError, ValueError):
+        return False
+
+
 def dev_auth_enabled():
     """Whether the API still offers development sign-in, which setup uses to act as the admin."""
     environment = {}
     for line in (INPUTS / "api.env").read_text().splitlines():
         key, _, value = line.partition("=")
         environment[key] = value
-    providers = [value.strip() for value in environment.get("AUTH_PROVIDERS", "").split(",")]
-    return environment.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
+    return dev_sign_in(environment)
 
 
 def agent_listener_enabled():
@@ -1538,10 +2476,10 @@ def history_database(secret_store):
             "network": f"{API_PROJECT}_default"}
 
 
-def api_token(answers, email=None):
+def api_token(answers, email=None, existing_only=False):
     # In a database setup did not create, sign in only as someone already there (subspace-api's auth:dev), so a
     # mistyped --organisation or --admin-email never adds an organisation or a person. An empty one is exempt.
-    existing = ["-e", "DEV_TOKEN_EXISTING_ONLY=true"] if external_database(answers) else []
+    existing = ["-e", "DEV_TOKEN_EXISTING_ONLY=true"] if external_database(answers) or existing_only else []
     try:
         token = compose("exec", "-T", *existing, "api", "bun", "run", "--silent", "auth:dev",
                         email or answers["adminEmail"], answers["organisation"], capture=True).splitlines()[-1].strip()
@@ -1573,8 +2511,10 @@ def api_call(token, method, path, body=None):
         with urlopen(request, timeout=30) as response:
             text = response.read().decode()
     except HTTPError as error:
+        detail = problem_detail(error)
         error.close()
-        raise ApiError(f"The Subspace API returned HTTP {error.code} for {method} {path}.", error.code) from None
+        raise ApiError(f"The Subspace API returned HTTP {error.code} for {method} {path}.", error.code, detail) \
+            from None
     except (URLError, OSError):
         raise SetupError(f"Could not reach the Subspace API for {method} {path}.") from None
     return json.loads(text) if text else {}
@@ -1637,15 +2577,27 @@ def seed_demo(answers):
             "api", "bun", "run", "--silent", "seed:demo")
 
 
-def fleet_initiative(token, name, slug, known=None, exclude=()):
-    """Create, or find, a fleet's initiative.
+def fleet_initiative(token, name, slug, known=None, exclude=(), adopt=False, hint=""):
+    """Create, or find, a fleet's initiative; None when the one setup recorded now belongs to another fleet.
 
-    The initiative is found by its saved ID, else by name among initiatives that belong to no fleet or to
-    this one (slug). Setup lists no channels on it: an initiative's channels are its own, beyond its fleet's
+    known is the initiative setup recorded as the fleet's. With adopt, --initiative named it on this run: it is
+    the fleet's whichever fleet has it now, and adopt_initiative moves it (configure has checked that it exists).
+    Otherwise it stands while it belongs to no fleet or to this one (slug). One that has gone to another fleet
+    since stays there, as only an explicit adoption moves an initiative: setup warns, adding hint, and registers
+    none. One that is gone is replaced by one found by name among initiatives that belong to no fleet or to this
+    one, else created. Setup lists no channels on it: an initiative's channels are its own, beyond its fleet's
     standard channels, which the fleet and its ships record (fleet_records) and the desktop joins.
     """
     mine = {row["id"]: row for row in api_call(token, "GET", "/me/initiatives").get("items", [])}
-    found = known if known in mine else None
+    row = initiative_row(token, known) if known else None
+    require(row or not adopt, f"There is no initiative {known} to adopt.")
+    if row and not adopt and row.get("fleetId") and (row.get("fleet") or {}).get("slug") != slug:
+        say(f"WARNING: initiative {row.get('name')} ({known}), recorded as fleet {slug}'s, now belongs to "
+            f"{fleet_label(row)}. Setup leaves it there and registers no initiative for {slug} on this run: only an "
+            f"explicit adoption moves one. To move it back, run 'sudo subspace-fleetctl assign {known} {slug}'"
+            f"{hint}.")
+        return None
+    found = known if row else None
     cursor = ""
     while not found:
         page = api_call(token, "GET", "/initiatives?limit=100" + (f"&cursor={quote(cursor)}" if cursor else ""))
@@ -1656,7 +2608,9 @@ def fleet_initiative(token, name, slug, known=None, exclude=()):
             break
     if found:
         if found not in mine:
-            say(f"found an initiative named {name} that you are not a member of; add yourself in the desktop")
+            say(f"the fleet's initiative {found} does not list you as a member; add yourself in the desktop"
+                if found == known else
+                f"found an initiative named {name} that you are not a member of; add yourself in the desktop")
         return found
     me = api_call(token, "GET", "/me")
     return api_call(token, "POST", "/initiatives", {
@@ -1664,6 +2618,223 @@ def fleet_initiative(token, name, slug, known=None, exclude=()):
         "description": f"Work for the {name} fleet. Talk to the rear admiral in {standard_channels.starbase(slug)}.",
         "channelConfiguration": {"memberUserIds": [me["userId"]]},
     })["id"]
+
+
+def initiative_row(token, initiative):
+    """The initiative as the API on this VM has it, or None when there is none with that ID."""
+    try:
+        return api_call(token, "GET", f"/initiatives/{initiative}")
+    except ApiError as error:
+        if error.status == 404:
+            return None
+        raise
+
+
+def fleet_label(row):
+    """The fleet an initiative row belongs to, for a message."""
+    other = row.get("fleet") or {}
+    return f"fleet {other.get('name') or other['slug']} ({other['slug']})" if other.get("slug") else f"fleet {row['fleetId']}"
+
+
+def unknown_initiative(answers, saved):
+    """Stop because the initiative --initiative names does not exist, after putting back the one the answers had,
+    so a later run neither takes the mistyped ID for a recorded one nor finds or creates another in its place."""
+    initiative = answers.pop("initiativeId")
+    if saved.get("initiativeId"):
+        answers["initiativeId"] = saved["initiativeId"]
+    save_answers(answers)
+    raise SetupError(f"There is no initiative {initiative} in the development organisation {answers['organisation']}, "
+                     "so setup stopped before changing any tracker record. Check the ID given with --initiative (the "
+                     "desktop shows it, as does GET /api/v1/initiatives), or leave --initiative out to keep the "
+                     "fleet's current one.")
+
+
+def adopt_initiative(token, slug, initiative):
+    """Assign the initiative --initiative names on this run to this fleet, moving it from any other: the one move
+    of an initiative from another fleet setup makes, and only when asked."""
+    fleet = api_call(token, "GET", f"/fleets/{slug}")["id"]
+    row = api_call(token, "GET", f"/initiatives/{initiative}")
+    if row.get("fleetId") != fleet:
+        api_call(token, "PUT", f"/initiatives/{initiative}/fleet", {"fleetId": fleet})
+        say(f"assigned initiative {row.get('name')} ({initiative}) to this fleet"
+            + (f", moving it from {fleet_label(row)}" if row.get("fleetId") else ""))
+
+
+def agent_reader(answers, members):
+    """A read-only GET of the fleet's Subspace API as its rear admiral's own agent record, with a hosted API
+    through its signing-proxy socket and with an API on this VM through the agent listener, so it sees what the
+    fleet's officers see; or None and the reason there is none yet."""
+    rear = members[0]
+    if answers.get("apiUrl"):
+        source, socket = installed_stargate_source(), runtime.agent_socket(rear["id"])
+        if not source or not socket.is_socket():
+            return None, "the officers have not enrolled with the hosted API yet"
+
+        def get(path):
+            try:
+                # Bun keeps no transpiler cache for this read, so a dry run writes nothing.
+                result = subprocess.run([FLEET_APP / "bin/bun", source / "src/main.ts", "subspace", "request", "--socket",
+                                         socket, f"/api/v1{path}"], capture_output=True, text=True, timeout=30,
+                                        check=False, stdin=subprocess.DEVNULL,
+                                        env={**os.environ, "BUN_RUNTIME_TRANSPILER_CACHE_PATH": "0"})
+            except (OSError, subprocess.TimeoutExpired):
+                raise ApiError(f"Could not ask the hosted Subspace API for GET {path}.", None) from None
+            if result.returncode:
+                raise ApiError(f"The hosted Subspace API refused GET {path}: {result.stderr.strip()[:200]}", None)
+            return json.loads(result.stdout or "{}")
+        return get, None
+    if not answers.get("api") or not (INPUTS / "api.env").is_file() or not agent_listener_enabled():
+        return None, "this VM's API has no agent listener"
+
+    def get(path):
+        request = Request(f"http://{LOOPBACK}:{AGENT_API_PORT}/api/v1{path}",
+                          headers={"X-Subspace-Agent": rear["account"], "Accept": "application/json"})
+        try:
+            with urlopen(request, timeout=15) as response:
+                return json.loads(response.read().decode() or "{}")
+        except HTTPError as error:
+            error.close()
+            raise ApiError(f"The Subspace API returned HTTP {error.code} for GET {path}.", error.code) from None
+        except (URLError, OSError, ValueError):
+            raise ApiError(f"Could not reach the Subspace API's agent listener for GET {path}.", None) from None
+    return get, None
+
+
+def ownership_lines(get, repositories, initiative=None, assigns=False, adopt=False):
+    """What the tracker says about this fleet's work, as its rear admiral reads it (get).
+
+    A project belongs to its initiative's fleet, or else to the fleet of the initiative's nearest ancestor with one,
+    and the API refuses a fleet agent's assignment, or Ready for agents flag, in another fleet's project
+    (subspace-api src/fleet-ownership.ts). So this names each tracker project linked to one of the fleet's GitHub
+    repositories that belongs to another fleet, with the initiative that makes it so, and the fleet's own
+    initiative (setup's answer, which --initiative sets) when it is not the fleet's yet. assigns says whether setup
+    can assign that initiative to the fleet (an API on this VM with development sign-in); otherwise only an
+    administrator of the API can. Setup assigns one that belongs to no fleet, and moves one from another fleet
+    only when --initiative names it on this run (adopt).
+    """
+    me = get("/me")
+    fleet = me.get("fleetId")
+    if me.get("kind") != "agent" or not fleet:
+        return ["could not check which fleet owns this fleet's tracker projects: its rear admiral is not yet a "
+                "registered agent of a fleet"]
+    rows = {}
+
+    def initiative_row(initiative_id):
+        if initiative_id not in rows:
+            rows[initiative_id] = get(f"/initiatives/{quote(initiative_id, safe='')}")
+        return rows[initiative_id]
+
+    def owner(initiative_id):
+        """The initiative that gives a project its fleet, and the initiatives on the way to it."""
+        path = []
+        while initiative_id and initiative_id not in path:
+            path.append(initiative_id)
+            row = initiative_row(initiative_id)
+            if row.get("fleetId"):
+                return row, path
+            initiative_id = row.get("parentId")
+        return None, path
+
+    def remedy(initiative_id, record=True):
+        if assigns:
+            return f"run setup again with --initiative {initiative_id}, which assigns it, and all below it, to this fleet"
+        return (f"ask an administrator of the Subspace API to assign it to this fleet (PUT /api/v1/initiatives/"
+                f'{initiative_id}/fleet with {{"fleetId": "{fleet}"}})'
+                + (f", and pass --initiative {initiative_id} to record it as the fleet's" if record else ""))
+
+    lines, ours, seen = [], [], set()
+    own, takes = None, False
+    if initiative:
+        try:
+            own = initiative_row(initiative)
+        except ApiError as error:
+            if error.status != 404:
+                raise
+            return [f"WARNING: the tracker has no initiative {initiative}: check the ID given with --initiative"
+                    + ("; a real run stops before changing any tracker record." if assigns else ".")
+                    if adopt else
+                    f"WARNING: the tracker has no initiative {initiative}, which setup recorded as the fleet's"
+                    + ("; a real run finds or creates one by the fleet's name." if assigns else ".")]
+        # The run gives it to this fleet: one of no fleet as the installer registers it, one of another fleet only
+        # when --initiative names it.
+        takes = assigns and (adopt or not own.get("fleetId"))
+    for repository in repositories:
+        page = get(f"/repositories/projects?repository={quote(repository, safe='')}&limit=100")
+        for project in page.get("items", []):
+            if project["id"] in seen:
+                continue
+            seen.add(project["id"])
+            row, path = owner(project.get("initiativeId"))
+            if not row or row["fleetId"] == fleet:
+                ours.append(project["key"])
+                continue
+            where = (f"tracker project {project['key']} ({repository}) belongs to {fleet_label(row)} through "
+                     f"initiative {row.get('name')} ({row['id']})")
+            if initiative in path and takes:
+                lines.append(f"{where}; setup assigns the fleet's initiative {initiative}, on that path, to this "
+                             "fleet, which makes it this fleet's.")
+            else:
+                lines.append(f"WARNING: {where}, so this fleet's officers are refused when they assign its issues or "
+                             f"mark them Ready for agents. To make it this fleet's, {remedy(row['id'])}.")
+    if own and own.get("fleetId") != fleet:
+        name = f"the fleet's initiative {own.get('name')} ({initiative})"
+        if takes:
+            moved = f", moving it from {fleet_label(own)}" if own.get("fleetId") else ""
+            lines.append(f"setup assigns {name} to this fleet{moved}.")
+        elif assigns:
+            lines.append(f"WARNING: {name} belongs to {fleet_label(own)}, and setup leaves it there. To make it this "
+                         f"fleet's, {remedy(initiative)}.")
+        else:
+            other = f" but to {fleet_label(own)}" if own.get("fleetId") else ""
+            lines.append(f"WARNING: {name} is not assigned to it{other}: {remedy(initiative, record=False)}.")
+    if ours:
+        lines.append(f"tracker projects {', '.join(sorted(set(ours)))} belong to this fleet or to none, so its "
+                     "officers may assign their issues")
+    elif not lines:
+        lines.append("no tracker project lists this fleet's GitHub repositories, so setup cannot tell which fleet "
+                     "owns its work")
+    return lines
+
+
+def manual_adoption(answers, initiative):
+    """The request for an administrator of the Subspace API that adopts the initiative --initiative names, for a
+    fleet whose setup cannot assign it: with a hosted API, or one on this VM without development sign-in."""
+    why = ("a hosted API's administrators keep its records" if answers.get("apiUrl") else
+           "this VM's API no longer offers development sign-in, through which setup acts as its administrator")
+    return (f"WARNING: setup cannot assign the initiative given with --initiative ({initiative}) to this fleet, as "
+            f"{why}. Ask an administrator of the Subspace API to assign it: PUT /api/v1/initiatives/{initiative}/fleet "
+            f'with {{"fleetId": "<the fleet\'s ID>"}}, where the fleet\'s ID is the "id" that GET /api/v1/fleets/'
+            f"{answers['slug']} returns.")
+
+
+def ownership_check(answers, members, config, adopt=False):
+    """Say what ownership_lines finds; a check that cannot run says why, and never stops setup.
+
+    adopt says --initiative named the fleet's initiative on this run. When setup cannot assign it, the request
+    for an administrator follows a check that cannot run; one that runs names the fleet's own ID in it.
+    """
+    initiative = answers.get("initiativeId")
+    local = bool(answers.get("api")) and not answers.get("apiUrl")
+    # Setup acts as the admin through development sign-in, which a new fleet's API offers.
+    assigns = local and (not (INPUTS / "api.env").is_file() or dev_auth_enabled())
+    manual = adopt and initiative and (local or answers.get("apiUrl")) and not assigns
+    get, reason = agent_reader(answers, members)
+    repositories = [name for row in config.get("repositories", []) if isinstance(row, dict)
+                    if (name := runtime.github_repository(str(row.get("url", ""))))]
+    if not get:
+        say(f"not checking which fleet owns this fleet's tracker projects: {reason}")
+        if manual:
+            say(manual_adoption(answers, initiative))
+        return
+    try:
+        lines = ownership_lines(get, repositories, initiative, assigns=assigns, adopt=adopt)
+    except (ApiError, ValueError, KeyError, TypeError, AttributeError) as error:
+        say(f"could not check which fleet owns this fleet's tracker projects: {error}")
+        if manual:
+            say(manual_adoption(answers, initiative))
+        return
+    for line in lines:
+        say(line)
 
 
 def installed_records():
@@ -1744,21 +2915,23 @@ def register_fleet(registration):
         raise SetupError(str(error)) from None
     registered = answers.setdefault("registeredFleets", {}).setdefault(slug, {})
     initiative = fleet_initiative(token, name, slug, registered.get("initiativeId"), exclude=[answers.get("initiativeId")])
-    assigned = api_call(token, "GET", f"/initiatives/{initiative}").get("fleetId")
-    require(assigned in (None, fleet["id"]), f"Initiative {initiative} already belongs to another fleet.")
-    if assigned != fleet["id"]:
-        api_call(token, "PUT", f"/initiatives/{initiative}/fleet", {"fleetId": fleet["id"]})
+    if initiative:
+        assigned = api_call(token, "GET", f"/initiatives/{initiative}").get("fleetId")
+        require(assigned in (None, fleet["id"]), f"Initiative {initiative} already belongs to another fleet.")
+        if assigned != fleet["id"]:
+            api_call(token, "PUT", f"/initiatives/{initiative}/fleet", {"fleetId": fleet["id"]})
+        registered.update(initiativeId=initiative)
     registered.pop("channels", None)
-    registered.update(initiativeId=initiative)
     write_json(INPUTS / "answers.json", answers)
-    say(f"registered fleet {name} ({slug}), its ships and officers, with initiative {initiative}")
+    say(f"registered fleet {name} ({slug}), its ships and officers" + (f", with initiative {initiative}" if initiative else ""))
 
 
 # Summary ---------------------------------------------------------------------
 
 def fleet_channels(answers, members):
     """The fleet's standard channels: Starbase, the command channel, then one ship channel per captain."""
-    return standard_channels.standard(answers["slug"], [person["id"] for person in members[1:]])
+    return standard_channels.standard(answers["slug"], [person["id"] for person in members[1:]],
+                                      answers.get("officerNames") == "plain")
 
 
 def installed_irc_auth():
@@ -1814,19 +2987,38 @@ def certificate_lines(answers, certificates):
     return lines
 
 
-def password_file(path, option, label):
-    """A password from a root-only file, for this run only. Messages name the file, never what it holds."""
+def secret_file(path, option, label):
+    """What a root-only file holds, stripped, for this run only. Messages name the file, never what it holds."""
     require(Path(path).is_absolute(), f"{option} needs an absolute path to a file on this VM.")
     try:
         info = os.lstat(path)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == SECRET_OWNER and not info.st_mode & 0o077,
                 f"The {label} file {path} must be a regular file owned by root with mode 0600: chmod 600 {path}.")
-        password = Path(path).read_text().strip()
+        return Path(path).read_text().strip()
     except (OSError, UnicodeDecodeError):
         raise SetupError(f"Cannot read the {label} file {path}.") from None
+
+
+def password_file(path, option, label):
+    """A password from a root-only file, for this run only. Messages name the file, never what it holds."""
+    password = secret_file(path, option, label)
     require(password and len(password) <= 512 and not re.search(r"[\s\x00]", password),
             f"The {label} file {path} must hold one password on one line.")
     return password
+
+
+# The longest bearer token the Subspace API reads (subspace-api src/auth.ts); identity providers' access tokens
+# are often 600 to 2,000 characters.
+API_TOKEN_LIMIT = 16_384
+
+
+def bearer_token_file(path, option, label):
+    """A bearer token from a root-only file, for this run only: one line of printable ASCII, at most the API's own
+    limit. Messages name the file, never what it holds."""
+    token = secret_file(path, option, label)
+    require(re.fullmatch(rf"[\x21-\x7e]{{1,{API_TOKEN_LIMIT}}}", token),
+            f"The {label} file {path} must hold one bearer token on one line, at most {API_TOKEN_LIMIT:,} characters.")
+    return token
 
 
 def irc_operator(args):
@@ -1845,9 +3037,31 @@ def irc_operator(args):
     return args.irc_operator, password, account
 
 
+# IRC accounts setup registered (SAREGISTER) for a certificate whose binding (CERT ADD) it has not seen succeed.
+IRC_REGISTERED = "irc-registered.json"
+
+
+def registered_accounts():
+    """{account: certificate fingerprint} for accounts an earlier run registered with NickServ and may have stopped
+    before binding: the next run finishes the binding instead of taking the account for someone else's."""
+    value = read_json(INPUTS / IRC_REGISTERED, {})
+    return value if isinstance(value, dict) else {}
+
+
+def note_registered(account, fingerprint=None):
+    """Record that setup created an account for a certificate (fingerprint), or forget it once it signs in."""
+    registered = registered_accounts()
+    if fingerprint:
+        registered[account] = fingerprint
+    elif registered.pop(account, None) is None:
+        return
+    write_json(INPUTS / IRC_REGISTERED, registered)
+
+
 def check_certificates(answers, members, certificates, operator, register):
     """With the operator's credential: check it, register the officers' accounts and bind their certificates
-    (register), and check that each certificate signs in as its account. A dry run only checks."""
+    (register), and check that each certificate signs in as its account. A dry run only checks. An account an
+    earlier run registered and stopped before binding (registered_accounts) is only bound."""
     host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
     name, password, signed_in_as = operator
 
@@ -1864,12 +3078,16 @@ def check_certificates(answers, members, certificates, operator, register):
     try:
         missing = unbound()
         # Only accounts whose certificate does not sign in yet are registered; a rerun registers nothing.
-        replies = irc_accounts.register(host, port, ca, name, password, missing if register else {}, signed_in_as)
+        earlier = {account for account, fingerprint in registered_accounts().items() if missing.get(account) == fingerprint}
+        replies = irc_accounts.register(host, port, ca, name, password, missing if register else {}, signed_in_as,
+                                        registered=earlier, created=note_registered)
         if not register:
             say(f"the IRC operator {name} is accepted on {host}")
         for account, lines in replies.items():
             say(f"NickServ for {account}: " + " / ".join(lines))
         failed = list(unbound()) if register and missing else []
+        for account in set(missing) - set(failed) if register else ():
+            note_registered(account)
     except irc_accounts.IrcError as error:
         raise SetupError(str(error)) from None
     require(not register or not failed, f"{', '.join(failed)} cannot sign in to {host} with {'its' if len(failed) == 1 else 'their'} "
@@ -1965,10 +3183,7 @@ def configure(args):
             "This VM's API already keeps its tracker in its own PostgreSQL, which setup does not move. To use an "
             "existing PostgreSQL, restore a dump of that database there and set up a fresh VM with "
             "--database-url-file (installer README, 'An existing PostgreSQL').")
-    if answers.get("stargateRef"):
-        stargate_tag, stargate_ref = "pinned", answers["stargateRef"]
-    else:
-        stargate_tag, stargate_ref = latest_stargate()
+    stargate_tag, stargate_ref = stargate_release(answers)
     say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
     enrolment = None
     if answers.get("apiUrl"):
@@ -1987,27 +3202,33 @@ def configure(args):
     # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
     secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
     members = roster(answers, rear, captains)
+    # The toolchains as confirmed, with this run's choices: fleet.json's toolchains and systemPackages come from it.
+    record, changes = update_toolchains(args, answers)
+    for line in changes:
+        say(line)
     local_irc = answers["irc"] == "local"
     config_path = INPUTS / "fleet.json"
     secrets_path = INPUTS / "fleet.secrets.json"
 
     dispatch_token = ""
 
-    def inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None):
-        config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
-        private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc,
-                                certificates=answers.get("ircAuth") == "certificate",
-                                dispatch_token=dispatch_token if api_block else "")
-        if history:
-            private["ircHistoryPassword"] = secret_store.password("ergo-history")
-        return config, private
+    def inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None, dispatch=None):
+        return run_inputs(answers, members, secret_store, stargate_ref, irc_ref, api_block, stargate_api, token,
+                          history, dispatch_token if dispatch is None else dispatch)
+
+    def planned_inputs():
+        return planned_run_inputs(answers, members, secret_store, stargate_ref)
 
     def write_inputs(*args):
         config, private = inputs(*args)
-        write_json(config_path, config)
+        write_fleet(config_path, config)
         write_json(secrets_path, private)
 
     certificates = operator = None
+    say("officer names (" + ("plain: each officer's ID is its IRC account, API name and Stargate ID" if
+                             answers["officerNames"] == "plain" else "fleet-prefixed, as installed; 'subspace-setup "
+                             "rename-officers' gives them plain names") + "): "
+        + ", ".join(person["account"] for person in members))
     if answers.get("ircAuth") == "certificate":
         operator = irc_operator(args)
         certificates = officer_certificates(members, generate=not args.dry_run)
@@ -2020,24 +3241,32 @@ def configure(args):
     if external_database(answers):
         for line in external_plan(answers, args.migrate):
             say(line)
+    # Before setup changes anything here, on the IRC server or in the API: every officer's name must be free there.
+    problems = irc_name_problems(answers, members, certificates, operator)
+    if answers.get("apiUrl"):
+        problems += hosted_name_problems(answers, members, enrolment)
+    elif answers["api"] and (INPUTS / "api.env").is_file() and dev_auth_enabled() and api_healthy():
+        problems += local_name_problems(answers, members, api_reader(answers))
+    require_names(problems)
     if args.dry_run:
         if external_database(answers):
             database_checks(answers, args.migrate)
-        write_inputs(hashlib.sha1(b"dry-run").hexdigest())
-        if answers["agentDispatch"]:
+        config, private = planned_inputs()
+        write_fleet(config_path, config)
+        write_json(secrets_path, private)
+        if answers["agentDispatch"] and not config["agentDispatch"]["enabled"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
+        ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
+        if answers["toolchains"] == "derive":
+            propose_safely(read_json(config_path, {}), read_json(INPUTS / TOOLCHAIN_RECORD) or record, save=False)
         say("dry run complete; nothing on this VM changed")
         return
 
     if answers["api"]:
         # The API comes first (its token and registration go into the fleet's inputs), so check now that the
         # installer will accept those inputs: with --migrate, a refused run must not have migrated the database.
-        preflight(*inputs(hashlib.sha1(b"dry-run").hexdigest()))
-
-    if certificates and operator:
-        # Before any officer starts: register the accounts, bind the certificates and check each sign-in.
-        check_certificates(answers, members, certificates, operator, register=True)
+        preflight(*planned_inputs())
 
     irc_ref = irc_source() if local_irc else None
     # Releases from v0.40.0 have the Fleet API; a pinned commit is checked after it is installed.
@@ -2063,20 +3292,29 @@ def configure(args):
             token = api_token(answers)
             if external_database(answers):
                 existing_administrator(answers, token)
+            # An existing database may already hold an officer's name: stop before anything is registered.
+            require_names(local_name_problems(answers, members, token))
+            # Only --initiative on this run adopts an initiative, and only one that exists: checked before any
+            # tracker record changes.
+            adopt = bool(args.initiative)
+            if adopt and not initiative_row(token, answers["initiativeId"]):
+                unknown_initiative(answers, saved)
             if answers["demo"]:
                 seed_demo(answers)
-            initiative = fleet_initiative(token, answers["name"], answers["slug"], answers.get("initiativeId"))
-            answers.update(initiativeId=initiative)
-            save_answers(answers)
-            api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
-            if answers.get("vmHost"):
-                api_block["vmHost"] = answers["vmHost"]  # The fleet's record in the API names the VM.
-            if agent_listener_enabled():
-                # Officers get the API's MCP server at the agent listener, as their own agent records.
-                api_block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"
+            initiative = fleet_initiative(token, answers["name"], answers["slug"], answers.get("initiativeId"),
+                                          adopt=adopt, hint=", or setup with --initiative "
+                                          f"{answers.get('initiativeId')}; to have setup find or create one by the "
+                                          "fleet's name instead, pass --initiative ''")
+            if initiative:
+                answers.update(initiativeId=initiative)
+                save_answers(answers)
+            api_block = local_api_block(answers, [initiative] if initiative else [], agent_listener_enabled())
             # Register the fleet, its channels, ships and officers now: agent dispatch signs in as the rear
-            # admiral's agent record. The installer's 'fleetctl register' sends the same records again.
+            # admiral's agent record. The installer's 'fleetctl register' sends the same records again, and
+            # assigns the initiative when it belongs to no fleet; an adopted one setup moves here itself.
             records = register_own(token, *inputs(irc_ref, api_block, bool(stargate_api), token, history))
+            if adopt:
+                adopt_initiative(token, answers["slug"], initiative)
             if answers["agentDispatch"]:
                 dispatch_token = rear_admiral_token(answers, records)
         else:
@@ -2088,6 +3326,11 @@ def configure(args):
                     "the API offers development sign-in. Pass --no-agent-dispatch, and configure api, agentDispatch "
                     "and rearAdmiralApiToken for the fleet installer by hand (subspace-installer/README.md, "
                     "'Agent dispatch').")
+
+    if certificates and operator:
+        # Before any officer starts, and once the API has its records: register the accounts, bind the certificates
+        # and check each sign-in.
+        check_certificates(answers, members, certificates, operator, register=True)
 
     write_inputs(irc_ref, api_block, bool(stargate_api), token, history)
     installer(config_path)
@@ -2105,6 +3348,15 @@ def configure(args):
             installer(config_path)
     elif stargate_api:
         confirm_fleet_api(True, installed_stargate_source())
+    ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
+    if answers["toolchains"] == "derive":
+        # The repositories are cloned now. Nothing proposed is installed until the person confirms it, and nothing
+        # in a repository stops setup before the lockdown below.
+        # The record as write_fleet left it, with what fleet.json was written with.
+        propose_safely(read_json(config_path, {}), read_json(INPUTS / TOOLCHAIN_RECORD) or record, save=True)
+    if args.verify_toolchains:
+        # Each repository's basic check as a crew member; a failure is reported, never fatal.
+        run(FLEET_APP / "lib/runtime.py", "verify-toolchains", check=False)
 
     lockdown_id = ""
     if answers["lockdown"]:
@@ -2144,6 +3396,9 @@ def configure(args):
     if not local_irc:
         say(remote_irc_next_step(answers, operator))
     say(f"forward these loopback ports to reach it: {values['SUBSPACE_PORTS']}")
+    # The VM's memory, each engine's limits and why, limits set by hand, and swap, for the operator and their agent
+    # (installer README, 'Memory limits and swap'). --captain-memory, --rear-admiral-memory and --swap change them.
+    run(FLEET_APP / "lib/runtime.py", "memory-summary", check=False)
     if run(HERE / "providers.sh", "status", check=False):
         say("next: bring the agents online by signing CLIProxyAPI in to a provider account "
             "(INSTALL.md, 'Bring the agents online').")
@@ -2231,6 +3486,422 @@ def metadata_users(answers):
     return list(dict.fromkeys(users))
 
 
+# Rename ----------------------------------------------------------------------
+
+# Stargate's subspaceAgents state for the shared gateway: <dataDirectory>/subspace-agents, <name>.pem per officer.
+GATEWAY_KEYS = runtime.STATE / "gateway" / "data" / "subspace-agents"
+
+
+def rename_parser():
+    parser = argparse.ArgumentParser(
+        prog="subspace-setup rename-officers",
+        description="Give an installed fleet's officers their plain names: each officer's ID becomes its IRC account "
+                    "and nick, its Subspace API agent name and its ship channel (#<captain-id>), as a new fleet "
+                    "has them. Safe to run again after a failure. See 'Officer names' in the installer README.")
+    parser.add_argument("--dry-run", action="store_true", help="check and print the plan, changing nothing")
+    for flag, text in (("--irc-operator", "an IRC operator's name (OPER) with NickServ's accreg capability, to "
+                        "register the new accounts and bind their certificates"),
+                       ("--irc-operator-password-file", "a root-only file (mode 0600) with that operator's password"),
+                       ("--irc-operator-account", "an IRC account the operator's connection signs in to first"),
+                       ("--irc-operator-account-password-file", "a root-only file with that account's password"),
+                       ("--api-admin-token-file", "a root-only file (mode 0600) with a bearer token of an "
+                        "administrator of the hosted Subspace API, which renames the agent records in place "
+                        "(PUT /api/v1/agents/{id}); read for this run only, never printed or saved"),
+                       ("--crew-names", "names for the crew of captains already installed, as for setup: needs a "
+                        "Stargate whose crew plugin lets a crew member's name differ from its ID")):
+        parser.add_argument(flag, help=text)
+    parser.add_argument("--no-api-records", action="store_true",
+                        help="for a fleet with no Subspace API on this VM and no hosted one: no Subspace API keeps "
+                             "this fleet's agent records (not one installed with --api-target), so only IRC and "
+                             "Stargate are renamed")
+    parser.add_argument("--inputs", default=str(INPUTS), help=argparse.SUPPRESS)
+    return parser
+
+
+def installed_plan(answers):
+    """The installed fleet's officers and their renames: [(person, old account, new account, old API name,
+    new API name, old ship channel, new ship channel)], from the fleet's own inputs."""
+    config = read_json(INPUTS / "fleet.json", {}) or {}
+    people = [config.get("rearAdmiral") or {}, *(config.get("captains") or [])]
+    require(all(isinstance(person, dict) and NAME_ID.fullmatch(str(person.get("id", ""))) for person in people),
+            "Set the fleet up first: its inputs have no officers.")
+    renamed = (answers.get("officerRename") or {}).get("from", {})
+    plan = []
+    for index, person in enumerate(people):
+        old = renamed.get(person["id"]) or person.get("account") or officer_account(answers, person["id"])
+        old_api = (person["name"] if index == 0 else old)
+        channel = None if index == 0 else (standard_channels.ship(answers["slug"], person["id"]),
+                                           standard_channels.ship(answers["slug"], person["id"], plain=True))
+        plan.append((person, old, person["id"], old_api, person["id"], channel))
+    return plan
+
+
+def staged_bundle(agent_id, account, generate):
+    """The new IRC certificate for an officer's new account, made once and kept for re-runs, or None."""
+    path = INPUTS / "rename" / agent_id / runtime.IRC_CLIENT_PEM
+    if not path.exists() and generate:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(path.parent.parent, 0o700)
+        write_private(path, runtime.new_irc_bundle(account))
+    return path if path.exists() else None
+
+
+def copy_gateway_key(old, new):
+    """Give Stargate's key bundle and enrolment record for an officer's old API name its new name too, so the
+    gateway keeps the officer's enrolled key under the new name (a copy: the old files stay until removed)."""
+    for suffix in (".pem", ".pem.enrolment.json"):
+        source, target = GATEWAY_KEYS / f"{old}{suffix}", GATEWAY_KEYS / f"{new}{suffix}"
+        if not source.is_file() or source == target:
+            continue
+        if target.exists():
+            require(target.read_bytes() == source.read_bytes(),
+                    f"{target} exists with other contents than {source}. Move it aside, then run the rename again.")
+            continue
+        info = source.stat()
+        with tempfile.NamedTemporaryFile(dir=GATEWAY_KEYS, delete=False) as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            os.fchown(handle.fileno(), info.st_uid, info.st_gid)
+            handle.write(source.read_bytes())
+            temporary = handle.name
+        os.replace(temporary, target)
+        say(f"copied Stargate's {source.name} to {target.name}")
+
+
+def check_switch(answers):
+    """Check the rename's last step, the switch (setup's run with the new names), before the rename changes
+    anything, with the code and checks the switch itself runs. answers are the switch's: plain names, and any new
+    crew names with the crew's kept IDs. They are read and checked as setup reads and checks them, and the
+    fleet.json and secrets setup then hands the fleet installer are checked by the fleet installer's validation,
+    then by its own dry run (crew names across the fleet, pinned sessions, a new captain's crew, repositories). It
+    works on a private copy of the fleet's inputs, as setup's dry run does, so nothing it writes stays. Returns
+    lines that show each ship's crew as the switch installs them."""
+    global INPUTS
+    original = INPUTS
+    with tempfile.TemporaryDirectory(prefix="subspace-setup-rename-check-") as scratch:
+        INPUTS = Path(scratch) / "inputs"
+        if original.is_dir():
+            shutil.copytree(original, INPUTS, symlinks=True)
+        try:
+            switch = gather(parse_args(["--non-interactive"]), json.loads(json.dumps(answers)))
+            rear, captains = check_answers(switch)
+            members = roster(switch, rear, captains)
+            config, private = planned_run_inputs(switch, members, Secrets(INPUTS, switch["slug"], None),
+                                                 stargate_release(switch)[1])
+            try:
+                cfg = runtime.validate(config, private, check_files=False)
+            except runtime.Invalid as error:
+                raise SetupError(f"{error} The fleet installer would refuse the switch to the new names, so the "
+                                 "rename stops here. Nothing was changed.") from None
+            # Quietly: before the switch, the installer's plan would show the officers' current certificates
+            # against their new accounts, which the rename binds to new certificates of its own.
+            preflight(config, private, "the rename changes anything", quiet=True)
+        finally:
+            INPUTS = original
+    crews = [person for person in cfg["members"][1:] if person["crew"]]
+    if not crews:
+        return []
+    return ["crew after the switch, by ship (name, ID, model family and slot):"] + [
+        f"  {person['name']}: " + "; ".join(f"{worker['name']} ({worker['id']}, {slot_label(worker['slot'])})"
+                                            for worker in person["crew"]) for person in crews]
+
+
+def rename_officers(argv):
+    """subspace-setup rename-officers: move an installed fleet from fleet-prefixed officer names to plain ones, and
+    name the crew of installed captains where the installed Stargate allows it.
+
+    The rename is recorded in answers.json (officerRename): "from", the old names, before anything changes; the
+    plain names once IRC and the API have them; "switched" only once setup has run with them and, with certificate
+    sign-in, every installed certificate signs in as its new account. Until then every run resumes at that last
+    step, and only then does it print what is left to remove."""
+    global INPUTS
+    args = rename_parser().parse_args(argv)
+    INPUTS = Path(args.inputs)
+    require(args.dry_run or os.geteuid() == 0, "Run subspace-setup as root (sudo).")
+    answers = read_json(INPUTS / "answers.json", {})
+    require(answers.get("slug"), "Set the fleet up first.")
+    crew = rename_crew(answers, args.crew_names) if args.crew_names else {}
+    record = answers.get("officerRename") or {}
+    plan = installed_plan(answers)
+    officers = answers.get("officerNames") != "plain"
+    # Renamed in IRC and the API, but setup has not yet finished a run with the new names.
+    pending = not officers and bool(record.get("from")) and not record.get("switched")
+    if not (officers or pending or crew):
+        say("this fleet's officers already have plain names" + (f" (renamed from {', '.join(record['from'].values())})"
+                                                               if record.get("from") else "") + ".")
+        for line in rename_cleanup(answers, plan, record):
+            say(line)
+        return
+    members = [{"id": person["id"], "name": person["name"], "account": new} for person, _, new, *_ in plan]
+    # The answers the switch runs setup with: plain names, and any new crew names with the crew's kept IDs.
+    plain = {**answers, "officerNames": "plain",
+             **{key: {**(answers.get(key) or {}), **values} for key, values in crew.items()}}
+    hosted = bool(answers.get("apiUrl"))
+    local_api = answers.get("api") and not hosted and (INPUTS / "api.env").is_file()
+    certificate = answers.get("irc") == "remote" and answers.get("ircAuth") == "certificate"
+    staged, operator, admin, unasked = {}, None, None, False
+    if officers:
+        say(f"renaming fleet {answers['slug']}'s officers to plain names:")
+        for person, old, new, old_api, new_api, channel in plan:
+            say(f"  {person['name']}: IRC account {old} -> {new}; API agent {old_api} -> {new_api}"
+                + (f"; ship channel {channel[0]} -> {channel[1]}" if channel else ""))
+        require(hosted or local_api or args.no_api_records,
+                f"Fleet {answers['slug']} has no Subspace API on this VM and no hosted API (--api-url), so this VM "
+                "cannot rename its agent records. If another fleet's API keeps them (a fleet installed with "
+                "--api-target, or registered there by hand), renaming here would leave those records under the old "
+                "names, and the next registration would refuse the new names or add duplicate officers: the rename "
+                "does not reach another fleet's API, so keep this fleet's fleet-prefixed names. If no Subspace API "
+                "keeps this fleet's records, run the rename again with --no-api-records. Nothing was changed.")
+        require(not local_api or dev_auth_enabled(),
+                "The Subspace API on this VM no longer offers development sign-in, which setup renames its agent "
+                "records with. Keep the fleet's fleet-prefixed names. Nothing was changed.")
+    elif pending:
+        say(f"fleet {answers['slug']}'s officers have their plain names on IRC and in the API, but setup has not yet "
+            "finished a run with them: this run does that, then checks the installed certificates")
+    # Read-only checks first, the switch's own before any other: what the switch (step 4) hands the fleet
+    # installer, checked as it will be, so that neither the dry run nor this check passes what the switch refuses.
+    for line in check_switch(plain):
+        say(line)
+    if officers:
+        admin = bearer_token_file(args.api_admin_token_file, "--api-admin-token-file", "API administrator token") \
+            if args.api_admin_token_file else None
+        require(not hosted or admin or args.dry_run,
+                f"This fleet uses the hosted Subspace API at {answers.get('apiUrl')}, whose agent records only an "
+                "administrator may rename: pass --api-admin-token-file with a token of an administrator of that API. "
+                "Nothing was changed.")
+        operator = irc_operator(args)
+        staged = {person["id"]: staged_bundle(person["id"], new, not args.dry_run) for person, _, new, *_ in plan
+                  if certificate}
+        # Every new name must be free on the IRC server and in the API, or this fleet's own.
+        current = [INPUTS / "fleet.secrets" / person["id"] / runtime.IRC_CLIENT_PEM for person, *_ in plan]
+        problems = irc_name_problems(plain, members, None, operator, staged, current)
+        own = {person["id"]: {old} for person, old, *_ in plan}
+        if hosted and admin:
+            call = lambda method, path, body: hosted_call(answers["apiUrl"], admin, method, path, body)  # noqa: E731
+            wanted = [(name, nick, {nick, *own[person["id"]]})
+                      for (_, name, nick, _), person in zip(officer_records(plain, members), members, strict=True)]
+            problems += fleet_records.taken_names(fleet_records.agents(call), answers["slug"], wanted,
+                                                  fleet_records.usernames(call))
+        elif hosted:
+            unasked = True
+            say("names: without --api-admin-token-file the hosted Subspace API was not asked about the new names")
+        elif local_api and api_healthy():
+            problems += local_name_problems(plain, members, api_reader(answers), own)
+        elif local_api:
+            unasked = True
+            say("names: the Subspace API on this VM is not running, so it was not asked about the new names")
+        require(not problems, "Cannot rename: " + "; ".join(problems) + ". An officer's ID is its plain name and "
+                "cannot change here; free the name on the IRC server or in the API, or keep the fleet's prefixed "
+                "names. Nothing was changed.")
+    if args.dry_run:
+        if officers:
+            steps = []
+            if certificate:
+                steps.append("makes a new IRC certificate for each new account and "
+                             + ("registers it with --irc-operator" if operator else "prints the NickServ lines to "
+                                "register it"))
+            elif answers.get("irc") == "remote":
+                steps.append("writes the fleet's IRC bundle with the new accounts and stops until they sign in")
+            if hosted or local_api:
+                steps.append("renames the API agent records in place and moves the ship channels")
+            say("dry run: " + ("the API was not asked, so its names are unchecked; the other checks found the new "
+                               "names free. " if unasked else "the names are free. ")
+                + "The real run " + ", then ".join([*steps, "runs setup again with the new names"])
+                + ". Nothing on this VM changed.")
+        else:
+            say("dry run: the real run runs setup again with the new names. Nothing on this VM changed.")
+        return
+    if crew:
+        for key in ("crewNames", "crewIds"):
+            answers.setdefault(key, {}).update(crew[key])
+        save_answers(answers)
+    if officers:
+        answers["officerRename"] = record = {**record, "from": {person["id"]: old for person, old, *_ in plan}}
+        save_answers(answers)
+        # 1. IRC: the new accounts, while the officers keep signing in to the old ones.
+        if certificate:
+            rename_irc_certificates(answers, plan, staged, operator)
+        elif answers.get("irc") == "remote":
+            rename_irc_passwords(answers, members)
+        # 2. The API's agent records, in place, and the ships' channels.
+        renames = [{"old": old, "name": new_api, "nick": new, "channel": channel}
+                   for _, old, new, _, new_api, channel in plan]
+        if hosted:
+            fleet_records.rename(lambda method, path, body: hosted_call(answers["apiUrl"], admin, method, path, body),
+                                 answers["slug"], renames, say=say)
+            for _, _, _, old_api, new_api, _ in plan:
+                copy_gateway_key(old_api, new_api)
+        elif local_api:
+            token = api_token(answers)
+            rows = {str(row.get("ircNick", "")).lower(): row for row in
+                    fleet_records.agents(lambda method, path, body: api_call(token, method, path, body))}
+            # The account subjects stay: setup signs officers in by them, and the API binds each record to its own.
+            subjects = dict(record.get("subjects") or {})
+            for person, old, new, *_ in plan:
+                row = rows.get(old.lower()) or rows.get(new.lower())
+                if row and person["id"] not in subjects:
+                    subjects[person["id"]] = row["serviceTokenClientId"]
+            answers["officerRename"] = record = {**record, "subjects": subjects}
+            save_answers(answers)
+            fleet_records.rename(lambda method, path, body: api_call(token, method, path, body), answers["slug"],
+                                 renames, say=say)
+        # 3. The new certificates, kept beside the old ones for a rollback.
+        for person, *_ in plan:
+            if staged.get(person["id"]):
+                current = INPUTS / "fleet.secrets" / person["id"] / runtime.IRC_CLIENT_PEM
+                previous = INPUTS / "rename" / person["id"] / "irc-client.previous.pem"
+                if current.is_file() and current.read_text() != staged[person["id"]].read_text() \
+                        and not previous.exists():
+                    write_private(previous, current.read_text())
+                write_private(current, staged[person["id"]].read_text())
+        answers["officerNames"] = "plain"
+        save_answers(answers)
+    # 4. Switch: the fleet's inputs, Stargate, the officers' configuration and the summary, as a re-run does. A run
+    # that stops here, or whose certificates do not sign in yet, is resumed from here by the next one.
+    say("running setup with the new names")
+    configure(parse_args(["--non-interactive"]))
+    if officers or pending:
+        finish_rename(plan)
+
+
+def finish_rename(plan):
+    """The rename's last check: with certificate sign-in, every installed certificate signs in as its officer's new
+    account. Only then is the rename recorded as switched, and what is left to remove printed."""
+    answers = read_json(INPUTS / "answers.json", {})
+    if answers.get("irc") == "remote" and answers.get("ircAuth") == "certificate":
+        host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+        wrong = []
+        for person, _, new, *_ in plan:
+            bundle = FLEET_ETC / "irc-certs" / f"{person['id']}.pem"
+            try:
+                signed = irc_accounts.check_login(host, port, ca, str(bundle)) if bundle.is_file() else None
+            except irc_accounts.IrcError as error:
+                raise SetupError(f"{error} The rename is not finished: run 'sudo subspace-setup rename-officers' "
+                                 "again once the IRC server answers.") from None
+            say(f"{new}: the installed certificate {'signs in as ' + signed if signed else 'does not sign in'}")
+            if (signed or "").lower() != new.lower():
+                wrong.append(new)
+        require(not wrong, f"The installed certificate of {', '.join(wrong)} does not sign in as the new account on "
+                f"{host}, so the rename is not finished: keep the old accounts. Check the new accounts' certificates "
+                "there (NickServ CERT LIST), then run 'sudo subspace-setup rename-officers' again, which runs setup "
+                "with the new names and checks again.")
+    answers["officerRename"] = {**(answers.get("officerRename") or {}), "switched": True}
+    save_answers(answers)
+    for line in rename_cleanup(answers, plan, answers["officerRename"]):
+        say(line)
+
+
+def rename_crew(answers, value):
+    """--crew-names for installed captains: each crew member keeps its ID, so its sessions, worktrees and queued
+    tasks stay, and takes the new name. Needs a Stargate whose crew plugin lets the two differ."""
+    config = read_json(INPUTS / "fleet.json", {}) or {}
+    installed = {person["id"]: person for person in config.get("captains", []) if isinstance(person, dict)}
+    named = parse_crew_names(value, answers)
+    ids = {}
+    for captain_id in named:
+        person = installed.get(captain_id) or {}
+        current = {**{slot: slot_label(slot) for slot in crew_slots(answers)}, **(person.get("crewNames") or {})}
+        ids[captain_id] = {slot: (person.get("crewIds") or {}).get(slot) or runtime.crew_id(name)
+                           for slot, name in current.items()}
+    changed = [f"{captain_id} {slot}" for captain_id, names in named.items() for slot, name in names.items()
+               if runtime.crew_id(name) != ids[captain_id].get(slot)]
+    require(not changed or crew_names_supported(),
+            "The installed Stargate's crew plugin requires a crew member's name to match its ID (Stargate "
+            "src/coordination/crew/team.ts: 'Agent IDs must match assigned names'), and a crew member's ID cannot "
+            "change without losing its sessions, worktrees and queued tasks. Naming an installed fleet's crew ("
+            + ", ".join(changed) + ") needs a Stargate that drops that rule (installer README, 'Crew names'). "
+            "Nothing was changed.")
+    check_crew_answers({**answers, "crewNames": {**(answers.get("crewNames") or {}), **named}},
+                       [ident(answers["rearAdmiral"], "Rear admiral"),
+                        *(ident(name, "Captain") for name in answers["captains"])])
+    return {"crewNames": named, "crewIds": ids}
+
+
+def rename_irc_certificates(answers, plan, staged, operator):
+    """Register each new account and bind the officer's new certificate, or print the lines that do; stop until
+    every new certificate signs in as its new account. The old accounts keep their certificates meanwhile:
+    Ergo binds a certificate fingerprint to one account only, so each new account gets a certificate of its own."""
+    host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+    certificates = {new: (staged[person["id"]], runtime.irc_fingerprint(staged[person["id"]].read_text(),
+                                                                        str(staged[person["id"]])))
+                    for person, _, new, *_ in plan}
+    if operator:
+        check_certificates(answers, None, certificates, operator, register=True)
+        return
+    missing = []
+    try:
+        for account, (path, fingerprint) in certificates.items():
+            if irc_accounts.check_login(host, port, ca, str(path)) != account:
+                missing.append((account, fingerprint))
+    except irc_accounts.IrcError as error:
+        raise SetupError(str(error)) from None
+    if not missing:
+        say("every new account signs in with its new certificate")
+        return
+    say(f"register the new accounts on {host} as an IRC operator with NickServ's accreg capability:")
+    registered = registered_accounts()
+    for account, fingerprint in missing:
+        # An account an earlier run registered, and stopped before binding, needs only its certificate.
+        if registered.get(account) != fingerprint:
+            say(f"  /NS SAREGISTER {account}")
+        say(f"  /NS CERT ADD {account} {fingerprint}")
+    raise SetupError("The new IRC accounts are not registered yet. Send the lines above (or run rename-officers "
+                     "again with --irc-operator), then run 'sudo subspace-setup rename-officers' again. The officers "
+                     "keep signing in to their old accounts; nothing else was changed.")
+
+
+def rename_irc_passwords(answers, members):
+    """A shared IRC server that seeds accounts from each fleet's bundle: write the bundle with the new accounts
+    and stop until they sign in with their passwords. The old accounts stay in Ergo until dropped."""
+    store = Secrets(INPUTS, answers["slug"], answers.get("keyVault"))
+    plain = {**answers, "officerNames": "plain"}
+    bundle = irc_bundle(plain, members, store)
+    host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+    missing = [row["name"] for row in bundle["accounts"]
+               if not irc_accounts.check_password(host, port, ca, row["name"], row["password"])]
+    if missing:
+        raise SetupError(f"{', '.join(missing)} cannot sign in to {host} yet. Add the fleet's new bundle there: copy "
+                         f"{INPUTS / 'irc-bundle.json'} to the IRC server and run 'sudo subspace-setup irc-server add "
+                         "<file>' (running the host installer again does it), then run 'sudo subspace-setup "
+                         "rename-officers' again. The officers keep their old accounts meanwhile.")
+    say("every new account signs in with its password")
+
+
+def rename_cleanup(answers, plan, record):
+    """What is left once the officers run under their plain names: steps outside the installer, and how to
+    remove the old names once the new ones are verified."""
+    old = record.get("from") or {}
+    if not old:
+        return []
+    olds = [old[person["id"]] for person, *_ in plan if old.get(person["id"]) and old[person["id"]] != person["id"]]
+    lines = ["once the officers are on IRC under their new names and the desktop shows their ships:"]
+    if answers.get("irc") == "remote":
+        lines += [f"  - on {answers['ircHost']}, if its Subspace API sign-in hook lists local-only accounts "
+                  "(IRC_AUTH_LOCAL_ACCOUNTS), add " + " ".join(person["id"] for person, *_ in plan)
+                  + " there and restart the IRC server; take the old names out when you drop them",
+                  "  - drop the old accounts as an IRC operator: " + "; ".join(f"/NS ERASE {name}" for name in olds),
+                  "  - the old ship channels (" + ", ".join(channel[0] for *_, channel in plan if channel)
+                  + ") stay with their history; drop or unregister them with ChanServ when no longer needed"]
+    else:
+        lines.append("  - the fleet's Ergo keeps the old accounts; drop them as its operator with /NS ERASE "
+                     + ", ".join(olds))
+    if answers.get("apiUrl"):
+        lines.append(f"  - Stargate kept the old key files beside the new ones in {GATEWAY_KEYS} ("
+                     + ", ".join(f"{row[3]}.pem" for row in plan if row[3] != row[4]) + "); remove them")
+    lines += ["  - the API keeps each old IRC nick retired for its own agent: no one else can take it",
+              "  - desktops: run the host installer again (or update Settings > Channels) for the new ship channels"]
+    return lines
+
+
+def crew_names_supported():
+    """Whether the installed Stargate lets a crew member's name differ from its ID."""
+    source = installed_stargate_source()
+    team = source / "src/coordination/crew/team.ts" if source else None
+    try:
+        return bool(team) and "Agent IDs must match assigned names" not in team.read_text()
+    except OSError:
+        return False
+
+
 def print_secret(args):
     store = read_json(INPUTS / "generated-secrets.json", {})
     answers = read_json(INPUTS / "answers.json", {})
@@ -2277,6 +3948,10 @@ def main(argv):
         except ValueError:
             raise SetupError("The fleet registration is not valid JSON.") from None
         register_fleet(registration)
+    elif argv and argv[0] == "rename-officers":
+        rename_officers(argv[1:])
+    elif argv and argv[0] == "toolchains":
+        toolchains_command(argv[1:])
     elif argv and argv[0] == "demo":
         answers = read_json(INPUTS / "answers.json", {})
         require(answers.get("api"), "The Subspace API is not set up on this VM.")

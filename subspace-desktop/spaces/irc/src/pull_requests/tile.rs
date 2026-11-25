@@ -1,5 +1,5 @@
 //! A pull request's passive hover card, in the issue card's shared
-//! `reference_card` treatment: a state edge, the `repo#n` key and state
+//! `reference_card` outline treatment: the `repo#n` key and state
 //! pill, the title, branches and changed lines when known, then author,
 //! review and check marks and how long ago it changed. Each mark pairs its
 //! glyph with words, so colour never carries meaning alone.
@@ -71,7 +71,6 @@ pub(super) fn hover_card(
     tokens: &Tokens,
     cx: &App,
 ) -> Div {
-    let tone = status(details.status).1;
     let content = v_flex()
         .flex_1()
         .min_w_0()
@@ -82,7 +81,7 @@ pub(super) fn hover_card(
             card.child(line)
         })
         .child(footer(details, now, tokens));
-    reference_card::frame(content, Treatment::Accent(tone), tokens, cx).w(rems(CARD_WIDTH_REM))
+    reference_card::frame(content, Treatment::Outline, tokens, cx).w(rems(CARD_WIDTH_REM))
 }
 
 fn header(details: &PullRequestDetails, label: &str, tokens: &Tokens, cx: &App) -> Div {

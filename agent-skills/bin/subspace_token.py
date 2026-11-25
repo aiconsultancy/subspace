@@ -10,6 +10,9 @@ subspace-tracker skill). Configure the helper in ~/.subspace/agent.json.
   subspace_token.py --login      sign in to WorkOS in your browser
   subspace_token.py --logout     forget the local session
   subspace_token.py --target T   use another installed fleet (default from ~/.subspace/agents.env)
+  subspace_token.py --config F   use the settings in F, such as a deployment repository's
+                                 agent-kit/agent.json, instead of ~/.subspace/agent.json and the
+                                 environment (each API keeps its own session)
 """
 
 import argparse
@@ -32,7 +35,7 @@ import time
 import webbrowser
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 HOME = Path(os.environ.get("SUBSPACE_HOME", Path.home() / ".subspace"))
 DEFAULT_API_URL = "http://127.0.0.1:3000"
@@ -43,6 +46,31 @@ SIGN_IN_REQUIRED = "WorkOS session unavailable. Run subspace_token.py --login."
 
 class TokenError(Exception):
     pass
+
+
+def sign_in_required(config_file=None):
+    """The one-line sign-in hint, naming the settings file when it is not the machine-wide one."""
+    if not config_file:
+        return SIGN_IN_REQUIRED
+    return f"WorkOS session unavailable. Run subspace_token.py --config {config_file} --login."
+
+
+def loopback_host(host):
+    try:
+        return ipaddress.ip_address((host or "").strip("[]")).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
+def opener(url, redirects=False):
+    """An opener for url: no redirects unless asked, and never through a proxy for this computer.
+
+    A system or environment proxy would otherwise carry a loopback request, bearer token and all, to
+    another host."""
+    handlers = [] if redirects else [NoRedirect()]
+    if loopback_host(urlsplit(url).hostname):
+        handlers.append(ProxyHandler({}))
+    return build_opener(*handlers)
 
 
 @dataclass(frozen=True)
@@ -57,13 +85,8 @@ class Config:
 def base_url(value, setting, paths):
     try:
         url = urlsplit(value)
-        host = url.hostname
-        try:
-            loopback = ipaddress.ip_address(host).is_loopback
-        except ValueError:
-            loopback = host == "localhost"
         if (
-            (url.scheme == "https" or url.scheme == "http" and loopback)
+            (url.scheme == "https" or url.scheme == "http" and loopback_host(url.hostname))
             and re.fullmatch(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]+)?", url.netloc)
             and url.path in paths and url.port != 0
             and not any(char.isspace() or ord(char) < 32 or char in "\\?#" for char in value)
@@ -74,18 +97,22 @@ def base_url(value, setting, paths):
     raise TokenError(f"{setting} must be an HTTPS URL or a loopback HTTP URL.")
 
 
-def load_config():
+def load_config(path=None):
+    """The settings in ~/.subspace/agent.json, overridden by the environment, or exactly those in path."""
     try:
-        values = json.loads((HOME / "agent.json").read_text(encoding="utf-8"))
+        values = json.loads(Path(path or HOME / "agent.json").read_text(encoding="utf-8"))
     except FileNotFoundError:
+        if path:
+            raise TokenError(f"Cannot find {path}.") from None
         values = {}
     except (OSError, ValueError):
-        raise TokenError("Cannot read agent.json as JSON.") from None
+        raise TokenError(f"Cannot read {path or 'agent.json'} as JSON.") from None
     if not isinstance(values, dict):
         raise TokenError("agent.json must contain a JSON object.")
 
     def setting(name, default):
-        value = os.environ.get("SUBSPACE_" + name.upper(), values.get(name, default))
+        # A named file binds the settings to it, such as a deployment repository's: no overrides.
+        value = values.get(name, default) if path else os.environ.get("SUBSPACE_" + name.upper(), values.get(name, default))
         if isinstance(value, str) or (name == "workos_redirect_port" and type(value) is int):
             return str(value).strip()
         raise TokenError(f"Invalid {name} in agent.json.")
@@ -138,7 +165,7 @@ def call(config, method, path, token=None, body=None):
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        open_url = urlopen if config.identity_provider == "dev" else build_opener(NoRedirect()).open
+        open_url = opener(config.api_url, redirects=config.identity_provider == "dev").open
         request = Request(f"{config.api_url}/api/v1{path}", data=data, headers=headers, method=method)
         with open_url(request, timeout=REQUEST_TIMEOUT) as response:
             return json.load(response)
@@ -256,7 +283,7 @@ def authenticate(config, *, previous=None, **grant):
         headers={"Accept": "application/json", "Content-Type": "application/json"},
     )
     try:
-        with build_opener(NoRedirect()).open(request, timeout=REQUEST_TIMEOUT) as response:
+        with opener(config.workos_api_url).open(request, timeout=REQUEST_TIMEOUT) as response:
             reply = json.loads(response.read(1024 * 1024))
     except HTTPError as error:
         error.close()
@@ -442,9 +469,9 @@ def workos_token(config, store):
         raise TokenError(SIGN_IN_REQUIRED) from None
 
 
-def mcp_stdio(config, store):
+def mcp_stdio(config, store, config_file=None):
     """Forward newline-delimited MCP to Subspace's stateless JSON HTTP endpoint."""
-    opener = build_opener(NoRedirect())
+    forward = opener(config.api_url)
     for line in sys.stdin.buffer:
         try:
             message = json.loads(line)
@@ -459,11 +486,11 @@ def mcp_stdio(config, store):
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {value}",
             })
-            with opener.open(request, timeout=REQUEST_TIMEOUT) as response:
+            with forward.open(request, timeout=REQUEST_TIMEOUT) as response:
                 reply = json.load(response) if response.status == 200 else None
         except (TokenError, HTTPException, OSError, ValueError) as error:
             if isinstance(error, TokenError):
-                detail = str(error)
+                detail = sign_in_required(config_file) if str(error) == SIGN_IN_REQUIRED else str(error)
             elif isinstance(error, HTTPError):
                 error.close()
                 detail = f"Subspace MCP endpoint returned HTTP {error.code}."
@@ -487,8 +514,10 @@ def main():
     group.add_argument("--workos-mcp-url", action="store_true", help=argparse.SUPPRESS)
     group.add_argument("--mcp-stdio", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--mcp-endpoint", help=argparse.SUPPRESS)
+    parser.add_argument("--config", help="use the settings in this file instead of ~/.subspace/agent.json and the "
+                        "environment, such as a deployment repository's agent-kit/agent.json")
     args = parser.parse_args()
-    config = load_config()
+    config = load_config(args.config)
     workos = config.identity_provider == "workos"
     endpoint = f"{config.api_url if workos else DEFAULT_API_URL}/mcp"
     if args.workos_mcp_url:
@@ -496,11 +525,12 @@ def main():
             print(endpoint)
         return
     if args.mcp_endpoint is not None and args.mcp_endpoint != endpoint:
-        raise TokenError("The Subspace MCP URL changed. Run the local skills installer again.")
+        raise TokenError("The Subspace MCP URL changed. Run the local skills installer again."
+                         if not args.config else f"The Subspace MCP URL is not the one in {args.config}.")
     if args.mcp_stdio:
         if not workos:
             raise TokenError("The MCP stdio helper requires WorkOS configuration.")
-        mcp_stdio(config, SessionStore(config))
+        mcp_stdio(config, SessionStore(config), args.config)
         return
     if workos:
         store = SessionStore(config)
@@ -516,7 +546,10 @@ def main():
                 store.clear()
             print("Signed out.")
             return
-        value = workos_token(config, store)
+        try:
+            value = workos_token(config, store)
+        except TokenError as error:
+            raise TokenError(sign_in_required(args.config)) if str(error) == SIGN_IN_REQUIRED else error
     elif args.login:
         print("Development sign-in needs no login.")
         return

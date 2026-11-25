@@ -4,6 +4,19 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.5.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.4.0...subspace-framework-v0.5.0) (2026-11-25)
+
+
+### Features
+
+* **framework:** say which start-up routes read the app's configuration ([e47dd15](https://github.com/aiconsultancy/subspace/commit/e47dd15218d07762a75445c472db9c8fddae2549))
+
+
+### Bug Fixes
+
+* **desktop:** public release review fixes ([8b63c2f](https://github.com/aiconsultancy/subspace/commit/8b63c2f47dffafa1cada72587b526fb44274b954))
+* **framework:** quit when the start-up failure window closes ([d4aab96](https://github.com/aiconsultancy/subspace/commit/d4aab9678b3c57517fcec72867e2b2d3af6aa7b8))
+
 ## [0.4.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.3.0...subspace-framework-v0.4.0) (2026-11-24)
 
 

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "subspace": {
+      "type": "local",
+      "command": ["sh", "-c", "top=$(git rev-parse --show-toplevel) && exec python3 \"$top/agent-kit/bin/subspace_token.py\" --config \"$top/agent-kit/agent.json\" --mcp-stdio --mcp-endpoint @@API_URL@@/mcp"],
+      "enabled": true
+    }
+  }
+}
