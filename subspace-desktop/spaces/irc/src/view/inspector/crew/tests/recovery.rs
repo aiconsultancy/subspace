@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use subspace_client_fleet::{Error, model::ShipDetail};
 
 use super::{DetailState, Roster, assert_progress, member, roster};
@@ -168,18 +170,20 @@ fn a_missing_route_discards_the_queued_task_revision() {
     assert_eq!(state.retry_delay(), None);
 }
 
-#[test]
-fn a_later_task_revision_reads_after_the_retry_budget_is_spent() {
+fn state_after_five_retries() -> DetailState {
     let mut state = DetailState::new(roster("first", "Working…", 1), 0);
     for delay in [1, 2, 4, 8, 16] {
         let flight = state.begin().unwrap();
         state.finish(flight, Err(Error::Unreachable));
-        assert_eq!(
-            state.retry_delay(),
-            Some(std::time::Duration::from_secs(delay))
-        );
+        assert_eq!(state.retry_delay(), Some(Duration::from_secs(delay)));
         state.retry_elapsed();
     }
+    state
+}
+
+#[test]
+fn a_later_task_revision_reads_after_the_retry_budget_is_spent() {
+    let mut state = state_after_five_retries();
     let last = state.begin().unwrap();
     state.finish(last, Err(Error::Unreachable));
     assert_eq!(state.retry_delay(), None);
@@ -189,14 +193,58 @@ fn a_later_task_revision_reads_after_the_retry_budget_is_spent() {
 }
 
 #[test]
-fn a_queued_task_revision_reads_when_retry_after_exceeds_the_limit() {
+fn a_task_revision_waits_for_a_long_retry_after() {
+    let mut state = DetailState::new(roster("first", "Working…", 1), 0);
+    let flight = state.begin().unwrap();
+    state.finish(flight, Err(Error::Busy(Some(31))));
+    assert!(state.update(revised_task(), 0));
+    assert_eq!(state.retry_delay(), Some(Duration::from_secs(31)));
+    assert_eq!(state.begin(), None);
+    state.retry_elapsed();
+    assert_eq!(state.retry_delay(), None);
+    let follow_up = state.begin().expect("read the held revision once");
+    state.finish(follow_up, Err(Error::Unreachable));
+    assert_eq!(
+        state.retry_delay(),
+        Some(Duration::from_secs(1)),
+        "the hold used no retry budget"
+    );
+}
+
+#[test]
+fn a_hold_without_queued_demand_does_not_read() {
+    let mut state = DetailState::new(roster("first", "Working…", 1), 0);
+    let flight = state.begin().unwrap();
+    state.finish(flight, Err(Error::Busy(Some(31))));
+    assert_eq!(state.retry_delay(), Some(Duration::from_secs(31)));
+    state.retry_elapsed();
+    assert_eq!(state.retry_delay(), None);
+    assert_eq!(state.begin(), None);
+}
+
+#[test]
+fn a_task_revision_honours_retry_after_with_no_retry_budget() {
+    let mut state = state_after_five_retries();
+    let flight = state.begin().unwrap();
+    assert!(state.update(revised_task(), 0));
+    state.finish(flight, Err(Error::Busy(Some(6))));
+    assert_eq!(state.retry_delay(), Some(Duration::from_secs(6)));
+    assert_eq!(state.begin(), None);
+    state.retry_elapsed();
+    assert_eq!(state.retry_delay(), None);
+    let follow_up = state.begin().expect("read after Retry-After");
+    state.finish(follow_up, Err(Error::Unreachable));
+    assert_eq!(state.retry_delay(), None);
+    assert_eq!(state.begin(), None);
+}
+
+#[test]
+fn try_again_clears_a_hold_and_reads_at_once() {
     let (mut state, flight) = read_with_queued_task_revision();
     state.finish(flight, Err(Error::Busy(Some(31))));
-    assert_eq!(state.retry_delay(), None);
-    let follow_up = state
-        .begin()
-        .expect("no scheduled retry holds the revision");
-    state.finish(follow_up, Ok(member("first", "Latest detail", 1)));
-    assert_progress(&state, "Latest detail");
     assert_eq!(state.begin(), None);
+    assert!(state.can_retry());
+    state.probe();
+    assert_eq!(state.retry_delay(), None);
+    assert!(state.begin().is_some());
 }

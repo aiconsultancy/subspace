@@ -271,7 +271,12 @@ fn retry_backoff_is_bounded_and_does_not_poll_early() {
     state.probe();
     let manual = state.begin().unwrap();
     state.finish(manual, Err(Error::Busy(Some(31))));
-    assert_eq!(state.retry_delay(), None);
+    assert_eq!(
+        state.retry_delay(),
+        Some(std::time::Duration::from_secs(31))
+    );
+    state.retry_elapsed();
+    assert_eq!(state.begin(), None, "a long wait is not an automatic retry");
 }
 
 #[test]

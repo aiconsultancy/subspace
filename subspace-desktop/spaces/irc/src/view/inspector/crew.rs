@@ -126,12 +126,7 @@ fn sync(board: &mut Irc, api: Entity<FleetApi>, cx: &mut Context<Irc>) {
         selection.retry_timer = None;
     }
     let roster_changed = selection.update(api.read(cx));
-    let client_changed = if visible {
-        selection.refresh(&api, cx)
-    } else {
-        selection.retry_timer = None;
-        false
-    };
+    let client_changed = visible && selection.refresh(&api, cx);
     if visibility_changed || roster_changed || client_changed {
         cx.notify();
     }
@@ -188,14 +183,21 @@ impl Selection {
 
     fn schedule_retry(
         &self,
-        delay: std::time::Duration,
+        mut delay: std::time::Duration,
         api: &Entity<FleetApi>,
         cx: &mut Context<Irc>,
     ) -> Task<()> {
         let selection_id = self.back.clone();
         let api = api.clone();
         cx.spawn(async move |board, cx| {
-            cx.background_executor().timer(delay).await;
+            // Retry-After is a u64 in seconds. Bound each timer's duration
+            // so the platform scheduler can represent its deadline.
+            const MAX_TIMER_SLICE: std::time::Duration = std::time::Duration::from_secs(86_400);
+            while !delay.is_zero() {
+                let slice = delay.min(MAX_TIMER_SLICE);
+                cx.background_executor().timer(slice).await;
+                delay -= slice;
+            }
             _ = board.update(cx, |board, cx| {
                 if let Some(selection) = &mut board.inspector_crew
                     && selection.back == selection_id

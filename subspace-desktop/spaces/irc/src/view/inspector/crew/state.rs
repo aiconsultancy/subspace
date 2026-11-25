@@ -8,7 +8,7 @@ use subspace_client_fleet::model::{CrewContext, CrewMember};
 
 mod retry;
 mod roster;
-use retry::retry_delay;
+use retry::ReadWait;
 pub(super) use roster::Roster;
 use roster::{current_in, same_task_facts};
 
@@ -19,8 +19,7 @@ pub(super) struct DetailState {
     visible: bool,
     // Demand not yet covered by the active read, independent of its result.
     pending: bool,
-    // A transient failure gates pending demand behind the retry policy.
-    waiting_to_retry: bool,
+    wait: Option<ReadWait>,
     flight: Option<(u64, Box<CrewMember>)>,
     detail: Option<FullDetail>,
     error: Option<Error>,
@@ -35,7 +34,7 @@ impl DetailState {
             generation: 0,
             visible: true,
             pending: true,
-            waiting_to_retry: false,
+            wait: None,
             flight: None,
             detail: None,
             error: None,
@@ -58,7 +57,7 @@ impl DetailState {
         if connection_changed {
             self.flight = None;
             self.error = None;
-            self.waiting_to_retry = false;
+            self.wait = None;
         }
         self.connection = connection;
         self.roster = roster;
@@ -87,7 +86,7 @@ impl DetailState {
         self.retries = 0;
         self.flight = None;
         self.pending = true;
-        self.waiting_to_retry = false;
+        self.wait = None;
     }
 
     /// Reports a transition so the owner can let go of obsolete work.
@@ -100,6 +99,7 @@ impl DetailState {
             self.probe();
         } else {
             self.flight = None;
+            self.wait = None;
         }
         true
     }
@@ -111,36 +111,27 @@ impl DetailState {
     }
 
     pub fn can_retry(&self) -> bool {
-        (!self.pending || self.waiting_to_retry)
+        (!self.pending || self.wait.is_some())
             && self.flight.is_none()
             && self.error.is_some_and(|err| err != Error::NotFound)
     }
 
     pub fn retry_delay(&self) -> Option<Duration> {
-        if !self.can_retry() {
-            return None;
-        }
-        self.automatic_retry_delay(self.error?)
-    }
-
-    fn automatic_retry_delay(&self, error: Error) -> Option<Duration> {
-        if !matches!(self.roster, Roster::Present(_)) {
-            return None;
-        }
-        retry_delay(error, self.retries)
+        self.wait.map(ReadWait::delay)
     }
 
     pub fn retry_elapsed(&mut self) {
-        self.retries += 1;
-        self.waiting_to_retry = false;
-        self.queue();
+        if matches!(self.wait.take(), Some(ReadWait::Retry(_))) {
+            self.retries += 1;
+            self.queue();
+        }
     }
 
     pub fn begin(&mut self) -> Option<u64> {
         let Roster::Present(roster) = &self.roster else {
             return None;
         };
-        if !self.visible || self.flight.is_some() || !self.pending || self.waiting_to_retry {
+        if !self.visible || self.flight.is_some() || !self.pending || self.wait.is_some() {
             return None;
         }
         self.pending = false;
@@ -169,7 +160,11 @@ impl DetailState {
             }
             Err(error) => {
                 self.error = Some(error);
-                self.waiting_to_retry = self.automatic_retry_delay(error).is_some();
+                self.wait = ReadWait::after(
+                    error,
+                    self.retries,
+                    matches!(self.roster, Roster::Present(_)),
+                );
             }
         }
     }
