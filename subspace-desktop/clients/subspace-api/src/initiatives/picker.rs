@@ -2,10 +2,10 @@
 //! person's initiatives only: someone who belongs to one always has one
 //! selected, so there is no choice of none.
 
-use gpui_kit::{Pixels, Styled as _, px};
+use gpui_kit::{App, Entity, Pixels, Styled as _, Window, px};
 use subspace_framework::dashboard::action::menu_button;
 use subspace_framework::dashboard::icon_button::IconButton;
-use subspace_framework::dashboard::menu::{MenuContents, MenuOption};
+use subspace_framework::dashboard::menu::{Menu, MenuAnchors, MenuContents, MenuOption};
 use subspace_framework::lucide::IconName;
 
 use super::{CHECKING, Catalog, NO_MEMBERSHIPS, UNAVAILABLE};
@@ -14,6 +14,23 @@ const PICKER_MAX_WIDTH: Pixels = px(280.);
 const TITLE: &str = "Initiative";
 
 impl Catalog {
+    /// Open the searchable picker and capture the catalogue revision it represents.
+    pub fn open_picker(
+        catalog: &Entity<Self>,
+        anchors: &MenuAnchors,
+        key: &'static str,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<(Entity<Menu>, u64)> {
+        let catalog = catalog.read(cx);
+        let revision = catalog.revision();
+        let contents = catalog.menu();
+        let anchor = anchors.anchor(key, cx);
+        anchors
+            .open(anchor, contents, window, cx)
+            .map(|menu| (menu, revision))
+    }
+
     /// What the picker's Space says about the memberships: that the API
     /// could not be reached, in the words every Space uses for it, that
     /// they could not be read, that the person belongs to no initiative

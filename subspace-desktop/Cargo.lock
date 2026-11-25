@@ -9514,6 +9514,7 @@ dependencies = [
  "subspace-github-copilot-agents-board",
  "subspace-irc-board",
  "subspace-issues-board",
+ "subspace-projects-board",
  "subspace-space-lab-board",
  "subspace-terminal-panel",
  "subspace-web-board",
@@ -9978,6 +9979,16 @@ dependencies = [
  "semver",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "subspace-projects-board"
+version = "0.12.1"
+dependencies = [
+ "chrono",
+ "gpui-kit",
+ "subspace-api-client",
+ "subspace-framework",
 ]
 
 [[package]]

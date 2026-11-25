@@ -385,7 +385,7 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py repo_refresh.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
 done
 # The screenshot tools' pinned versions and renderer, which runtime.py render installs from.

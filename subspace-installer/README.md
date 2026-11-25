@@ -215,6 +215,13 @@ install without those repositories now, and add them as private ones once the
 officers have GitHub Apps ([Add private repositories later](#add-private-repositories-later)).
 An installed repository is not checked again.
 
+The rear admiral can call `refresh_origin` on the `repo_refresh` MCP server
+with an installed repository ID. The tool fetches from the configured upstream
+into `refs/remotes/origin/*` in the rear admiral's reference checkout. Use
+`read_origin_file` with a branch and path to read the fetched version. The checkout
+branch and working files remain read-only. Private fetches use the rear
+admiral's existing repository-scoped GitHub App credentials.
+
 A repository also takes an optional one-line `description` and `tracker`,
 free text that names where its work is tracked, for example
 `"tracker": "Example issues at https://tracker.example.com/project"`. Both
