@@ -81,8 +81,8 @@ STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 # Stargate's latest release and the commit its tag names; every install gets exactly that commit. Agent
 # dispatch on the rear admiral's gateway needs v0.43.0 or later. scripts/stargate-pin.py checks the two
 # against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
-STARGATE_RELEASE = "v0.43.0"
-STARGATE_REF = "fcf6ac75d9c780878c06c8b49fb160e4a27832ff"
+STARGATE_RELEASE = "v0.46.0"
+STARGATE_REF = "91f5cced309ff86dae6cc44454630abd7cbfcbc7"
 # A hosted Subspace API (api.enrolment): Stargate's subspaceAgents section, its signing proxy and its MCP bridge,
 # first in this commit; a checkout has them when it has SUBSPACE_AGENTS_FILE. Releases up to v0.43 lack them.
 SUBSPACE_AGENTS_COMMIT = "5630a5ce9ca1e7cd533bc7a5ab951bb4681757be"

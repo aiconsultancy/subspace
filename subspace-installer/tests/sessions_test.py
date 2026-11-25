@@ -1079,10 +1079,13 @@ class InstalledFleet(unittest.TestCase):
                 ({"api": {"url": "https://subspace.example.com", "enrolment": True,
                           "agentUrl": "http://127.0.0.1:3001"}}, secrets, "exclude each other"),
                 ({}, {**secrets, "apiToken": "aaa.bbb.admin"}, "keeps no administrator token"),
-                ({"stargate": {}}, secrets, "pinned release, v0.43.0, has not got it"),
                 (claude_only, secrets_for("example-atlas", "example-vega"), "needs an OpenCode officer")):
             with self.subTest(message), self.assertRaisesRegex(runtime.Invalid, message):
                 runtime.validate({**config, **change}, private)
+        with patch.object(runtime, "STARGATE_RELEASE", "v0.43.0"), \
+                self.assertRaisesRegex(runtime.Invalid, "pinned release, v0.43.0, has not got it"):
+            runtime.validate({**config, "stargate": {}}, secrets)
+        runtime.validate({**config, "stargate": {}}, secrets)
         cfg = runtime.validate(config, secrets)
         with self.assertRaisesRegex(runtime.Invalid, "needs the fleet's enrolment token"):
             runtime.extra_snapshot(cfg, None, {}, False)
