@@ -18,6 +18,7 @@ pub mod model;
 mod native;
 pub mod nett;
 mod pacing;
+pub mod projects;
 mod query;
 mod reads;
 pub mod reference;

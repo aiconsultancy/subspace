@@ -15,6 +15,7 @@ subspace-github-copilot-agents-board = { path = "../../spaces/github-copilot-age
 subspace-actions-board = { path = "../../spaces/actions" }
 subspace-irc-board = { path = "../../spaces/irc" }
 subspace-issues-board = { path = "../../spaces/issues" }
+subspace-projects-board = { path = "../../spaces/projects" }
 subspace-decisions-board = { path = "../../spaces/decisions" }
 subspace-web-board = { path = "../../spaces/web" }
 subspace-descriptor.workspace = true

@@ -584,7 +584,7 @@ keeps the collapse control.
 | \` | Theme designer |
 | ? | Show or hide the Help dock panel |
 | Cmd+Shift+/ (Ctrl+Shift+/ on Windows and Linux) | Show or hide Keyboard Shortcuts. Type to filter by key or action; Esc closes it and restores focus |
-| F1 to F12 | Dashboard switch keys with Secondary+1 to Secondary+9. Enabled product order. With every Subspace board on: F1 GitHub, F2 Copilot Agents, F3 Channels, F4 Issues, F5 Decisions, F6 Actions. A build with the unreleased Spaces adds the Component gallery after Actions and, on macOS ARM64, Space Lab after Decisions. Disabled boards take no slot. Unused positions do nothing. |
+| F1 to F12 | Dashboard switch keys with Secondary+1 to Secondary+9. Enabled product order. With every Subspace board on: F1 GitHub, F2 Copilot Agents, F3 Channels, F4 Issues, F5 Projects, F6 Decisions, F7 Actions. A build with the unreleased Spaces adds the Component gallery after Actions and, on macOS ARM64, Space Lab after Decisions. Disabled boards take no slot. Unused positions do nothing. |
 | Secondary+1 to Secondary+9 | Product dashboard order; unused positions do nothing. |
 | Cmd+Shift+L (Ctrl+Shift+L elsewhere) | Show the log viewer |
 | Cmd+Shift+C (Super+Shift+C on Linux, Ctrl+Shift+C on Windows) | Show or hide chat |
