@@ -34,16 +34,22 @@ pub struct PlanningProject {
     pub version: Option<u32>,
 }
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectFields {
     pub version: u32,
-    pub name: String,
-    pub description: Option<String>,
-    pub status: String,
-    pub priority: u8,
-    pub start_date: Option<String>,
-    pub target_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_date: Option<Option<String>>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -150,15 +156,19 @@ impl Client {
 
     pub fn milestone_issues(&self, id: &str) -> Result<Vec<IssueListItem>, Error> {
         transport::validate_segments(std::iter::once(id))?;
-        let mut rows: Vec<IssueListItem> = self.planning_pages(
-            &["issues"],
-            &[
-                ("milestone".into(), id.into()),
-                ("includeArchived".into(), "true".into()),
-            ],
-        )?;
-        rows.retain(|row| row.fields.milestone_id.as_deref() == Some(id));
+        let mut rows = self.planning_pages(&["issues"], &milestone_issue_query(id))?;
+        retain_milestone(&mut rows, id);
         Ok(rows)
+    }
+
+    pub fn milestone_issue_preview(&self, id: &str) -> Result<Page<IssueListItem>, Error> {
+        self.current()?;
+        transport::validate_segments(std::iter::once(id))?;
+        let mut query = milestone_issue_query(id).to_vec();
+        query.push(("limit".into(), PAGE_SIZE.to_string()));
+        let mut page: Page<IssueListItem> = self.get(&["issues"], &query)?;
+        retain_milestone(&mut page.items, id);
+        Ok(page)
     }
 
     pub fn change_project(
@@ -168,7 +178,11 @@ impl Client {
     ) -> Result<(), PlanningWriteError> {
         self.current()?;
         let url = self.endpoint(&["projects", id], &[])?;
-        let response = transport::put_json(self, &url, &json!(fields), transport::READ_TIMEOUT)
+        let body = json!(fields);
+        if body.as_object().is_some_and(|fields| fields.len() == 1) {
+            return Ok(());
+        }
+        let response = transport::put_json(self, &url, &body, transport::READ_TIMEOUT)
             .map_err(|_| PlanningWriteError::Unconfirmed)?;
         self.current()?;
         write_result(&response, StatusCode::OK)
@@ -271,6 +285,17 @@ impl Client {
         self.current()?;
         write_result(&response, success)
     }
+}
+
+fn milestone_issue_query(id: &str) -> [(String, String); 2] {
+    [
+        ("milestone".into(), id.into()),
+        ("includeArchived".into(), "true".into()),
+    ]
+}
+
+fn retain_milestone(rows: &mut Vec<IssueListItem>, id: &str) {
+    rows.retain(|row| row.fields.milestone_id.as_deref() == Some(id));
 }
 
 fn write_result(

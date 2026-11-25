@@ -180,14 +180,7 @@ impl Dashboard for Projects {
     fn reload(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if self.write_task.is_none() {
             self.refresh(cx);
-            if let Some(id) = self
-                .milestone_pages
-                .detail
-                .as_ref()
-                .map(|detail| detail.milestone.clone())
-            {
-                self.retry_milestone_issues(&id, cx);
-            }
+            self.reload_milestone_issues(cx);
         }
     }
 

@@ -25,7 +25,20 @@ pub(crate) struct Pages {
     pub(crate) list_scroll: ScrollHandle,
     pub(crate) detail_scroll: ScrollHandle,
     pub(crate) issues: HashMap<String, Result<Vec<IssueListItem>, Error>>,
-    pending: HashMap<String, Task<()>>,
+    pub(crate) preview_issues: HashMap<String, Result<IssuePreview, Error>>,
+    pending: HashMap<(String, IssueRead), Task<()>>,
+    restore_offset: Option<f32>,
+}
+
+pub(crate) struct IssuePreview {
+    pub(crate) items: Vec<IssueListItem>,
+    pub(crate) more: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum IssueRead {
+    Preview,
+    Detail,
 }
 
 pub(crate) struct Detail {
@@ -61,7 +74,11 @@ impl Projects {
     pub(crate) fn preview_milestone(&mut self, id: &str, hovered: bool, cx: &mut Context<Self>) {
         if hovered && self.milestone(id).is_some() {
             self.milestone_pages.preview = Some(id.to_owned());
-            self.fetch_issues(id, cx);
+            if !self.milestone_pages.preview_issues.contains_key(id)
+                && !self.milestone_pages.issues.contains_key(id)
+            {
+                self.fetch_issues(id, IssueRead::Preview, cx);
+            }
         } else if self.milestone_pages.preview.as_deref() == Some(id) {
             self.milestone_pages.preview = None;
         }
@@ -81,6 +98,7 @@ impl Projects {
             from,
         });
         self.milestone_pages.detail_scroll = ScrollHandle::new();
+        self.milestone_pages.restore_offset = None;
         self.tab = Tab::Milestones;
         self.retry_milestone_issues(id, cx);
         cx.notify();
@@ -153,50 +171,117 @@ impl Projects {
         {
             return false;
         }
-        self.select(project, cx);
-        self.show_milestone(milestone, from, cx);
-        self.milestone_pages
-            .detail_scroll
-            .set_offset(point(Default::default(), px(offset)));
+        let returning_to_open_detail = self.selected.as_deref() == Some(project)
+            && self
+                .milestone_pages
+                .detail
+                .as_ref()
+                .is_some_and(|detail| detail.milestone == milestone && detail.from == from);
+        if !returning_to_open_detail {
+            self.select(project, cx);
+            self.show_milestone(milestone, from, cx);
+            self.milestone_pages.restore_offset = Some(offset);
+        }
         true
     }
 
-    fn fetch_issues(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.milestone_pages.pending.contains_key(id) {
+    pub(crate) fn restore_milestone_scroll(&mut self) {
+        let Some(detail) = &self.milestone_pages.detail else {
+            return;
+        };
+        if self.milestone(&detail.milestone).is_some()
+            && self.milestone_pages.issues.contains_key(&detail.milestone)
+            && let Some(offset) = self.milestone_pages.restore_offset.take()
+        {
+            self.milestone_pages
+                .detail_scroll
+                .set_offset(point(Default::default(), px(offset)));
+        }
+    }
+
+    fn fetch_issues(&mut self, id: &str, kind: IssueRead, cx: &mut Context<Self>) {
+        let key = (id.to_owned(), kind);
+        if self.milestone_pages.pending.contains_key(&key) {
             return;
         }
-        let id = id.to_owned();
-        let requested = id.clone();
+        let requested = key.0.clone();
         let account = self.account;
         let project = self.selected.clone();
-        let read = cx.background_spawn(async move { Client::new()?.milestone_issues(&requested) });
-        let task = cx.spawn({
-            let id = id.clone();
-            async move |this, cx| {
-                let result = read.await;
-                _ = this.update(cx, |this, cx| {
-                    if signed_in_generation() == account && this.selected == project {
-                        this.milestone_pages.pending.remove(&id);
-                        this.milestone_pages.issues.insert(id, result);
-                        cx.notify();
-                    }
-                });
+        let read = cx.background_spawn(async move {
+            let client = Client::new()?;
+            if signed_in_generation() != account {
+                return Err(Error::SignInNeeded);
+            }
+            match kind {
+                IssueRead::Preview => {
+                    client
+                        .milestone_issue_preview(&requested)
+                        .map(|page| IssuePreview {
+                            items: page.items,
+                            more: page.next_cursor.is_some(),
+                        })
+                }
+                IssueRead::Detail => client
+                    .milestone_issues(&requested)
+                    .map(|items| IssuePreview { items, more: false }),
             }
         });
-        self.milestone_pages.pending.insert(id, task);
+        let pending_key = key.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            _ = this.update(cx, |this, cx| {
+                this.milestone_pages.pending.remove(&pending_key);
+                if signed_in_generation() != account || this.selected != project {
+                    return;
+                }
+                match kind {
+                    IssueRead::Preview => {
+                        this.milestone_pages
+                            .preview_issues
+                            .insert(pending_key.0, result);
+                    }
+                    IssueRead::Detail => {
+                        this.milestone_pages
+                            .issues
+                            .insert(pending_key.0, result.map(|page| page.items));
+                    }
+                }
+                cx.notify();
+            });
+        });
+        self.milestone_pages.pending.insert(key, task);
     }
 
     pub(crate) fn retry_milestone_issues(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self
+        if !self
             .milestone_pages
             .issues
             .get(id)
-            .is_some_and(Result::is_err)
+            .is_some_and(Result::is_ok)
         {
             self.milestone_pages.issues.remove(id);
+            self.fetch_issues(id, IssueRead::Detail, cx);
         }
-        self.fetch_issues(id, cx);
         cx.notify();
+    }
+
+    pub(crate) fn reload_milestone_issues(&mut self, cx: &mut Context<Self>) {
+        self.milestone_pages.pending.clear();
+        self.milestone_pages.preview_issues.clear();
+        let open = self
+            .milestone_pages
+            .detail
+            .as_ref()
+            .map(|detail| detail.milestone.clone());
+        self.milestone_pages
+            .issues
+            .retain(|id, _| Some(id) == open.as_ref());
+        if let Some(id) = open {
+            self.fetch_issues(&id, IssueRead::Detail, cx);
+        }
+        if let Some(id) = self.milestone_pages.preview.clone() {
+            self.fetch_issues(&id, IssueRead::Preview, cx);
+        }
     }
 }
 

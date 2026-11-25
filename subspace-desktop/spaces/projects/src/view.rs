@@ -28,6 +28,7 @@ use crate::{Projects, Record, Tab, editor, initiative};
 impl Render for Projects {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.follow_account(cx);
+        self.restore_milestone_scroll();
         let tokens = Tokens::current(cx);
         let pane = workspace::Pane::new("projects-pane")
             .toolbar(toolbar(self, cx))

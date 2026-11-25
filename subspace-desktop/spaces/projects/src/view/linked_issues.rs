@@ -18,8 +18,20 @@ const PREVIEW_LIMIT: usize = 5;
 
 pub(super) fn preview(this: &Projects, id: &str, tokens: &Tokens) -> Option<Div> {
     let milestone = this.milestone(id)?;
-    let body = match this.milestone_pages.issues.get(id) {
-        Some(Ok(rows)) if !rows.is_empty() => v_flex()
+    let rows = this
+        .milestone_pages
+        .issues
+        .get(id)
+        .map(|result| result.as_ref().map(|rows| (rows.as_slice(), false)))
+        .or_else(|| {
+            this.milestone_pages.preview_issues.get(id).map(|result| {
+                result
+                    .as_ref()
+                    .map(|page| (page.items.as_slice(), page.more))
+            })
+        });
+    let body = match rows {
+        Some(Ok((rows, more))) if !rows.is_empty() => v_flex()
             .gap_1()
             .children(rows.iter().take(PREVIEW_LIMIT).map(|row| {
                 h_flex()
@@ -28,11 +40,13 @@ pub(super) fn preview(this: &Projects, id: &str, tokens: &Tokens) -> Option<Div>
                     .child(div().min_w_0().truncate().child(issue_label(row)))
                     .child(status(row, tokens))
             }))
-            .children((rows.len() > PREVIEW_LIMIT).then(|| {
-                div().text_color(tokens.muted).child(format!(
-                    "{} more in the milestone",
-                    rows.len() - PREVIEW_LIMIT
-                ))
+            .children((more || rows.len() > PREVIEW_LIMIT).then(|| {
+                let label = if more {
+                    "More issues in the milestone".to_owned()
+                } else {
+                    format!("{} more in the milestone", rows.len() - PREVIEW_LIMIT)
+                };
+                div().text_color(tokens.muted).child(label)
             })),
         Some(Ok(_)) => muted("No linked issues", tokens),
         Some(Err(_)) => muted("Linked issues unavailable", tokens),

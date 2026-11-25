@@ -94,14 +94,22 @@ fn editing_projects_uses_versioned_put_in_both_backends() {
     let nett = Client::nett_loopback(&format!("{}/api", mock.base_url()), Some(org), None).unwrap();
     let fields = ProjectFields {
         version: 4,
-        name: "Example project".into(),
-        description: None,
-        status: "paused".into(),
-        priority: 3,
-        start_date: None,
-        target_date: Some("2026-12-15".into()),
+        status: Some("paused".into()),
+        target_date: Some(None),
+        ..Default::default()
     };
-    native.change_project("project-1", &fields).unwrap();
+    native
+        .change_project(
+            "project-1",
+            &ProjectFields {
+                name: Some("Example project".into()),
+                version: 4,
+                status: Some("paused".into()),
+                target_date: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     nett.change_project("project-1", &fields).unwrap();
     let requests = mock.requests();
     assert_eq!(requests[0].path, "/api/v1/projects/project-1");
@@ -109,15 +117,36 @@ fn editing_projects_uses_versioned_put_in_both_backends() {
         requests[1].path,
         format!("/api/v1/orgs/{org}/projects/project-1")
     );
-    for request in requests {
-        assert_eq!(request.method, "PUT");
+    assert!(requests.iter().all(|request| request.method == "PUT"));
+    assert_eq!(
+        serde_json::from_str::<Value>(&requests[0].body).unwrap(),
+        json!({"version":4, "name":"Example project", "status":"paused", "targetDate":null}),
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&requests[1].body).unwrap(),
+        json!({"version":4, "status":"paused", "targetDate":null}),
+    );
+}
+
+#[test]
+fn project_write_reports_conflicts_validation_and_sign_in_without_retries() {
+    for (status, expected) in [
+        (409, PlanningWriteError::Conflict),
+        (422, PlanningWriteError::Invalid),
+        (403, PlanningWriteError::Read(crate::Error::SignInNeeded)),
+        (401, PlanningWriteError::Read(crate::Error::SignInNeeded)),
+    ] {
+        let mock = Mock::new(move |_| (status, "{}".into()));
+        let fields = ProjectFields {
+            version: 4,
+            status: Some("started".into()),
+            ..Default::default()
+        };
         assert_eq!(
-            serde_json::from_str::<Value>(&request.body).unwrap(),
-            json!({
-                "version":4, "name":"Example project", "description":null, "status":"paused",
-                "priority":3, "startDate":null, "targetDate":"2026-12-15"
-            }),
+            super::client(&mock).change_project("project-1", &fields),
+            Err(expected),
         );
+        assert_eq!(mock.requests().len(), 1);
     }
 }
 

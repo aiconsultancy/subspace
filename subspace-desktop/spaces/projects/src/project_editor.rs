@@ -2,7 +2,7 @@
 
 use chrono::NaiveDate;
 use gpui_kit::component::input::{InputState, TextareaState};
-use gpui_kit::component::select::{SearchableVec, Select, SelectItem, SelectState};
+use gpui_kit::component::select::{SearchableVec, SelectItem, SelectState};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Div, Entity, Focusable as _,
@@ -16,6 +16,7 @@ use subspace_api_client::{
 use subspace_framework::dashboard::{
     Tokens,
     action::{Intent, dialog_button},
+    anchored,
     dialog::{self, DialogWidth},
     feedback,
     fields::{self, InputRole},
@@ -66,6 +67,7 @@ impl SelectItem for Choice {
 type Choices = Entity<SelectState<SearchableVec<Choice>>>;
 
 pub(super) struct Form {
+    before: PlanningProject,
     version: u32,
     name: Entity<InputState>,
     description: Entity<TextareaState>,
@@ -95,6 +97,7 @@ impl Form {
         });
         name.read(cx).focus_handle(cx).focus(window, cx);
         Self {
+            before: project.clone(),
             version,
             name,
             description,
@@ -118,10 +121,16 @@ impl Form {
     pub(super) fn write(&self, cx: &App) -> Result<ProjectFields, &'static str> {
         let name = self.name.read(cx).value();
         let name = name.trim();
-        validate_name(name, backend())?;
+        let name = (name != self.before.name.trim()).then_some(name);
+        if let Some(name) = name {
+            validate_name(name, backend())?;
+        }
         let description = self.description.read(cx).value();
-        if description.contains('\0')
-            || description.encode_utf16().count() > editor::MAX_DESCRIPTION_LENGTH
+        let description_changed =
+            description.as_str() != self.before.description.as_deref().unwrap_or_default();
+        if description_changed
+            && (description.contains('\0')
+                || description.encode_utf16().count() > editor::MAX_DESCRIPTION_LENGTH)
         {
             return Err("Enter a description of at most 50,000 characters.");
         }
@@ -149,14 +158,20 @@ impl Form {
         {
             return Err("The target date must be on or after the start date.");
         }
+        let start_date = start.map(|day| day.to_string());
+        let target_date = target.map(|day| day.to_string());
         Ok(ProjectFields {
             version: self.version,
-            name: name.to_owned(),
-            description: (!description.is_empty()).then(|| description.to_string()),
-            status: status.clone(),
-            priority,
-            start_date: start.map(|day| day.to_string()),
-            target_date: target.map(|day| day.to_string()),
+            // The Subspace PUT schema requires the current name on every edit.
+            name: name
+                .map(str::to_owned)
+                .or_else(|| (backend() == Backend::Subspace).then(|| self.before.name.clone())),
+            description: description_changed
+                .then(|| (!description.is_empty()).then(|| description.to_string())),
+            status: (status != &self.before.status).then(|| status.clone()),
+            priority: (priority != self.before.priority).then_some(priority),
+            start_date: (start_date != self.before.start_date).then_some(start_date),
+            target_date: (target_date != self.before.target_date).then_some(target_date),
         })
     }
 }
@@ -289,11 +304,11 @@ fn form_body(form: &Form, busy: bool) -> Div {
                 .gap_3()
                 .child(div().min_w_0().flex_1().child(fields::form_field(
                     "Status",
-                    Select::new(&form.status).disabled(busy),
+                    anchored::select(&form.status).disabled(busy),
                 )))
                 .child(div().min_w_0().flex_1().child(fields::form_field(
                     "Priority",
-                    Select::new(&form.priority).disabled(busy),
+                    anchored::select(&form.priority).disabled(busy),
                 ))),
         )
         .child(
