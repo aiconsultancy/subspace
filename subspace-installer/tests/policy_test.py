@@ -37,6 +37,24 @@ readable_without_credentials = runtime.readable_without_credentials
 runtime.readable_without_credentials = lambda url: True
 
 
+def stargate_team_problems(team):
+    """Stargate's own check of a crew team (src/coordination/crew/team.ts, from its release that lets a crew name
+    differ from its ID): crew IDs unique and none the captain's, captain or all; compared without case, a name is
+    no other member's name or ID, nor captain or all. The members it would refuse."""
+    problems, ids = [], {team["captain"]["id"], "captain", "all"}
+    for member in team["crew"]:
+        if member["id"] in ids:
+            problems.append(member["id"])
+        ids.add(member["id"])
+    members = [team["captain"], *team["crew"]]
+    owners = {"captain": -1, "all": -1, **{member["id"]: index for index, member in enumerate(members)}}
+    for index, member in enumerate(members):
+        name = member.get("name", "").strip().lower()
+        if name and owners.setdefault(name, index) != index:
+            problems.append(member.get("name"))
+    return problems
+
+
 def example_config():
     # Most of these tests name the officers' accounts as a fleet installed before plain names did; PlainNamesTests
     # covers plain names, the example's own.
@@ -1881,9 +1899,86 @@ class PlainNamesTests(unittest.TestCase):
             runtime.check_crew_ids(cfg)
         with patch.object(runtime, "stargate_crew_names_free", return_value=True):
             runtime.check_crew_ids(cfg)
+        # The dry run cannot read a Stargate that is not checked out yet (a release newer than the installed one):
+        # it says the install checks it, and refuses only a checkout that is there and has the rule.
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            paths = [work / "fleet.json", work / "fleet.secrets.json"]
+            for path, value in zip(paths, (self.config, self.secrets), strict=True):
+                path.write_text(json.dumps(value))
+                path.chmod(0o600)
+            ref = validate(self.config, self.secrets)["stargate"]["ref"]
+
+            def plan():
+                output = io.StringIO()
+                with patch.object(runtime, "ETC", work / "etc"), patch.object(runtime, "STATE", work / "state"), \
+                        patch.object(runtime, "SESSIONS", work / "none"), patch.object(runtime, "APP", work / "app"), \
+                        patch.object(runtime, "check_new_crew_named"), contextlib.redirect_stdout(output):
+                    runtime.main(["plan", *map(str, paths), "", "false"])
+                return output.getvalue()
+
+            self.assertIn("is not checked out here yet: the install checks", plan())
+            team = work / "app/src" / f"stargate-{ref}" / "src/coordination/crew/team.ts"
+            team.parent.mkdir(parents=True)
+            team.write_text("throw new Error('Agent IDs must match assigned names')\n")
+            with self.assertRaisesRegex(Invalid, "requires a crew member's name to match its ID"):
+                plan()
+            team.write_text("export {}\n")
+            self.assertNotIn("is not checked out here yet", plan())
         self.config["captains"][0]["crewIds"] = {"claude-9": "x"}
         with self.assertRaisesRegex(Invalid, "crewIds may give only enabled crew slots"):
             validate(self.config, self.secrets)
+
+    def test_installed_crew_keep_their_ids_under_names_unique_in_the_fleet(self):
+        # Three ships whose crew were installed under their slot names, so that every ship has a claude-1, then
+        # named by rename-officers --crew-names: each member keeps its installed ID (crewIds) under its new name.
+        # It is the names that are unique in the fleet; an ID is unique only in its captain's crew.
+        slots = ["claude-1", "claude-2", "codex-1", "codex-2"]
+        crews = {"draco": ["Kestrel", "Heron", "Wren", "Finch"], "cygnus": ["Osprey", "Plover", "Linnet", "Swift"],
+                 "pavo": ["Merlin", "Egret", "Robin", "Siskin"]}
+        self.config["captains"] = [{"id": captain, "name": captain.title(),
+                                    "crewNames": dict(zip(slots, names, strict=True)),
+                                    "crewIds": {slot: slot for slot in slots}} for captain, names in crews.items()]
+        secrets = {**self.secrets, "ircPasswords": {name: "fixture-password" for name in ("atlas", *crews)}}
+        cfg = validate(self.config, secrets)
+        for person, names in zip(cfg["members"][1:], crews.values(), strict=True):
+            self.assertEqual([(worker["id"], worker["name"]) for worker in person["crew"]],
+                             list(zip(slots, names, strict=True)))
+            # What the fleet renders keys every crew member by its ID and shows its name: Stargate's team, the
+            # worktrees, the native agents, the captain's roster and the crew member's own instructions.
+            home = Path("/var/lib/subspace-fleet/agents") / person["id"]
+            options = runtime.crew_options(cfg, person, home, 4097, "ses_fixture")
+            team = options["team"]
+            self.assertEqual([(member["id"], member["name"], member["agent"]) for member in team["crew"]],
+                             [(slot, name, f"{person['id']}-crew-{slot}") for slot, name in zip(slots, names)])
+            self.assertEqual(stargate_team_problems(team), [])
+            clash = [dict(team["crew"][0], name="codex-1"), *team["crew"][1:]]
+            self.assertEqual(stargate_team_problems({**team, "crew": clash}), ["codex-1"])
+            self.assertEqual(options["worktrees"], {slot: f"{home}/worktrees/{slot}/project" for slot in slots})
+            documents = roles.role_documents(cfg, person, None, home)
+            self.assertIn(f"- {names[0]} (`claude-1`, Claude family, slot claude-1", documents["instructions"])
+            self.assertEqual(sorted(documents["crew"]), slots)
+            self.assertIn(names[0], documents["crew"]["claude-1"])
+        self.assertIn("Captain Pavo: pavo, channel #pavo\n    crew: Merlin (Claude 1, claude-sonnet-5-5, ID claude-1); ",
+                      "\n".join(runtime.names_plan(cfg)))
+        # A name on two ships is refused, naming both, as is an officer's name.
+        for captain, slot, name, message in (
+                (2, "codex-2", "heron", "Crew member heron of captain pavo has the same name as captain draco's "
+                                        "Heron, ignoring case"),
+                (1, "claude-1", "Pavo", "Crew member Pavo of captain cygnus has an officer's name \\(pavo\\)")):
+            config = json.loads(json.dumps(self.config))
+            config["captains"][captain]["crewNames"][slot] = name
+            with self.subTest(name), self.assertRaisesRegex(Invalid, message):
+                validate(config, secrets)
+        # In one captain's crew a name is no other member's name or ID, as Stargate's team requires.
+        for name, message in (("Codex 1", "Codex 1 \\(claude-1\\) has the same name as the ID of Wren \\(codex-1\\)"),
+                              ("heron", "Heron \\(claude-2\\) has the same name as heron \\(claude-1\\)"),
+                              ("Draco", "Draco \\(claude-1\\) has the same name as captain draco's ID"),
+                              ("All", "All \\(claude-1\\) has the same name as the alias all")):
+            config = json.loads(json.dumps(self.config))
+            config["captains"][0]["crewNames"]["claude-1"] = name
+            with self.subTest(name), self.assertRaisesRegex(Invalid, f"Captain draco's crew member {message}"):
+                validate(config, secrets)
 
     def test_records_accept_either_standard_ship_channel(self):
         cfg = validate(self.config, self.secrets)

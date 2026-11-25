@@ -306,7 +306,11 @@ only the remaining slots' names to `fleet.json`.
 - **Rules.** ASCII letters, digits, spaces, hyphens and underscores,
   shortening to a crew ID of at most 32 characters. A name is unique in the
   fleet, across every ship, compared without case, and is never an officer's
-  ID, account or name. The fleet installer enforces them for any
+  ID, account or name. It is the names that are compared: a crew member's ID
+  need only be unique in its captain's crew, so every ship may have a
+  `claude-1`, as a fleet whose crew were named after installation has (see
+  below). Within a captain's crew a name is also no other member's ID, as
+  Stargate requires. The fleet installer enforces them for any
   `fleet.json`, and setup checks them before it writes anything. Crew have
   no records in the Subspace API, so the API does not check them: a captain
   records a crew member's work with `relayedCrew: {"name", "model"}`, where
@@ -316,7 +320,8 @@ only the remaining slots' names to `fleet.json`.
   crew slot claude-1)"), which the Fleet API returns with its model; the
   captain's instructions list each one as name, ID, family, slot and model;
   and `--dry-run` prints each captain's crew as `Rigel (Claude 1,
-  claude-sonnet-5-5)`.
+  claude-sonnet-5-5)`, adding `ID claude-1` for a crew member that keeps
+  another ID under its name.
 - **Installed fleets keep their crew.** A slot without a name of its own is
   called after its slot, `Claude 1`, on every ship, as in fleets installed
   before crew names; such names may repeat across ships. Stargate keeps a
@@ -330,7 +335,8 @@ only the remaining slots' names to `fleet.json`.
   `sudo subspace-setup rename-officers --crew-names 'Orion=Rigel,...'`
   keeps each crew member's ID (`crewIds`) and gives it the new name, so its
   sessions, worktrees and queued tasks stay. With today's Stargate it stops,
-  saying so, and changes nothing.
+  saying so, and changes nothing. Later runs of setup take the same names
+  again.
 
 ### Captain sessions
 
@@ -934,12 +940,18 @@ sudo subspace-setup rename-officers [--irc-operator NAME --irc-operator-password
 
 1. **Plan and check.** It prints each officer's old and new IRC account,
    API agent name and ship channel. Before it changes anything, it checks
-   the fleet's answers with plain names as setup checks a new fleet's (a
+   the switch (step 4) as the switch will run: the fleet's answers with
+   plain names and any `--crew-names`, as setup checks a new fleet's (a
    name the IRC server, the API or the installer keeps for itself is
-   refused), and the new names on the IRC server and in the API: other
-   agents' names and nicks, and people's usernames. A hosted API is asked
-   only with `--api-admin-token-file`; without it, the dry run says the
-   API was not asked. The dry run stops here.
+   refused), and the `fleet.json` setup then hands the fleet installer,
+   with the fleet installer's own checks and dry run (crew names across the
+   fleet, pinned sessions). It prints each ship's crew as the switch
+   installs them, each name with its ID. It also checks the new names on
+   the IRC server and in the API: other agents' names and nicks, and
+   people's usernames. A hosted API is asked only with
+   `--api-admin-token-file`; without it, the dry run says the API was not
+   asked. The dry run stops here. A run that resumes at the switch checks
+   it the same way first.
    - A fleet with no Subspace API on its VM and no hosted API is refused:
      a fleet installed with `--api-target` keeps its agent records in
      another fleet's API, which the rename cannot reach, so keep its

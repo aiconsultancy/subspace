@@ -760,6 +760,17 @@ def crew_roster(captain, teams, names, slug, ids=None):
     ids = [person["id"] for person in roster]
     require(len(set(ids)) == len(ids) and not set(ids) & {captain["id"], "captain", "all"},
             "Crew names must give distinct IDs that differ from the captain's ID, captain and all.")
+    # Stargate's team rule, which a kept ID (crewIds) makes reachable: compared without case, a crew member's name
+    # is no other member's name or ID, nor the captain's ID, captain or all. Without crewIds each ID is its name's.
+    taken = {captain["id"]: f"captain {captain['id']}'s ID", "captain": "the alias captain", "all": "the alias all"}
+    for worker in roster:
+        taken.setdefault(worker["id"], f"the ID of {worker['name']} ({worker['id']})")
+    for worker in roster:
+        key = crew_id(worker["name"])
+        clash = taken.get(key) if key != worker["id"] else None
+        require(clash is None, f"Captain {captain['id']}'s crew member {worker['name']} ({worker['id']}) has the "
+                f"same name as {clash}, ignoring case. In a captain's crew a name is no other member's name or ID.")
+        taken[key] = f"{worker['name']} ({worker['id']})"
     return roster
 
 
@@ -778,8 +789,10 @@ def names_plan(cfg):
         names = person["account"] if same else (f"IRC {person['account']}, API {api}, Stargate {person['id']}")
         lines.append(f"  {role} {person['name']}: {names}, channel {person['channel']}")
         if person["crew"]:
+            # A crew member that keeps its installed ID under a new name (crewIds) shows the ID too.
             lines.append("    crew: " + "; ".join(
-                f"{worker['name']} ({worker['family'].title()} {worker['slot'].rpartition('-')[2]}, {worker['model']})"
+                f"{worker['name']} ({worker['family'].title()} {worker['slot'].rpartition('-')[2]}, {worker['model']}"
+                + ("" if crew_id(worker["name"]) == worker["id"] else f", ID {worker['id']}") + ")"
                 + ("" if worker["named"] else " [slot name]") for worker in person["crew"]))
     return lines
 
@@ -806,10 +819,12 @@ def check_crew_ids(cfg):
 
 
 def check_crew_names(agents):
-    """Crew names (crewNames) are unique in the fleet, compared without case (as their IDs), and none is an
-    officer's ID, account or name: a captain addresses crew by ID, people tell them apart by name, and the
-    tracker records a crew member's work by its name beside its captain (relayedCrew). A slot without a name
-    of its own keeps its slot name, 'Claude 1', on every ship, as fleets installed before crew names do."""
+    """Crew names (crewNames) are unique in the fleet, compared without case (as Stargate shortens a name to an ID),
+    and none is an officer's ID, account or name: people tell crew apart by name, and the tracker records a crew
+    member's work by its name beside its captain (relayedCrew). It is the names that are compared, not the IDs: a
+    crew member's ID need only be unique in its captain's crew (crew_roster), and an installed one keeps its ID
+    under a new name (crewIds), so every ship may have a claude-1. A slot without a name of its own keeps its slot
+    name, 'Claude 1', on every ship, as fleets installed before crew names do."""
     officers = {}
     for person in agents:
         for value in (person["id"], person["account"], person["name"]):
@@ -819,13 +834,14 @@ def check_crew_names(agents):
         for worker in person["crew"]:
             if not worker["named"]:
                 continue
-            owner = officers.get(worker["id"])
+            key = crew_id(worker["name"])
+            owner = officers.get(key)
             require(owner is None, f"Crew member {worker['name']} of captain {person['id']} has an officer's name "
                     f"({owner}). Crew names are unique in the fleet and differ from the officers' names.")
-            other = seen.get(worker["id"])
+            other = seen.get(key)
             require(other is None, f"Crew member {worker['name']} of captain {person['id']} has the same name as "
                     f"{other}, ignoring case. Crew names are unique in the fleet: give each crew member its own.")
-            seen[worker["id"]] = f"captain {person['id']}'s {worker['name']}"
+            seen[key] = f"captain {person['id']}'s {worker['name']}"
 
 
 def check_new_crew_named(cfg, installed):
@@ -3219,7 +3235,11 @@ def main(args):
             print(officer_models_line(cfg))
             for line in names_plan(cfg):
                 print(line)
-            check_crew_ids(cfg)
+            if (APP / "src" / f"stargate-{cfg['stargate']['ref']}").is_dir():
+                check_crew_ids(cfg)
+            elif any(crew_id(worker["name"]) != worker["id"] for person in cfg["members"] for worker in person["crew"]):
+                print(f"Stargate {cfg['stargate']['ref'][:12]} is not checked out here yet: the install checks, once "
+                      "it is, that its crew plugin lets a crew member keep its installed ID under a new name.")
             print(f"Standard IRC channels: {' '.join(cfg['irc']['channels'])} (Starbase, fleet command, then one "
                   "ship channel per captain)." + ("" if cfg["irc"]["mode"] == "local" else
                                                    " On a remote server the officers create them by joining, so they "
