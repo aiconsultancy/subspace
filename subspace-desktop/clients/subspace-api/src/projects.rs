@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use ureq::http::StatusCode;
 
-use crate::{Backend, Client, Error, PageRequest, model::Page, transport};
+use crate::{
+    Backend, Client, Error, PageRequest,
+    model::{IssueListItem, Page},
+    transport,
+};
 
 const PAGE_SIZE: u32 = 50;
 
@@ -27,6 +31,19 @@ pub struct PlanningProject {
     pub archived: bool,
     pub initiative_id: Option<String>,
     pub initiative: Option<ProjectInitiative>,
+    pub version: Option<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFields {
+    pub version: u32,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: u8,
+    pub start_date: Option<String>,
+    pub target_date: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -103,14 +120,14 @@ pub enum MilestoneChange {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum MilestoneWriteError {
+pub enum PlanningWriteError {
     #[error("The milestone or project changed. Reload it before making another change.")]
     Conflict,
-    #[error("You don’t have permission to change milestones in this project.")]
+    #[error("You don’t have permission to make this change.")]
     Forbidden,
-    #[error("The API refused this change. Check the milestone’s fields and issue status.")]
+    #[error("The API refused this change. Check the fields and status.")]
     Invalid,
-    #[error("The save could not be confirmed. Reload and check the milestone before trying again.")]
+    #[error("The save could not be confirmed. Reload and check the record before trying again.")]
     Unconfirmed,
     #[error(transparent)]
     Read(#[from] Error),
@@ -129,6 +146,32 @@ impl Client {
 
     pub fn project_milestones(&self, id: &str) -> Result<Vec<Milestone>, Error> {
         self.planning_pages(&["projects", id, "milestones"], &[])
+    }
+
+    pub fn milestone_issues(&self, id: &str) -> Result<Vec<IssueListItem>, Error> {
+        transport::validate_segments(std::iter::once(id))?;
+        let mut rows: Vec<IssueListItem> = self.planning_pages(
+            &["issues"],
+            &[
+                ("milestone".into(), id.into()),
+                ("includeArchived".into(), "true".into()),
+            ],
+        )?;
+        rows.retain(|row| row.fields.milestone_id.as_deref() == Some(id));
+        Ok(rows)
+    }
+
+    pub fn change_project(
+        &self,
+        id: &str,
+        fields: &ProjectFields,
+    ) -> Result<(), PlanningWriteError> {
+        self.current()?;
+        let url = self.endpoint(&["projects", id], &[])?;
+        let response = transport::put_json(self, &url, &json!(fields), transport::READ_TIMEOUT)
+            .map_err(|_| PlanningWriteError::Unconfirmed)?;
+        self.current()?;
+        write_result(&response, StatusCode::OK)
     }
 
     pub fn latest_project_update(&self, id: &str) -> Result<Option<ProjectUpdate>, Error> {
@@ -171,7 +214,7 @@ impl Client {
         &self,
         project: &str,
         fields: &MilestoneFields,
-    ) -> Result<(), MilestoneWriteError> {
+    ) -> Result<(), PlanningWriteError> {
         self.write_milestone(
             &["projects", project, "milestones"],
             &json!(fields),
@@ -184,7 +227,7 @@ impl Client {
         project: &str,
         milestone: &Milestone,
         change: MilestoneChange,
-    ) -> Result<(), MilestoneWriteError> {
+    ) -> Result<(), PlanningWriteError> {
         let (body, status) = change_body(milestone, change);
         if status == StatusCode::OK && body.as_object().is_some_and(|body| body.len() == 1) {
             return Ok(());
@@ -201,7 +244,7 @@ impl Client {
         path: &[&str],
         body: &Value,
         success: StatusCode,
-    ) -> Result<(), MilestoneWriteError> {
+    ) -> Result<(), PlanningWriteError> {
         self.current()?;
         let url = self.endpoint(path, &[])?;
         transport::prepare(&url);
@@ -224,23 +267,30 @@ impl Client {
             .max_redirects_will_error(false)
             .build()
             .send(body.to_string().as_bytes())
-            .map_err(|_| MilestoneWriteError::Unconfirmed)?;
+            .map_err(|_| PlanningWriteError::Unconfirmed)?;
         self.current()?;
-        if response.status() == success {
-            return Ok(());
-        }
-        if transport::is_access_challenge(&response) {
-            return Err(Error::SignInNeeded.into());
-        }
-        Err(match response.status().as_u16() {
-            400 | 422 => MilestoneWriteError::Invalid,
-            401 => Error::SignInNeeded.into(),
-            403 => MilestoneWriteError::Forbidden,
-            404 => Error::NotFound.into(),
-            409 => MilestoneWriteError::Conflict,
-            _ => MilestoneWriteError::Unconfirmed,
-        })
+        write_result(&response, success)
     }
+}
+
+fn write_result(
+    response: &ureq::http::Response<ureq::Body>,
+    success: StatusCode,
+) -> Result<(), PlanningWriteError> {
+    if response.status() == success {
+        return Ok(());
+    }
+    if transport::is_access_challenge(response) {
+        return Err(Error::SignInNeeded.into());
+    }
+    Err(match response.status().as_u16() {
+        400 | 422 => PlanningWriteError::Invalid,
+        401 => Error::SignInNeeded.into(),
+        403 => PlanningWriteError::Forbidden,
+        404 => Error::NotFound.into(),
+        409 => PlanningWriteError::Conflict,
+        _ => PlanningWriteError::Unconfirmed,
+    })
 }
 
 fn change_body(milestone: &Milestone, change: MilestoneChange) -> (Value, StatusCode) {

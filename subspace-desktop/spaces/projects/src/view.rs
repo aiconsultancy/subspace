@@ -1,9 +1,11 @@
 //! The Projects workspace with shared navigation and project header.
 
+mod linked_issues;
 mod milestones;
 mod overview;
 #[cfg(test)]
 mod tests;
+mod timeline;
 
 use chrono::NaiveDate;
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
@@ -77,17 +79,40 @@ fn toolbar(this: &Projects, cx: &mut Context<Projects>) -> workspace::Toolbar {
                 action_button(label, intent, None, label)
                     .disabled(this.editor.is_some())
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        this.milestone_pages.detail = None;
+                        this.milestone_pages.preview = None;
                         this.tab = tab;
                         cx.notify();
                     })),
             );
         }
     }
-    if this.tab == Tab::Milestones && this.may_write() {
+    if this.milestone_pages.detail.is_some() {
+        bar = bar.leading(
+            action_button(
+                "milestone-back",
+                Intent::Neutral,
+                Some(IconName::ArrowLeft),
+                "Back",
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.close_milestone(cx))),
+        );
+    } else if this.tab == Tab::Milestones && this.may_write() {
         bar = bar.trailing(
             main_action("projects-new-milestone", IconName::Plus, "New milestone")
                 .disabled(this.editor.is_some())
                 .on_click(cx.listener(|this, _, window, cx| this.open_editor(None, window, cx))),
+        );
+    } else if this.tab == Tab::Overview && this.editable_project().is_some() {
+        bar = bar.trailing(
+            action_button(
+                "projects-edit",
+                Intent::Neutral,
+                Some(IconName::Pencil),
+                "Edit project",
+            )
+            .disabled(this.editor.is_some())
+            .on_click(cx.listener(|this, _, window, cx| this.open_project_editor(window, cx))),
         );
     }
     bar
@@ -125,13 +150,15 @@ fn content(this: &Projects, tokens: &Tokens, cx: &mut Context<Projects>) -> AnyE
         },
     };
     v_flex()
-        .id(match this.tab {
-            Tab::Overview => "project-overview-scroll",
-            Tab::Milestones => "project-milestones-scroll",
+        .id(match (this.milestone_pages.detail.is_some(), this.tab) {
+            (true, _) => "project-milestone-detail-scroll",
+            (_, Tab::Overview) => "project-overview-scroll",
+            (_, Tab::Milestones) => "project-milestones-scroll",
         })
         .size_full()
         .min_h_0()
         .overflow_y_scroll()
+        .track_scroll(this.milestone_pages.scroll(this.tab))
         .child(
             h_flex().w_full().justify_center().child(
                 v_flex()
@@ -174,6 +201,9 @@ fn record_body(
     cx: &Context<Projects>,
 ) -> AnyElement {
     let project = &record.project;
+    if let Some(detail) = &this.milestone_pages.detail {
+        return milestones::detail(this, &detail.milestone, &project.name, tokens, cx);
+    }
     let initiative_name = project
         .initiative
         .as_ref()
@@ -200,7 +230,7 @@ fn record_body(
         .child(overview::facts(project, tokens))
         .child(overview::stages(project, tokens))
         .child(match this.tab {
-            Tab::Overview => overview::render(record, tokens, cx),
+            Tab::Overview => overview::render(this, record, tokens, cx),
             Tab::Milestones => milestones::render(this, record, tokens, cx),
         })
         .into_any_element()

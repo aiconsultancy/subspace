@@ -1,24 +1,18 @@
-//! Read-only project facts, Markdown and milestone dates.
+//! Project facts, Markdown, and progress.
 
-use chrono::NaiveDate;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     AnyElement, Context, Div, FontWeight, IntoElement as _, ParentElement as _, Pixels,
-    Styled as _, div, px, relative,
+    Styled as _, div, px,
 };
-use subspace_api_client::projects::{Milestone, MilestoneStatus, PlanningProject};
-use subspace_framework::dashboard::{
-    Tokens,
-    action::{Intent, action_button},
-};
-use subspace_framework::lucide::IconName;
+use subspace_api_client::projects::PlanningProject;
+use subspace_framework::dashboard::Tokens;
 
-use super::{date_label, failure, prose};
-use crate::{Projects, Record, Tab};
+use super::{date_label, failure, prose, timeline};
+use crate::{Projects, Record, project_editor::STAGES};
 
 const FACT_MIN_WIDTH: Pixels = px(96.);
-const MARKER_SIZE: Pixels = px(7.);
-const TRACK_HEIGHT: Pixels = px(1.);
+const STAGE_HEIGHT: Pixels = px(3.);
 
 pub(super) fn facts(project: &PlanningProject, tokens: &Tokens) -> Div {
     let status = if project.archived {
@@ -72,45 +66,52 @@ pub(super) fn facts(project: &PlanningProject, tokens: &Tokens) -> Div {
 }
 
 fn stage(status: &str) -> &str {
-    match status {
-        "backlog" => "Backlog",
-        "planned" => "Planned",
-        "started" => "Started",
-        "paused" => "Paused",
-        "completed" => "Completed",
-        "canceled" => "Cancelled",
-        _ => status,
-    }
+    STAGES
+        .iter()
+        .find(|(key, _)| *key == status)
+        .map_or(status, |(_, label)| *label)
 }
 
 pub(super) fn stages(project: &PlanningProject, tokens: &Tokens) -> Div {
     let stages = ["backlog", "planned", "started", "completed"];
     let special = matches!(project.status.as_str(), "paused" | "canceled");
-    h_flex().flex_wrap().gap_4().children(
+    let current = stages.iter().position(|status| *status == project.status);
+    h_flex().flex_wrap().gap_2().children(
         stages
             .into_iter()
             .chain(special.then_some(project.status.as_str()))
-            .map(|status| {
+            .enumerate()
+            .map(|(index, status)| {
                 let active = status == project.status;
-                let color = if active { tokens.accent } else { tokens.muted };
-                h_flex()
+                let reached = current.is_some_and(|current| index <= current);
+                v_flex()
+                    .flex_1()
+                    .min_w(FACT_MIN_WIDTH)
                     .gap_2()
                     .text_sm()
-                    .text_color(color)
+                    .text_color(if active { tokens.accent } else { tokens.muted })
                     .child(
                         div()
-                            .size(MARKER_SIZE)
+                            .w_full()
+                            .h(STAGE_HEIGHT)
                             .rounded_full()
-                            .border_1()
-                            .border_color(color)
-                            .bg(if active { color } else { tokens.bg }),
+                            .bg(if reached || active {
+                                tokens.accent
+                            } else {
+                                tokens.line
+                            }),
                     )
                     .child(stage(status).to_owned())
             }),
     )
 }
 
-pub(super) fn render(record: &Record, tokens: &Tokens, cx: &Context<Projects>) -> AnyElement {
+pub(super) fn render(
+    this: &Projects,
+    record: &Record,
+    tokens: &Tokens,
+    cx: &Context<Projects>,
+) -> AnyElement {
     let description = record
         .project
         .description
@@ -141,6 +142,11 @@ pub(super) fn render(record: &Record, tokens: &Tokens, cx: &Context<Projects>) -
     v_flex()
         .gap_5()
         .child(section(
+            "Timeline",
+            timeline::render(this, record, tokens, cx),
+            tokens,
+        ))
+        .child(section(
             "Description",
             description.map_or_else(
                 || {
@@ -153,107 +159,8 @@ pub(super) fn render(record: &Record, tokens: &Tokens, cx: &Context<Projects>) -
             ),
             tokens,
         ))
-        .child(section("Timeline", timeline(record, tokens, cx), tokens))
         .child(section("Latest update", update, tokens))
         .into_any_element()
-}
-
-fn timeline(record: &Record, tokens: &Tokens, cx: &Context<Projects>) -> AnyElement {
-    let rows = match &record.milestones {
-        Ok(rows) => rows,
-        Err(error) => return failure(&error.to_string(), tokens, cx),
-    };
-    let project = &record.project;
-    let dates = timeline_dates(project, rows);
-    let Some(first) = dates.first().copied() else {
-        return div()
-            .text_color(tokens.muted)
-            .child("No dates yet.")
-            .into_any_element();
-    };
-    let last = dates.last().copied().unwrap_or(first);
-    let next = rows.iter().find(|row| row.status == MilestoneStatus::Next);
-    v_flex()
-        .gap_3()
-        .child(timeline_axis(&dates, first, last, tokens))
-        .children(next.map(|row| {
-            div().child(format!(
-                "Next · {} · {}",
-                row.name,
-                date_label(row.target_date.as_deref())
-            ))
-        }))
-        .children((!rows.is_empty()).then(|| {
-            h_flex().child(
-                action_button(
-                    "timeline-see-milestones",
-                    Intent::Neutral,
-                    Some(IconName::Flag),
-                    format!("Milestones · {}", rows.len()),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.tab = Tab::Milestones;
-                    cx.notify();
-                })),
-            )
-        }))
-        .into_any_element()
-}
-
-fn timeline_dates(project: &PlanningProject, milestones: &[Milestone]) -> Vec<NaiveDate> {
-    let mut dates: Vec<_> = [
-        project.start_date.as_deref(),
-        project.target_date.as_deref(),
-    ]
-    .into_iter()
-    .chain(
-        milestones
-            .iter()
-            .map(|milestone| milestone.target_date.as_deref()),
-    )
-    .flatten()
-    .filter_map(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
-    .collect();
-    dates.sort_unstable();
-    dates.dedup();
-    dates
-}
-
-fn timeline_axis(dates: &[NaiveDate], first: NaiveDate, last: NaiveDate, tokens: &Tokens) -> Div {
-    let duration = (last - first).num_days().max(1) as f32;
-    v_flex()
-        .gap_1()
-        .child(
-            div()
-                .relative()
-                .h_4()
-                .mr_2()
-                .child(
-                    div()
-                        .absolute()
-                        .top(MARKER_SIZE)
-                        .w_full()
-                        .h(TRACK_HEIGHT)
-                        .bg(tokens.line),
-                )
-                .children(dates.iter().map(|date| {
-                    div()
-                        .absolute()
-                        .top_1()
-                        .left(relative((*date - first).num_days() as f32 / duration))
-                        .size(MARKER_SIZE)
-                        .rounded_full()
-                        .bg(tokens.accent)
-                })),
-        )
-        .child(
-            h_flex()
-                .justify_between()
-                .text_sm()
-                .text_color(tokens.muted)
-                .child(first.format("%-d %b %Y").to_string())
-                .children((last != first).then(|| last.format("%-d %b %Y").to_string())),
-        )
 }
 
 fn section(title: &'static str, body: AnyElement, tokens: &Tokens) -> Div {

@@ -904,10 +904,17 @@ def issue_write_route(handler, method, path, query):
             labels = [l for l in labels if l['state'] in query['state']]
         return 200, page(labels, query, 'labels')
     match = re.fullmatch(r'/api/v1/projects/([^/]+)', path)
-    if method == 'GET' and match:
+    if method in ('GET', 'PUT') and match:
         project_row = next((p for p in fixture.projects if match[1] in (p['key'], p['id'])), None)
         if project_row is None:
             raise Problem(404, 'Project not found.')
+        if method == 'PUT':
+            fields = handler.read_json()
+            if fields.get('version') != project_row['version']:
+                raise Problem(409, 'The project version is stale.')
+            allowed = ('name', 'description', 'status', 'priority', 'startDate', 'targetDate')
+            project_row.update({key: fields[key] for key in allowed if key in fields})
+            project_row.update(version=project_row['version'] + 1, updatedAt=instant())
         return 200, project_row
     if method == 'POST' and path == '/api/v1/issues':
         return 201, fixture.create_issue(handler.read_json())
@@ -954,6 +961,8 @@ class Fixture(IssueWrites):
         ]
         created = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
         self.issues = seed_issues(created)
+        for linked_issue in self.issues[1:3]:
+            linked_issue['milestoneId'] = uid('SUBmilestone')
         self.pull_requests = {self.issues[0]['id']: [pull_request(index, now) for index in range(25)]}
         self.pull_requests_available = True
         for row in self.issues:
@@ -1192,6 +1201,8 @@ def filtered(fixture, query):
     if parent and parent != 'none' and not parent_row:
         return []
     rows = [r for r in fixture.issues if matches(r, query, parent_id)]
+    if 'milestone' in query:
+        rows = [r for r in rows if (r['milestoneId'] or 'none') in query['milestone']]
     if query.get('includeArchived', ['false'])[0] != 'true':
         rows = [r for r in rows if r['archivedAt'] is None]
     if 'activitySince' in query:
@@ -1590,6 +1601,13 @@ class Handler(BaseHTTPRequestHandler):
             if project_row is None:
                 raise Problem(404, 'Project not found.')
             rows = planning_rows(project_row['key'], cycles=match is None)
+            if match:
+                for row in rows:
+                    linked = [issue for issue in fixture.issues if issue['milestoneId'] == row['id']]
+                    row['issueProgress'] = dict(
+                        done=sum(issue['state']['type'] == 'completed' for issue in linked),
+                        total=len(linked),
+                    )
             if match and query.get('includeContent', ['true']) == ['false']:
                 rows = [dict(r, description=None) for r in rows]
             if 'milestoneId' in query:
