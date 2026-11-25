@@ -615,11 +615,7 @@ impl Settings {
             CHECK_UPDATES_KEY,
             check_updates_preference(self.check_updates),
         );
-        prefs::set(
-            cx,
-            "chat.approve-all-default",
-            if self.approve_all_default { "1" } else { "0" },
-        );
+        self.save_approve_all_default(cx);
         self.toolbar.save(&self.initial_toolbar, cx);
         self.initial_toolbar = self.toolbar;
         self.board_navigation.save(cx);
@@ -627,6 +623,17 @@ impl Settings {
             terminal.save(cx);
         }
         self.save_developer_mode(cx);
+    }
+
+    /// Writes Copilot's approve-all default. A build without Copilot neither
+    /// shows nor writes it: Save creates no Copilot preference there and
+    /// leaves a saved one for a build that includes Copilot.
+    fn save_approve_all_default(&self, cx: &mut Context<Self>) {
+        if !subspace_chat::COPILOT_BUILT_IN {
+            return;
+        }
+        let value = if self.approve_all_default { "1" } else { "0" };
+        prefs::set(cx, APPROVE_ALL_DEFAULT_KEY, value);
     }
 
     /// Writes a changed Developer mode and shows or hides the Developer menu.
