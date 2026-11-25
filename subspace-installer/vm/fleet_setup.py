@@ -1399,12 +1399,20 @@ def uncloned(proposal):
 
 
 def record_proposal(record, proposal):
-    """Keep a proposal for the person to answer; one with nothing to confirm is settled at once."""
+    """Keep a proposal for the person to answer. One with nothing to confirm (everything configured already, or
+    named only by documentation, which the confirming command leaves out) is answered at once: its repositories
+    count as examined, and its documentation-only items are recorded as declined, as when a person answers."""
     cloned = [repository for repository in proposal["repositories"] if repository not in uncloned(proposal)]
     proposal = {**proposal, "repositories": cloned}
-    if any(not item.get("configured") for item in proposal["items"]):
+    if toolchains.confirmable(proposal["items"]):
         record["proposal"] = proposal
     else:
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        for item in proposal["items"]:
+            if not item.get("configured"):
+                kind = "tools" if item["kind"] == "tool" else "packages"
+                record["declined"][kind].append({"name": item["name"], "version": item["version"],
+                                                 "sources": item["sources"], "declined": today})
         record["examined"] = list(dict.fromkeys([*record["examined"], *cloned]))
         record["proposal"] = None
     write_json(INPUTS / TOOLCHAIN_RECORD, record)

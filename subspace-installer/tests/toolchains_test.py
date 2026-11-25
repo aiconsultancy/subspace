@@ -962,6 +962,23 @@ class SetupRecordTests(unittest.TestCase):
         self.assertEqual(record["examined"], ["relay-gateway"])
         self.assertIsNone(record["proposal"])
 
+    def test_a_proposal_named_only_by_documentation_is_answered_at_once(self):
+        # Documentation-only items are left out of the confirming command, so such a proposal has nothing to
+        # confirm: it is answered at once rather than proposed again on every run.
+        self.config["repositories"] = [{"id": "docs-only", "url": "https://github.com/example/docs-only.git"}]
+        (self.inputs / "fleet.json").write_text(json.dumps(self.config))
+        write_repositories(self.references / "atlas", {"docs-only": {
+            "README.md": "# Docs only\n\n```sh\nsudo apt-get install -y libfoo-dev\n```\n"}})
+        _, record, output = self.run_setup("--toolchains", "derive")
+        self.assertIn("[low] libfoo-dev", output)
+        self.assertIn("Nothing to confirm: only documentation names the items above", output)
+        self.assertNotIn("To confirm, edit and run", output)
+        self.assertIsNone(record["proposal"])
+        self.assertEqual(record["examined"], ["docs-only"])
+        self.assertEqual([row["name"] for row in record["declined"]["packages"]], ["libfoo-dev"])
+        _, _, output = self.run_setup("--toolchains", "derive")
+        self.assertNotIn("proposal", output)
+
     def test_the_show_and_detect_commands(self):
         self.clone("harbour-api")
         self.run_setup()

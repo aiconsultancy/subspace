@@ -833,7 +833,9 @@ installer records `fleet.json`'s toolchains as they are. Later runs:
   with a line saying how to remove it, and one added by hand is recorded;
 - propose only from repositories added since the last answered proposal;
 - record a proposal's unconfirmed items as declined once it is answered, and
-  never propose them again unless `toolchains detect --all` asks.
+  never propose them again unless `toolchains detect --all` asks. A proposal
+  with nothing to confirm, because everything in it is configured already or
+  named only by documentation, counts as answered at once, and says so.
 
 **Dry run.** `--dry-run` lists each tool with where it goes and whether it is
 installed, each system package with whether apt has it, what is no longer

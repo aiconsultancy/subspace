@@ -1470,12 +1470,16 @@ def source_label(source):
     return f"{source['repository']}: {source['file']}" + (f":{source['line']}" if source["line"] else "")
 
 
+def confirmable(items):
+    """The items a proposal asks a person to confirm: not configured already, and named by more than documentation."""
+    return [item for item in items if not item.get("configured") and item["confidence"] != "low"]
+
+
 def suggestion(items):
     """The setup options that confirm the proposed items, for the person to edit before running."""
-    tools = list(dict.fromkeys(f"{item['name']}@{item['version']}" for item in items
-                               if item["kind"] == "tool" and not item.get("configured") and item["confidence"] != "low"))
-    packages = [item["name"] for item in items
-                if item["kind"] == "package" and not item.get("configured") and item["confidence"] != "low"]
+    tools = list(dict.fromkeys(f"{item['name']}@{item['version']}" for item in confirmable(items)
+                               if item["kind"] == "tool"))
+    packages = list(dict.fromkeys(item["name"] for item in confirmable(items) if item["kind"] == "package"))
     parts = []
     if tools:
         parts.append(f"--toolchains {shlex.quote(','.join(tools))}")
@@ -1512,9 +1516,14 @@ def proposal_lines(proposal):
                   for entry in proposal["unknown"]]
     if command := suggestion(proposal["items"]):
         lines.append(f"To confirm, edit and run: sudo subspace-setup {command}")
-        lines.append("Low-confidence items, named only by documentation, are left out of that command: add any "
-                     "that the repositories need.")
-    elif not pending:
+        if any(item["confidence"] == "low" for item in pending):
+            lines.append("Low-confidence items, named only by documentation, are left out of that command: add any "
+                         "that the repositories need.")
+    elif pending:
+        lines.append("Nothing to confirm: only documentation names the items above, so setup does not propose "
+                     "installing them, and counts this proposal as answered. If the repositories need any, add them: "
+                     "sudo subspace-setup --system-packages NAME,... or --toolchains TOOL@VERSION,...")
+    else:
         lines.append("Nothing new to confirm.")
     return lines
 
