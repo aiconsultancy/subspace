@@ -580,6 +580,7 @@ mod desk {
 | `with_reserved(route)` | A route under the home that the view never navigates to, such as the site's session endpoints, with the same route under a format suffix such as `.json`, and everything under either. |
 | `SessionAccount` | The account a session belongs to: its generation, which changes with another account, and whether it is still current. Implement it on a newtype around the shell's `AccountSession`. |
 | `NativeSession::new(scope, account, acquire)` | `account` reads the account signed in now, on the UI thread; `acquire` turns it into a grant, off the UI thread. |
+| `with_start(route)` | Optional. Where the view starts, from the app's own state: `route` reads the app on the UI thread and gives a reference relative to the home, such as `?team=blue` or `teams/blue`, or `None` for the home itself. See [A start that follows the app](#what-the-space-does). |
 | `SessionGrant::new(cookie, lifetime)` | The cookie and how long it lasts: at least `MIN_SESSION_LIFETIME` (4 minutes), or the Space refuses it, and at most `MAX_SESSION_LIFETIME` (24 hours). `with_revoke` ends it at the site; calling it again replaces the earlier revocation, which then never runs. |
 | `SessionCookie::new(name, value)` | The cookie's name and opaque value. `with_path` narrows its path within the scope: the scope's path, with its final `/`, or a route under it. |
 | `SessionFailure::action` or `temporary` | Why an attempt failed, in words for the person. A temporary failure of a renewal is retried. Never put a credential in it. |
@@ -617,6 +618,23 @@ mod desk {
   default browser, without the session.
 - **Sign-in required.** While `account` returns no current account, the
   Space shows `Sign-in required` and starts no attempt.
+- **A start that follows the app.** With `with_start`, the Space reads the
+  route at every poll, ten times a second, so keep it to a lookup. When its
+  answer changes, a view showing a page loads the new start at once, even
+  while the session renews, and a session that shows no page yet, or that
+  ended, starts there: **Retry** opens the start rather than the page the
+  view showed. While the site refuses the session, after its signal, the
+  view goes to the new start once a renewal succeeds. Until the session
+  next renews or ends, the signal's return and **Retry** never go back to
+  the page the move left, where a load the site sent to its signal leaves
+  the view. **Go to the start page** goes there too. The Space joins the
+  route to the home as a browser would. A route's path must be a plain
+  path, as every page in the scope must: ASCII only, with no `;`, `..`,
+  `//` or backslash, and no percent-escape the scope refuses. Carry other
+  names, such as one with accents, in the query, percent-encoded. Never put
+  a credential in a route: the address reaches the site and its logs. A
+  route that leaves the scope, or names the signal or a reserved route, is
+  the product's mistake: the Space logs it and starts at the home.
 - **Renewal.** The Space acquires a new grant two minutes before the current
   one ends, or at half its life if that is shorter, and installs it in the
   same view; the old grant is then revoked, so each grant must be a session
