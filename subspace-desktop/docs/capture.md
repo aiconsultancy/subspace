@@ -59,8 +59,9 @@ default size, so add a `resize:<width>,<height>` step, such as
 `resize:1440,900`, before the shot to capture it at another size.
 `CAPTURE_STATE` and `CAPTURE_CONFIG` merge JSON keys into the fixture files. `CAPTURE_IRC_CONFIG` copies a configuration for a
 local IRC fixture. `CAPTURE_FLEET_API=1` starts the Stargate Fleet API fixture
-(see [Fleet fixture](#fleet-fixture)) and points the built-in Fleet Console at
-it. `CAPTURE_FLEET=1` adds the fleet's issues to the Subspace API fixture.
+(see [Fleet fixture](#fleet-fixture)) and, on macOS, points the built-in Fleet
+Console at it. `CAPTURE_FLEET=1` adds the fleet's issues to the Subspace API
+fixture.
 `CAPTURE_IRC_CREDENTIAL=1` has that fixture issue fictional IRC sign-ins
 for the servers its fleets use, such as the aurora fleet's with
 `CAPTURE_FLEET=1` (`POST /api/v1/me/irc-credential` with the server's `host`
@@ -91,15 +92,16 @@ The build runs in your environment, so `SUBSPACE_BUILD_CONFIG` selects its
 build configuration. A build with no API backend (`{"api_backend":
 "none"}`) refuses to start with the Subspace API fixture's variables, so
 capture it with `CAPTURE_NO_API=1`, which leaves them out of the app's
-environment. Add `CAPTURE_FLEET_API=1` to show Fleet Console, which such a
-build shows only once its own address and token are saved.
+environment. On macOS, add `CAPTURE_FLEET_API=1` to show Fleet Console,
+which such a build shows only once its own address and token are saved.
 
 The step syntax is listed in [AGENTS.md](../AGENTS.md#ui-change-evidence).
 Use `link:<space-id>,<url>` to open an internal route in a Space that accepts
-it. Commas after the Space ID are part of the URL. An unknown Space or a
-refused link fails the capture instead of taking a screenshot of the wrong
-view. Put a `wait:` step before the link when its destination needs fixture
-data first.
+it. Commas after the Space ID are part of the URL. A literal semicolon
+ends the step, so percent-encode semicolons as `%3B` in the URL. An unknown
+Space or a refused link fails the capture instead of taking a screenshot of
+the wrong view. Put a `wait:` step before the link when its destination needs
+fixture data first.
 
 Capture uses the same steps and fixture data on both platforms. Window
 decorations and text rasterisation can differ between operating systems.
@@ -138,13 +140,15 @@ ships, Lyra, Orion, Vega and Castor, with 16 crew: nine busy, five tasks
 queued, one uncertain, idle and not yet provisioned crew, branches, pull
 requests, subagents and 24 hours of outcomes. Every few seconds a crew member
 moves to the next phase, opens a pull request, finishes or picks up queued
-work, so the stream stays live. The capture writes its address and the
-fictional token `fixture-fleet` into `webBoards.fleet-console`, and the app
-adds its built-in Fleet Console to that entry at start, with its permissions
-allowed, so Fleet Console shows the fleet live, not in sample mode.
+work, so the stream stays live. On macOS only, capture writes its address
+and the fictional token `fixture-fleet` into `webBoards.fleet-console`.
+The app adds its built-in Fleet Console to that entry at start, with its
+permissions allowed, so Fleet Console shows the fleet live, not in sample
+mode.
 
 `CAPTURE_FLEET_API=1` also saves the aurora fleet's token for the fixture's
-address, as **Settings › Fleets** keeps it (`fleet-api-tokens.json`). Only
+address, as **Settings › Fleets** keeps it (`fleet-api-tokens.json`). On
+Linux, use this saved token through **Settings › Fleets** instead. Only
 with `CAPTURE_FLEET=1` as well does the Subspace API fixture's aurora fleet
 record that address as its `fleetApiUrl`, so the app lists the fleet and
 uses the token. `CAPTURE_FLEET_TOKEN` chooses that token:
@@ -154,8 +158,8 @@ fleet shows **Address changed** and the token must never reach the fixture.
 The fixture prints one line per request, with a fingerprint of its
 `Authorization` header (the first 12 hex digits of its SHA-256, or `none`),
 never the header itself; `CAPTURE_KEEP_LOG=1` keeps that log as
-`fleet-api.log`. To show only the API's fleet in Fleet Console, without its
-own Settings fleet at the same address, pass
+`fleet-api.log`. On macOS, to show only the API's fleet in Fleet Console,
+without its own Settings fleet at the same address, pass
 `CAPTURE_CONFIG='{"webBoards":{"fleet-console":{}}}'`.
 
 Crew work names issues of the demo world's projects `NAV`, `MAP`, `WARP` and

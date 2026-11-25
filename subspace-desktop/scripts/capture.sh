@@ -21,6 +21,7 @@
 #                              it refuses the options below that write them
 #   CAPTURE_STATE='{...}'      keys merged into state.json
 #   CAPTURE_CONFIG='{...}'     keys merged into config.json, such as boards
+#                              (Linux rejects a webBoards.fleet-console entry)
 #   CAPTURE_RUNS_DELAY=<secs>  hold each Actions run list
 #   CAPTURE_ITEM_DELAY=<secs>  hold each GitHub issue or pull request detail read
 #   CAPTURE_IRC_CONFIG=<file>  IRC board config; use scripts/irc-test-server.sh
@@ -39,10 +40,10 @@
 #   CAPTURE_CHANGE_AFTER=<s>   the fixture retitles SUB-1 after <s> seconds, as a change elsewhere
 #   CAPTURE_FLEET=1            the fixture adds the neutral FLT project and the demo world's NAV, MAP,
 #                              WARP and RELAY issues for web Space evidence
-#   CAPTURE_FLEET_API=1        a fictional Stargate Fleet API (the aurora fleet) on loopback, with the
-#                              built-in Fleet Console's address and token set to it and the fleet's
-#                              Settings > Fleets token saved for that address; with CAPTURE_FLEET=1 the
-#                              API's aurora fleet records it as its fleetApiUrl, so the app uses it
+#   CAPTURE_FLEET_API=1        a fictional Stargate Fleet API (the aurora fleet) on loopback; saves the
+#                              Settings > Fleets token and configures the built-in Fleet Console on
+#                              macOS. With CAPTURE_FLEET=1 the API's aurora fleet records the address
+#                              as its fleetApiUrl, so the app uses it
 #   CAPTURE_FLEET_TOKEN=<saved|none|moved>  with CAPTURE_FLEET_API=1, the aurora fleet's Settings > Fleets
 #                              token: saved for the fixture's address (the default), none saved, or
 #                              fixture-fleet-moved saved for https://aurora-old.example.test, so the

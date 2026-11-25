@@ -339,8 +339,10 @@ compare them yourself before asking for review.
   `app.dashboard` to a Space id. `action:` dispatches from the window's app
   root regardless of focus, and an unknown action or one without a root handler
   fails with `capture failed` and a non-zero exit. A `link:` step fails the
-  same way if the Space is unknown or refuses the link. Let fixture data load
-  first with `wait:` when the route depends on it. Keys go to the focused
+  same way if the Space is unknown or refuses the link. Commas after the
+  Space ID are part of the URL; a literal semicolon ends the step, so use
+  `%3B` in the URL instead. Let fixture data load first with `wait:` when
+  the route depends on it. Keys go to the focused
   element: each `key:` step first focuses the active Space, then sends the
   whole sequence, so keys such as Tab can change focus within that sequence.
   `type:` preserves focus; click the composer before typing into it.
@@ -353,7 +355,7 @@ compare them yourself before asking for review.
   secrets; `CAPTURE_FLEET=1` adds the neutral `FLT` project and the demo
   world's `NAV`, `MAP`, `WARP` and `RELAY` issues that such a page can
   reference. `CAPTURE_FLEET_API=1` serves a fictional Stargate Fleet API on
-  loopback and points the built-in Fleet Console at it
+  loopback and, on macOS, points the built-in Fleet Console at it
   ([Fleet fixture](docs/capture.md#fleet-fixture)).
 - Capture in the bundled **Twilight Two** theme, the approved mock-ups'
   colours and sizes, so the images can be compared with them: pass
