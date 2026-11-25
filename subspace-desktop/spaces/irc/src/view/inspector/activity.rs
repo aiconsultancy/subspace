@@ -314,23 +314,26 @@ impl Selection {
     pub(crate) fn join_mut(&mut self) -> &mut ActivityJoin {
         &mut self.join
     }
+}
 
-    /// The items read in full or being read, by turn and item ID.
-    pub(crate) fn loaded_keys(&self) -> Vec<(String, String)> {
-        let mut keys: Vec<_> = self.loaded.keys().cloned().collect();
-        keys.sort();
-        keys
-    }
+/// The items `selection` read in full or is reading, by turn and item ID.
+#[cfg(test)]
+pub(crate) fn loaded_keys(selection: &Selection) -> Vec<(String, String)> {
+    let mut keys: Vec<_> = selection.loaded.keys().cloned().collect();
+    keys.sort();
+    keys
+}
 
-    /// Reads items with `client` in place of the service's.
-    pub(crate) fn set_client(&mut self, client: FleetClient) {
-        self.client = Some(client);
-    }
+/// Makes `selection` read items with `client` in place of the service's.
+#[cfg(test)]
+pub(crate) fn set_client(selection: &mut Selection, client: FleetClient) {
+    selection.client = Some(client);
+}
 
-    /// Whether a retry of the failed fetch waits on its timer.
-    pub(crate) fn retry_scheduled(&self) -> bool {
-        self.retry.is_some()
-    }
+/// Whether a retry of `selection`'s failed fetch waits on its timer.
+#[cfg(test)]
+pub(crate) fn retry_scheduled(selection: &Selection) -> bool {
+    selection.retry.is_some()
 }
 
 /// Answers the fetch the join started with `result`, as a read from the

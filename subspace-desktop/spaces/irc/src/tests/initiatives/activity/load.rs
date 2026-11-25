@@ -17,6 +17,7 @@ use subspace_framework::core::Secret;
 use super::super::super::remove::settle;
 use super::{answer, drawn, opened, refresh, running};
 use crate::Irc;
+use crate::view::inspector::activity::{loaded_keys, set_client};
 
 /// The most bytes of item JSON one page carries.
 const PAGE: usize = 64 * 1024;
@@ -125,11 +126,7 @@ fn served<'a>(
     served.serve(seq, tool(seq, output));
     let client = gateway(&served);
     board.update(cx, |board, _| {
-        board
-            .inspector_activity
-            .as_mut()
-            .unwrap()
-            .set_client(client);
+        set_client(board.inspector_activity.as_mut().unwrap(), client);
     });
     let bytes = served.item.lock().unwrap().1.len();
     answer(&board, Ok(running(paged(seq, bytes))), cx);
@@ -230,7 +227,7 @@ fn an_item_goes_with_its_turn(cx: &mut TestAppContext) {
     load(cx);
     let loaded = |board: &Entity<Irc>, cx: &mut VisualTestContext| {
         board.read_with(cx, |board, _| {
-            board.inspector_activity.as_ref().unwrap().loaded_keys()
+            loaded_keys(board.inspector_activity.as_ref().unwrap())
         })
     };
     assert_eq!(loaded(&board, cx), [("t-now".to_owned(), "i3".to_owned())]);
