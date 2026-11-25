@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline checks of the Stargate Fleet API fixture. Works with python3 -I and uses only the stdlib."""
 
+import base64
 import contextlib
 import hashlib
 import importlib.util
@@ -8,10 +9,13 @@ import io
 import json
 import re
 import socket
+import struct
 import threading
 import unittest
+import zlib
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 SPEC = importlib.util.spec_from_file_location('fleet_fixture', Path(__file__).with_name('fleet_api_test_server.py'))
@@ -19,6 +23,7 @@ FIXTURE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FIXTURE)
 
 TOKEN = 'fixture-fleet'
+WREN_DIFF = '/api/v1/ships/aurora-lyra/crew/wren/diff'
 FLEET_FIELDS = set('apiVersion generatedAt name host gateway admiral ships longestIdle'.split())
 SHIP_FIELDS = set('id name captain repository available crew features'.split())
 MEMBER_FIELDS = set('id name role model backend activity since idleSince contexts subagents'.split())
@@ -50,6 +55,126 @@ class FleetFixtureTests(unittest.TestCase):
     def get(self, path, **options):
         with self.open(path, **options) as response:
             return response.status, json.loads(response.read() or b'null'), response.headers
+
+    def diff(self, route=WREN_DIFF, **params):
+        return self.get(route + '?' + urlencode(params))[:2]
+
+    def test_crew_diff_list_pages_and_modes_share_a_fingerprint(self):
+        project = 'navigation-console'
+        status, first = self.diff(project=project, mode='branch')
+        self.assertEqual(status, 200)
+        status, second = self.diff(project=project, mode='branch', cursor=first['nextCursor'])
+        self.assertEqual(status, 200)
+        files = first['files'] + second['files']
+        paths = [entry['path'] for entry in files]
+        self.assertEqual(paths, sorted(set(paths)))
+        self.assertEqual((first['total'], second['total'], len(files)), (6, 6, 6))
+        self.assertEqual((first['additions'], first['deletions']), (7, 2))
+        self.assertNotIn('nextCursor', second)
+        self.assertEqual(first['fingerprint'], second['fingerprint'])
+        self.assertEqual((first['ship'], first['member'], first['project']), ('aurora-lyra', 'wren', project))
+        self.assertEqual(len(first['head']), 40)
+        for mode, count in [('working', 4), ('committed', 2)]:
+            status, page = self.diff(mode=mode)
+            self.assertEqual((status, page['mode'], page['total']), (200, mode, count))
+            self.assertIsNone(page['project'])
+            self.assertEqual(page['fingerprint'], first['fingerprint'])
+        self.assertEqual(self.diff(mode='working', cursor=first['nextCursor']), (400, None))
+
+    def test_patch_continuation_and_reread(self):
+        path = 'src/chart/tiles.ts'
+        first_list = self.diff()[1]
+        last_list = self.diff(cursor=first_list['nextCursor'])[1]
+        inline = next(file for file in last_list['files'] if file['path'] == path)
+        params = dict(path=path, at=first_list['fingerprint'])
+        status, first = self.diff(WREN_DIFF + '/file', **params)
+        self.assertEqual((status, first['file']), (200, inline))
+        status, last = self.diff(WREN_DIFF + '/file', page=inline['patchNextPage'], **params)
+        self.assertEqual((status, last['fingerprint']), (200, params['at']))
+        self.assertNotIn('patchNextPage', last['file'])
+        joined = first['file']['patch'] + last['file']['patch']
+        self.assertIn('return `${tile.sector}:${tile.id}`;', joined)
+        self.assertIn('+export const MAX_VISIBLE_TILES = 48;\n', joined)
+        long_line = next(file['patch'] for file in last_list['files'] if file['path'] == 'src/chart/waypoints.ts')
+        self.assertGreater(len(long_line.splitlines()[-1]), 550)
+
+    def test_binary_pages_reassemble_both_png_sides_and_end_exactly_at_eof(self):
+        snapshot = self.diff()[1]
+        png_path = 'fixtures/chart-tile.png'
+        png = next(file for file in snapshot['files'] if file['path'] == png_path)
+        old = self.collect_bytes(snapshot, png_path, expected_side='old', side='old')
+        new = self.collect_bytes(snapshot, png_path, expected_side='new')
+        self.assertNotEqual(old, new)
+        for data in (old, new):
+            self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
+            self.assertEqual(struct.unpack('>II', data[16:24]), (160, 96))
+            self.assertEqual(data[37:41], b'IDAT')
+            end = 41 + int.from_bytes(data[33:37], 'big')
+            self.assertEqual(len(zlib.decompress(data[41:end])), 96 * (1 + 160 * 3))
+        self.assertEqual(len(new), png['size'])
+        removed_path = 'fixtures/legacy-tile.bin'
+        removed = self.collect_bytes(snapshot, removed_path, expected_side='old')
+        self.assertEqual(removed, b'CHART\x00\x01\xff' + bytes(range(184)))
+        self.assertEqual(self.diff(WREN_DIFF + '/file', path=removed_path, side='new',
+                                   at=snapshot['fingerprint']), (404, None))
+
+    def collect_bytes(self, snapshot, path, expected_side, **params):
+        chunks = bytearray()
+        for number in range(16):  # The image preview's page budget.
+            status, page = self.diff(WREN_DIFF + '/file', path=path, at=snapshot['fingerprint'], **params)
+            self.assertEqual((status, page['fingerprint']), (200, snapshot['fingerprint']))
+            content = page['content']
+            self.assertEqual((content['side'], content['encoding'], content['offset']),
+                             (expected_side, 'base64', len(chunks)))
+            chunks.extend(base64.b64decode(content['data'], validate=True))
+            self.assertEqual('nextPage' in content, len(chunks) < content['size'])
+            if 'nextPage' not in content:
+                self.assertGreater(number, 0)
+                self.assertEqual(len(chunks), content['size'])
+                return bytes(chunks)
+            params['page'] = content['nextPage']
+        self.fail('Binary continuation never ended')
+
+    def test_crew_diff_empty_unavailable_and_invalid_requests(self):
+        status, clean = self.diff('/api/v1/ships/aurora-lyra/crew/talon/diff')
+        self.assertEqual((status, clean['total'], clean['files']), (200, 0, []))
+        self.assertEqual(self.diff('/api/v1/ships/aurora-castor/crew/corvin/diff'), (404, None))
+        self.assertEqual(self.diff(project='missing'), (404, None))
+        self.assertEqual(self.diff(mode='missing'), (400, None))
+        self.assertEqual(self.diff(cursor='bad'), (400, None))
+        at = self.diff()[1]['fingerprint']
+        route = WREN_DIFF + '/file'
+        self.assertEqual(self.diff(route, at=at, path='docs/chart notes.md')[0], 200)
+        self.assertEqual(self.diff(route, at=at, path='../outside'), (400, None))
+        self.assertEqual(self.diff(route, at=at, path='missing'), (404, None))
+        self.assertEqual(self.diff(route, at='stale', path='src/chart/tiles.ts'), (409, None))
+        self.assertEqual(self.get(WREN_DIFF, token=None)[0], 401)
+        with self.open(WREN_DIFF, method='HEAD') as response:
+            self.assertEqual((response.status, response.read()), (200, b''))
+
+    def test_diff_fingerprint_is_added_to_ship_events_only(self):
+        fingerprint = self.diff()[1]['fingerprint']
+
+        def wren_git(ship):
+            return next(who for who in ship['crewMembers'] if who['id'] == 'wren')['contexts'][0]['git']
+
+        with self.open('/api/v1/events') as response:
+            self.assertEqual(response.readline(), b'event: fleet\n')
+            response.readline()
+            response.readline()
+            self.assertEqual(response.readline(), b'event: ship\n')
+            ship = json.loads(response.readline()[6:])
+        self.assertEqual(wren_git(ship)['fingerprint'], fingerprint)
+        self.assertNotIn('fingerprint', wren_git(self.get('/api/v1/ships/aurora-lyra')[1]))
+        self.assertNotIn('fingerprint', self.get('/api/v1/ships/aurora-lyra/crew/wren')[1]['member']['contexts'][0]['git'])
+        with self.server.lock:
+            snapshot = self.server.fleet.snapshot()
+            detail = self.server.fleet.ships[0]
+            wren_git(detail)['head'] = 'b15cafe'
+            changed = self.server.fleet.changed(detail, detail['crewMembers'][0])[0][1]
+        self.assertNotIn('fingerprint', wren_git(snapshot['ships']['aurora-lyra']))
+        self.assertNotEqual(wren_git(changed)['fingerprint'], fingerprint)
+        self.assertEqual(wren_git(changed)['fingerprint'], self.diff()[1]['fingerprint'])
 
     def test_a_server_refusing_streams_still_serves_reads(self):
         busy = FIXTURE.FleetServer(0, TOKEN, tick=0, refuse_events=True)

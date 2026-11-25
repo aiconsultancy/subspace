@@ -51,8 +51,11 @@ content. The PRs Space’s GitHub path keeps its own account, links and marks.
 - This change adds the Fleet reader and native navigation responder. The
   Channels control that calls it is a separate change.
 - Fictional HTTP and GPUI fixtures cover paging, stale snapshots and opening
-  the view without a GitHub account. Screenshot capture still needs a Linux
-  runner with `xvfb-run` and the Channels entry wired up.
+  the view without a GitHub account. The capture Fleet API serves Wren’s
+  paged chart diff, Talon’s clean checkout and Corvin’s unavailable checkout.
+  Screenshot capture still needs a native entry point: the Channels control
+  is separate, and selecting the PRs Space in `CAPTURE_STATE` does not open
+  a crew diff.
 - An empty HTTP 404 means either the checkout is unavailable or the gateway
   predates the route. A successful empty snapshot means no changes, including
   on an unborn branch.

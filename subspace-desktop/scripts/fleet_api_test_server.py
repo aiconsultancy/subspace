@@ -9,6 +9,10 @@ crew routes and the /api/v1/events stream, which sends `fleet` and one
 ten seconds and `heartbeat` every fifteen. Every name, host, repository and
 token is invented. Never calls upstream services.
 
+Crew diff routes provide a paged checkout for Lyra's Wren, a clean
+checkout for Lyra's Talon, and no checkout for Castor's Corvin. The
+ordinary fleet, ship and crew reads and --snapshot keep their old shapes.
+
   python3 scripts/fleet_api_test_server.py --port 0 --token fixture-fleet
   python3 scripts/fleet_api_test_server.py --port 0 --refuse-events  # 503, as with eight streams open
   python3 scripts/fleet_api_test_server.py --port 0 --log-requests   # one line per request
@@ -22,6 +26,7 @@ method and path are escaped, and a malformed request logs `-` for them.
 """
 
 import argparse
+import base64
 import copy
 import hashlib
 import hmac
@@ -29,10 +34,12 @@ import json
 import queue
 import random
 import re
+import struct
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 M = 60_000
 H = 60 * M
@@ -48,6 +55,174 @@ NAVIGATION = 'acme/web'
 ATLAS = 'acme/design-system'
 RELAY = 'acme/api'
 REHEARSAL = 'acme/api'
+
+# Deliberately short pages make continuation controls reachable in captures.
+DIFF_LIST_LIMIT = 3
+DIFF_BYTES_LIMIT = 96
+DIFF_PROJECTS = {('aurora-lyra', 'wren'): 'navigation-console',
+                 ('aurora-lyra', 'talon'): 'navigation-console'}
+DIFF_BASE = 'e19c4f0' + '0' * 33
+
+
+def chart_png(background, accent):
+    """A fictional chart tile with a grid and a highlighted survey corridor."""
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+
+    width, height = 160, 96
+    pixels = b''.join(b'\0' + b''.join(
+        accent if abs(y - (80 - x // 3)) < 4 else b'\x43\x51\x66' if x % 16 == 0 or y % 16 == 0 else background
+        for x in range(width)) for y in range(height))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b''))
+
+
+def text_change(path, status, additions, deletions, *patches):
+    return dict(path=path, previousPath=None, status=status, additions=additions, deletions=deletions), patches, {}
+
+
+def binary_change(path, status, old, new=None):
+    sides = {'old': old} if new is None else {'old': old, 'new': new}
+    return (dict(path=path, previousPath=None, status=status, additions=None, deletions=None,
+                 binary=True, size=len(sides.get('new', old))), (), sides)
+
+
+COMMITTED_DIFF = (
+    text_change('src/chart/tiles.ts', 'modified', 3, 1,
+                '@@ -18,3 +18,4 @@\n export function tileKey(tile: Tile) {\n'
+                '-  return tile.id;\n+  return `${tile.sector}:${tile.id}`;\n }\n+\n',
+                '@@ -42 +43,2 @@\n export const TILE_SIZE = 256;\n+export const MAX_VISIBLE_TILES = 48;\n'),
+    text_change('src/chart/viewport.ts', 'modified', 1, 1,
+                '@@ -7 +7 @@\n-export const MIN_ZOOM = 2;\n+export const MIN_ZOOM = 1;\n'),
+)
+WORKING_DIFF = (
+    text_change('docs/chart notes.md', 'added', 2, 0,
+                '@@ -0,0 +1,2 @@\n+# Survey chart\n+Keep the next waypoint visible while panning.\n'),
+    binary_change('fixtures/chart-tile.png', 'modified', chart_png(b'\x12\x21\x36', b'\xea\xb3\x69'),
+                  chart_png(b'\x15\x2d\x3e', b'\x71\xe3\xda')),
+    binary_change('fixtures/legacy-tile.bin', 'removed', b'CHART\x00\x01\xff' + bytes(range(184))),
+    text_change('src/chart/waypoints.ts', 'added', 1, 0,
+                '@@ -0,0 +1 @@\n+export const corridor = "' + 'AuroraFallowReachWaypoint' * 24 + '";\n'),
+)
+DIFF_MODES = {'branch': sorted(COMMITTED_DIFF + WORKING_DIFF, key=lambda entry: entry[0]['path']),
+              'committed': COMMITTED_DIFF, 'working': WORKING_DIFF}
+
+
+def diff_fingerprint(ship_id, member_id, git_state):
+    # The fixture contents and base are fixed; the simulation can change HEAD.
+    value = (ship_id, member_id, git_state['branch'], git_state['head'], DIFF_BASE)
+    return hashlib.sha256(json.dumps(value).encode()).hexdigest()
+
+
+def ship_event(detail):
+    """Add the checkout fingerprint to SSE only, not to legacy HTTP reads."""
+    detail = copy.deepcopy(detail)
+    for who in detail['crewMembers']:
+        key = (detail['id'], who['id'])
+        if key not in DIFF_PROJECTS:
+            continue
+        for row in who['contexts']:
+            if row['git'] and row['project'] == DIFF_PROJECTS[key]:
+                row['git']['fingerprint'] = diff_fingerprint(*key, row['git'])
+    return 'ship', detail
+
+
+def page_cursor(*scope):
+    return hashlib.sha256(json.dumps(scope).encode()).hexdigest()
+
+
+def inline_file(entry, fingerprint, mode):
+    metadata, patches, _ = entry
+    file = dict(metadata, patch=patches[0] if patches else None)
+    if len(patches) > 1:
+        file['patchNextPage'] = page_cursor(fingerprint, mode, file['path'], 'patch')
+    return file
+
+
+def diff_file(entry, fingerprint, mode, page=None, side=None):
+    metadata, patches, sides = entry
+    scope = (fingerprint, mode, metadata['path'])
+    file = dict(metadata, patch=None)
+    result = dict(fingerprint=fingerprint, file=file)
+    if sides:
+        if side is None:
+            side = 'old' if file['status'] == 'removed' else 'new'
+        if side not in sides:
+            return 404, None
+        data = sides[side]
+        offset = next((i for i in range(DIFF_BYTES_LIMIT, len(data), DIFF_BYTES_LIMIT)
+                       if page == page_cursor(*scope, side, i)), None) if page is not None else 0
+        if offset is None:
+            return 400, None
+        chunk = data[offset:offset + DIFF_BYTES_LIMIT]
+        content = dict(side=side, encoding='base64', offset=offset, size=len(data),
+                       data=base64.b64encode(chunk).decode('ascii'))
+        end = offset + len(chunk)
+        if end < len(data):
+            content['nextPage'] = page_cursor(*scope, side, end)
+        result['content'] = content
+    elif side is not None:
+        return 400, None
+    elif page is None:
+        result['file'] = inline_file(entry, fingerprint, mode)
+    elif len(patches) > 1 and page == page_cursor(*scope, 'patch'):
+        file['patch'] = patches[1]
+    else:
+        return 400, None
+    return 200, result
+
+
+def diff_list(entries, fingerprint, mode, cursor):
+    continuation = page_cursor(fingerprint, mode, 'files')
+    if cursor is not None and (cursor != continuation or len(entries) <= DIFF_LIST_LIMIT):
+        return None
+    start = DIFF_LIST_LIMIT if cursor is not None else 0
+    end = start + DIFF_LIST_LIMIT
+    files = [inline_file(entry, fingerprint, mode) for entry in entries[start:end]]
+    value = dict(total=len(entries), additions=sum(entry[0]['additions'] or 0 for entry in entries),
+                 deletions=sum(entry[0]['deletions'] or 0 for entry in entries), files=files)
+    if end < len(entries):
+        value['nextCursor'] = continuation
+    return value
+
+
+def crew_diff(fleet, ship_id, member_id, file_route, query):
+    params = parse_qs(query, keep_blank_values=True)
+    keys = {'project', 'mode'} | ({'path', 'page', 'at', 'side'} if file_route else {'cursor'})
+    if not params.keys() <= keys or any(len(values) != 1 or not values[0] for values in params.values()):
+        return 400, None
+    args = {key: values[0] for key, values in params.items()}
+    mode = args.get('mode', 'branch')
+    project = args.get('project')
+    if mode not in DIFF_MODES or args.get('side') not in (None, 'old', 'new'):
+        return 400, None
+    path = args.get('path', '')
+    if file_route and ('at' not in args or not valid_diff_path(path)):
+        return 400, None
+    fixture_project = DIFF_PROJECTS.get((ship_id, member_id))
+    if fixture_project is None or project not in (None, fixture_project):
+        return 404, None
+    member = fleet.crew(ship_id, member_id)['member']
+    git_state = next(row['git'] for row in member['contexts'] if row['project'] == fixture_project)
+    fingerprint = diff_fingerprint(ship_id, member_id, git_state)
+    entries = DIFF_MODES[mode] if member_id == 'wren' else ()
+    if file_route:
+        if args['at'] != fingerprint:
+            return 409, None
+        entry = next((entry for entry in entries if entry[0]['path'] == path), None)
+        return diff_file(entry, fingerprint, mode, args.get('page'), args.get('side')) if entry else (404, None)
+    value = diff_list(entries, fingerprint, mode, args.get('cursor'))
+    if value is None:
+        return 400, None
+    return 200, dict(value, ship=ship_id, member=member_id, project=project, mode=mode,
+                     branch=git_state['branch'], head=git_state['head'].ljust(40, '0'),
+                     base={'ref': git_state['base'], 'commit': DIFF_BASE}, fingerprint=fingerprint,
+                     computedAt=fleet.now)
+
+
+def valid_diff_path(path):
+    return (all(part not in ('', '.', '..', '.git') for part in path.split('/'))
+            and '\\' not in path and all(ch.isprintable() for ch in path))
 
 
 class Clock:
@@ -424,7 +599,7 @@ class Fleet:
                           for entry in self.ships})
 
     def initial(self):
-        return [('fleet', self.overview())] + [('ship', copy.deepcopy(detail)) for detail in self.ships]
+        return [('fleet', self.overview())] + [ship_event(detail) for detail in self.ships]
 
     def host_sample(self):
         cpu = self.host['cpu']
@@ -463,7 +638,7 @@ class Fleet:
         derive_member(who)
         derive_ship(detail, self.now)
         detail['detailUpdatedAt'] = self.now
-        return [('ship', copy.deepcopy(detail)), ('fleet', self.overview())]
+        return [ship_event(detail), ('fleet', self.overview())]
 
     def start(self, detail, who):
         row = next(row for row in who['contexts'] if row['queued'])
@@ -597,7 +772,7 @@ class Handler(BaseHTTPRequestHandler):
         return hmac.compare_digest(given.encode(), f'Bearer {self.server.token}'.encode())
 
     def reply(self, status, value, head=False):
-        body = json.dumps(value).encode()
+        body = json.dumps(value).encode() if value is not None else b''
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'no-store')
@@ -646,6 +821,10 @@ class Handler(BaseHTTPRequestHandler):
             if len(route) == 4 and route[0] == 'ships' and route[2] == 'crew':
                 value = fleet.crew(route[1], route[3])
                 return self.reply(200 if value else 404, value or dict(error='Unknown crew member.'), head)
+            if (len(route) >= 5 and route[0] == 'ships' and route[2] == 'crew'
+                    and route[4:] in (['diff'], ['diff', 'file'])):
+                status, value = crew_diff(fleet, route[1], route[3], len(route) == 6, urlsplit(self.path).query)
+                return self.reply(status, value, head)
         if route == ['events'] and not head and self.server.refuse_events:
             # Stargate serves at most eight streams and answers 503 beyond.
             return self.busy()
