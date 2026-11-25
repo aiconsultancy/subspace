@@ -1940,6 +1940,28 @@ uses the app identity without custom author, committer or signature data.
 See [GitHub's bot signature verification rules](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification).
 Rotate or revoke a retired member's App key from the App settings.
 
+### Captain pull request merges
+
+Ask the operator before enabling merges. Pass
+`--captain-merge-repositories example/project[,example/library]` to
+`install.sh` or `subspace-setup`. Setup saves this list as
+`githubPolicy.captainMergeRepositories` in the fleet definition. The default
+is an empty list. Pass `--captain-merge-repositories none` to turn it off.
+Use the GitHub owner and repository names from the fleet's repository URLs.
+
+From the root of their own checkout of an enabled repository, a captain with
+a Contents write GitHub App can run:
+
+```sh
+subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA
+```
+
+Use the full SHA the captain reviewed and check the repository's approval
+and CI requirements first. The helper scopes the installation token to that
+repository. GitHub enforces branch protections. Crew hand the PR and head SHA
+back to their captain. The helper refuses merges from crew worktrees. Crew
+still share the captain's Linux user and GitHub App.
+
 ### Add private repositories later
 
 A fleet installed without its private repositories gets them once the rear
