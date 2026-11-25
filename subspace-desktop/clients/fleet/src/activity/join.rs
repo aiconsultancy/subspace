@@ -14,7 +14,10 @@
 //! 3. Apply each waiting or later event whose `seq` is above the
 //!    snapshot's `cursor.seq`, as an upsert by ID; drop the rest. An event
 //!    at or below the cursor as fetched is covered: it is dropped and
-//!    counts for nothing else.
+//!    counts for nothing else. Events that wait are checked only once the
+//!    snapshot they wait for has come, after the ones it covers are
+//!    dropped, so an event covered by a snapshot still in flight never
+//!    fetches again.
 //! 4. Fetch again, one fetch at a time, when the stream reconnects or
 //!    closes, when an event's `generation` is not the cursor's, when the
 //!    `seq` of the live events (those the snapshot does not cover) fails
@@ -289,9 +292,11 @@ impl ActivityJoin {
                 } else {
                     Fetch::Idle
                 };
+                // Covered events go first: only those left are checked
+                // for a `seq` that fails to rise.
                 self.pending.bytes = 0;
                 for event in std::mem::take(&mut self.pending.events) {
-                    self.take_settled(event);
+                    self.take(event);
                 }
             }
             Err(error) => {
@@ -320,12 +325,18 @@ impl ActivityJoin {
         };
     }
 
-    /// One event off the stream: drops it when the fetched snapshot covers
-    /// it, else checks that `seq` rises among the live events, then waits
-    /// for the fetch or applies it. A covered event is no live event, so
-    /// it neither fetches again nor moves the `seq` the next must pass.
+    /// One event off the stream, or one that waited for a snapshot: drops
+    /// it when the fetched snapshot covers it; else, while a fetch is
+    /// wanted, runs or failed, keeps it for the snapshot, unchecked, since
+    /// that snapshot may cover it; else checks that `seq` rises among the
+    /// live events and applies it. A covered event is no live event, so it
+    /// neither fetches again nor moves the `seq` the next must pass.
     fn take(&mut self, event: AgentActivityEvent) -> bool {
         if covered(self.fetched.as_ref(), &event) {
+            return false;
+        }
+        if self.fetch != Fetch::Idle {
+            self.hold(event);
             return false;
         }
         if self.stream_seq.is_some_and(|last| event.seq <= last) {

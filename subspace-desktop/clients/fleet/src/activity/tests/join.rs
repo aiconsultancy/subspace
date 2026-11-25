@@ -7,6 +7,8 @@ use super::*;
 use crate::activity::{Fetch, MAX_HELD_BYTES, MAX_HELD_EVENTS};
 use crate::{FleetState, Link};
 
+mod covered;
+
 const POLLED: FleetState = FleetState::Followed(Link::Polling);
 
 #[test]
