@@ -754,6 +754,7 @@ function openActivity(agent, name, role) {
     doc: document,
     onClose: () => closeActivity(true),
     onLoad: (turn, item) => view.watcher?.loadItem(turn, item),
+    onPart: (turn, item, to) => view.watcher?.loadPart(turn, item, to),
     onRetry: () => view.watcher?.retry(),
   });
   app.activity = view;

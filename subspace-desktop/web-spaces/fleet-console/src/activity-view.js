@@ -7,36 +7,45 @@
 //
 // The tree is described by plain objects (`h`), so tests can read it, then
 // mounted. Live updates rebuild only the turns and items whose `seq` changed,
-// so a selection in unchanged content survives. An item read in full that is
-// larger than 256 KiB shows in 64 KiB parts, one mounted at a time, so the
-// page stays small while every byte stays reachable.
+// so a selection in unchanged content survives.
+//
+// Nothing is cut, and what is mounted is bounded (SUB decision a17870f4): a
+// closed turn mounts no items, an open one at most ITEM_WINDOW of them, and
+// an item whose text is larger than one window (WINDOW_BYTES or
+// WINDOW_LINES) shows one window at a time with First, Previous, Next and
+// Last. An item larger than the view's budget is read a part at a time
+// (`activity.js`), and each part shows in windows the same way. A run of
+// hidden characters is one marker element, each character still its own
+// `⟨U+XXXX⟩`, so a copy is exactly what shows.
 
 import { ACTIVITY_MESSAGES, isWellFormedItem } from "./activity.js";
 import { formatBytes, formatClock, formatDuration } from "./format.js";
-import { splitUtf8 } from "./utf8.js";
+import { splitBounded } from "./pager.js";
+import { utf8Length } from "./utf8.js";
 
-/** A loaded item larger than this shows in parts. */
-export const PART_THRESHOLD_BYTES = 256 * 1024;
-/** Each part holds at most this many UTF-8 bytes, split between code points. */
-export const PART_BYTES = 64 * 1024;
+/** The most one mounted window of an item's text holds: UTF-8 bytes and lines, split between code points. */
+export const WINDOW_BYTES = 64 * 1024;
+export const WINDOW_LINES = 1000;
+/** The most items an open turn mounts at once; Earlier items and Later items move among the rest. */
+export const ITEM_WINDOW = 20;
 
 /**
  * Control characters other than newline and tab, DEL and C1 controls, the
  * bidi marks, embeddings, overrides and isolates, the line and paragraph
  * separators and the byte order mark.
  */
-const HIDDEN = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069\uFEFF]/g;
+const HIDDEN = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069\uFEFF]+/g;
 
 export const marker = (char) => `⟨U+${char.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}⟩`;
 
-/** Split text into plain strings and `{ctl}` markers. */
+/** Split text into plain strings and `{ctl}` markers, one for each run of hidden characters. */
 export function visibleSegments(text) {
   const value = String(text ?? "");
   const out = [];
   let last = 0;
   for (const match of value.matchAll(HIDDEN)) {
     if (match.index > last) out.push(value.slice(last, match.index));
-    out.push({ ctl: marker(match[0]) });
+    out.push({ ctl: Array.from(match[0], marker).join("") });
     last = match.index + match[0].length;
   }
   if (last < value.length) out.push(value.slice(last));
@@ -51,7 +60,7 @@ export function h(tag, props = {}, ...children) {
   return { tag, props, children: children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false && child !== "") };
 }
 
-/** Text with its hidden characters as marker spans. */
+/** Text with each run of hidden characters as one marker span. */
 function txt(value) {
   return visibleSegments(value).map((part) => (typeof part === "string" ? part : h("span", { class: "ctl", title: "Hidden character" }, part.ctl)));
 }
@@ -183,36 +192,16 @@ function toolItem(item) {
 
 const KIND_NAMES = { step: "Step", text: "Reply", reasoning: "Reasoning", tool: "Tool call" };
 
-function pagedItem(turnId, item, full, part) {
-  const what = item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind);
-  const pages = `${item.paged.pages} ${item.paged.pages === 1 ? "page" : "pages"}, ${formatBytes(item.paged.bytes)}`;
-  const shown = full?.item ?? null;
-  const head = h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(what)), item.callId ? h("span", { class: "act-sub mono" }, txt(item.callId)) : null, chip(item.status, { ...TOOL_STATUS, ...TEXT_STATUS }));
-  const load = (words) => h("button", { class: "btn", type: "button", "data-activity-load": item.id, "data-activity-turn": turnId }, words);
-  if (!shown) {
-    if (full?.state === "loading") return [head, h("p", { class: "act-note" }, `Large item (${pages}). Reading every page…`)];
-    return [head, h("p", { class: "act-note" }, `Large item (${pages}), read on request and then shown in full.`), full?.state === "failed" ? h("p", { class: "act-warn" }, "Could not read it: ", txt(full.error)) : null, load(full?.state === "failed" ? "Try again" : "Load in full")];
-  }
-  const note =
-    full.state === "loading" ? "Reading the newer version…" : full.state === "failed" ? null : full.seq < item.seq ? "A newer version is on the gateway." : `Read in full (${pages}).`;
-  const large = full.bytes > PART_THRESHOLD_BYTES;
-  // A newer version is read only on request: a running tool changes often.
-  const latest = full.state === "ready" && full.seq < item.seq;
-  return [
-    large ? [head, partsView(turnId, item, shown, part)] : itemBody(shown),
-    note ? h("p", { class: "act-note" }, note) : null,
-    latest ? load("Load the latest") : null,
-    full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the newer version: ", txt(full.error)), load("Try again")] : null,
-  ];
-}
-
 /** An item shown as the JSON it came as, with why. */
 function rawItem(title, note, value) {
   return [h("div", { class: "act-head" }, h("b", {}, txt(title))), h("p", { class: "act-note" }, note), valueBlock(value)];
 }
 
 function itemBody(item) {
-  if (item.kind === "unreadable") return rawItem("Item", "This item doesn't have the fields this console reads. Shown as sent.", item.raw);
+  if (item.kind === "unreadable") {
+    const note = item.wholeTurn ? "This turn doesn't have the fields this console reads. Shown as sent." : "This item doesn't have the fields this console reads. Shown as sent.";
+    return rawItem(item.wholeTurn ? "Turn" : "Item", note, item.raw);
+  }
   if (!KIND_NAMES[item.kind]) return rawItem(item.kind ?? "Item", "A kind of item this console doesn't know yet. Shown as sent.", item);
   if (!isWellFormedItem(item)) return rawItem(KIND_NAMES[item.kind], "This item doesn't have the fields this console reads. Shown as sent.", item);
   if (item.kind === "step") return stepItem(item);
@@ -221,7 +210,7 @@ function itemBody(item) {
 }
 
 /**
- * An item's whole content as one text, for showing in parts: each field
+ * An item's whole content as one text, for showing in windows: each field
  * labelled, strings as text and anything else as JSON, nothing left out.
  */
 export function itemDocument(item) {
@@ -235,38 +224,125 @@ export function itemDocument(item) {
   return out.join("\n\n");
 }
 
-const partCache = new WeakMap();
+/** Content split into windows that each fit WINDOW_BYTES and WINDOW_LINES. */
+export const windowsOf = (text) => splitBounded(text, { maxBytes: WINDOW_BYTES, maxLines: WINDOW_LINES });
 
-/** The parts of a large loaded item, worked out once per version read. */
-export function itemParts(item) {
-  let parts = partCache.get(item);
-  if (!parts) {
-    parts = splitUtf8(itemDocument(item), PART_BYTES);
-    partCache.set(item, parts);
-  }
-  return parts;
+/**
+ * How an item shows: field by field when its text fits one window, or else
+ * as its text in windows, one mounted at a time. `windows` is null in the
+ * first case; `bytes` is its text's UTF-8 length either way.
+ */
+export function formatItem(item) {
+  const text = item.kind === "unreadable" ? json(item.raw) : itemDocument(item);
+  const windows = windowsOf(text);
+  return { windows: windows.length > 1 ? windows : null, bytes: utf8Length(text) };
 }
 
-/** A large loaded item: one part at a time, with First, Previous, Next and Last. */
-function partsView(turnId, item, shown, part) {
-  const parts = itemParts(shown);
-  const at = Math.min(Math.max(0, part), parts.length - 1);
+/** A part read of an item too large to hold, in windows. */
+export function formatPart(data) {
+  return { windows: windowsOf(data), bytes: utf8Length(data) };
+}
+
+const clampIndex = (index, count) => Math.min(Math.max(0, index), Math.max(0, count - 1));
+
+/** One window of `windows`, with First, Previous, Next and Last among them when there are several. */
+function windowed(turnId, itemId, windows, index) {
+  const at = clampIndex(index, windows.length);
+  if (windows.length === 1) return [pre(windows[0], "act-part")];
+  const go = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-activity-window": to, "data-activity-turn": turnId, "data-activity-item": itemId, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
+  const nav = h(
+    "div",
+    { class: "act-parts", role: "group", "aria-label": "Sections" },
+    go("first", "First", at === 0),
+    go("previous", "Previous", at === 0),
+    h("span", { class: "act-sub" }, `Section ${at + 1} of ${windows.length}`),
+    go("next", "Next", at === windows.length - 1),
+    go("last", "Last", at === windows.length - 1),
+  );
+  return [nav, pre(windows[at], "act-part")];
+}
+
+/** An item's body from its format: field by field, or one window of its text. */
+function formattedBody(turnId, item, format, window) {
+  return format.windows ? [h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind ?? "Item")))), windowed(turnId, item.id, format.windows, window)] : itemBody(item);
+}
+
+/** An item read part by part: the part's navigation, then one window of the part. */
+function partsBody(turnId, item, full, format, window) {
   const go = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-activity-part": to, "data-activity-turn": turnId, "data-activity-item": item.id, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
+  const of = full.count === null ? `${full.known}+` : String(full.count);
   const nav = h(
     "div",
     { class: "act-parts", role: "group", "aria-label": "Parts" },
-    go("first", "First", at === 0),
-    go("previous", "Previous", at === 0),
-    h("span", { class: "act-sub" }, `Part ${at + 1} of ${parts.length}`),
-    go("next", "Next", at === parts.length - 1),
-    go("last", "Last", at === parts.length - 1),
+    go("first", "First part", !full.hasPrevious),
+    go("previous", "Previous part", !full.hasPrevious),
+    h("span", { class: "act-sub" }, `Part ${full.part + 1} of ${of}`),
+    go("next", "Next part", !full.hasNext),
+    go("last", "Last part", !full.hasLast),
   );
-  return [nav, pre(parts[at], "act-part")];
+  return [nav, format ? windowed(turnId, item.id, format.windows, window) : null];
 }
 
-/** One item of a turn. `full` is the item read in full when it is paged; `part` the part shown of a large one. */
-export function itemTree(turnId, item, full = null, part = 0) {
-  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full, part) : itemBody(item));
+/**
+ * A paged item: read on request, then shown whole (field by field or in
+ * windows) or, when larger than the view's budget, a part at a time.
+ * `full` is the watcher's entry; `format` its format, made by the caller.
+ */
+function pagedItem(turnId, item, full, format, window) {
+  const what = item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind);
+  const pages = `${item.paged.pages} ${item.paged.pages === 1 ? "page" : "pages"}, ${formatBytes(item.paged.bytes)}`;
+  const head = h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(what)), item.callId ? h("span", { class: "act-sub mono" }, txt(item.callId)) : null, chip(item.status, { ...TOOL_STATUS, ...TEXT_STATUS }));
+  const load = (words) => h("button", { class: "btn", type: "button", "data-activity-load": item.id, "data-activity-turn": turnId }, words);
+  if (full?.mode === "parts") {
+    const latest = full.state === "ready" && full.seq !== null && full.seq < item.seq;
+    const note =
+      full.state === "loading"
+        ? full.data === null
+          ? `Large item (${pages}), more than this view holds at once. Reading its first part…`
+          : `Reading part ${full.want + 1}…`
+        : full.newer
+          ? "The item changed while it was read: this is the newer version, from its first part."
+          : `Large item (${pages}), more than this view holds at once, so it shows a part at a time.`;
+    return [
+      head,
+      h("p", { class: "act-note" }, note),
+      full.data !== null ? partsBody(turnId, item, full, format, window) : null,
+      latest ? [h("p", { class: "act-note" }, "A newer version is on the gateway."), load("Load the latest")] : null,
+      full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the part: ", txt(full.error)), load("Try again")] : null,
+    ];
+  }
+  const shown = full?.item ?? null;
+  if (!shown) {
+    if (full?.state === "loading" || full?.state === "queued") return [head, h("p", { class: "act-note" }, `Large item (${pages}). Reading every page…`)];
+    return [head, h("p", { class: "act-note" }, `Large item (${pages}), read on request and then shown in full.`), full?.state === "failed" ? h("p", { class: "act-warn" }, "Could not read it: ", txt(full.error)) : null, load(full?.state === "failed" ? "Try again" : "Load in full")];
+  }
+  const note =
+    full.state === "loading" ? "Reading the newer version…" : full.state === "failed" ? null : full.seq < item.seq ? "A newer version is on the gateway." : `Read in full (${pages}).`;
+  // A newer version is read only on request: a running tool changes often.
+  const latest = full.state === "ready" && full.seq < item.seq;
+  return [
+    formattedBody(turnId, shown, format, window),
+    note ? h("p", { class: "act-note" }, note) : null,
+    latest ? load("Load the latest") : null,
+    full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the newer version: ", txt(full.error)), load("Try again")] : null,
+  ];
+}
+
+/** What an item's body is made from: its own fields, the item read whole, or the part shown. */
+function itemSource(item, full) {
+  if (!item.paged) return { kind: "inline", source: item };
+  if (full?.mode === "parts") return full.data === null ? null : { kind: "part", source: full.data };
+  return full?.item ? { kind: "whole", source: full.item } : null;
+}
+
+/**
+ * One item of a turn. `full` is the item's read when it is paged. `format`
+ * makes (or recalls) the format of a source; `window` is the window shown.
+ */
+export function itemTree(turnId, item, full = null, { window = 0, format = null } = {}) {
+  const from = itemSource(item, full);
+  const made = from ? (format ?? ((at) => (at.kind === "part" ? formatPart(at.source) : formatItem(at.source))))(from) : null;
+  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full, made, window) : formattedBody(turnId, item, made, window));
 }
 
 /** A turn's summary line. */
@@ -330,7 +406,6 @@ export function mount(node, doc) {
   return element;
 }
 
-const itemVersion = (item, full, part) => `${item.seq}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}|${part}` : ""}`;
 const turnVersion = (turn) => `${turn.seq}|${turn.status}|${turn.reconnects}|${turn.endedAt}|${turn.items.length === 0}`;
 
 /** Put `element` at `index` among `parent`'s children, moving it only if needed (moving drops a selection). */
@@ -339,11 +414,21 @@ function place(parent, element, index) {
   if (current !== element) parent.insertBefore(element, current ?? null);
 }
 
+const isOpen = (details) => details.getAttribute("open") !== null;
+
 /**
  * The live panel. `update(view, officer)` redraws what changed.
- * @param {{doc: Document, onClose: () => void, onLoad: (turn: string, item: string) => void, onRetry: () => void}} options
+ *
+ * What it mounts is bounded: a closed turn mounts no items; an open one
+ * mounts at most ITEM_WINDOW items, each at most one window (WINDOW_BYTES
+ * and WINDOW_LINES). The formats it keeps and the content it mounts are
+ * charged to the view's budget (`view.budget`) beside the items read, so
+ * the least recently opened goes first: a format is made again when next
+ * drawn, and an open turn is closed.
+ *
+ * @param {{doc: Document, onClose?: () => void, onLoad?: (turn: string, item: string) => void, onPart?: (turn: string, item: string, to: string) => void, onRetry?: () => void}} options
  */
-export function createActivityPanel({ doc, onClose, onLoad, onRetry }) {
+export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   const root = doc.createElement("div");
   root.setAttribute("class", "activity");
   const header = doc.createElement("div");
@@ -351,36 +436,91 @@ export function createActivityPanel({ doc, onClose, onLoad, onRetry }) {
   list.setAttribute("class", "act-turns");
   root.appendChild(header);
   root.appendChild(list);
-  /** turn ID -> {element, summary, notes, items, version, kids: Map(item ID -> {element, version})} */
+  /** turn ID -> {element, summary, notes, nav, items, version, navKey, start, kids: Map(item ID -> {element, version, bytes})} */
   const turns = new Map();
   let headerKey = "";
-  /** The part shown of each large item, by turn and item ID. */
-  const parts = new Map();
+  /** Formats made, by item: key -> {source, format}. Inline items' and parts' are charged to the budget; a whole read's is in its read's charge. */
+  const formats = new Map();
+  /** The window shown of each item, with the source it was chosen for: key -> {source, index}. */
+  const windows = new Map();
   let last = null;
-  const partKey = (turn, item) => `${turn}\u0000${item}`;
+  const itemKey = (turn, item) => `${turn}\u0000${item}`;
+  const budgetOf = () => last?.view.budget ?? null;
 
-  function movePart(button) {
-    const { activityTurn: turn, activityItem: item, activityPart: to } = button.dataset;
-    const key = partKey(turn, item);
-    const full = last?.view.full(turn, item);
-    if (!full?.item) return;
-    const count = itemParts(full.item).length;
-    const at = Math.min(parts.get(key) ?? 0, count - 1);
+  function forgetFormat(key) {
+    formats.delete(key);
+    budgetOf()?.release(`fmt\u0000${key}`);
+  }
+
+  /** The format of an item's source, made once per source and charged to the budget. */
+  const formatFor = (key) => (from) => {
+    const held = formats.get(key);
+    if (held?.source === from.source) {
+      budgetOf()?.touch(`fmt\u0000${key}`);
+      return held.format;
+    }
+    const format = from.kind === "part" ? formatPart(from.source) : formatItem(from.source);
+    formats.set(key, { source: from.source, format });
+    const budget = budgetOf();
+    if (budget && from.kind !== "whole" && format.windows) {
+      budget.reserve(`fmt\u0000${key}`, format.bytes, () => formats.delete(key), { force: true });
+    } else budget?.release(`fmt\u0000${key}`);
+    return format;
+  };
+
+  function windowAt(key, source) {
+    const at = windows.get(key);
+    return at?.source === source ? at.index : 0;
+  }
+
+  /** Unmount a turn's items and give back their charge. */
+  function closeTurn(id, entry) {
+    entry.items.replaceChildren();
+    entry.kids.clear();
+    budgetOf()?.release(`mnt\u0000${id}`);
+  }
+
+  function moveWindow(button) {
+    const { activityTurn: turn, activityItem: item, activityWindow: to } = button.dataset;
+    const key = itemKey(turn, item);
+    const held = formats.get(key);
+    if (!held?.format.windows) return;
+    const count = held.format.windows.length;
+    const at = windowAt(key, held.source);
     const next = { first: 0, previous: Math.max(0, at - 1), next: Math.min(count - 1, at + 1), last: count - 1 }[to] ?? at;
     if (next === at) return;
-    parts.set(key, next);
-    update(last.view, last.officer);
+    windows.set(key, { source: held.source, index: next });
+    redraw();
     const escape = globalThis.CSS?.escape ?? ((value) => value.replace(/["\\]/g, "\\$&"));
-    root.querySelector?.(`[data-activity-part="${to}"][data-activity-item="${escape(item)}"]`)?.focus?.();
+    root.querySelector?.(`[data-activity-window="${to}"][data-activity-item="${escape(item)}"]`)?.focus?.();
   }
+
+  function moveItems(button) {
+    const entry = turns.get(button.dataset.activityTurn);
+    const turn = last?.view.turns.find((each) => each.id === button.dataset.activityTurn);
+    if (!entry || !turn) return;
+    const end = Math.max(0, turn.items.length - ITEM_WINDOW);
+    const start = entry.start ?? end;
+    const to = button.dataset.activityItems === "earlier" ? Math.max(0, start - ITEM_WINDOW) : Math.min(end, start + ITEM_WINDOW);
+    // At the end, the window follows new items.
+    entry.start = to >= end ? null : to;
+    redraw();
+  }
+
+  const redraw = () => last && update(last.view, last.officer);
 
   root.addEventListener("click", (event) => {
     const target = event.target;
-    if (target.closest("[data-activity-close]")) onClose?.();
-    else if (target.closest("[data-activity-retry]")) onRetry?.();
-    else if (target.closest("[data-activity-part]")) movePart(target.closest("[data-activity-part]"));
-    else {
-      const load = target.closest("[data-activity-load]");
+    const on = (name) => target.closest(`[${name}]`);
+    if (on("data-activity-close")) onClose?.();
+    else if (on("data-activity-retry")) onRetry?.();
+    else if (on("data-activity-window")) moveWindow(on("data-activity-window"));
+    else if (on("data-activity-items")) moveItems(on("data-activity-items"));
+    else if (on("data-activity-part")) {
+      const { activityTurn: turn, activityItem: item, activityPart: to } = on("data-activity-part").dataset;
+      onPart?.(turn, item, to);
+    } else {
+      const load = on("data-activity-load");
       if (load) onLoad?.(load.dataset.activityTurn, load.dataset.activityLoad);
     }
   });
@@ -394,14 +534,63 @@ export function createActivityPanel({ doc, onClose, onLoad, onRetry }) {
     if (turn.status === "running") element.setAttribute("open", "");
     const summary = doc.createElement("summary");
     const notes = doc.createElement("div");
+    const nav = doc.createElement("div");
     const items = doc.createElement("ol");
     items.setAttribute("class", "act-items");
     element.appendChild(summary);
     element.appendChild(notes);
+    element.appendChild(nav);
     element.appendChild(items);
-    entry = { element, summary, notes, items, version: "", kids: new Map() };
+    entry = { element, summary, notes, nav, items, version: "", navKey: "", start: null, kids: new Map() };
+    // Opening a turn mounts its items; closing it unmounts them.
+    element.addEventListener("toggle", () => redraw());
     turns.set(turn.id, entry);
     return entry;
+  }
+
+  /** The items window of a turn, and its Earlier and Later items buttons. */
+  function itemsWindow(turn, entry) {
+    const end = Math.max(0, turn.items.length - ITEM_WINDOW);
+    const start = Math.min(entry.start ?? end, end);
+    const navKey = `${start}|${turn.items.length}`;
+    if (navKey !== entry.navKey) {
+      const go = (to, words) => h("button", { class: "btn", type: "button", "data-activity-items": to, "data-activity-turn": turn.id }, words);
+      const shown = turn.items.length > ITEM_WINDOW ? h("div", { class: "act-parts", role: "group", "aria-label": "Items" }, start > 0 ? go("earlier", "Earlier items") : null, h("span", { class: "act-sub" }, `Items ${start + 1}–${Math.min(turn.items.length, start + ITEM_WINDOW)} of ${turn.items.length}`), start < end ? go("later", "Later items") : null) : null;
+      entry.nav.replaceChildren(...(shown ? [mount(shown, doc)] : []));
+      entry.navKey = navKey;
+    }
+    return turn.items.slice(start, start + ITEM_WINDOW);
+  }
+
+  function drawItems(turn, entry, view) {
+    const shown = itemsWindow(turn, entry);
+    const ids = new Set(shown.map((item) => item.id));
+    for (const [id, kid] of entry.kids) {
+      if (ids.has(id)) continue;
+      kid.element.remove();
+      entry.kids.delete(id);
+    }
+    let mounted = 0;
+    shown.forEach((item, at) => {
+      const full = item.paged ? view.full(turn.id, item.id) : null;
+      const key = itemKey(turn.id, item.id);
+      const from = itemSource(item, full);
+      const window = from ? windowAt(key, from.source) : 0;
+      const version = `${item.seq}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}|${full.part ?? ""}|${full.want ?? ""}|${full.newer ?? ""}|${full.data === null}` : ""}|${window}`;
+      let kid = entry.kids.get(item.id);
+      if (!kid || kid.version !== version) {
+        let format = null;
+        const tree = itemTree(turn.id, item, full, { window, format: (source) => (format = formatFor(key)(source)) });
+        const element = mount(tree, doc);
+        if (kid) kid.element.replaceWith(element);
+        const bytes = format ? (format.windows ? utf8Length(format.windows[clampIndex(window, format.windows.length)]) : format.bytes) : 0;
+        kid = { element, version, bytes };
+        entry.kids.set(item.id, kid);
+      }
+      mounted += kid.bytes;
+      place(entry.items, kid.element, at);
+    });
+    return mounted;
   }
 
   function update(view, officer) {
@@ -415,14 +604,14 @@ export function createActivityPanel({ doc, onClose, onLoad, onRetry }) {
     const keep = new Set(shown.map((turn) => turn.id));
     for (const [id, entry] of turns) {
       if (keep.has(id)) continue;
+      closeTurn(id, entry);
       entry.element.remove();
       turns.delete(id);
     }
-    // Forget the part shown of items no longer read in full.
-    for (const key of parts.keys()) {
-      const [turn, item] = key.split("\u0000");
-      if (!view.full(turn, item)?.item) parts.delete(key);
-    }
+    // Forget the formats and windows of items no longer shown.
+    const items = new Set(shown.flatMap((turn) => turn.items.map((item) => itemKey(turn.id, item.id))));
+    for (const held of [...formats.keys()]) if (!items.has(held)) forgetFormat(held);
+    for (const held of [...windows.keys()]) if (!items.has(held)) windows.delete(held);
     shown.forEach((turn, index) => {
       const entry = turnEntry(turn);
       const version = turnVersion(turn);
@@ -431,25 +620,23 @@ export function createActivityPanel({ doc, onClose, onLoad, onRetry }) {
         entry.notes.replaceChildren(...turnNotes(turn).filter(Boolean).map((node) => mount(node, doc)));
         entry.version = version;
       }
-      const ids = new Set(turn.items.map((item) => item.id));
-      for (const [id, kid] of entry.kids) {
-        if (ids.has(id)) continue;
-        kid.element.remove();
-        entry.kids.delete(id);
+      if (!isOpen(entry.element)) {
+        // A closed turn builds no item bodies.
+        if (entry.kids.size) closeTurn(turn.id, entry);
+        entry.nav.replaceChildren();
+        entry.navKey = "";
+      } else {
+        const mounted = drawItems(turn, entry, view);
+        // Charged as mounted; freed by closing the turn when least recently opened.
+        view.budget?.reserve(`mnt\u0000${turn.id}`, mounted, () => {
+          const evicted = turns.get(turn.id);
+          if (!evicted) return;
+          evicted.element.removeAttribute("open");
+          closeTurn(turn.id, evicted);
+          evicted.nav.replaceChildren();
+          evicted.navKey = "";
+        }, { force: true });
       }
-      turn.items.forEach((item, at) => {
-        const full = item.paged ? view.full(turn.id, item.id) : null;
-        const part = parts.get(partKey(turn.id, item.id)) ?? 0;
-        const itemKey = itemVersion(item, full, part);
-        let kid = entry.kids.get(item.id);
-        if (!kid || kid.version !== itemKey) {
-          const element = mount(itemTree(turn.id, item, full, part), doc);
-          if (kid) kid.element.replaceWith(element);
-          kid = { element, version: itemKey };
-          entry.kids.set(item.id, kid);
-        }
-        place(entry.items, kid.element, at);
-      });
       place(list, entry.element, index);
     });
   }

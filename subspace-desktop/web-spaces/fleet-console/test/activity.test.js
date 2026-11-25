@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { createApiClient, HttpError, InvalidResponseError, MAX_PAGE_BODY_BYTES, readPagedItem } from "../src/api.js";
+import { createApiClient, HttpError, InvalidResponseError, MAX_PAGE_BODY_BYTES, readPagedItem, TooLargeError } from "../src/api.js";
 import { ACTIVITY_MESSAGES, applyChange, createActivityWatcher, decodeActivity, decodeActivityEvent, MAX_BUFFER, MAX_BUFFER_BYTES, MAX_TURNS, POLL_MS } from "../src/activity.js";
-import { createActivityPanel, headerTree, itemDocument, itemParts, itemTree, json as viewJson, mount, PART_BYTES, visibleSegments, visibleText } from "../src/activity-view.js";
+import { createActivityPanel, formatItem, headerTree, itemDocument, itemTree, json as viewJson, mount, visibleSegments, visibleText, WINDOW_BYTES, WINDOW_LINES } from "../src/activity-view.js";
 import { crewContext } from "../src/effects.js";
 import { splitUtf8, utf8Length } from "../src/utf8.js";
 import { createLiveSource } from "../src/live.js";
@@ -12,131 +12,7 @@ import { createSampleActivitySource } from "../src/sample-source.js";
 import { createSampleActivitySim } from "../src/sample.js";
 import { activityEvent, activitySnapshot, GENERATION, stepItem, T0, textItem, toolItem, turn } from "./activity-fixtures.js";
 import { sampleFleet } from "./fixtures.js";
-
-const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
-
-/** Timers a test fires by hand. */
-function fakeTimers() {
-  let next = 1;
-  const live = new Map();
-  return {
-    options: {
-      setTimer: (fn, ms) => {
-        const id = next++;
-        live.set(id, { fn, ms });
-        return id;
-      },
-      clearTimer: (id) => live.delete(id),
-    },
-    delays: () => [...live.values()].map((timer) => timer.ms),
-    pending: () => live.size,
-    /** Fire every timer set so far. */
-    fire() {
-      const due = [...live.entries()];
-      for (const [id, timer] of due) {
-        live.delete(id);
-        timer.fn();
-      }
-    },
-  };
-}
-
-// ---------- a small DOM, enough for mount() and the panel ----------
-
-class FakeText {
-  constructor(text) {
-    this.nodeType = 3;
-    this.data = text;
-    this.parent = null;
-  }
-  get textContent() {
-    return this.data;
-  }
-  remove() {
-    this.parent?.removeChild(this);
-  }
-}
-
-class FakeElement {
-  constructor(tag) {
-    this.nodeType = 1;
-    this.tag = tag;
-    this.attributes = {};
-    this.childNodes = [];
-    this.parent = null;
-    this.listeners = {};
-  }
-  set innerHTML(_) {
-    throw new Error("innerHTML is never used by the activity view");
-  }
-  get children() {
-    return this.childNodes.filter((node) => node.nodeType === 1);
-  }
-  get dataset() {
-    const out = {};
-    for (const [name, value] of Object.entries(this.attributes)) if (name.startsWith("data-")) out[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    return out;
-  }
-  get textContent() {
-    return this.childNodes.map((node) => node.textContent).join("");
-  }
-  setAttribute(name, value) {
-    this.attributes[name] = String(value);
-  }
-  getAttribute(name) {
-    return this.attributes[name] ?? null;
-  }
-  appendChild(node) {
-    node.parent?.removeChild(node);
-    node.parent = this;
-    this.childNodes.push(node);
-    return node;
-  }
-  insertBefore(node, before) {
-    if (!before) return this.appendChild(node);
-    node.parent?.removeChild(node);
-    node.parent = this;
-    this.childNodes.splice(this.childNodes.indexOf(before), 0, node);
-    return node;
-  }
-  removeChild(node) {
-    this.childNodes = this.childNodes.filter((child) => child !== node);
-    node.parent = null;
-  }
-  remove() {
-    this.parent?.removeChild(this);
-  }
-  replaceChildren(...nodes) {
-    for (const node of this.childNodes) node.parent = null;
-    this.childNodes = [];
-    for (const node of nodes) this.appendChild(node);
-  }
-  replaceWith(node) {
-    const parent = this.parent;
-    parent.insertBefore(node, this);
-    parent.removeChild(this);
-  }
-  addEventListener(type, fn) {
-    this.listeners[type] = fn;
-  }
-  closest(selector) {
-    const name = selector.slice(1, -1);
-    for (let node = this; node; node = node.parent) if (node.nodeType === 1 && name in node.attributes) return node;
-    return null;
-  }
-  findAll(predicate, out = []) {
-    for (const node of this.childNodes) {
-      if (node.nodeType !== 1) continue;
-      if (predicate(node)) out.push(node);
-      node.findAll(predicate, out);
-    }
-    return out;
-  }
-}
-
-const fakeDoc = { createElement: (tag) => new FakeElement(tag), createTextNode: (text) => new FakeText(text) };
-
-// ---------- decoding ----------
+import { buttons, clickOn, fakeActivityClient, fakeDoc, fakeTimers, flush, pagedSnapshot, pagesOf, settle } from "./activity-helpers.js";
 
 test("activity: decodes a #355-shaped snapshot and keeps a malformed item as unreadable", () => {
   const json = activitySnapshot();
@@ -222,7 +98,28 @@ test("api: paged items join in full, and a seq change between pages starts again
   assert.equal(item.seq, 11);
   assert.deepEqual(item.item, JSON.parse(v2), "the whole item, not cut");
   assert.equal(item.item.content[0].text.length, 100);
-  await assert.rejects(readPagedItem(async (page) => ({ seq: page, page, pages: 2, bytes: 2, data: "x" }), { restarts: 2 }), /kept changing/);
+  // Every page a new version: given up after PAGE_ATTEMPTS reads from page 0.
+  const changing = [];
+  await assert.rejects(
+    readPagedItem(async (page) => {
+      changing.push(page);
+      if (changing.length > 20) throw new Error("runaway read");
+      return { seq: changing.length, page, pages: 2, bytes: 2, data: "x" };
+    }),
+    /kept changing/,
+  );
+  assert.deepEqual(changing, [0, 1, 0, 1, 0, 1, 0, 1, 0, 1], "five attempts, each stopped at the first change");
+  // The same with fewer attempts.
+  let tries = 0;
+  await assert.rejects(
+    readPagedItem(async (page) => {
+      tries += 1;
+      if (tries > 20) throw new Error("runaway read");
+      return { seq: page, page, pages: 2, bytes: 2, data: "x" };
+    }, { attempts: 3 }),
+    /kept changing/,
+  );
+  assert.equal(tries, 6);
 });
 
 test("api: joined pages must have the item's UTF-8 byte length, or the read is invalid", async () => {
@@ -244,24 +141,6 @@ test("api: joined pages must have the item's UTF-8 byte length, or the read is i
 });
 
 // ---------- the watcher: snapshot and stream joined ----------
-
-function fakeActivityClient(snapshots) {
-  const calls = [];
-  const pending = [];
-  return {
-    calls,
-    pending,
-    activity(agent, query, signal) {
-      calls.push({ agent, query });
-      const next = snapshots.shift();
-      if (next === "hold") return new Promise((resolve) => pending.push(resolve));
-      return next instanceof Error ? Promise.reject(next) : Promise.resolve(structuredClone(next));
-    },
-    activityItemPage: async () => {
-      throw new HttpError(404);
-    },
-  };
-}
 
 test("watcher: events buffered during the snapshot join with no gap and no duplicate", async () => {
   const client = fakeActivityClient(["hold"]);
@@ -708,27 +587,6 @@ test("sample manager: watchActivity serves a simulated officer", async () => {
 
 // ---------- round 1: source change, paging, retry, polling and rendering ----------
 
-const flush = async () => {
-  for (let i = 0; i < 4; i += 1) await settle();
-};
-
-/** Pages of `item` as the gateway sends them: at most 64 KiB of UTF-8 each, split between code points. */
-function pagesOf(item, { agent = "example-captain", turn: turnId = "turn-b", id = item.id, seq = item.seq } = {}) {
-  const text = JSON.stringify(item);
-  const parts = splitUtf8(text, 64 * 1024);
-  return parts.map((data, page) => ({ agent, turn: turnId, item: id, seq, page, pages: parts.length, bytes: utf8Length(text), data }));
-}
-
-/** A snapshot whose running turn holds paged items with these IDs. */
-function pagedSnapshot(ids, { seq = 9, generation = GENERATION } = {}) {
-  const snapshot = activitySnapshot({ seq, generation });
-  snapshot.turns[1].items = ids.map((id) => ({ id, seq: 9, startedAt: T0 + 70, updatedAt: T0 + 80, kind: "tool", status: "completed", callId: `call_${id}`, name: "read", paged: { pages: 2, bytes: 70_000 } }));
-  return snapshot;
-}
-
-const clickOn = (panel, node) => panel.root.listeners.click({ target: node });
-const buttons = (root, words) => root.findAll((node) => node.tag === "button" && node.textContent === words);
-
 test("fix 1: a source change drops the old snapshot and page reads, and no later request carries the old token", async () => {
   const { fleet } = sampleFleet();
   const log = [];
@@ -799,21 +657,49 @@ test("fix 1: a source change drops the old snapshot and page reads, and no later
 });
 
 test("fix 2: a page claiming more than it may hold is refused before another page is read", async () => {
-  let reads = 0;
+  const reads = [];
+  // Without a `room`, a read holds at most the default budget: a 60 GB item
+  // is refused after page 0, never read page by page (which once grew this
+  // process past 18 GB). The fake stops a runaway read itself, too.
+  const huge = async (page) => {
+    reads.push(page);
+    if (reads.length > 10) throw new Error("runaway read");
+    return { agent: "a", turn: "t", item: "i", seq: 1, page, pages: 1_000_000, bytes: 60_000_000_000, data: "{" };
+  };
+  await assert.rejects(readPagedItem(huge, { agent: "a", turn: "t", item: "i" }), TooLargeError);
+  assert.equal(reads.length, 1, "no read after page 0");
+  assert.equal(reads[0], 0);
+  // A view that makes room says so; one that cannot is refused just the same.
+  reads.length = 0;
+  await assert.rejects(readPagedItem(huge, { agent: "a", turn: "t", item: "i", room: () => false }), TooLargeError);
+  assert.equal(reads.length, 1);
+  // Page counts that need empty pages are invalid before any further read.
+  reads.length = 0;
   await assert.rejects(
     readPagedItem(async (page) => {
-      reads += 1;
-      assert.equal(reads, 1, "reject the oversized item on its first read");
+      reads.push(page);
+      if (reads.length > 10) throw new Error("runaway read");
+      return { agent: "a", turn: "t", item: "i", seq: 1, page, pages: 1_000_000, bytes: 10, data: "" };
+    }),
+    /claims 1000000 pages for 10 bytes/,
+  );
+  assert.equal(reads.length, 1);
+  // Over MAX_ITEM_BYTES the refusal is an invalid response for a whole read, on the first read.
+  let count = 0;
+  await assert.rejects(
+    readPagedItem(async (page) => {
+      count += 1;
+      assert.equal(count, 1, "reject the oversized item on its first read");
       assert.equal(page, 0);
       return { agent: "a", turn: "t", item: "i", seq: 1, page, pages: 1_000_000, bytes: 60_000_000_000, data: "{" };
-    }, { agent: "a", turn: "t", item: "i" }),
+    }, { agent: "a", turn: "t", item: "i", room: () => true }),
     InvalidResponseError,
   );
-  assert.equal(reads, 1);
+  assert.equal(count, 1);
   const page = (fields) => async (n) => ({ agent: "a", turn: "t", item: "i", seq: 1, page: n, pages: 1, bytes: 2, data: "{}", ...fields });
   await assert.rejects(readPagedItem(page({ pages: 0 })), /not a valid page/);
   await assert.rejects(readPagedItem(page({ bytes: 70_000 })), /claims 70000 bytes in 1 pages/);
-  await assert.rejects(readPagedItem(page({ pages: 3000, bytes: 100 * 1024 * 1024 })), /over this console's/);
+  await assert.rejects(readPagedItem(page({ pages: 3000, bytes: 100 * 1024 * 1024 })), TooLargeError);
   await assert.rejects(readPagedItem(page({ item: "other" }), { agent: "a", turn: "t", item: "i" }), /another item/);
   await assert.rejects(readPagedItem(page({ page: 1 })), /not a valid page/);
   // A page body is capped before it is decoded.
@@ -839,7 +725,7 @@ test("api: a multi-page item must have enough bytes for its pages and make progr
   assert.deepEqual(reads, [0, 1]);
 });
 
-test("fix 2: one item read at a time, and a large item shows in parts that reach its last byte", async () => {
+test("fix 2: one item read at a time, and a large item shows in windows that reach its last byte", async () => {
   const sentinel = "END-OF-ITEM-SENTINEL";
   // Multi-byte text, so parts must split between code points.
   const big = toolItem("i2", 9, { name: "read", content: [{ type: "text", text: `${"ünï ✓ 🛰 ".repeat(40_000)}${sentinel}` }] });
@@ -864,23 +750,26 @@ test("fix 2: one item read at a time, and a large item shows in parts that reach
   assert.ok(full.bytes > 256 * 1024);
   const panel = createActivityPanel({ doc: fakeDoc });
   panel.update(watcher.view, { name: "Example", role: "captain", live: true });
-  const parts = itemParts(full.item);
+  const parts = formatItem(full.item).windows;
   assert.ok(parts.length > 4);
-  assert.ok(parts.every((part) => utf8Length(part) <= PART_BYTES), "each part at most 64 KiB");
+  assert.ok(parts.every((part) => utf8Length(part) <= WINDOW_BYTES && part.split("\n").length <= WINDOW_LINES + 1), "each window at most 64 KiB and 1,000 lines");
   assert.ok(parts.every((part) => !/^[\uDC00-\uDFFF]/.test(part) && !/[\uD800-\uDBFF]$/.test(part)), "split between code points");
-  const mounted = () => panel.root.findAll((node) => node.attributes.class === "act-pre act-part");
-  assert.equal(mounted().length, 1, "only the current part is mounted");
-  assert.ok(panel.root.textContent.includes(`Part 1 of ${parts.length}`));
+  // i4 (70,000 bytes) is over one window too: each item mounts one window of its own.
+  const ofI2 = () => panel.root.findAll((node) => node.tag === "li" && node.findAll((inner) => inner.attributes["data-activity-item"] === "i2").length > 0)[0];
+  const mounted = () => ofI2().findAll((node) => node.attributes.class === "act-pre act-part");
+  assert.equal(panel.root.findAll((node) => node.attributes.class === "act-pre act-part").length, 2);
+  assert.equal(mounted().length, 1, "only the current window is mounted");
+  assert.ok(panel.root.textContent.includes(`Section 1 of ${parts.length}`));
   assert.ok(!panel.root.textContent.includes(sentinel));
-  clickOn(panel, buttons(panel.root, "Next")[0]);
-  assert.ok(panel.root.textContent.includes(`Part 2 of ${parts.length}`));
-  clickOn(panel, buttons(panel.root, "Last")[0]);
-  assert.ok(panel.root.textContent.includes(`Part ${parts.length} of ${parts.length}`));
+  clickOn(panel, buttons(ofI2(), "Next")[0]);
+  assert.ok(panel.root.textContent.includes(`Section 2 of ${parts.length}`));
+  clickOn(panel, buttons(ofI2(), "Last")[0]);
+  assert.ok(panel.root.textContent.includes(`Section ${parts.length} of ${parts.length}`));
   assert.ok(mounted()[0].textContent.includes(sentinel), "the final page's sentinel is reachable");
-  clickOn(panel, buttons(panel.root, "Previous")[0]);
-  assert.ok(panel.root.textContent.includes(`Part ${parts.length - 1} of ${parts.length}`));
-  clickOn(panel, buttons(panel.root, "First")[0]);
-  assert.ok(panel.root.textContent.includes(`Part 1 of ${parts.length}`));
+  clickOn(panel, buttons(ofI2(), "Previous")[0]);
+  assert.ok(panel.root.textContent.includes(`Section ${parts.length - 1} of ${parts.length}`));
+  clickOn(panel, buttons(ofI2(), "First")[0]);
+  assert.ok(panel.root.textContent.includes(`Section 1 of ${parts.length}`));
   assert.equal(mounted().length, 1);
   watcher.stop();
 });
@@ -892,7 +781,7 @@ test("fix 2: loaded items are evicted least recently opened first, and released 
   const client = fakeActivityClient([pagedSnapshot(["i2", "i4", "i5"]), withoutTurnB]);
   client.activityItemPage = async (agent, turnId, item, page) => pagesOf(items[item], { id: item })[page];
   const one = utf8Length(JSON.stringify(items.i2));
-  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: one * 2 + 10 });
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: one * 4 + 10 });
   watcher.start();
   await settle();
   await watcher.loadItem("turn-b", "i2");
@@ -903,7 +792,8 @@ test("fix 2: loaded items are evicted least recently opened first, and released 
   assert.equal(watcher.view.full("turn-b", "i4"), null, "the least recently opened is freed");
   assert.equal(watcher.view.full("turn-b", "i2").state, "ready");
   assert.equal(watcher.view.full("turn-b", "i5").state, "ready");
-  assert.ok(watcher.view.loadedBytes <= one * 2 + 10);
+  // Each is charged twice its length: the item and its formatted copy.
+  assert.ok(watcher.view.loadedBytes <= one * 4 + 10);
   const evicted = mount(itemTree("turn-b", watcher.view.turns[0].items.find((item) => item.id === "i4"), watcher.view.full("turn-b", "i4")), fakeDoc);
   assert.equal(buttons(evicted, "Load in full").length, 1, "an evicted item offers Load in full again");
   // The turn leaves the snapshot: its loaded items go with it.
@@ -1175,10 +1065,10 @@ test("1b-1: a rawInput-only marker shows inline, in a paged item read in full, a
   assert.ok(mount(itemTree("turn-b", placeholder, { state: "ready", seq: 2, item: tool, bytes: 70_000 }), fakeDoc).textContent.includes(sentinel), "paged, through itemBody");
   const document = itemDocument(tool);
   assert.ok(document.includes("input\n") && document.includes("rawInput\n") && document.includes(sentinel), "both inputs in the item's document");
-  // Over the part threshold the item shows in parts, built from itemDocument.
+  // Over one window the item shows in windows, built from itemDocument.
   const big = { ...tool, content: [{ type: "text", text: "z".repeat(300 * 1024) }] };
-  const parts = itemParts(big);
-  assert.ok(parts.length > 1 && parts.join("").includes(sentinel), "the parts reach the streamed input");
+  const parts = formatItem(big).windows;
+  assert.ok(parts.length > 1 && parts.join("").includes(sentinel), "the windows reach the streamed input");
 });
 
 test("1b-2: after a token change the next snapshot read uses the new client; removing the fleet closes the view", async () => {
