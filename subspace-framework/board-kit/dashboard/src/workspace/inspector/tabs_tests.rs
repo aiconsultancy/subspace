@@ -47,7 +47,7 @@ impl Render for Dock {
                 .tabs(channel_tabs(), 1, move |index, _, _, _| {
                     chosen.borrow_mut().push(index);
                 })
-                .track_selected_tab(&self.selected_focus)
+                .track_tab(1, &self.selected_focus)
         } else {
             inspector
         };

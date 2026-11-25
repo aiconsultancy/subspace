@@ -206,8 +206,11 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
             cx.listener(|board, _, _, cx| dock::toggle_members(board, cx)),
         )
         .child(body);
-    let inspector = if board.inspector_tab == InspectorTab::Subject {
-        inspector.track_selected_tab(&board.inspector_crew_focus.ship_tab)
+    let inspector = if matches!(front.subject, Subject::Ship { .. }) {
+        inspector.track_tab(
+            InspectorTab::Subject.index(),
+            &board.inspector_crew_focus.ship_tab,
+        )
     } else {
         inspector
     };

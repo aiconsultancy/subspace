@@ -82,11 +82,12 @@ impl Inspector {
         self
     }
 
-    /// Track an owner-provided, tab-stoppable handle on the selected tab.
-    /// Set after [`Self::tabs`] when a drill-in needs a focus fallback.
-    pub fn track_selected_tab(mut self, focus: &FocusHandle) -> Self {
+    /// Track an owner-provided, tab-stoppable handle on the tab at `index`,
+    /// independent of selection. Set after [`Self::tabs`] when a drill-in
+    /// needs a focus fallback.
+    pub fn track_tab(mut self, index: usize, focus: &FocusHandle) -> Self {
         if let Some(tabs) = &mut self.tabs {
-            tabs.focus = Some(focus.clone());
+            tabs.focus = Some((index, focus.clone()));
         }
         self
     }

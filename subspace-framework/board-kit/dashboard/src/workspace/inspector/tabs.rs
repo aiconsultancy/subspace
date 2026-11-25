@@ -63,7 +63,7 @@ pub(super) struct InspectorTabs {
     pub(super) tabs: Vec<InspectorTab>,
     pub(super) selected: usize,
     pub(super) on_select: SelectHandler,
-    pub(super) focus: Option<FocusHandle>,
+    pub(super) focus: Option<(usize, FocusHandle)>,
 }
 
 /// The tabs kept: the first [`INSPECTOR_MAX_TABS`], and the selected index
@@ -96,9 +96,10 @@ pub(super) fn tab_list(
             let template = Button::new((TAB_ID, index)).role(Role::Tab);
             let name = tab.accessible_label();
             segmented::segment(template, tab.label, chosen, tokens)
-                .when_some(tabs.focus.as_ref().filter(|_| chosen), |button, focus| {
-                    button.track_focus(focus)
-                })
+                .when_some(
+                    tabs.focus.as_ref().filter(|(tracked, _)| *tracked == index),
+                    |button, (_, focus)| button.track_focus(focus),
+                )
                 .accessibility_label(name)
                 .aria_selected(chosen)
                 .children(

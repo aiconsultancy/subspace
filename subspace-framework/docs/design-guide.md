@@ -92,8 +92,9 @@ nothing to this control.
 ### Inspector tabs
 
 When returning from a drill-in, restore focus to the control that opened it.
-If it and the other content controls are gone, `Inspector::track_selected_tab`
-lets the Space return focus to the selected inspector tab.
+If it and the other content controls are gone, `Inspector::track_tab` lets
+the Space return focus to the originating inspector tab. Bind the handle to
+that tab's index even when another tab is selected.
 
 The owner has approved one exception to the zones above: the inspector may
 carry tabs in place of its title, as Channels' "Ship", "Thread" and

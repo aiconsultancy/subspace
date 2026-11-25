@@ -56,6 +56,32 @@ fn a_roster_without_fleet_api_shows_plain_rows(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn activating_ship_from_the_keyboard_keeps_its_focus_and_tab_order(cx: &mut TestAppContext) {
+    let (_, hub, cx) = ship(cx);
+    set_fleet(&hub, live(), cx);
+    cx.update(|window, cx| {
+        window.click(THREAD, cx);
+        assert_eq!(window.find(THREAD).selected(), Some(true));
+        for _ in 0..30 {
+            if window.find(SHIP).focused() == Some(true) {
+                break;
+            }
+            window.focus_next(cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(window.find(SHIP).focused(), Some(true));
+        assert_eq!(window.find(SHIP).selected(), Some(false));
+        window.press("enter", cx);
+        assert_eq!(window.find(SHIP).selected(), Some(true));
+        assert_eq!(window.find(SHIP).focused(), Some(true));
+        // Follow the same focus traversal as Tab in the app shell.
+        window.focus_next(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(THREAD).focused(), Some(true));
+    });
+}
+
+#[gpui_kit::test]
 fn thread_tab_pauses_refresh_until_the_ship_tab_returns(cx: &mut TestAppContext) {
     let (board, hub, cx) = ship(cx);
     set_fleet(&hub, live(), cx);

@@ -82,7 +82,7 @@ fn tabbed_inspector(id: &'static str, focus: Option<FocusHandle>, cx: &App) -> I
                 .child(workspace::fact("Replies", "12", cx)),
         );
     match focus {
-        Some(focus) => inspector.track_selected_tab(&focus).footer(
+        Some(focus) => inspector.track_tab(1, &focus).footer(
             action::action_button(
                 "gallery-focus-thread",
                 Intent::Quiet,
