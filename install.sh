@@ -71,6 +71,7 @@
 #   --admin admiral --demo | --no-demo --crew-claude 2 --crew-codex 2
 #   --repositories https://github.com/example/project.git
 #   --agent-dispatch | --no-agent-dispatch (default off)
+#   --toolchains derive|none|node@24,pnpm@9.12.3 --system-packages zsh,clang
 #   --access ssh|tailscale|cloudflare --ssh-from 203.0.113.7/32
 # Run `./install.sh --help` to see them all.
 
