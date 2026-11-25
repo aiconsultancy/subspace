@@ -43,8 +43,12 @@ item too large to send inline is paged and loads on demand, never hidden.
   than the declared one, is an invalid answer.
 - **One budget.** Everything the view holds counts against 64 MiB: the
   snapshot's inline content (estimated from its strings and values) and
-  every item read. Room is made before each read, the least recently
-  opened item going first (it shows **Load in full** again); items go when
+  every item read, inline text counted in UTF-8 bytes. Room is made before
+  each read for the item's declared size, and the budget holds during the
+  read as after it: a read never holds more than its room. An item whose
+  page 0 claims more is read again once with room made for that claimed
+  size when it fits the budget, and in parts otherwise. The least recently
+  opened item goes first (it shows **Load in full** again); items go when
   their turn leaves the snapshot. A reply that arrives after its item was
   let go, or after it was read again, is dropped.
 - **Larger than the budget.** An item larger than the room left is read

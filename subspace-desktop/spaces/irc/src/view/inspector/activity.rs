@@ -34,6 +34,7 @@ mod item;
 mod load;
 mod paged;
 mod parts;
+mod size;
 mod text;
 mod turn;
 

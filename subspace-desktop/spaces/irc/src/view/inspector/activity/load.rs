@@ -13,15 +13,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui_kit::{App, AppContext as _, Context, Task};
-use serde_json::Value;
-use subspace_client_fleet::activity::{
-    ActivityContent, ActivityEntry, ActivityError, ActivityItem, AgentActivity, ItemPage, ItemPart,
-    ItemRead,
-};
+use subspace_client_fleet::activity::{ActivityEntry, ItemPage, ItemRead};
 use subspace_client_fleet::{Error, FleetApi, FleetClient};
 
 use super::Selection;
 use crate::Irc;
+
+mod part;
+
+pub(super) use part::show_page;
 
 /// The most bytes of the captain's activity one view holds: the
 /// snapshot's inline content and the items read for it.
@@ -39,6 +39,9 @@ pub(super) struct Loaded {
     opened: u64,
     /// The read under way or last made: a reply for any other is dropped.
     read: u64,
+    /// An item found larger than its room is read again, once, with room
+    /// for the size it claimed, when that fits the budget.
+    regrow: bool,
     /// Set when the item goes or its read is replaced, so that read asks
     /// for no further page.
     cancel: Arc<AtomicBool>,
@@ -84,6 +87,20 @@ pub(super) fn room(selection: &Selection) -> u64 {
 /// Reads an item that was too large to send inline: whole when its
 /// declared size, `bytes`, fits the room left, part by part otherwise.
 pub(super) fn load(board: &mut Irc, turn: &str, item: &str, bytes: u64, cx: &mut Context<Irc>) {
+    read_item(board, (turn.to_owned(), item.to_owned()), (bytes, true), cx);
+}
+
+/// Reads the item `key` of declared size `bytes` within the room made for
+/// it before the read: a whole read never holds more than that room, and
+/// page 0 claiming more comes back alone. Once, when `regrow`, an item
+/// that grew past its room but fits the budget is read again with room
+/// made for the size its page 0 claimed.
+fn read_item(
+    board: &mut Irc,
+    key: (String, String),
+    (bytes, regrow): (u64, bool),
+    cx: &mut Context<Irc>,
+) {
     let client = board
         .inspector_activity
         .as_ref()
@@ -91,17 +108,16 @@ pub(super) fn load(board: &mut Irc, turn: &str, item: &str, bytes: u64, cx: &mut
     let Some((selection, client)) = board.inspector_activity.as_mut().zip(client) else {
         return;
     };
-    let key = (turn.to_owned(), item.to_owned());
     // Any read of the item already in flight goes first.
     selection.loaded.remove(&key);
-    let reserve = if bytes <= room(selection) {
-        bytes
+    let room = room(selection);
+    // Room for the whole item, and at least for its page 0.
+    let reserve = if bytes <= room {
+        bytes.max(PAGE.min(room))
     } else {
         PAGE
     };
     make_room(selection, reserve, None);
-    // An item that grew past what was made room for is read in parts.
-    let limit = room(selection).saturating_sub(held(selection));
     selection.opened += 1;
     let read = selection.opened;
     let cancel = Arc::new(AtomicBool::new(false));
@@ -110,7 +126,7 @@ pub(super) fn load(board: &mut Irc, turn: &str, item: &str, bytes: u64, cx: &mut
         let (turn, item) = read_key.clone();
         let result = cx
             .background_spawn(
-                async move { client.activity_item(&agent, &turn, &item, limit, &flag) },
+                async move { client.activity_item(&agent, &turn, &item, reserve, &flag) },
             )
             .await;
         let Some(result) = result else {
@@ -127,61 +143,11 @@ pub(super) fn load(board: &mut Irc, turn: &str, item: &str, bytes: u64, cx: &mut
             bytes: reserve,
             opened: read,
             read,
+            regrow,
             cancel,
             _read: Some(task),
         },
     );
-    cx.notify();
-}
-
-/// Shows part `page` of an item read part by part, pinned to the version
-/// of the part shown.
-pub(super) fn show_page(board: &mut Irc, key: &(String, String), page: u32, cx: &mut Context<Irc>) {
-    let client = board
-        .inspector_activity
-        .as_ref()
-        .and_then(|selection| client(selection, cx));
-    let Some((selection, client)) = board.inspector_activity.as_mut().zip(client) else {
-        return;
-    };
-    if !selection.loaded.contains_key(key) {
-        return;
-    }
-    // Room for a whole page beside the one shown, which it replaces.
-    make_room(selection, PAGE, Some(key));
-    selection.opened += 1;
-    let read = selection.opened;
-    let agent = selection.agent.clone();
-    let Some(loaded) = selection.loaded.get_mut(key) else {
-        return;
-    };
-    let Held::Parts(parts) = &mut loaded.held else {
-        return;
-    };
-    parts.loading = Some(page);
-    parts.failed = None;
-    let pinned = parts.page.clone();
-    // The part read before, if any, asks for nothing more.
-    loaded.cancel.store(true, Ordering::Release);
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (read_key, flag) = (key.clone(), cancel.clone());
-    loaded.cancel = cancel;
-    loaded.opened = read;
-    loaded.read = read;
-    loaded._read = Some(cx.spawn(async move |board, cx| {
-        let (turn, item) = read_key.clone();
-        let result = cx
-            .background_spawn(async move {
-                client.activity_item_part(&agent, &turn, &item, (page, Some(&pinned)), &flag)
-            })
-            .await;
-        let Some(result) = result else {
-            return;
-        };
-        _ = board.update(cx, |board, cx| {
-            publish_part(board, (&read_key, read), (page, result), cx);
-        });
-    }));
     cx.notify();
 }
 
@@ -217,6 +183,12 @@ fn publish(
     result: Result<ItemRead, Error>,
     cx: &mut Context<Irc>,
 ) {
+    if let Ok(ItemRead::Larger(first)) = &result
+        && grew(board, (key, read), first.bytes)
+    {
+        read_item(board, key.clone(), (first.bytes, false), cx);
+        return;
+    }
     let Some(loaded) = current(board, (key, read)) else {
         return;
     };
@@ -241,33 +213,16 @@ fn publish(
     cx.notify();
 }
 
-/// Shows part `page` once read, unless its item went or another part was
-/// asked for meanwhile.
-fn publish_part(
-    board: &mut Irc,
-    (key, read): (&(String, String), u64),
-    (page, result): (u32, Result<ItemPart, Error>),
-    cx: &mut Context<Irc>,
-) {
-    let Some(loaded) = current(board, (key, read)) else {
-        return;
-    };
-    let Held::Parts(parts) = &mut loaded.held else {
-        return;
-    };
-    parts.loading = None;
-    match result {
-        Ok(part) => {
-            loaded.bytes = part.page.data.len() as u64;
-            parts.newer |= part.newer;
-            parts.page = part.page;
-        }
-        Err(error) => parts.failed = Some((page, error)),
-    }
-    if let Some(selection) = board.inspector_activity.as_mut() {
-        make_room(selection, 0, Some(key));
-    }
-    cx.notify();
+/// The item read `read` of `key`, still wanted, came back larger than
+/// the room made for it, may be read again, and fits the budget at the
+/// size its page 0 claimed.
+fn grew(board: &mut Irc, (key, read): (&(String, String), u64), bytes: u64) -> bool {
+    let regrow = current(board, (key, read)).is_some_and(|loaded| loaded.regrow);
+    regrow
+        && board
+            .inspector_activity
+            .as_ref()
+            .is_some_and(|selection| bytes <= room(selection))
 }
 
 /// The read under way or last made of the item `key`.
@@ -322,7 +277,7 @@ pub(super) fn prune(selection: &mut Selection) {
     let Some(activity) = selection.join.activity() else {
         return;
     };
-    let inline = inline_bytes(activity);
+    let inline = super::size::inline_bytes(activity);
     let turns: std::collections::HashSet<&str> = activity
         .turns
         .iter()
@@ -339,69 +294,4 @@ pub(super) fn prune(selection: &mut Selection) {
     });
     selection.inline = inline;
     make_room(selection, 0, None);
-}
-
-/// About how many bytes the snapshot's inline content holds: the length
-/// of every text, input, output and value in it.
-pub(super) fn inline_bytes(activity: &AgentActivity) -> u64 {
-    activity
-        .turns
-        .iter()
-        .flat_map(|turn| &turn.items)
-        .map(entry_bytes)
-        .sum()
-}
-
-fn entry_bytes(entry: &ActivityEntry) -> u64 {
-    let bytes = match entry {
-        // Its identity only: its content is read on demand.
-        ActivityEntry::Paged(_) => 0,
-        ActivityEntry::Item(item) => item_bytes(item),
-        ActivityEntry::Unknown(unknown) => value_bytes(&unknown.raw),
-    };
-    bytes.saturating_add(entry.base().id.len() as u64)
-}
-
-fn item_bytes(item: &ActivityItem) -> u64 {
-    let text = |text: &str| text.len() as u64;
-    let error = |error: Option<&ActivityError>| {
-        error.map_or(0, |error| {
-            text(&error.message) + error.response_body.as_deref().map_or(0, text)
-        })
-    };
-    match item {
-        ActivityItem::Text(words) | ActivityItem::Reasoning(words) => text(&words.text),
-        ActivityItem::Step(step) => error(step.error.as_ref()),
-        ActivityItem::Tool(tool) => {
-            let content: u64 = tool
-                .content
-                .iter()
-                .flatten()
-                .map(|content| match content {
-                    ActivityContent::Text { text: words } => text(words),
-                    ActivityContent::File { uri, .. } => text(uri),
-                    ActivityContent::Other(raw) => value_bytes(raw),
-                })
-                .sum();
-            text(&tool.raw_input)
-                + tool.input.as_ref().map_or(0, value_bytes)
-                + tool.metadata.as_ref().map_or(0, value_bytes)
-                + content
-                + error(tool.error.as_ref())
-        }
-    }
-}
-
-/// About how many bytes a JSON value holds: its strings and keys, and
-/// eight for any other value.
-fn value_bytes(value: &Value) -> u64 {
-    match value {
-        Value::String(text) => text.len() as u64,
-        Value::Array(values) => values.iter().map(value_bytes).sum(),
-        Value::Object(fields) => fields
-            .iter()
-            .map(|(key, value)| key.len() as u64 + value_bytes(value))
-            .sum(),
-        _ => 8,
-    }
 }
