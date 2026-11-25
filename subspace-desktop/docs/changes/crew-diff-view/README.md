@@ -20,12 +20,12 @@ The viewer checks for changes again when the Space becomes active. A conflict
 or missing list continuation also asks for **Refresh**. If a list or file
 page reports an unstable read, the viewer still displays the content and
 shows **Changed while loading · Refresh**. Closing or refreshing cancels the
-old load before it requests another page. A stale snapshot cancels file and
-preview reads but leaves already loaded content visible. Busy requests retry
+old load before it requests another page. A stale snapshot cancels file, byte
+and preview reads but leaves already loaded content visible. Busy requests retry
 the same page up to twice, respecting a numeric `Retry-After`. If the wait is
-over ten seconds or the retries run out, **Retry page** repeats the failed
-request without reloading the file list or discarding loaded pages. For a
-stale snapshot or a failed file-list load, use **Refresh** instead.
+over ten seconds or the retries run out, **Retry page** repeats the failed file,
+binary or preview page without reloading the file list or discarding loaded
+pages. A stale snapshot or a failed file-list load still uses **Refresh**.
 
 **View binary** opens a readonly hex and ASCII dump. Its pages are read on
 demand at the original fingerprint; modified binaries offer **Old** and
@@ -56,6 +56,8 @@ content. The PRs Space’s GitHub path keeps its own account, links and marks.
   Screenshot capture still needs a native entry point: the Channels control
   is separate, and selecting the PRs Space in `CAPTURE_STATE` does not open
   a crew diff.
+- Progressive file-list display and a shared patch cache budget are SUB-67
+  follow-ups, deferred from this change under STAR decision `01c2e208`.
 - An empty HTTP 404 means either the checkout is unavailable or the gateway
   predates the route. A successful empty snapshot means no changes, including
   on an unborn branch.
