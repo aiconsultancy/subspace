@@ -1,4 +1,21 @@
-use super::{CrewContext, Project};
+use super::{CrewContext, Project, pr_button_name, project_key};
+
+#[test]
+fn pr_button_names_distinguish_numbers_and_projects() {
+    assert_eq!(pr_button_name(123, "charts"), "Open PR #123 for charts");
+    assert_ne!(pr_button_name(123, "charts"), pr_button_name(124, "charts"));
+    assert_ne!(pr_button_name(123, "charts"), pr_button_name(123, "radar"));
+}
+
+#[test]
+fn project_keys_keep_default_rows_distinct_from_named_rows_and_each_other() {
+    assert_ne!(project_key(None, 0), project_key(Some(""), 1));
+    assert_ne!(project_key(None, 0), project_key(Some("default:0"), 0));
+    assert_eq!(
+        project_key(Some("charts"), 0),
+        project_key(Some("charts"), 1)
+    );
+}
 
 #[test]
 fn project_keeps_full_progress_git_counts_and_pull_request_details() {

@@ -85,14 +85,7 @@ fn project_row(
     cx: &Context<Irc>,
 ) -> AnyElement {
     let tokens = Tokens::current(cx);
-    let key = context
-        .project
-        .as_deref()
-        .filter(|name| !name.is_empty())
-        .map_or_else(
-            || format!("default:{index}"),
-            |name| format!("named:{name}"),
-        );
+    let key = project_key(context.project.as_deref(), index);
     let buffer = buffer.clone();
     let project = Project::of(context);
     let name = visible(&project.name);
@@ -101,7 +94,7 @@ fn project_row(
         .zip(context.pull_request.as_ref())
         .map(|(link, pr)| {
             action_button(format!("irc-crew-pr:{key}"), Intent::Quiet, None, "Open PR")
-                .accessibility_label(format!("Open PR #{} for {name}", pr.number))
+                .accessibility_label(pr_button_name(pr.number, &name))
                 .on_click(cx.listener(move |_, _, _, cx| pull_requests::open(&link, &buffer, cx)))
         });
     v_flex()
@@ -119,6 +112,17 @@ fn project_row(
         .children(fact_rows(project.facts, cx))
         .children(actions)
         .into_any_element()
+}
+
+fn project_key(project: Option<&str>, index: usize) -> String {
+    project.filter(|name| !name.is_empty()).map_or_else(
+        || format!("default:{index}"),
+        |name| format!("named:{name}"),
+    )
+}
+
+fn pr_button_name(number: u64, project: &str) -> String {
+    format!("Open PR #{number} for {project}")
 }
 
 #[derive(Debug)]

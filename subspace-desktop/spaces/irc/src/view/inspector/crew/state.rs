@@ -131,9 +131,9 @@ impl DetailState {
     fn note(&self) -> Option<&'static str> {
         match (self.error, self.detail.is_some()) {
             (None, _) => None,
-            (Some(Error::NotFound), false) => {
-                Some("Crew detail is unavailable. Showing the ship's roster data.")
-            }
+            (Some(Error::NotFound), false) => Some(
+                "Crew detail is unavailable. Showing the ship's roster data. Older Stargate gateways don't serve crew detail.",
+            ),
             (Some(_), false) => Some("Could not load crew detail. Showing the ship's roster data."),
             (Some(_), true) => Some(
                 "Could not refresh crew detail. Showing the last available detail and current roster tasks.",

@@ -154,7 +154,9 @@ fn missing_route_uses_the_current_roster() {
     assert_eq!(shown.unwrap().name, "Wren");
     assert_eq!(
         note,
-        Some("Crew detail is unavailable. Showing the ship's roster data.")
+        Some(
+            "Crew detail is unavailable. Showing the ship's roster data. Older Stargate gateways don't serve crew detail."
+        )
     );
 }
 
@@ -170,6 +172,8 @@ fn refresh_not_found_switches_from_full_detail_to_the_roster() {
     assert_progress(&state, "Checking…");
     assert_eq!(
         state.shown(true).1,
-        Some("Crew detail is unavailable. Showing the ship's roster data.")
+        Some(
+            "Crew detail is unavailable. Showing the ship's roster data. Older Stargate gateways don't serve crew detail."
+        )
     );
 }
