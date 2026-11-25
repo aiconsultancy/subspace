@@ -1829,7 +1829,8 @@ to the captains in fleet command, one at a time, and tells a captain in
 fleet command about an issue assigned to it. See the
 [repository README](../README.md#agent-dispatch) for what people see and
 [Stargate's guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/agent-dispatch.md)
-for the details. It is off by default. `subspace-setup` asks whether to
+for the details. It needs Stargate v0.43.0 or newer and is off by default.
+`subspace-setup` asks whether to
 switch it on (`--agent-dispatch`); in `fleet.json` it is:
 
 ```json
