@@ -14,7 +14,8 @@ such as `main` and a repository-relative path. Report which commit you checked.
 Ask the owning captain about unpushed work.
 
 Read up to eight repository pages in parallel and compare their returned commits.
-Run one refresh at a time per checkout.
+If returned commits differ, restart the read from line one. Run one refresh
+at a time per checkout.
 
 When the connected API offers `subspace_read_text_page`, use it for issue
 documents, text attachments and chat uploads. Start at offset zero, then pass back `nextOffset`
