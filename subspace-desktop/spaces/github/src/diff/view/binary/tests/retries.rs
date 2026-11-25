@@ -86,10 +86,19 @@ fn retry_page_keeps_the_current_bytes_until_the_failed_page_arrives(cx: &mut Tes
     let mock = busy_tail();
     let (view, window) = mount(cx, &mock);
     click(window, ("crew-diff-bytes", 0usize));
+    window.update(|window, _| assert_eq!(window.find("crew-binary-next").disabled(), Some(false)));
     click(window, "crew-binary-next");
     assert_page(&view, window, DiffSide::New, 0);
+    window.update(|window, _| {
+        let next = window.find("crew-binary-next");
+        assert!(next.visible());
+        assert_eq!(next.disabled(), Some(true));
+    });
     click(window, "crew-binary-retry-page");
     assert_page(&view, window, DiffSide::New, 3);
+    window.update(|window, _| {
+        assert_eq!(window.find("crew-binary-previous").disabled(), Some(false));
+    });
     assert_tail_was_retried(&mock, 3);
 }
 

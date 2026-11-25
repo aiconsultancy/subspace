@@ -1,6 +1,6 @@
 //! Controls for selecting a side and paging or previewing its bytes.
 
-use gpui_kit::component::h_flex;
+use gpui_kit::component::{Disableable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{AnyElement, Context, Div, IntoElement, ParentElement as _, Styled as _, div};
 use subspace_client_fleet::diff::DiffSide;
@@ -99,10 +99,18 @@ fn paging_controls(
             });
     }
     if binary.read.is_some() {
-        return row.child(div().text_color(tokens.muted).child("Loading…"));
+        return row
+            .when(binary.page.is_some(), |row| {
+                row.children(binary_actions(binary, true, cx))
+            })
+            .child(div().text_color(tokens.muted).child("Loading…"));
     }
     if let Some((retry, wait)) = &binary.retry {
+        let bytes_busy = matches!(retry, Retry::Bytes(_));
         return row
+            .when(!bytes_busy || binary.page.is_some(), |row| {
+                row.children(binary_actions(binary, bytes_busy, cx))
+            })
             .child(
                 action_button(
                     "crew-binary-retry-page",
@@ -113,21 +121,18 @@ fn paging_controls(
                 .on_click(cx.listener(|view, _, _, cx| view.retry_binary(cx))),
             )
             .text_color(tokens.muted)
-            .child(busy_message(*wait))
-            .when(matches!(retry, Retry::Preview(..)), |row| {
-                row.children(binary_actions(binary, cx))
-            });
+            .child(busy_message(*wait));
     }
     if binary.preview.is_some() {
         return row.child(preview::bytes_button(cx));
     }
-    row.children(binary_actions(binary, cx))
+    row.children(binary_actions(binary, false, cx))
         .when_some(preview::format(path), |row, format| {
             row.child(preview::open_button(format, cx))
         })
 }
 
-fn binary_actions(binary: &BinaryView, cx: &Context<DiffView>) -> Vec<AnyElement> {
+fn binary_actions(binary: &BinaryView, disabled: bool, cx: &Context<DiffView>) -> Vec<AnyElement> {
     [
         (
             Move::Start,
@@ -158,6 +163,7 @@ fn binary_actions(binary: &BinaryView, cx: &Context<DiffView>) -> Vec<AnyElement
     .filter(|(_, show, _, _, _)| *show)
     .map(|(direction, _, id, icon, label)| {
         action_button(id, Intent::Quiet, Some(icon), label)
+            .disabled(disabled)
             .on_click(cx.listener(move |view, _, _, cx| view.read_binary(direction, cx)))
             .into_any_element()
     })
