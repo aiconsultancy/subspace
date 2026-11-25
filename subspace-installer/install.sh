@@ -15,13 +15,17 @@ app_secrets=
 prune_secrets=false
 dry_run=false
 no_systemd=false
+verify_toolchains=false
 
 usage() {
     cat <<'USAGE'
 Usage: install.sh [install|upgrade|uninstall] [--config FILE] [--secrets FILE]
                   [--secrets-dir DIR] [--prune-secrets] [--dry-run] [--no-systemd]
+                  [--verify-toolchains]
 Config is required for the first install. Upgrade reuses the saved inputs by
 default. Uninstall stops the fleet and retains its accounts and persistent data.
+--verify-toolchains runs each repository's basic check as a crew member would
+after installing, and reports pass or fail per repository without failing.
 USAGE
 }
 
@@ -36,6 +40,7 @@ while (( $# )); do
         --prune-secrets) prune_secrets=true; shift ;;
         --dry-run) dry_run=true; shift ;;
         --no-systemd) no_systemd=true; shift ;;
+        --verify-toolchains) verify_toolchains=true; shift ;;
         --help|-h) usage; exit ;;
         *) die "Unknown argument $1" ;;
     esac
@@ -391,4 +396,8 @@ if ! "$no_systemd"; then
 fi
 # With certificates, the fingerprints an IRC operator binds to the officers' accounts. No key material.
 python3 "$app/lib/runtime.py" irc-fingerprints
+if "$verify_toolchains"; then
+    # Reports each repository's result; a failed check never fails the install.
+    python3 "$app/lib/runtime.py" verify-toolchains || printf 'subspace-fleet: the toolchain check could not run.\n' >&2
+fi
 printf 'Fleet installation complete.\n'

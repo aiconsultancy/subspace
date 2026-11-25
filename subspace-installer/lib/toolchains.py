@@ -1,5 +1,6 @@
-"""The fleet's toolchains: the toolchains and systemPackages settings, where each tool is installed, and the
-environment officers and crew run their tools in.
+#!/usr/bin/python3
+"""The fleet's toolchains: the toolchains and systemPackages settings, where each tool is installed, the
+environment officers and crew run their tools in, and detection of what the fleet's repositories need.
 
 Where things are installed:
 
@@ -10,14 +11,19 @@ Where things are installed:
 - toolchains, per user (rust and cargo: tools by default, or "install": "user"): installed as each officer's
   Linux user, as explicit tool@version arguments from its home, into its own mise data directory. Crew run as
   their captain's user, so they share their captain's.
+
+Detection reads the repositories' files as data. It never runs mise, a package manager, Git or anything else
+from a repository, and never follows a symbolic link.
 """
 
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import stat
 import subprocess
+import sys
 
 
 APP = Path("/opt/subspace-fleet")
@@ -340,3 +346,1145 @@ def plan_lines(tools, packages, officers, previous=None, states=None):
     root = dotnet_root(tools)
     lines.append(environment + (f"; DOTNET_ROOT {root}." if root else "."))
     return lines
+
+
+# Detection -----------------------------------------------------------------------------------------------------
+
+CONFIDENCE = ("high", "medium", "low")
+MAX_FILE = 1 << 20
+MAX_FILES = 20000
+MAX_DEPTH = 8
+MAX_DOCS = 200
+SKIP_DIRS = {".git", "node_modules", "vendor", "target", "dist", "out", "obj", ".venv", "venv", "__pycache__",
+             ".next", ".nuxt", ".cache", "coverage", ".terraform", ".gradle", ".idea", ".turbo", "bower_components"}
+ASDF_NAMES = {"nodejs": "node", "golang": "go", "dotnet-core": "dotnet"}
+VERSION_FILES = {".node-version": "node", ".nvmrc": "node", ".terraform-version": "terraform",
+                 ".opentofu-version": "opentofu", ".python-version": "python", ".ruby-version": "ruby",
+                 ".go-version": "go", ".bun-version": "bun", ".java-version": "java",
+                 ".terragrunt-version": "terragrunt", ".deno-version": "deno"}
+MISE_FILE = re.compile(r"(?:^|/)(?:\.?mise(?:\.([a-z0-9_-]+))?\.toml|\.?mise/config\.toml|\.config/mise\.toml"
+                       r"|\.config/mise/config\.toml|\.?(?:config/)?mise/conf\.d/[^/]+\.toml)$")
+COMPOSE_FILES = {"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+DOC_FILE = re.compile(r"(?:^|/)(?:README|INSTALL|INSTALLING|CONTRIBUTING|BUILDING|BUILD|DEVELOPMENT|HACKING)"
+                      r"[^/]*\.md$|^docs?/.+\.md$", re.IGNORECASE)
+# GitHub set-up actions: the tool each installs and the with: keys that name its version. A version belongs to
+# the uses: of its own step, never to a neighbouring step's.
+SETUP_ACTIONS = {
+    "actions/setup-node": ("node", ("node-version",)),
+    "actions/setup-python": ("python", ("python-version",)),
+    "actions/setup-go": ("go", ("go-version",)),
+    "actions/setup-dotnet": ("dotnet", ("dotnet-version",)),
+    "actions/setup-java": ("java", ("java-version",)),
+    "pnpm/action-setup": ("pnpm", ("version",)),
+    "oven-sh/setup-bun": ("bun", ("bun-version",)),
+    "denoland/setup-deno": ("deno", ("deno-version",)),
+    "hashicorp/setup-terraform": ("terraform", ("terraform_version",)),
+    "opentofu/setup-opentofu": ("opentofu", ("tofu_version",)),
+    "ruby/setup-ruby": ("ruby", ("ruby-version",)),
+    "astral-sh/setup-uv": ("uv", ("version",)),
+    "azure/setup-kubectl": ("kubectl", ("version",)),
+    "azure/setup-helm": ("helm", ("version",)),
+    "dtolnay/rust-toolchain": ("rust", ("toolchain",)),
+    "actions-rs/toolchain": ("rust", ("toolchain",)),
+    "mlugg/setup-zig": ("zig", ("version",)),
+    "goto-bus-stop/setup-zig": ("zig", ("version",)),
+}
+# Set-up actions whose with: version is not a tool's: mise-action's is mise's own, and the tools it installs come
+# from the repository's mise files, which detection reads directly.
+NOT_TOOLS = {"jdx/mise-action"}
+DATABASES = re.compile(r"(?:^|/)(postgres|postgis|mysql|mariadb|mongo|redis|valkey|mssql|sqlserver|cockroach"
+                       r"|clickhouse|elasticsearch|opensearch|cassandra|neo4j)", re.IGNORECASE)
+
+
+class Finder:
+    """Collects proposal items and what could not be determined, for one detection run."""
+
+    def __init__(self):
+        self.items = {}
+        self.unknown = []
+
+    def add(self, kind, name, version, confidence, source, options=None, constraint=None, note=None):
+        key = (kind, name, version, json.dumps(options or {}, sort_keys=True))
+        item = self.items.setdefault(key, {"kind": kind, "name": name, "version": version,
+                                           "options": options or {}, "confidence": confidence, "sources": []})
+        if CONFIDENCE.index(confidence) < CONFIDENCE.index(item["confidence"]):
+            item["confidence"] = confidence
+        if constraint and "constraint" not in item:
+            item["constraint"] = constraint
+        if note and note not in item.setdefault("notes", []):
+            item["notes"].append(note)
+        if source not in item["sources"]:
+            item["sources"].append(source)
+
+    def cannot(self, source, reason):
+        entry = {**source, "reason": reason}
+        if entry not in self.unknown:
+            self.unknown.append(entry)
+
+
+def source_of(repository, rel, line, detail=""):
+    detail = " ".join(str(detail).split())
+    return {"repository": repository, "file": rel, "line": line, "detail": detail[:160]}
+
+
+def read_text(path):
+    """A regular file's text, never through a symbolic link, at most MAX_FILE bytes; None otherwise."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_FILE:
+            return None
+        return stream.read(MAX_FILE + 1)[:MAX_FILE].decode("utf-8", "replace")
+
+
+def repository_files(root):
+    """Relative paths of the files detection reads, without following symbolic links or entering dependency
+    and build directories."""
+    found = []
+    root = str(root)
+    count = 0
+    for directory, subdirectories, files in os.walk(root, followlinks=False):
+        rel_dir = os.path.relpath(directory, root)
+        depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
+        subdirectories[:] = sorted(name for name in subdirectories
+                                   if name not in SKIP_DIRS and depth < MAX_DEPTH
+                                   and not os.path.islink(os.path.join(directory, name)))
+        for name in sorted(files):
+            count += 1
+            if count > MAX_FILES:
+                return found
+            rel = name if rel_dir == "." else f"{rel_dir}/{name}".replace(os.sep, "/")
+            found.append(rel)
+    return found
+
+
+def line_of(text, pattern_text, start=0):
+    """The 1-based line of the first match of a regular expression, or 1."""
+    match = re.compile(pattern_text, re.MULTILINE).search(text, start)
+    return text.count("\n", 0, match.start()) + 1 if match else 1
+
+
+def clean_version(value):
+    value = str(value).strip().strip("'\"")
+    value = re.sub(r"^v(?=\d)", "", value)
+    return value
+
+
+def valid_version(value):
+    return isinstance(value, str) and re.fullmatch(VERSION, value) is not None
+
+
+def valid_tool(value):
+    try:
+        tool_name(value)
+        return True
+    except Invalid:
+        return False
+
+
+# Versions and ranges
+
+def numbers(text):
+    parts = re.findall(r"\d+", text)
+    return tuple(int(part) for part in parts[:3])
+
+
+def full(parts):
+    return tuple(list(parts[:3]) + [0] * (3 - len(parts[:3])))
+
+
+def bump(parts, index):
+    """The smallest version above every version that starts with parts[:index + 1]."""
+    padded = list(full(parts))
+    padded[index] += 1
+    return tuple(padded[:index + 1] + [0] * (2 - index))
+
+
+def semver_alternatives(text):
+    """An npm version range as intervals [low, high), each a 3-tuple or None for unbounded. None when unparsable."""
+    alternatives = []
+    for alternative in str(text).split("||"):
+        low, high = (0, 0, 0), None
+        alternative = alternative.replace(",", " ").strip()
+        hyphen = re.fullmatch(r"v?([\d.xX*]+)\s+-\s+v?([\d.xX*]+)", alternative)
+        if hyphen:
+            first, last = (numbers(re.split(r"[xX*]", part)[0]) for part in hyphen.groups())
+            if not first or not last:
+                return None
+            comparators = [(">=", first), ("<", bump(last, len(last) - 1))]
+        else:
+            comparators = []
+            for token in re.findall(r"(?:[<>]=?|=|\^|~)?\s*v?[\dxX*][\w.*-]*|[*xX]", alternative):
+                match = re.fullmatch(r"([<>]=?|=|\^|~)?\s*v?([\dxX*][\w.*-]*)", token.strip())
+                if not match:
+                    return None
+                operator, version = match.groups()
+                parts = numbers(re.split(r"[xX*]", version)[0]) if re.match(r"\d", version) else ()
+                if not parts:
+                    continue
+                if operator in (None, "="):
+                    comparators += [(">=", parts), ("<", bump(parts, len(parts) - 1))]
+                elif operator == "^":
+                    index = next((i for i, part in enumerate(full(parts)) if part), len(parts) - 1)
+                    comparators += [(">=", parts), ("<", bump(full(parts), min(index, len(parts) - 1)))]
+                elif operator == "~":
+                    comparators += [(">=", parts), ("<", bump(parts, min(1, len(parts) - 1)))]
+                elif operator == ">=":
+                    comparators.append((">=", parts))
+                elif operator == ">":
+                    comparators.append((">=", bump(parts, len(parts) - 1)))
+                elif operator == "<":
+                    comparators.append(("<", full(parts)))
+                elif operator == "<=":
+                    comparators.append(("<", bump(parts, len(parts) - 1)))
+        for operator, parts in comparators:
+            parts = full(parts)
+            if operator == ">=":
+                low = max(low, parts)
+            else:
+                high = parts if high is None else min(high, parts)
+        alternatives.append((low, high))
+    return alternatives or None
+
+
+def pep440_alternatives(text):
+    """A Python version specifier (PEP 440, or Poetry's ^ and ~) as one interval [low, high), or None."""
+    low, high = (0, 0, 0), None
+
+    def cap(value):
+        nonlocal high
+        high = value if high is None else min(high, value)
+
+    for clause in str(text).split(","):
+        match = re.fullmatch(r"\s*(~=|===?|!=|>=|<=|>|<|\^|~)?\s*([\d.*]+)\s*", clause)
+        if not match:
+            return None
+        operator, version = match.groups()
+        parts = numbers(version.replace("*", ""))
+        if not parts or operator == "!=":
+            continue
+        if operator == ">=":
+            low = max(low, full(parts))
+        elif operator == ">":
+            low = max(low, bump(parts, len(parts) - 1))
+        elif operator in (None, "==", "==="):
+            low = max(low, full(parts))
+            cap(bump(parts, len(parts) - 1))
+        elif operator == "~=":
+            low = max(low, full(parts))
+            cap(bump(parts, max(len(parts) - 2, 0)))
+        elif operator == "^":
+            low = max(low, full(parts))
+            cap(bump(parts, next((index for index, part in enumerate(parts) if part), len(parts) - 1)))
+        elif operator == "~":
+            low = max(low, full(parts))
+            cap(bump(parts, min(1, len(parts) - 1)))
+        elif operator == "<":
+            cap(full(parts))
+        elif operator == "<=":
+            cap(bump(parts, len(parts) - 1))
+    return [(low, high)]
+
+
+def overlaps(intervals, version):
+    """Whether a version request (24, 24.11 or 24.11.0) can meet one of the intervals."""
+    if not re.fullmatch(r"\d+(?:\.\d+){0,2}", str(version)):
+        return False
+    parts = numbers(version)
+    start, end = full(parts), bump(parts, len(parts) - 1)
+    return any(start < (high or (10 ** 9, 0, 0)) and low < end for low, high in intervals)
+
+
+# How far each global.json rollForward policy lets the SDK move from its version: within the feature band
+# (8.0.4xx), the minor version (8.0), the major version (8), or anywhere above it.
+ROLL_FORWARD = {"disable": "exact", "patch": "band", "latestPatch": "band", "feature": "minor",
+                "latestFeature": "minor", "minor": "major", "latestMinor": "major", "major": "any", "latestMajor": "any"}
+
+
+def dotnet_accepts(constraint, version):
+    """Whether an SDK version request meets a global.json version and its rollForward policy. An exact version
+    must lie within the policy's reach; a prefix (8.0, which mise resolves to the newest SDK in it) must lie
+    within it entirely."""
+    minimum, reach = tuple(constraint["minimum"]), ROLL_FORWARD.get(constraint["policy"], "band")
+    if not re.fullmatch(r"\d+(?:\.\d+){0,2}", str(version)):
+        return False
+    parts = numbers(version)
+    if len(parts) == 3:
+        if reach == "exact":
+            return parts == minimum
+        within = {"band": parts[:2] == minimum[:2] and parts[2] // 100 == minimum[2] // 100,
+                  "minor": parts[:2] == minimum[:2], "major": parts[0] == minimum[0], "any": True}[reach]
+        return within and parts >= minimum
+    if reach == "minor":
+        return len(parts) == 2 and parts == minimum[:2]
+    if reach == "major":
+        return parts[0] == minimum[0] and (len(parts) == 1 or parts[1] >= minimum[1])
+    return reach == "any" and parts[0] >= minimum[0]
+
+
+def accepts(item, version):
+    """Whether a configured or proposed version request meets an item: the same request, an exact version within a
+    prefix (22.11.0 for 22), or one that meets the item's range."""
+    if version == item["version"]:
+        return True
+    constraint = item.get("constraint")
+    if constraint:
+        if constraint["kind"] == "dotnet":
+            return dotnet_accepts(constraint, version)
+        intervals = [(tuple(low), tuple(high) if high else None) for low, high in constraint["intervals"]]
+        return overlaps(intervals, version)
+    requested = item["version"]
+    return bool(requested) and re.fullmatch(r"\d+(?:\.\d+)*", requested) is not None \
+        and version.startswith(requested + ".")
+
+
+# The files
+
+def toml_load(text):
+    try:
+        import tomllib
+    except ImportError:
+        return None
+    try:
+        return tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, ValueError):
+        return None
+
+
+def mise_versions(value):
+    """A mise [tools] value as (version, options) pairs."""
+    values = value if isinstance(value, list) else [value]
+    for entry in values:
+        if isinstance(entry, dict):
+            yield entry.get("version"), {key: option for key, option in entry.items() if key != "version"}
+        else:
+            yield entry, {}
+
+
+def carried_options(finder, source, spec, options):
+    """The options detection proposes: those the installer passes on; the rest are reported."""
+    kept = {}
+    for key, option in options.items():
+        if key in ("components", "targets") and isinstance(option, (str, list)):
+            # A list or a comma-separated string, in any order: one form, so equal requests are one item.
+            parts = option if isinstance(option, list) else option.split(",")
+            option = ",".join(sorted({str(part).strip() for part in parts if str(part).strip()}))
+        if key in OPTION_KEYS and (type(option) in (bool, int) or isinstance(option, str)
+                                   and re.fullmatch(OPTION_VALUE, option)):
+            kept[key] = option
+        elif key in ("postinstall", "install_env") or "env" in key or "hook" in key:
+            finder.cannot(source, f"{spec}'s option {key} is not carried over: root installs the shared tools, so "
+                          "no option that runs a command or sets an install's environment is passed to mise")
+        else:
+            finder.cannot(source, f"{spec}'s option {key} is not carried over: it is not one of the mise options the "
+                          "installer passes on")
+    return kept
+
+
+def scan_mise(finder, repository, rel, text, environment):
+    data = toml_load(text)
+    if data is None:
+        finder.cannot(source_of(repository, rel, 1), "not valid TOML, or this Python cannot read TOML")
+        return
+    tools = data.get("tools", {})
+    if not isinstance(tools, dict):
+        return
+    section = text.find("[tools]")
+    note = f"only with MISE_ENV={environment}" if environment and environment != "local" else None
+    for key, value in tools.items():
+        line = line_of(text, rf"^\s*[\"']?{re.escape(key)}[\"']?\s*=", max(section, 0))
+        source = source_of(repository, rel, line, f"{key} = {json.dumps(value)}")
+        if not valid_tool(key):
+            finder.cannot(source, f"{key} is not a tool name the installer accepts")
+            continue
+        for version, options in mise_versions(value):
+            version = clean_version(version) if isinstance(version, (str, int, float)) else None
+            if not valid_version(version):
+                finder.cannot(source, f"{key}'s version {version or '(none)'} cannot be installed as given")
+                continue
+            finder.add("tool", key, version, "medium" if note else "high", source,
+                       carried_options(finder, source, key, options), note=note)
+
+
+def scan_tool_versions(finder, repository, rel, text):
+    for number, line in enumerate(text.splitlines(), 1):
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        name, *versions = line.split()
+        tool = ASDF_NAMES.get(name, name)
+        source = source_of(repository, rel, number, line)
+        if not valid_tool(tool):
+            finder.cannot(source, f"{name} is not a tool name the installer accepts")
+            continue
+        for version in versions:
+            version = clean_version(version)
+            if valid_version(version):
+                finder.add("tool", tool, version, "high", source)
+            else:
+                finder.cannot(source, f"{name}'s version {version} cannot be installed as given")
+
+
+def scan_rust_toolchain(finder, repository, rel, text):
+    data = toml_load(text) if "[toolchain]" in text else None
+    if data is not None:
+        toolchain = data.get("toolchain", {})
+        channel = toolchain.get("channel") if isinstance(toolchain, dict) else None
+        line = line_of(text, r"^\s*channel\s*=")
+        options = {key: toolchain[key] for key in ("components", "targets", "profile")
+                   if isinstance(toolchain, dict) and key in toolchain}
+    else:
+        channel = next((line.strip() for line in text.splitlines() if line.strip()), None)
+        line, options = 1, {}
+    source = source_of(repository, rel, line, f"channel {channel}")
+    if not isinstance(channel, str) or not valid_version(channel):
+        finder.cannot(source, "no Rust channel the installer can install")
+        return
+    options = {key: sorted(value) if isinstance(value, list) else value for key, value in options.items()}
+    finder.add("tool", "rust", channel, "high", source, carried_options(finder, source, "rust", options))
+
+
+def jsonc(text):
+    """JSON with comments and trailing commas, as global.json may be."""
+    result, index, quoted = [], 0, False
+    while index < len(text):
+        char = text[index]
+        if quoted:
+            result.append(char)
+            if char == "\\":
+                result.append(text[index + 1:index + 2])
+                index += 1
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+            result.append(char)
+        elif text.startswith("//", index):
+            index = text.find("\n", index)
+            index = len(text) if index < 0 else index
+            continue
+        elif text.startswith("/*", index):
+            index = text.find("*/", index)
+            index = len(text) if index < 0 else index + 2
+            continue
+        else:
+            result.append(char)
+        index += 1
+    return json.loads(re.sub(r",(\s*[}\]])", r"\1", "".join(result)))
+
+
+def scan_global_json(finder, repository, rel, text):
+    try:
+        sdk = jsonc(text).get("sdk", {})
+    except (ValueError, AttributeError):
+        finder.cannot(source_of(repository, rel, 1), "not valid JSON")
+        return
+    if not isinstance(sdk, dict) or "version" not in sdk:
+        return
+    version, policy = sdk.get("version"), sdk.get("rollForward", "latestPatch")
+    source = source_of(repository, rel, line_of(text, r'"version"\s*:'), f"version {version}, rollForward {policy}")
+    parts = numbers(version) if isinstance(version, str) else ()
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d{3}(?:-[\w.]+)?", version) or len(parts) < 3:
+        finder.cannot(source, f"SDK version {version} is not an SDK version such as 8.0.404")
+        return
+    scope = {"feature": "{0}.{1}", "latestFeature": "{0}.{1}", "minor": "{0}", "latestMinor": "{0}",
+             "major": "{0}", "latestMajor": "{0}"}
+    proposed = scope[policy].format(*parts) if policy in scope else version
+    notes = {"disable": "exactly this SDK (rollForward disable)",
+             "patch": f"this SDK or a later patch in the {parts[0]}.{parts[1]}.{parts[2] // 100}xx band",
+             "latestPatch": f"this SDK or a later patch in the {parts[0]}.{parts[1]}.{parts[2] // 100}xx band",
+             "feature": f"{version} or a later {parts[0]}.{parts[1]} feature band",
+             "latestFeature": f"{version} or a later {parts[0]}.{parts[1]} feature band",
+             "minor": f"{version} or a later {parts[0]}.x SDK", "latestMinor": f"{version} or a later {parts[0]}.x SDK",
+             "major": f"{version} or any later SDK", "latestMajor": f"{version} or any later SDK"}
+    finder.add("tool", "dotnet", proposed, "high", source,
+               constraint={"kind": "dotnet", "minimum": list(parts), "policy": policy},
+               note=f"global.json accepts {notes.get(policy, version)}")
+
+
+def range_proposal(tool, intervals):
+    """The version request a range proposes: the newest major below an upper bound (an even one for Node, whose
+    long-term releases are even), Node's lts for an open range, else the lowest major."""
+    lows = [low for low, _ in intervals]
+    bounded = [high for _, high in intervals if high]
+    if bounded and len(bounded) == len(intervals):
+        top = max(high for high in bounded)
+        majors = [major for major in range(min(low[0] for low in lows), top[0] + 1)
+                  if overlaps(intervals, str(major))]
+        if tool == "node" and any(major % 2 == 0 for major in majors):
+            majors = [major for major in majors if major % 2 == 0]
+        return str(max(majors)) if majors else None
+    return "lts" if tool == "node" else str(min(lows)[0])
+
+
+def scan_package_json(finder, repository, rel, text):
+    try:
+        data = json.loads(text)
+    except ValueError:
+        finder.cannot(source_of(repository, rel, 1), "not valid JSON")
+        return
+    if not isinstance(data, dict):
+        return
+    managers = set()
+    manager = data.get("packageManager")
+    if isinstance(manager, str):
+        source = source_of(repository, rel, line_of(text, r'"packageManager"\s*:'), f"packageManager {manager}")
+        match = re.fullmatch(r"(pnpm|yarn|bun|npm)@(\d[\w.-]*)(?:\+.*)?", manager)
+        if not match:
+            finder.cannot(source, f"packageManager {manager} names no package manager the installer knows")
+        elif match.group(1) == "npm":
+            finder.cannot(source, f"npm {match.group(2)} comes with Node: check that the Node version bundles it")
+        else:
+            managers.add(match.group(1))
+            finder.add("tool", match.group(1), match.group(2), "high", source)
+    volta = data.get("volta")
+    if isinstance(volta, dict):
+        for tool, version in volta.items():
+            if tool in ("node", "pnpm", "yarn") and isinstance(version, str) and valid_version(clean_version(version)):
+                finder.add("tool", tool, clean_version(version), "high",
+                           source_of(repository, rel, line_of(text, r'"volta"\s*:'), f"volta {tool} {version}"))
+    engines = data.get("engines")
+    if not isinstance(engines, dict):
+        return
+    for tool, expression in engines.items():
+        if tool not in ("node", "pnpm", "yarn", "bun") or tool in managers or not isinstance(expression, str):
+            continue
+        source = source_of(repository, rel, line_of(text, rf'"{tool}"\s*:\s*"{re.escape(expression)}"'),
+                           f"engines {tool} {expression}")
+        intervals = semver_alternatives(expression)
+        proposed = range_proposal(tool, intervals) if intervals else None
+        if not proposed:
+            finder.cannot(source, f"engines {tool} {expression!r} is not a range the installer reads")
+            continue
+        finder.add("tool", tool, proposed, "medium", source, note=f"engines {tool} {expression}",
+                   constraint={"kind": "range", "intervals": [[list(low), list(high) if high else None]
+                                                              for low, high in intervals]})
+
+
+def scan_version_file(finder, repository, rel, text, tool):
+    for number, line in enumerate(text.splitlines(), 1):
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        source = source_of(repository, rel, number, line)
+        version = clean_version(line)
+        if tool == "node" and version.startswith("lts/"):
+            version = "lts" if version == "lts/*" else version
+        version = version.removeprefix("ruby-") if tool == "ruby" else version
+        if valid_version(version):
+            finder.add("tool", tool, version, "high", source)
+        else:
+            finder.cannot(source, f"{tool} version {line} cannot be installed as given")
+
+
+def scan_go_mod(finder, repository, rel, text):
+    match = re.search(r"^toolchain\s+go(\d+\.\d+(?:\.\d+)?)\s*$", text, re.MULTILINE) or \
+        re.search(r"^go\s+(\d+\.\d+(?:\.\d+)?)\s*$", text, re.MULTILINE)
+    if match:
+        line = text.count("\n", 0, match.start()) + 1
+        finder.add("tool", "go", match.group(1), "medium", source_of(repository, rel, line, match.group(0)),
+                   note="the go command fetches a newer toolchain a module asks for itself")
+
+
+def scan_pyproject(finder, repository, rel, text):
+    data = toml_load(text)
+    if data is None:
+        finder.cannot(source_of(repository, rel, 1), "not valid TOML, or this Python cannot read TOML")
+        return
+    project, poetry = data.get("project", {}), data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+    expression = (project.get("requires-python") if isinstance(project, dict) else None) or \
+        (poetry.get("python") if isinstance(poetry, dict) else None)
+    if not isinstance(expression, str):
+        return
+    source = source_of(repository, rel, line_of(text, r"^\s*(?:requires-python|python)\s*="),
+                       f"Python {expression}")
+    intervals = pep440_alternatives(expression)
+    if not intervals or intervals[0][0] == (0, 0, 0):
+        finder.cannot(source, f"Python {expression!r} names no lowest version")
+        return
+    low = intervals[0][0]
+    finder.add("tool", "python", f"{low[0]}.{low[1]}", "medium", source, note=f"requires Python {expression}",
+               constraint={"kind": "range", "intervals": [[list(lo), list(hi) if hi else None] for lo, hi in intervals]})
+
+
+# A YAML subset for workflows and Compose files: block mappings and sequences, plain and quoted scalars, block
+# scalars, with each scalar's line. Flow collections stay text; anchors and tags are not read.
+
+class Scalar(str):
+    line = 0
+
+
+def scalar(text, line):
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        text = text[1:-1].replace("''", "'") if text[0] == "'" else text[1:-1]
+    value = Scalar(text)
+    value.line = line
+    return value
+
+
+def strip_comment(text):
+    quote = None
+    for index, char in enumerate(text):
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in "'\"" and (index == 0 or text[index - 1] in " :-[{,"):
+            quote = char
+        elif char == "#" and (index == 0 or text[index - 1] in " \t"):
+            return text[:index].rstrip()
+    return text.rstrip()
+
+
+KEY = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([^\s#'"][^:#]*?|[^\s#'"]))\s*:(?:\s+(.*)|\s*)$""")
+
+
+def parse_yaml(text):
+    raw = text.splitlines()
+    lines = []
+    for number, line in enumerate(raw, 1):
+        lines.append((len(line) - len(line.lstrip(" ")), line.strip(), number, line))
+
+    def skip(index):
+        while index < len(lines) and (not lines[index][1] or lines[index][1].startswith("#")
+                                      or lines[index][1] in ("---", "...")):
+            index += 1
+        return index
+
+    def block_scalar(index, indent):
+        collected = []
+        while index < len(lines) and (not lines[index][1] or lines[index][0] > indent):
+            collected.append(lines[index][3])
+            index += 1
+        width = min((len(line) - len(line.lstrip(" ")) for line in collected if line.strip()), default=0)
+        return "\n".join(line[width:] for line in collected), index
+
+    def value_of(rest, index, indent, number):
+        rest = strip_comment(rest)
+        if re.fullmatch(r"[|>][-+0-9]*", rest):
+            body, index = block_scalar(index, indent)
+            value = Scalar(body)
+            value.line = number + 1
+            return value, index
+        if rest:
+            # A plain scalar continued on deeper lines.
+            parts = [rest]
+            while index < len(lines) and lines[index][1] and lines[index][0] > indent \
+                    and not lines[index][1].startswith("#") and not rest.startswith(("'", '"', "[", "{")):
+                parts.append(strip_comment(lines[index][1]))
+                index += 1
+            return scalar(" ".join(parts), number), index
+        following = skip(index)
+        if following < len(lines) and (lines[following][0] > indent or lines[following][0] == indent
+                                       and lines[following][1].startswith("- ") or lines[following][1] == "-"):
+            return node(following, lines[following][0])
+        return scalar("", number), index
+
+    def mapping(index, indent, first=None):
+        result = {}
+        while True:
+            if first is None:
+                index = skip(index)
+                if index >= len(lines) or lines[index][0] != indent or lines[index][1].startswith("-"):
+                    return result, index
+                content, number = lines[index][1], lines[index][2]
+                index += 1
+            else:
+                content, number = first
+                first = None
+            match = KEY.match(content)
+            if not match:
+                return result, index
+            key = next(group for group in match.groups()[:3] if group is not None).strip()
+            value, index = value_of(match.group(4) or "", index, indent, number)
+            result[key] = value
+
+    def sequence(index, indent):
+        result = []
+        while True:
+            index = skip(index)
+            if index >= len(lines) or lines[index][0] != indent or not (
+                    lines[index][1].startswith("- ") or lines[index][1] == "-"):
+                return result, index
+            content, number = lines[index][1], lines[index][2]
+            rest = content[1:].lstrip()
+            index += 1
+            if not rest:
+                following = skip(index)
+                if following < len(lines) and lines[following][0] > indent:
+                    value, index = node(following, lines[following][0])
+                else:
+                    value = scalar("", number)
+            elif KEY.match(strip_comment(rest)) and not rest.startswith(("'", '"')):
+                value, index = mapping(index, indent + len(content) - len(rest), (strip_comment(rest), number))
+            else:
+                value, index = value_of(rest, index, indent, number)
+            result.append(value)
+
+    def node(index, indent):
+        if lines[index][1].startswith("- ") or lines[index][1] == "-":
+            return sequence(index, indent)
+        return mapping(index, indent)
+
+    start = skip(0)
+    if start >= len(lines):
+        return {}
+    return node(start, lines[start][0])[0]
+
+
+def steps_of(value, job=None):
+    """Every (job, step) under a steps: key, in workflows and composite actions."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "steps" and isinstance(child, list):
+                for step in child:
+                    if isinstance(step, dict):
+                        yield job, step
+            else:
+                yield from steps_of(child, child if isinstance(child, dict) and "runs-on" in child else job)
+    elif isinstance(value, list):
+        for child in value:
+            yield from steps_of(child, job)
+
+
+def ci_version(text):
+    """A set-up action's version in mise's terms: v2.x is 2, 22.x is 22, lts/* is lts."""
+    text = clean_version(text)
+    if text in ("lts/*", "lts"):
+        return "lts"
+    text = re.sub(r"(?:\.[xX*])+$", "", text)
+    return text
+
+
+def apt_packages(command):
+    """Package names in apt-get or apt install commands, and the tokens that are not package names."""
+    packages, others = [], []
+    command = re.sub(r"\\\n", " ", command)
+    for segment in re.split(r"&&|\|\||[;|\n]", command):
+        try:
+            tokens = shlex.split(segment, comments=True)
+        except ValueError:
+            tokens = segment.split()
+        for index, token in enumerate(tokens):
+            if token.rsplit("/", 1)[-1] in ("apt-get", "apt", "aptitude"):
+                rest = tokens[index + 1:]
+                if "install" not in rest:
+                    break
+                words = iter(rest[rest.index("install") + 1:])
+                for word in words:
+                    if word in ("-o", "--option", "-t", "--target-release", "-c", "--config-file"):
+                        next(words, None)
+                    elif word.startswith("-"):
+                        continue
+                    elif "$" in word or "{" in word or "}" in word or "`" in word:
+                        # A variable or expression: what follows is not a list of names either.
+                        others.append(word)
+                        break
+                    elif re.fullmatch(PACKAGE, name := re.split(r"[=:]", word)[0]):
+                        packages.append(name)
+                    else:
+                        others.append(word)
+                break
+    return packages, others
+
+
+def scan_workflow(finder, repository, rel, text):
+    try:
+        data = parse_yaml(text)
+    except (IndexError, ValueError, RecursionError):
+        finder.cannot(source_of(repository, rel, 1), "a workflow detection could not read")
+        return
+    if not isinstance(data, dict):
+        return
+    jobs = data.get("jobs", {}) if isinstance(data.get("jobs"), dict) else {}
+    for name, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        runner = job.get("runs-on")
+        if isinstance(runner, str) and re.search(r"macos|windows", runner, re.IGNORECASE):
+            finder.cannot(source_of(repository, rel, getattr(runner, "line", 1), f"runs-on {runner}"),
+                          f"job {name} runs on {runner}: its tools are not for this Linux VM")
+        container = job.get("container")
+        if container:
+            image = container.get("image", "") if isinstance(container, dict) else container
+            finder.cannot(source_of(repository, rel, getattr(image, "line", 1), f"container {image}"),
+                          f"job {name} runs in the container image {image}: tools inside it are not installed on the VM")
+        services = job.get("services")
+        if isinstance(services, dict):
+            for service, settings in services.items():
+                image = settings.get("image", "") if isinstance(settings, dict) else ""
+                line = getattr(image, "line", 1)
+                kind = "a database" if DATABASES.search(str(image) or service) else "a service container"
+                finder.cannot(source_of(repository, rel, line, f"services {service}: {image}"),
+                              f"job {name}'s tests need {kind} ({service}), which no toolchain provides")
+    for job, step in steps_of(data):
+        uses = step.get("uses")
+        options = step.get("with") if isinstance(step.get("with"), dict) else {}
+        secrets = re.findall(r"secrets\.([A-Za-z0-9_]+)", json.dumps(step))
+        if any(re.search(r"LICEN[CS]E|SERIAL", secret, re.IGNORECASE) for secret in secrets):
+            finder.cannot(source_of(repository, rel, getattr(uses or step.get("run", ""), "line", 1), uses or "run"),
+                          f"a licensed build step (secrets {', '.join(sorted(set(secrets)))}): it needs a licence the "
+                          "VM has not got")
+        if isinstance(uses, str):
+            action, _, ref = uses.partition("@")
+            action = action.lower()
+            if action.startswith("docker://"):
+                finder.cannot(source_of(repository, rel, uses.line, uses), "a Docker-only step: its tools live in "
+                              "the image")
+            if action in NOT_TOOLS:
+                continue
+            known = SETUP_ACTIONS.get("/".join(action.split("/")[:2]))
+            if known:
+                tool, keys = known
+                values = []
+                for key in keys:
+                    value = options.get(key)
+                    values += value if isinstance(value, list) else [value] if isinstance(value, str) else []
+                if tool == "rust" and not values and re.fullmatch(r"stable|beta|nightly|\d+\.\d+(?:\.\d+)?", ref):
+                    values = [scalar(ref, uses.line)]
+                for value in values:
+                    line = getattr(value, "line", uses.line)
+                    for part in [part for part in re.split(r"[\s,]+", str(value)) if part]:
+                        source = source_of(repository, rel, line, f"{uses} with {part}")
+                        if "${{" in str(value) or part.startswith("$"):
+                            source = source_of(repository, rel, line, f"{uses} with {value}")
+                            matrix = re.search(r"matrix\.([\w-]+)", str(value))
+                            values_text = ""
+                            if matrix and isinstance(job, dict):
+                                strategy = job.get("strategy", {})
+                                listed = strategy.get("matrix", {}).get(matrix.group(1)) if isinstance(strategy, dict) \
+                                    and isinstance(strategy.get("matrix"), dict) else None
+                                values_text = f" (the matrix lists {listed})" if listed else ""
+                            why = "a matrix" if matrix else "a secret, variable or expression"
+                            finder.cannot(source, f"{tool}'s version comes from {why}: {value}{values_text}")
+                            break
+                        version = ci_version(part)
+                        if tool == "java" and options.get("distribution"):
+                            version = f"{options['distribution']}-{version}"
+                        if valid_version(version):
+                            extra = {}
+                            if tool == "rust" and options.get("components"):
+                                extra = carried_options(finder, source, "rust", {"components": ",".join(
+                                    sorted(re.split(r"[\s,]+", str(options["components"]).strip())))})
+                            finder.add("tool", tool, version, "medium", source, extra or None)
+                        else:
+                            finder.cannot(source, f"{tool} version {part} cannot be installed as given")
+        run = step.get("run")
+        if isinstance(run, str):
+            if re.search(r"\bdocker(?:\s+compose)?\s+(?:run|build|compose|exec)\b|\bdocker-compose\b", run):
+                finder.cannot(source_of(repository, rel, run.line, run.splitlines()[0] if run else ""),
+                              "a Docker-only step: what it runs comes from container images")
+            packages, others = apt_packages(run)
+            for package in packages:
+                finder.add("package", package, None, "medium", source_of(repository, rel, run.line,
+                                                                         f"apt-get install {package}"))
+            for other in others:
+                finder.cannot(source_of(repository, rel, run.line, other),
+                              f"apt-get installs {other}, which is not a package name (a variable or expression)")
+
+
+def scan_compose(finder, repository, rel, text):
+    try:
+        data = parse_yaml(text)
+    except (IndexError, ValueError, RecursionError):
+        return
+    services = data.get("services") if isinstance(data, dict) else None
+    if not isinstance(services, dict):
+        return
+    for service, settings in services.items():
+        image = settings.get("image") if isinstance(settings, dict) else None
+        if isinstance(image, str) and image:
+            kind = "a database" if DATABASES.search(image) else "a service"
+            finder.cannot(source_of(repository, rel, getattr(image, "line", 1), f"{service}: {image}"),
+                          f"Docker Compose runs {kind} ({service}): tests that need it need Docker, not a toolchain")
+
+
+def doc_commands(text):
+    """Shell lines in documentation: inside fenced code blocks (continuations joined) and inline code spans."""
+    fenced, start, pending = False, 0, ""
+    for number, line in enumerate(text.splitlines(), 1):
+        if re.match(r"\s*(```|~~~)", line):
+            fenced = not fenced
+            continue
+        if fenced:
+            line = re.sub(r"^\s*(?:\$|#|>)\s+", "", line)
+            if not pending:
+                start = number
+            pending += line.rstrip("\\") + " "
+            if not line.rstrip().endswith("\\"):
+                yield start, pending.strip()
+                pending = ""
+        else:
+            for span in re.findall(r"`([^`]+)`", line):
+                yield number, span.strip().removeprefix("$ ")
+
+
+def scan_docs(finder, repository, rel, text):
+    for number, command in doc_commands(text):
+        if re.search(r"\bapt(?:-get)?\b.*\binstall\b", command):
+            packages, _ = apt_packages(command)
+            for package in packages:
+                finder.add("package", package, None, "low", source_of(repository, rel, number, command))
+
+
+def scan_repository(finder, repository, root):
+    try:
+        info = os.lstat(root)
+        readable = stat.S_ISDIR(info.st_mode) and os.access(root, os.R_OK | os.X_OK)
+    except OSError:
+        readable = False
+    if not readable:
+        finder.cannot(source_of(repository, "", 0), f"the repository is not cloned at {root} yet, or cannot be read")
+        return
+    docs = 0
+    for rel in repository_files(root):
+        name = rel.rsplit("/", 1)[-1]
+        mise = MISE_FILE.search(rel)
+        workflow = re.fullmatch(r"(?:.*/)?\.github/(?:workflows/[^/]+|actions/.+/action)\.ya?ml", rel)
+        doc = DOC_FILE.search(rel) and "/.github/" not in f"/{rel}"
+        if not (mise or workflow or doc or name in VERSION_FILES or name in COMPOSE_FILES or name in (
+                ".tool-versions", "rust-toolchain", "rust-toolchain.toml", "global.json", "package.json", "go.mod",
+                "pyproject.toml")):
+            continue
+        if doc:
+            docs += 1
+            if docs > MAX_DOCS:
+                continue
+        text = read_text(os.path.join(root, rel))
+        if text is None:
+            finder.cannot(source_of(repository, rel, 0), "not a regular file detection can read (a symbolic link, "
+                          "or larger than 1 MiB)")
+            continue
+        if mise:
+            scan_mise(finder, repository, rel, text, mise.group(1))
+        elif workflow:
+            scan_workflow(finder, repository, rel, text)
+        elif doc:
+            scan_docs(finder, repository, rel, text)
+        elif name == ".tool-versions":
+            scan_tool_versions(finder, repository, rel, text)
+        elif name in ("rust-toolchain", "rust-toolchain.toml"):
+            scan_rust_toolchain(finder, repository, rel, text)
+        elif name == "global.json":
+            scan_global_json(finder, repository, rel, text)
+        elif name == "package.json":
+            scan_package_json(finder, repository, rel, text)
+        elif name in VERSION_FILES:
+            scan_version_file(finder, repository, rel, text, VERSION_FILES[name])
+        elif name == "go.mod":
+            scan_go_mod(finder, repository, rel, text)
+        elif name == "pyproject.toml":
+            scan_pyproject(finder, repository, rel, text)
+        elif name in COMPOSE_FILES:
+            scan_compose(finder, repository, rel, text)
+
+
+def fold(items):
+    """Join an item into another of the same tool and options that meets it: a range or prefix that a proposed
+    exact version satisfies, or the same package. The joined item keeps both sources and the higher confidence."""
+    result = []
+    order = sorted(items, key=lambda item: (item["kind"], item["name"], -len(numbers(item["version"] or "")),
+                                            CONFIDENCE.index(item["confidence"])))
+    for item in order:
+        target = next((kept for kept in result if kept["kind"] == "tool" == item["kind"]
+                       and kept["name"] == item["name"] and kept["options"] == item["options"]
+                       and kept["version"] != item["version"] and accepts(item, kept["version"])), None)
+        if target is None:
+            result.append(item)
+            continue
+        for source in item["sources"]:
+            if source not in target["sources"]:
+                target["sources"].append(source)
+        target["notes"] = [*target.get("notes", []), *(note for note in item.get("notes", [])
+                                                        if note not in target.get("notes", []))]
+        if CONFIDENCE.index(item["confidence"]) < CONFIDENCE.index(target["confidence"]):
+            target["confidence"] = item["confidence"]
+    return result
+
+
+def detect(repositories):
+    """What the repositories need: {"items": [...], "unknown": [...], "repositories": [...]}.
+
+    repositories maps each repository ID to its checkout. Items are tools (name is a mise tool specification) and
+    system packages (version None), each with a confidence, its sources (repository, file, line) and notes."""
+    finder = Finder()
+    for repository, root in repositories.items():
+        scan_repository(finder, repository, root)
+    items = fold(finder.items.values())
+    for item in items:
+        if item["confidence"] == "low":
+            # Only documentation is low confidence.
+            item.setdefault("notes", []).append("named by documentation only")
+    items.sort(key=lambda item: (item["kind"] != "tool", CONFIDENCE.index(item["confidence"]), item["name"],
+                                 item["version"] or ""))
+    return {"repositories": list(repositories), "items": items, "unknown": finder.unknown}
+
+
+def annotate(proposal, tools, packages, homes, system_python=None, states=None):
+    """Give each item where it would be installed, whether the fleet's toolchains already have it (or a version
+    that meets it), and whether it is installed. homes are the officers' homes, for per-user tools."""
+    system_python = system_python or ".".join(str(part) for part in sys.version_info[:3])
+    states = states if states is not None else {}
+    for item in proposal["items"]:
+        if item["kind"] == "package":
+            item["where"] = "system"
+            item["configured"] = item["name"] in packages
+            if item["name"] not in states:
+                states[item["name"]] = package_state(item["name"])
+            item["installed"] = states[item["name"]]
+            continue
+        entry = tools.get(item["name"])
+        item["where"] = entry["install"] if entry else default_install(item["name"])
+        versions = entry["versions"] if entry else []
+        if item["version"] in versions:
+            item["configured"] = True
+        elif meeting := [version for version in versions if accepts(item, version)]:
+            item["configured"] = f"met by {item['name']} {meeting[0]}, already configured"
+        elif item["name"] == "python" and accepts(item, system_python):
+            item["configured"] = f"met by the system's Python {system_python}"
+        else:
+            item["configured"] = False
+        item["installed"] = tool_state(item["name"], item["version"], item["where"], homes)
+    return proposal
+
+
+def item_label(item):
+    if item["kind"] == "package":
+        return item["name"]
+    options = ", ".join(f"{key}={value}" for key, value in sorted(item["options"].items()))
+    return f"{item['name']}@{item['version']}" + (f" ({options})" if options else "")
+
+
+def where_label(where):
+    return {"shared": f"shared ({SHARED})", "user": f"per user (~/{USER_DATA})", "system": "system (apt)"}[where]
+
+
+def source_label(source):
+    if not source["file"]:
+        return source["repository"]
+    return f"{source['repository']}: {source['file']}" + (f":{source['line']}" if source["line"] else "")
+
+
+def suggestion(items):
+    """The setup options that confirm the proposed items, for the person to edit before running."""
+    tools = list(dict.fromkeys(f"{item['name']}@{item['version']}" for item in items
+                               if item["kind"] == "tool" and not item.get("configured") and item["confidence"] != "low"))
+    packages = [item["name"] for item in items
+                if item["kind"] == "package" and not item.get("configured") and item["confidence"] != "low"]
+    parts = []
+    if tools:
+        parts.append(f"--toolchains {shlex.quote(','.join(tools))}")
+    if packages:
+        parts.append(f"--system-packages {shlex.quote(','.join(packages))}")
+    return " ".join(parts)
+
+
+def proposal_lines(proposal):
+    """The proposal for a person to read: each item with where it would go, whether it is installed and where it
+    came from, then what detection could not determine. Nothing in it is installed until someone confirms it."""
+    names = ", ".join(proposal["repositories"]) or "no repositories"
+    lines = [f"Toolchain proposal from {names}. Nothing in it is installed until you confirm it."]
+    pending = [item for item in proposal["items"] if not item.get("configured")]
+    met = [item for item in proposal["items"] if item.get("configured")]
+    for title, kind in (("Tools", "tool"), ("System packages", "package")):
+        rows = [item for item in pending if item["kind"] == kind]
+        if not rows:
+            continue
+        lines.append(f"{title}:")
+        for item in rows:
+            notes = "; ".join(item.get("notes", []))
+            lines.append(f"  [{item['confidence']}] {item_label(item)}: {where_label(item['where'])}, "
+                         f"{item.get('installed', 'unknown')}" + (f"; {notes}" if notes else ""))
+            lines += [f"      from {source_label(source)}" + (f" ({source['detail']})" if source["detail"] else "")
+                      for source in item["sources"]]
+    if met:
+        lines.append("Already configured: " + "; ".join(
+            f"{item_label(item)}" + (f" ({item['configured']})" if isinstance(item["configured"], str) else "")
+            for item in met) + ".")
+    if proposal["unknown"]:
+        lines.append("Could not determine (check these yourself):")
+        lines += [f"  {source_label(entry)}: {entry['reason']}" + (f" ({entry['detail']})" if entry["detail"] else "")
+                  for entry in proposal["unknown"]]
+    if command := suggestion(proposal["items"]):
+        lines.append(f"To confirm, edit and run: sudo subspace-setup {command}")
+        lines.append("Low-confidence items, named only by documentation, are left out of that command: add any "
+                     "that the repositories need.")
+    elif not pending:
+        lines.append("Nothing new to confirm.")
+    return lines
+
+
+# Verification --------------------------------------------------------------------------------------------------
+
+PROBES = {
+    "node": ["node", "--version"], "pnpm": ["pnpm", "--version"], "yarn": ["yarn", "--version"],
+    "bun": ["bun", "--version"], "deno": ["deno", "--version"], "dotnet": ["dotnet", "--version"],
+    "rust": ["cargo", "--version"], "go": ["go", "version"], "python": ["python", "--version"],
+    "terraform": ["terraform", "version"], "opentofu": ["tofu", "version"], "java": ["java", "-version"],
+    "ruby": ["ruby", "--version"], "zig": ["zig", "version"], "uv": ["uv", "--version"],
+    "kubectl": ["kubectl", "version", "--client"], "helm": ["helm", "version"],
+}
+
+
+def verification_commands(found, tools, check=None):
+    """The commands a repository's basic check runs: each configured tool its files name, run from the checkout
+    (so mise, global.json and rust-toolchain resolve as they will for the crew), then its own check, if any."""
+    commands, missing = [], []
+    for item in found["items"]:
+        if item["kind"] != "tool" or item["confidence"] == "low":
+            continue
+        if item["name"] not in tools and not item.get("configured"):
+            missing.append(item_label(item))
+        elif item["name"] in PROBES and PROBES[item["name"]] not in commands:
+            commands.append(PROBES[item["name"]])
+    if check:
+        commands.append(["/bin/bash", "-c", check])
+    return commands, missing
+
+
+def verify_repository(user, home, directory, environment, commands, timeout):
+    """Run each command as the officer's user in the directory with the engine's environment, in a fresh private
+    temporary directory. Returns (passed, report)."""
+    scratch = subprocess.run(["runuser", "-u", user, "--", "mktemp", "-d", f"/tmp/{user}-verify.XXXXXX"],
+                             capture_output=True, text=True, check=False)
+    if scratch.returncode:
+        return False, "could not make a private temporary directory"
+    temporary = scratch.stdout.strip()
+    env = {**environment, "TMPDIR": temporary}
+    try:
+        for command in commands:
+            try:
+                result = subprocess.run(["runuser", "-u", user, "--", *clean_environment(user, home, env), *command],
+                                        cwd=directory, capture_output=True, text=True, timeout=timeout, check=False)
+            except subprocess.TimeoutExpired:
+                return False, f"{shlex.join(command)} did not finish within {timeout} seconds"
+            if result.returncode:
+                tail = (result.stderr or result.stdout).strip().splitlines()[-3:]
+                return False, f"{shlex.join(command)} failed ({result.returncode}): " + " / ".join(tail)
+        return True, f"{len(commands)} checks passed"
+    finally:
+        subprocess.run(["runuser", "-u", user, "--", "rm", "-rf", "--", temporary], check=False)
+
+
+def main(argv):
+    """sudo /opt/subspace-fleet/lib/toolchains.py detect [--json]: a proposal from the installed fleet's
+    repositories, as the rear admiral's reference checkouts hold them."""
+    if argv[:1] != ["detect"] or not set(argv[1:]) <= {"--json"}:
+        raise Invalid("Usage: toolchains.py detect [--json]")
+    config = json.loads((ETC / "fleet.json").read_text())
+    rear = config["rearAdmiral"]["id"]
+    repositories = {row["id"]: STATE / "references" / rear / row["id"] for row in config.get("repositories", [])}
+    tools = toolchain_config(config.get("toolchains", {}))
+    homes = [STATE / "agents" / person["id"] for person in [config["rearAdmiral"], *config["captains"]]]
+    proposal = annotate(detect(repositories), tools, package_config(config.get("systemPackages", [])), homes)
+    print(json.dumps(proposal, indent=2) if "--json" in argv else "\n".join(proposal_lines(proposal)))
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except (Invalid, OSError, ValueError, KeyError) as error:
+        sys.exit(f"subspace-fleet: {error}")
