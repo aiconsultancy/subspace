@@ -58,6 +58,19 @@ def state(**changes):
             "swappiness": 60, "swappinessFiles": [], "own": False, "ownSettings": False, **changes}
 
 
+def swaps(*entries):
+    """swap_state() on a VM whose /proc/swaps lists entries, each (name, size in KiB as the kernel reports it), and
+    which has no other swap configuration."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "swaps").write_text("Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n"
+                                    + "".join(f"{name}\tfile\t\t{kib}\t\t0\t\t-2\n" for name, kib in entries))
+        with patch.multiple(memory, PROC_SWAPS=root / "swaps", FSTAB=root / "fstab", WAAGENT=root / "waagent.conf",
+                            MOUNTS=root / "mounts", SYSCTL_PATHS=(), SWAPPINESS_PROC=root / "swappiness",
+                            SWAP_UNIT_DIRS=()):
+            return memory.swap_state()
+
+
 class SizingTests(unittest.TestCase):
     def test_the_rule_for_common_vm_sizes_and_fleet_shapes(self):
         # (hard cap, soft limit, swap allowance) for a captain, with a hosted API and a shared IRC server.
@@ -438,12 +451,27 @@ class SwapTests(unittest.TestCase):
         self.assertEqual(memory.swap_plan(OFF, state(), VMS[64])["action"], "off")
 
     def test_the_installers_own_swap_file_is_kept_never_resized(self):
-        own = state(active=[{"name": str(memory.SWAP_FILE), "size": 8 * GIB, "used": 0}], own=True)
-        self.assertEqual(memory.swap_plan("auto", own, VMS[64])["action"], "keep")
-        [line] = memory.swap_lines(16 * GIB, own, VMS[64])
-        self.assertIn("/subspace-fleet.swap, the installer's swap file, is on (8 GiB) and stays. memory.swap asks for "
-                      "16 GiB, and the installer never resizes a swap file in use: to resize it, run sudo swapoff "
-                      "/subspace-fleet.swap && sudo rm /subspace-fleet.swap, then the installer again.", line)
+        # The installer's 8 GiB swap file as /proc/swaps reports it, without its header page: 4 KiB, or 64 KiB on
+        # an arm64 kernel with 64 KiB pages.
+        for reported in (8388604, 8388544):
+            with self.subTest(reported):
+                own = {**swaps((str(memory.SWAP_FILE), reported)), "own": True, "swappiness": 10}
+                self.assertEqual(own["active"][0]["size"], 8 * GIB)
+                self.assertEqual(memory.swap_plan("auto", own, VMS[64])["action"], "keep")
+                # Made by the sizing or at the size memory.swap sets, it is the size it should be: nothing to do.
+                # A VM grown since, or a disk filled since, changes what auto would make, but not this file.
+                for setting, total in (("auto", VMS[64]), (8 * GIB, VMS[64]), ("auto", VMS[128])):
+                    [line] = memory.swap_lines(setting, own, total)
+                    self.assertTrue(line.startswith("Swap: /subspace-fleet.swap, the installer's swap file, is on (8 "
+                                                    "GiB) and stays. The installer will set vm.swappiness"), line)
+                [line] = memory.swap_lines(16 * GIB, own, VMS[64])
+                self.assertIn("/subspace-fleet.swap, the installer's swap file, is on (8 GiB) and stays. memory.swap "
+                              "asks for 16 GiB, and the installer never resizes a swap file in use: to resize it, run "
+                              "sudo swapoff /subspace-fleet.swap && sudo rm /subspace-fleet.swap, then the installer "
+                              "again.", line)
+        # Within 1 MiB is the same size, however the kernel rounds.
+        close = state(active=[{"name": str(memory.SWAP_FILE), "size": 8 * GIB - 1, "used": 0}], own=True)
+        self.assertNotIn("never resizes", memory.swap_lines(8 * GIB, close, VMS[64])[0])
         # Set up but off, after a reboot that lost it: turned on again.
         idle = state(configured=[str(memory.SWAP_FILE)], own=True)
         self.assertEqual(memory.swap_plan("auto", idle, VMS[64])["action"], "activate")
@@ -495,7 +523,8 @@ class SwapTests(unittest.TestCase):
                             SYSCTL_FILE=root / "sysctl.d/60-subspace-fleet-swap.conf",
                             SWAPPINESS_PROC=root / "swappiness", SWAP_UNIT_DIRS=(units,)):
             found = memory.swap_state()
-        self.assertEqual(found["active"], [{"name": "/swap file", "size": 8191, "used": 1}])
+        # An 8 GiB file: the kernel leaves its 4 KiB header page out of the size.
+        self.assertEqual(found["active"], [{"name": "/swap file", "size": 8 * GIB, "used": 1}])
         # The noauto entry is not set to come on; the masked unit is off.
         self.assertEqual(found["configured"], ["UUID=1111", "data-swap.swap"])
         self.assertIn("ResourceDisk.EnableSwap", found["agent"])

@@ -560,7 +560,10 @@ def swap_state():
     for line in read(PROC_SWAPS).splitlines()[1:]:
         parts = line.split()
         try:
-            active.append({"name": unescape(parts[0]), "size": int(parts[2]) // 1024, "used": int(parts[3]) // 1024})
+            # The kernel reports a swap area's size in KiB without its header page (an 8 GiB file shows as
+            # 8388604), so the size in MiB is rounded up to what the file or partition holds.
+            active.append({"name": unescape(parts[0]), "size": -(-int(parts[2]) // 1024),
+                           "used": int(parts[3]) // 1024})
         except (IndexError, ValueError):
             continue
     names = {entry["name"] for entry in active}
@@ -604,7 +607,10 @@ def swap_plan(setting, state, total):
     if setting == "auto":
         wanted = min(SWAP_MAX, max(SWAP_MIN, nearest((total or 0) // 8, GIB)))
     if own:
-        return {"action": "keep", "size": own[0]["size"], "wanted": wanted, "reason": "the installer's swap file is on"}
+        # Only a size set in memory.swap is compared with the file: auto's rule depends on the disk's free space,
+        # which the file itself and everything since have changed, so it is not a size the file should have now.
+        return {"action": "keep", "size": own[0]["size"], "wanted": None if setting == "auto" else setting,
+                "reason": "the installer's swap file is on"}
     if others:
         listed = ", ".join(f"{entry['name']} ({gib(entry['size'])})" for entry in others)
         return {"action": "skip", "size": 0, "reason": f"this VM already has swap: {listed}"}
@@ -689,7 +695,8 @@ def swap_lines(setting, state, total, installed=False, managed=True):
         text = f"{SWAP_FILE}, the installer's swap file, is on ({gib(decision['size'])}) and stays."
     else:
         text = f"{decision['reason']}."
-    if action == "keep" and decision["wanted"] != decision["size"]:
+    # Sizes within 1 MiB are the same file: /proc/swaps leaves out the header page.
+    if action == "keep" and decision["wanted"] is not None and abs(decision["wanted"] - decision["size"]) > 1:
         text += (f" memory.swap asks for {gib(decision['wanted'])}, and the installer never resizes a swap file in "
                  f"use: to resize it, run sudo swapoff {SWAP_FILE} && sudo rm {SWAP_FILE}, then the installer again.")
     text += " " + sentence(installed_swappiness(state) if installed else tuning["before"])
