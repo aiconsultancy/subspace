@@ -75,7 +75,11 @@ impl Projects {
         if hovered && self.milestone(id).is_some() {
             self.milestone_pages.preview = Some(id.to_owned());
             if !self.milestone_pages.preview_issues.contains_key(id)
-                && !self.milestone_pages.issues.contains_key(id)
+                && !self
+                    .milestone_pages
+                    .issues
+                    .get(id)
+                    .is_some_and(Result::is_ok)
             {
                 self.fetch_issues(id, IssueRead::Preview, cx);
             }
@@ -177,11 +181,13 @@ impl Projects {
                 .detail
                 .as_ref()
                 .is_some_and(|detail| detail.milestone == milestone && detail.from == from);
-        if !returning_to_open_detail {
+        if returning_to_open_detail {
+            self.retry_milestone_issues(milestone, cx);
+        } else {
             self.select(project, cx);
             self.show_milestone(milestone, from, cx);
-            self.milestone_pages.restore_offset = Some(offset);
         }
+        self.milestone_pages.restore_offset = Some(offset);
         true
     }
 
@@ -190,7 +196,11 @@ impl Projects {
             return;
         };
         if self.milestone(&detail.milestone).is_some()
-            && self.milestone_pages.issues.contains_key(&detail.milestone)
+            && self
+                .milestone_pages
+                .issues
+                .get(&detail.milestone)
+                .is_some_and(Result::is_ok)
             && let Some(offset) = self.milestone_pages.restore_offset.take()
         {
             self.milestone_pages

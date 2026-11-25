@@ -18,10 +18,9 @@ const PREVIEW_LIMIT: usize = 5;
 
 pub(super) fn preview(this: &Projects, id: &str, tokens: &Tokens) -> Option<Div> {
     let milestone = this.milestone(id)?;
-    let rows = this
-        .milestone_pages
-        .issues
-        .get(id)
+    let detail = this.milestone_pages.issues.get(id);
+    let rows = detail
+        .filter(|result| result.is_ok())
         .map(|result| result.as_ref().map(|rows| (rows.as_slice(), false)))
         .or_else(|| {
             this.milestone_pages.preview_issues.get(id).map(|result| {
