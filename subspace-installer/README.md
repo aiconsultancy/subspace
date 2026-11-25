@@ -729,9 +729,17 @@ as root instead of running its code; give it `"install": "user"`. To install
 such a tool once for the whole fleet as root, mark it explicitly:
 `"npm:@example/cli": {"version": "1.2.0", "install": "shared"}`, which also
 enables that backend for root's installs. Detection never proposes `shared`
-for them; only the operator can mark it, in `fleet.json`. A .NET SDK
-is shared: every SDK goes into one root, `/opt/subspace-fleet/toolchains/dotnet-root`,
-so `global.json` can choose among them. The installer never removes a tool or
+for them; only the operator can mark it, in `fleet.json`.
+
+**.NET is per user too.** The `dotnet` host finds SDKs in one root,
+`DOTNET_ROOT`, and nowhere else, so every SDK must be in the same root for
+`global.json` to choose among them, and an SDK a repository pins that the
+fleet has not got installs into that root on first use. Each officer's root is
+its own, `~/.local/share/mise/dotnet-root`, which it can write. A .NET marked
+`"install": "shared"` goes into `/opt/subspace-fleet/toolchains/dotnet-root`
+instead, once for the fleet, but then an SDK a repository pins that the
+fleet has not got cannot install (officers cannot write the shared root):
+confirm every SDK the repositories pin. The installer never removes a tool or
 package taken off the list; the dry run names them as left installed. The
 weekly tools service updates shared tools as root and per-user tools as each
 officer, within their configured versions.
@@ -753,7 +761,9 @@ officer's tools, gets:
 - a private temporary directory, `TMPDIR=/tmp/ss-<id>`, mode `0700`, which the
   engine makes in its service's private `/tmp`: tests that drive Git fail
   with a temporary directory inside the home;
-- `DOTNET_ROOT` when a .NET SDK is configured.
+- `DOTNET_ROOT` when a .NET SDK is configured: its own
+  `~/.local/share/mise/dotnet-root`, or the shared store's for a .NET marked
+  shared.
 
 The separation between officers is unchanged: each officer's data directory
 lives in its own home (mode `0700`), and crew share their captain's.
@@ -2400,6 +2410,11 @@ one is refused, none of them is applied.
   environment. Use the versions the installed directories show, exactly: a
   request such as `22` where `22.11.0` is installed may install a newer 22. A
   tool installed by hand into another directory than these is installed again.
+  .NET is per user by default: a .NET SDK installed by hand into the shared
+  store stays in use only if `fleet.json` marks it shared
+  (`"dotnet": {"version": "8.0.404", "install": "shared"}`, then `sudo
+  subspace-setup`, which records the change); otherwise each officer installs
+  its own.
   With the fleet installer alone, write the same into `toolchains` and
   `systemPackages` in `fleet.json` and run `sudo ./install.sh upgrade --config
   ~/fleet.json --dry-run` first.

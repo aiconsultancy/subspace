@@ -46,8 +46,10 @@ DEFAULT_TOOLS = {"node": "24"}
 # from fleet.json. http: (arbitrary URLs) and spm: are left out.
 BACKENDS = ("aqua", "asdf", "cargo", "conda", "dotnet", "gem", "github", "gitlab", "go", "npm", "pipx", "ubi", "vfox")
 # Installed per user by default: rustup keeps its toolchains in the user's home and installs a repository's
-# pinned toolchain and components on first use, which a read-only shared store cannot.
-USER_TOOLS = {"rust"}
+# pinned toolchain and components on first use, which a read-only shared store cannot. .NET likewise: the dotnet
+# host finds SDKs in one root only (DOTNET_ROOT), so an SDK a repository's global.json pins that the fleet has not
+# got installs there on first use, which needs a root the officer can write.
+USER_TOOLS = {"rust", "dotnet"}
 # Backends that run third-party code while they install: cargo: (build scripts), npm: (lifecycle scripts), gem:
 # (native extensions), pipx: (package builds), asdf: and vfox: (plugins are scripts), conda: (packages may carry
 # link scripts). Their tools install as each officer's user unless the operator marks one "install": "shared".
@@ -242,10 +244,14 @@ def user_data(home):
 
 
 def dotnet_root(tools, home=None):
+    """Where the .NET SDKs are, for an officer (home) or for root (no home): the officer's own root for a per-user
+    .NET (the default), the shared store's for a shared one; None without .NET, or for root with a per-user one."""
     entry = tools.get("dotnet")
     if not entry:
         return None
-    return str(user_data(home) / "dotnet-root" if entry["install"] == "user" and home else SHARED / "dotnet-root")
+    if entry["install"] == "user":
+        return str(user_data(home) / "dotnet-root") if home else None
+    return str(SHARED / "dotnet-root")
 
 
 def officer_environment(tools, user, home, trusted):
@@ -397,8 +403,13 @@ def plan_lines(tools, packages, officers, previous=None, states=None):
                    + ") and its shims first on PATH, then the shared store's; the shared store as mise's system "
                    "data directory; mise configuration trusted in their workspace and crew worktrees; and a "
                    "private TMPDIR, /tmp/<user> (0700)")
-    root = dotnet_root(tools)
-    lines.append(environment + (f"; DOTNET_ROOT {root}." if root else "."))
+    if "dotnet" not in tools:
+        lines.append(environment + ".")
+    elif root := dotnet_root(tools):
+        lines.append(environment + f"; DOTNET_ROOT {root} (shared: an SDK a repository pins that the fleet has not "
+                     "got cannot install on first use).")
+    else:
+        lines.append(environment + f"; DOTNET_ROOT ~/{USER_DATA}/dotnet-root, each officer's own.")
     return lines
 
 

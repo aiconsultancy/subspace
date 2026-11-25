@@ -398,12 +398,12 @@ class ConfigurationTests(unittest.TestCase):
             "terraform": {"version": "1.9.8", "install": "user"}})
         self.assertEqual(tools["node"]["versions"], ["22.11.0", "24"])
         self.assertEqual({spec: entry["install"] for spec, entry in tools.items()}, {
-            "node": "shared", "dotnet": "shared", "pnpm": "shared", "cargo:cargo-nextest": "user",
+            "node": "shared", "dotnet": "user", "pnpm": "shared", "cargo:cargo-nextest": "user",
             "github:example/release-tool": "shared", "conda:openssl": "user", "npm:@example/cli": "user",
             "rust": "user", "terraform": "user"})
         self.assertEqual(toolchains.requests(tools, "shared"), [
-            "node@22.11.0", "node@24", "dotnet@8.0.404", "pnpm@9.12.3", "github:example/release-tool@2.4.0"])
-        self.assertEqual(toolchains.requests(tools, "user"), ["rust@1.99.0", "terraform@1.9.8",
+            "node@22.11.0", "node@24", "pnpm@9.12.3", "github:example/release-tool@2.4.0"])
+        self.assertEqual(toolchains.requests(tools, "user"), ["dotnet@8.0.404", "rust@1.99.0", "terraform@1.9.8",
                                                               "cargo:cargo-nextest@0.9.100", "conda:openssl@3.4.0",
                                                               "npm:@example/cli@1.2.0"])
         self.assertEqual(toolchains.mise_config(tools).splitlines()[1:], [
@@ -582,18 +582,23 @@ class EnvironmentTests(unittest.TestCase):
             "MISE_TRUSTED_CONFIG_PATHS": "/var/lib/subspace-fleet/agents/orion/workspace:"
                                          "/var/lib/subspace-fleet/agents/orion/worktrees",
             "TMPDIR": "/tmp/ss-orion",
-            "DOTNET_ROOT": "/opt/subspace-fleet/toolchains/dotnet-root"})
-        # Without .NET, no DOTNET_ROOT; a per-user .NET has its own.
+            # .NET is per user by default: an SDK a repository's global.json pins installs into the officer's
+            # own root on first use, which a read-only shared root would refuse.
+            "DOTNET_ROOT": "/var/lib/subspace-fleet/agents/orion/.local/share/mise/dotnet-root"})
+        self.assertEqual(tools["dotnet"]["install"], "user")
+        # Without .NET, no DOTNET_ROOT; a .NET the operator marks shared uses the shared store's root.
         self.assertNotIn("DOTNET_ROOT", toolchains.officer_environment(toolchains.toolchain_config({}), "ss-orion",
                                                                        home, []))
-        personal = toolchains.toolchain_config({"dotnet": {"version": "8.0.404", "install": "user"}})
-        self.assertEqual(toolchains.officer_environment(personal, "ss-orion", home, [])["DOTNET_ROOT"],
-                         "/var/lib/subspace-fleet/agents/orion/.local/share/mise/dotnet-root")
-        # Root's installs use the shared store and the fleet's configuration only.
+        shared = toolchains.toolchain_config({"dotnet": {"version": "8.0.404", "install": "shared"}})
+        self.assertEqual(toolchains.officer_environment(shared, "ss-orion", home, [])["DOTNET_ROOT"],
+                         "/opt/subspace-fleet/toolchains/dotnet-root")
+        # Root's installs use the shared store and the fleet's configuration only, and set DOTNET_ROOT only for a
+        # shared .NET, which root installs.
         root = toolchains.root_environment(tools)
-        self.assertEqual((root["MISE_DATA_DIR"], root["MISE_GLOBAL_CONFIG_FILE"], root["HOME"], root["DOTNET_ROOT"]),
-                         ("/opt/subspace-fleet/toolchains", "/etc/subspace-fleet/toolchains.toml", "/root",
-                          "/opt/subspace-fleet/toolchains/dotnet-root"))
+        self.assertEqual((root["MISE_DATA_DIR"], root["MISE_GLOBAL_CONFIG_FILE"], root["HOME"]),
+                         ("/opt/subspace-fleet/toolchains", "/etc/subspace-fleet/toolchains.toml", "/root"))
+        self.assertNotIn("DOTNET_ROOT", root)
+        self.assertEqual(toolchains.root_environment(shared)["DOTNET_ROOT"], "/opt/subspace-fleet/toolchains/dotnet-root")
 
     def test_the_private_temporary_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -729,16 +734,16 @@ class PlanTests(unittest.TestCase):
                 lines = toolchains.plan_lines(tools, ["zsh", "clang", "libmissing-dev"], {"ss-orion": home}, previous,
                                               {"zsh": "installed", "clang": "available", "libmissing-dev": "missing"})
         text = "\n".join(lines)
-        self.assertIn(f"shared, installed by root into {shared}: node 24 [installed]; pnpm 9.12.3 [not installed]; "
-                      "dotnet 8.0.404 [not installed].", text)
+        self.assertIn(f"shared, installed by root into {shared}: node 24 [installed]; pnpm 9.12.3 [not installed].",
+                      text)
         self.assertIn("per officer, installed as each officer's user into ~/.local/share/mise (ss-orion); crew use "
-                      "their captain's: rust 1.99.0 [installed].", text)
+                      "their captain's: rust 1.99.0 [installed]; dotnet 8.0.404 [not installed].", text)
         self.assertIn("system packages, installed by apt as root: zsh [installed]; clang [available]; "
                       "libmissing-dev [missing].", text)
         self.assertIn("The install stops: no apt source on this VM offers libmissing-dev.", text)
         self.assertIn("No longer configured, and left installed: go 1.26.", text)
         self.assertIn("System packages no longer listed, and left installed: nano.", text)
-        self.assertIn(f"DOTNET_ROOT {shared}/dotnet-root.", text)
+        self.assertIn("DOTNET_ROOT ~/.local/share/mise/dotnet-root, each officer's own.", text)
 
     def test_the_proposal_for_a_person_to_read(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -752,7 +757,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(lines[0], "Toolchain proposal from harbour-api, comet-desktop. Nothing in it is installed "
                                    "until you confirm it.")
         text = "\n".join(lines)
-        self.assertIn("  [high] dotnet@8.0.404: shared (/opt/subspace-fleet/toolchains), not installed; global.json "
+        self.assertIn("  [high] dotnet@8.0.404: per user (~/.local/share/mise), not installed; global.json "
                       "accepts exactly this SDK (rollForward disable)\n      from harbour-api: global.json:4", text)
         self.assertIn("  [high] rust@1.99.0 (components=clippy,rustfmt): per user (~/.local/share/mise), not installed",
                       text)
@@ -839,7 +844,7 @@ class SetupRecordTests(unittest.TestCase):
         self.assertEqual(config["systemPackages"], ["zsh"])
         dotnet = next(row for row in record["tools"] if row["tool"] == "dotnet")
         self.assertEqual(dotnet["sources"][0]["file"], "global.json")
-        self.assertEqual(dotnet["install"], "shared")
+        self.assertEqual(dotnet["install"], "user")
         self.assertEqual(record["packages"][0]["sources"][0]["file"], ".github/workflows/ci.yml")
         self.assertEqual(record["examined"], ["harbour-api"])
         self.assertEqual([row["name"] for row in record["declined"]["tools"]], ["pnpm"])
@@ -942,7 +947,7 @@ class SetupRecordTests(unittest.TestCase):
         self.assertEqual(planned[-1]["toolchains"], {"node": "24"})
         self.assertEqual(planned[-1]["systemPackages"], ["zsh"])
         self.assertIn("toolchain proposal (dry run: not recorded):", said)
-        self.assertIn("  [high] dotnet@8.0.404: shared", output.getvalue())
+        self.assertIn("  [high] dotnet@8.0.404: per user", output.getvalue())
         self.assertIn("Already configured: zsh.", output.getvalue())
         # Nothing the dry run did is kept.
         self.assertEqual(sorted(path.name for path in self.inputs.iterdir()), [])
