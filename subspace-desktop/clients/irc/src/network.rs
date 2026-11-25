@@ -221,7 +221,7 @@ impl Network {
         let config = self.config.clone();
         self.while_waiting(connection::connect_to(&config, timeouts))
             .await?
-            .map_err(connection_failed)
+            .map_err(|error| connection_failed(error, &config.host))
     }
 
     /// The configuration with this connect's secrets, fetched while
@@ -304,14 +304,33 @@ fn exposes_login(config: &NetworkConfig, peer: IpAddr) -> bool {
     !config.tls && secrets::pending_source(config).is_some() && !peer.is_loopback()
 }
 
-fn connection_failed(error: connection::ConnectError) -> End {
+fn connection_failed(error: connection::ConnectError, host: &str) -> End {
+    use connection::ConnectError;
     if error.retryable() {
+        let error = match error {
+            ConnectError::Io(_) | ConnectError::Timeout { .. } => {
+                format!("{error}. {}", connection_help(host))
+            }
+            _ => error.to_string(),
+        };
         End::Lost {
-            error: error.to_string(),
+            error,
             registered: false,
         }
     } else {
         End::Fatal(error.to_string())
+    }
+}
+
+fn connection_help(host: &str) -> &'static str {
+    let local = host.trim_end_matches('.').eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .is_ok_and(|ip| ip.to_canonical().is_loopback());
+    if local {
+        "Check that the IRC server and any local VM or tunnel it uses are running."
+    } else {
+        "Check your network connection and connect to your organisation's private network if required. If you use Cloudflare One (WARP), refresh your Access session and complete any private-app sign-in."
     }
 }
 

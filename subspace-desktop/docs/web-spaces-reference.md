@@ -488,9 +488,10 @@ This section is for product builders. On macOS, a product can compose a
 web Space whose site is signed in with the account under
 **Settings › Account**, so the person signs in once. It is off unless a
 product composes it: no setting, manifest field or page script turns it
-on, and a build that does not compose it shows no trace of it. The in-app
-guide describes what the person sees in
-[Spaces signed in by the app](../spaces/web/help.md#spaces-signed-in-by-the-app).
+on, and a build that does not compose it has no setting, control or state
+for it. Only the in-app guide, which every build ships, mentions it, in
+[Spaces signed in by the app](../spaces/web/help.md#spaces-signed-in-by-the-app),
+which describes what the person sees in an app that includes one.
 
 The product supplies a trusted native adapter that exchanges the account
 for a session cookie the site issues, on the adapter's own HTTPS path. The
@@ -576,7 +577,7 @@ mod desk {
 | --- | --- |
 | `SessionScope::new(home)` | The address the view starts at: `https://`, a host, no credentials, query or fragment, and a path ending in `/`. The path is the prefix every page must sit under. |
 | `with_signal(route)` | A route under the home that the site sends the view to when it no longer accepts the session, such as `session/required`. |
-| `with_reserved(route)` | A route under the home, and everything under it, that the view never navigates to, such as the site's session endpoints. |
+| `with_reserved(route)` | A route under the home that the view never navigates to, such as the site's session endpoints, with the same route under a format suffix such as `.json`, and everything under either. |
 | `SessionAccount` | The account a session belongs to: its generation, which changes with another account, and whether it is still current. Implement it on a newtype around the shell's `AccountSession`. |
 | `NativeSession::new(scope, account, acquire)` | `account` reads the account signed in now, on the UI thread; `acquire` turns it into a grant, off the UI thread. |
 | `SessionGrant::new(cookie, lifetime)` | The cookie and how long it lasts: at least `MIN_SESSION_LIFETIME` (4 minutes), or the Space refuses it, and at most `MAX_SESSION_LIFETIME` (24 hours). `with_revoke` ends it at the site; calling it again replaces the earlier revocation, which then never runs. |
@@ -608,8 +609,10 @@ mod desk {
   with credentials, empty or dot segments, a backslash or `;`, and a
   percent-escape of an unreserved character, a separator, `%`, a control
   character or anything outside ASCII. Reserved routes and the signal
-  match ignoring ASCII case. Reserved routes limit navigations only: a page
-  in the scope can still `fetch` them, and the request carries the cookie.
+  match ignoring ASCII case, and a reserved route such as `session` also
+  covers `session.json` or `session.html`, which many web frameworks send
+  to the same handler. Reserved routes limit navigations only: a page in
+  the scope can still `fetch` them, and the request carries the cookie.
   A pop-up never opens a window; a web page it asks for opens in the
   default browser, without the session.
 - **Sign-in required.** While `account` returns no current account, the
@@ -632,6 +635,9 @@ mod desk {
   renewing has failed for good, the Space closes the view and says the
   session ended, with **Retry**. While a failed renewal waits 30 seconds to
   try again, a signal waits with it rather than call the adapter at once.
+  A signal that waited, or whose own renewal failed and is tried again,
+  still loads the page again, and starts the 30 seconds, once a renewal
+  succeeds.
 - **Time limits.** An attempt that takes more than 60 seconds counts as a
   temporary failure, so **Retry** always works, and a grant it returns
   later is revoked. The Space cannot stop the adapter, so a hung adapter

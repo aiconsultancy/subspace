@@ -1156,8 +1156,10 @@ are in the [change record](changes/irc-thread-status/spec.md).
 - **Trust.** A notice folds only when it replies to a message or action
   this buffer holds (in a private conversation, our own), and its
   server-set `account` tag equals the nick that request asks, ignoring
-  ASCII case. The request asks a ship: the nick its first word addresses
-  (`nick:`, `nick,` or `@nick`), or a private conversation's partner. A
+  ASCII case. A channel request can start with `@nick`, `nick:` or `nick,`.
+  A mention immediately after an introductory comma also addresses a request,
+  as in "Thanks, @pilot". Other requests can contain one distinct `@nick`
+  outside a URL. In a private conversation, the request asks its partner. A
   request whose sender's nick, or sender's `account` tag, is the addressed
   nick asks no one. Member lists play no part, so whoever holds the nick
   later, only the account named after it folds. This is the owner's rule
@@ -1587,9 +1589,9 @@ IRC shows issue references through the `issues` contract
 - **Hover cards** (`issues/tooltip.rs`) share one observed view for tile hover,
   inline-reference hover and the keyboard's focused reference. The view reads
   the hub on each draw, so `Pending` (*Loading SUB-42…*) becomes the current
-  summary after `changed`. Available summaries use the A accent or B tracker
+  summary after `changed`. Available summaries use the ordinary issue or tracker
   composition from `issues/tile/`, at `400 / REFERENCE_REM` rem. The shared
-  `reference_card::frame` supplies the card surface, state edge or outline,
+  `reference_card::frame` supplies the outlined card surface,
   padding and radius, with Kit's themed popover elevation. It is the tooltip
   view itself, with no surrounding Kit tooltip frame and no interactive
   children or focus. Pending, Unavailable, SignedOut and Failed keep plain
@@ -1625,9 +1627,8 @@ IRC shows issue references through the `issues` contract
   full line. A tracker (the summary's tracker flag) with sub-items ends with
   a small bar and **1 of 2**. A missing
   fact leaves no gap. Tiles keep their full accessible names and native
-  activation; the A and B hover cards appear on hover or reference keyboard
-  focus. Ordinary hover cards have a state edge,
-  mono key, urgent or high priority pill, state pill, two-line title and
+  activation. The cards appear on hover or reference keyboard focus. Ordinary
+  hover cards show a mono key, urgent or high priority pill, state pill, two-line title and
   optional assignment and latest-activity footer. Tracker hover cards show a
   progress bar and available pull request and due-date facts.
   Code spans and blocks do not request tiles. The additive summary builders
@@ -1723,7 +1724,7 @@ GitHub client or the PRs board.
   Nothing reaches IRC's store,
   search, state file or logs.
 - **Hover tile** (`pull_requests/tooltip.rs`, `pull_requests/tile.rs`): a
-  passive 320 px `reference_card` (accent treatment) with state edge and pill,
+  passive 320 px outlined `reference_card` with a coloured state pill,
   `repo#n`, title, branches and changed lines when known, author, review and
   check marks and the time since update from `hub.now`. Every other state is
   a note: `Loading repo#n…` while pending, otherwise **Details unavailable**.

@@ -92,7 +92,7 @@ export function createFleetForm(deps) {
       const fleet = await deps.readFleet(value.endpoint, token, signal);
       status(describeTestSuccess(fleet), "ok");
     } catch (error) {
-      status(describeTestError(error), "error");
+      status(describeTestError(error, value.endpoint), "error");
     }
   }
 

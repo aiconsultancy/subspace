@@ -46,6 +46,9 @@ pub(super) struct Live {
     retries: u8,
     /// Until when another signal means the renewal did not help.
     pub(super) returned: Option<Deadline>,
+    /// The site's signal came while renewing failed: the next renewal
+    /// returns to the page once it succeeds.
+    signal_waiting: bool,
 }
 
 impl Base {
@@ -76,7 +79,25 @@ impl Live {
             grant,
             retries: 0,
             returned,
+            signal_waiting: false,
         }
+    }
+
+    /// The renewal of this session, `signalled` when the site's signal
+    /// asks for it now, or asked while renewing failed.
+    pub(super) fn renewal(self, signalled: bool) -> Base {
+        let signalled = signalled || self.signal_waiting;
+        Base::Renewal {
+            live: self,
+            signalled,
+        }
+    }
+
+    /// The site's signal came while a failed renewal waits to try again:
+    /// the signal waits with it.
+    pub(super) fn signal_waits(mut self) -> Self {
+        self.signal_waiting = true;
+        self
     }
 
     /// A failed renewal is waiting to try again.
@@ -85,10 +106,12 @@ impl Live {
     }
 
     /// A renewal failed: try again soon if it may pass, else not at all.
-    pub(super) fn retry_later(mut self, transient: bool, now: Now) -> Self {
+    /// A signal that asked for it waits for the renewal that succeeds.
+    pub(super) fn retry_later(mut self, transient: bool, signalled: bool, now: Now) -> Self {
         let again = transient && self.retries < MAX_RENEW_RETRIES;
         self.renew = again.then(|| now.after(RENEW_RETRY));
         self.retries += u8::from(again);
+        self.signal_waiting |= signalled;
         self
     }
 }

@@ -99,6 +99,7 @@ impl WebBoard {
             Effect::Open(attempt, cookie) => self.open_view(attempt, cookie, cx),
             Effect::Install(attempt, cookie) => self.install(attempt, &cookie, cx),
             Effect::Show(attempt, url) => self.show(attempt, url, cx),
+            Effect::Discard(attempt) => self.discard(attempt),
             Effect::Renewed => self.report_renewal(cx),
             Effect::Return(url) => self.return_to(&url, cx),
             Effect::Close => self.close_view(cx),
@@ -232,6 +233,14 @@ impl WebBoard {
         self.page = Some(page);
         self.error = None;
         self.sync_shown(cx);
+    }
+
+    /// Drops the view opened for `attempt`, which never showed, with its
+    /// store.
+    fn discard(&mut self, attempt: u64) {
+        if let Some(session) = self.source.session() {
+            drop(session.take_staged(attempt));
+        }
     }
 
     fn report_renewal(&self, cx: &mut Context<Self>) {

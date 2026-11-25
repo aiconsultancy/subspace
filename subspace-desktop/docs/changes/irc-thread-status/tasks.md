@@ -20,7 +20,7 @@
 - [x] Add pure, client and headless render tests.
 - [x] Extend the disposable fixture: three requests, two in one thread, a
       question and its answer, a lookalike from another account, a lost
-      stream, a main-room final reply and one request ending while others
+      stream, a threaded final reply and one request ending while others
       work.
 - [x] Update `docs/irc.md` and the guide.
 - [x] Re-apply the change onto `main` after pull request #29 (the
