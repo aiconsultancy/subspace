@@ -173,6 +173,14 @@ def merge_options(first, second, spec):
     return merged
 
 
+def options_cover(have, want, spec):
+    """Whether a tool configured with options have already has every option want asks for."""
+    try:
+        return merge_options(have, want, spec) == have
+    except Invalid:
+        return False
+
+
 def options_label(options):
     return ", ".join(f"{key}={value}" for key, value in sorted(options.items())) or "none"
 
@@ -1686,7 +1694,9 @@ def annotate(proposal, tools, packages, homes, system_python=None, states=None):
             continue
         entry = tools.get(item["name"])
         item["where"] = entry["install"] if entry else default_install(item["name"])
-        versions = entry["versions"] if entry else []
+        # A configured version meets an item only with the options the item asks for (mise applies one set to
+        # every version of a tool): otherwise confirming it adds them, and the proposal asks.
+        versions = entry["versions"] if entry and options_cover(entry["options"], item["options"], item["name"]) else []
         if item["version"] in versions:
             item["configured"] = True
         elif meeting := [version for version in versions if accepts(item, version)]:

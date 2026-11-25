@@ -1316,19 +1316,29 @@ class SetupRecordTests(unittest.TestCase):
         config, record, output = self.run_setup("--toolchains", "rust@1.99.0")
         # The same version asked for with different options by two repositories: both sets, joined.
         self.assertEqual(config["toolchains"]["rust"], {"version": "1.99.0", "options": {"components": "clippy,rust-src"}})
+        # A repository added later asks for the same version with another component: confirming it again adds it.
+        self.config["repositories"].append({"id": "src", "url": "https://github.com/example/src.git"})
+        write_repositories(self.references / "atlas", {
+            "src": {"mise.toml": '[tools]\nrust = { version = "1.99.0", components = ["llvm-tools"] }\n'}})
+        self.run_setup()
+        config, record, output = self.run_setup("--toolchains", "rust@1.99.0")
+        self.assertIn("rust@1.99.0 is already in the toolchains; mise applies rust's options to every version, so "
+                      "every rust version now has components=clippy,llvm-tools,rust-src", output)
+        self.assertEqual(config["toolchains"]["rust"]["options"], {"components": "clippy,llvm-tools,rust-src"})
+        self.assertEqual(len([row for row in record["tools"] if row["tool"] == "rust"]), 1)
         # A repository added later pins another version with another component: the proposal says what confirming
         # it does to the version already confirmed, and confirming it keeps that version's components.
         self.config["repositories"].append({"id": "fmt", "url": "https://github.com/example/fmt.git"})
         _, record, output = self.run_setup()
-        self.assertIn("confirming this gives every rust version components=clippy,rust-src,rustfmt", output)
+        self.assertIn("confirming this gives every rust version components=clippy,llvm-tools,rust-src,rustfmt", output)
         config, record, output = self.run_setup("--toolchains", "rust@1.98.0")
+        components = "clippy,llvm-tools,rust-src,rustfmt"
         self.assertEqual(config["toolchains"]["rust"], {"version": ["1.99.0", "1.98.0"],
-                                                        "options": {"components": "clippy,rust-src,rustfmt"}})
+                                                        "options": {"components": components}})
         self.assertIn("confirmed rust@1.98.0, from fmt: rust-toolchain.toml:2; mise applies rust's options to every "
-                      "version, so every rust version now has components=clippy,rust-src,rustfmt", output)
+                      f"version, so every rust version now has components={components}", output)
         self.assertEqual({row["version"]: row["options"]["components"] for row in record["tools"]
-                          if row["tool"] == "rust"}, {"1.99.0": "clippy,rust-src,rustfmt",
-                                                      "1.98.0": "clippy,rust-src,rustfmt"})
+                          if row["tool"] == "rust"}, {"1.99.0": components, "1.98.0": components})
         # Options that cannot be joined stop setup with what to choose, and change nothing.
         record["tools"].append({"tool": "github:example/tool", "version": "1.0.0", "install": "shared",
                                 "options": {"bin_path": "bin"}, "sources": [{"by": "listed"}], "confirmed": "2026-11-01"})

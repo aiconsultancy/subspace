@@ -749,7 +749,9 @@ Debian packages:
   `filter_bins` and `features` are combined (two repositories pinning Rust
   1.99.0 with `clippy` and 1.98.0 with `rustfmt` give both versions both),
   and any other option must agree, or setup stops and says which to choose.
-  The proposal shows the result on each item before anyone confirms it.
+  The proposal shows the result on each item before anyone confirms it, and a
+  version that is configured already but without an option a repository asks
+  for is proposed again, so confirming it adds the option.
 - **Names are strict.** They end up on command lines run as root, so a tool,
   version, option or package that is not plainly a name or a version is
   refused before anything is installed.

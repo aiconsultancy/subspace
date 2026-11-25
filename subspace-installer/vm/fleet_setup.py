@@ -1267,13 +1267,18 @@ def confirm_tool(record, tool, version, today):
     changed = [item for item in existing if item["options"] != merged]
     for item in existing:
         item["options"] = merged
-    install = existing[0]["install"] if existing else proposed[0]["where"] if proposed and proposed[0].get(
-        "where") in ("shared", "user") else toolchains.default_install(tool)
     sources = [source for item in proposed for source in item["sources"]]
-    record["tools"].append({"tool": tool, "version": version, "install": install, "options": merged,
-                            "sources": list({json.dumps(source, sort_keys=True): source for source in sources}.values())
-                            or [{"by": "listed"}], "confirmed": today})
-    line = f"confirmed {tool}@{version}" + (f", from {source_text(sources)}" if proposed else ", listed by hand")
+    if any(item["version"] == version for item in existing):
+        # Confirmed already; a proposal asking for it with other options still adds them.
+        line = f"{tool}@{version} is already in the toolchains"
+    else:
+        install = existing[0]["install"] if existing else proposed[0]["where"] if proposed and proposed[0].get(
+            "where") in ("shared", "user") else toolchains.default_install(tool)
+        record["tools"].append({"tool": tool, "version": version, "install": install, "options": merged,
+                                "sources": list({json.dumps(source, sort_keys=True): source
+                                                 for source in sources}.values()) or [{"by": "listed"}],
+                                "confirmed": today})
+        line = f"confirmed {tool}@{version}" + (f", from {source_text(sources)}" if proposed else ", listed by hand")
     if changed or merged != options:
         line += (f"; mise applies {tool}'s options to every version, so every {tool} version now has "
                  f"{toolchains.options_label(merged)}")
@@ -1379,9 +1384,6 @@ def update_toolchains(args, answers):
                     lines.append(f"{tool}{'@' + version if version else ''} is not in the toolchains")
                 continue
             confirmed.add(("tool", tool, version))
-            if matching:
-                lines.append(f"{tool}@{version} is already in the toolchains")
-                continue
             lines.append(confirm_tool(record, tool, version, today))
     if args.system_packages is not None:
         for remove, name in parse_package_items(args.system_packages):
