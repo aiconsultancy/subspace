@@ -30,7 +30,13 @@ struct Env(Arc<Mutex<String>>);
 
 impl Environment for Env {
     fn var(&self, name: &str) -> Option<String> {
-        (name == "GH_TOKEN").then(|| self.0.lock().unwrap().clone())
+        match name {
+            "GH_TOKEN" => Some(self.0.lock().unwrap().clone()),
+            // A directory that never exists, so a developer's own gh login is
+            // never read.
+            "GH_CONFIG_DIR" => Some("/nonexistent/subspace-test-gh".into()),
+            _ => None,
+        }
     }
 }
 
