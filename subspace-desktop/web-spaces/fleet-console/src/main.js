@@ -733,7 +733,17 @@ function openActivity(agent, name, role) {
   view.handle = app.manager.watchActivity?.(app.manager.active, agent, {
     onEvent: (data) => view.watcher?.event(data),
     onOpen: () => view.watcher?.reopened(),
+    onDown: () => view.watcher?.disconnected(),
     onRefused: () => view.watcher?.refused(),
+    // The fleet's address or token changed: start again from the new stream.
+    onReset: () => view.watcher?.reset(),
+    // The fleet lost its token or went: nothing read from it stays on show.
+    onEnded: () => {
+      if (app.activity !== view) return;
+      view.handle = null;
+      closeActivity(true);
+      chrome.toast("Activity closed: the fleet's address or token changed.");
+    },
   });
   if (!view.handle) {
     chrome.toast("Activity needs the fleet's token.");

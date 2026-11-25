@@ -7,10 +7,18 @@
 //
 // The tree is described by plain objects (`h`), so tests can read it, then
 // mounted. Live updates rebuild only the turns and items whose `seq` changed,
-// so a selection in unchanged content survives.
+// so a selection in unchanged content survives. An item read in full that is
+// larger than 256 KiB shows in 64 KiB parts, one mounted at a time, so the
+// page stays small while every byte stays reachable.
 
-import { ACTIVITY_MESSAGES } from "./activity.js";
+import { ACTIVITY_MESSAGES, isWellFormedItem } from "./activity.js";
 import { formatBytes, formatClock, formatDuration } from "./format.js";
+import { splitUtf8 } from "./utf8.js";
+
+/** A loaded item larger than this shows in parts. */
+export const PART_THRESHOLD_BYTES = 256 * 1024;
+/** Each part holds at most this many UTF-8 bytes, split between code points. */
+export const PART_BYTES = 64 * 1024;
 
 /**
  * Control characters other than newline and tab, DEL and C1 controls, the
@@ -49,7 +57,29 @@ function txt(value) {
 }
 
 const pre = (value, cls = "") => h("pre", { class: `act-pre${cls ? ` ${cls}` : ""}` }, txt(value));
-const json = (value) => JSON.stringify(value, null, 2) ?? String(value);
+const JSON_ESCAPE = /\\(u[0-9a-fA-F]{4}|.)/g;
+const SHORT_CONTROLS = { b: "\b", f: "\f", r: "\r" };
+
+/**
+ * Indented JSON in which a hidden character in any string or key stays the
+ * character itself, so the view marks it `⟨U+XXXX⟩` as everywhere else.
+ * JSON.stringify writes C0 controls as escapes (`\u0000`, `\r`), which would
+ * read like text typed that way; those become characters again here, while
+ * a typed backslash stays escaped (`\\u0000`) and so stays distinguishable.
+ * Newlines and tabs keep their escapes, which JSON needs to read as one value.
+ */
+export function json(value) {
+  const text = JSON.stringify(value, null, 2) ?? String(value);
+  return text.replace(JSON_ESCAPE, (whole, code) => {
+    if (code in SHORT_CONTROLS) return SHORT_CONTROLS[code];
+    if (code.length === 5) {
+      const unit = Number.parseInt(code.slice(1), 16);
+      // Only controls; an escaped lone surrogate stays as written.
+      if (unit < 0x20) return String.fromCharCode(unit);
+    }
+    return whole;
+  });
+}
 
 /** A value in full: strings as text, anything else as indented JSON. */
 function valueBlock(value) {
@@ -125,13 +155,27 @@ function textItem(item) {
   ];
 }
 
+const present = (value) => value !== null && value !== undefined;
+const objectFields = (value) => (typeof value === "object" && !Array.isArray(value) ? fields(value) : [valueBlock(value)]);
+
+/** Parsed and streamed input are both shown when both came: they can differ. */
+function toolInput(item) {
+  const parsed = present(item.input);
+  const streamed = present(item.rawInput);
+  if (!parsed && !streamed) return [label("Input"), h("p", { class: "act-note" }, "(none)")];
+  return [
+    parsed ? [label("Input", streamed ? h("span", { class: "act-sub" }, " (parsed)") : null), ...objectFields(item.input)] : null,
+    streamed ? [label("Input", h("span", { class: "act-sub" }, " (as streamed)")), pre(item.rawInput)] : null,
+  ];
+}
+
 function toolItem(item) {
-  const input = item.input !== null && item.input !== undefined ? [label("Input"), ...(typeof item.input === "object" && !Array.isArray(item.input) ? fields(item.input) : [valueBlock(item.input)])] : [label("Input", h("span", { class: "act-sub" }, " (as streamed)")), pre(item.rawInput ?? "")];
+  const input = toolInput(item);
   return [
     h("div", { class: "act-head" }, h("b", { class: "mono" }, txt(item.name ?? "Tool")), item.callId ? h("span", { class: "act-sub mono" }, txt(item.callId)) : null, chip(item.status, TOOL_STATUS)),
     item.executed === false ? h("p", { class: "act-note" }, "The tool did not run.") : null,
     input,
-    item.metadata !== null && item.metadata !== undefined ? [label("Progress"), ...(typeof item.metadata === "object" && !Array.isArray(item.metadata) ? fields(item.metadata) : [valueBlock(item.metadata)])] : null,
+    present(item.metadata) ? [label("Progress"), ...objectFields(item.metadata)] : null,
     contentBlock(item.content),
     errorBlock(item.error),
   ];
@@ -139,7 +183,7 @@ function toolItem(item) {
 
 const KIND_NAMES = { step: "Step", text: "Reply", reasoning: "Reasoning", tool: "Tool call" };
 
-function pagedItem(turnId, item, full) {
+function pagedItem(turnId, item, full, part) {
   const what = item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind);
   const pages = `${item.paged.pages} ${item.paged.pages === 1 ? "page" : "pages"}, ${formatBytes(item.paged.bytes)}`;
   const shown = full?.item ?? null;
@@ -151,23 +195,78 @@ function pagedItem(turnId, item, full) {
   }
   const note =
     full.state === "loading" ? "Reading the newer version…" : full.state === "failed" ? null : full.seq < item.seq ? "A newer version is on the gateway." : `Read in full (${pages}).`;
+  const large = full.bytes > PART_THRESHOLD_BYTES;
+  // A newer version is read only on request: a running tool changes often.
+  const latest = full.state === "ready" && full.seq < item.seq;
   return [
-    itemBody(shown),
+    large ? [head, partsView(turnId, item, shown, part)] : itemBody(shown),
     note ? h("p", { class: "act-note" }, note) : null,
+    latest ? load("Load the latest") : null,
     full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the newer version: ", txt(full.error)), load("Try again")] : null,
   ];
 }
 
-function itemBody(item) {
-  if (item.kind === "step") return stepItem(item);
-  if (item.kind === "text" || item.kind === "reasoning") return textItem(item);
-  if (item.kind === "tool") return toolItem(item);
-  return [h("div", { class: "act-head" }, h("b", {}, txt(item.kind ?? "Item"))), valueBlock(item)];
+/** An item shown as the JSON it came as, with why. */
+function rawItem(title, note, value) {
+  return [h("div", { class: "act-head" }, h("b", {}, txt(title))), h("p", { class: "act-note" }, note), valueBlock(value)];
 }
 
-/** One item of a turn. `full` is the item read in full when it is paged. */
-export function itemTree(turnId, item, full = null) {
-  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full) : itemBody(item));
+function itemBody(item) {
+  if (item.kind === "unreadable") return rawItem("Item", "This item doesn't have the fields this console reads. Shown as sent.", item.raw);
+  if (!KIND_NAMES[item.kind]) return rawItem(item.kind ?? "Item", "A kind of item this console doesn't know yet. Shown as sent.", item);
+  if (!isWellFormedItem(item)) return rawItem(KIND_NAMES[item.kind], "This item doesn't have the fields this console reads. Shown as sent.", item);
+  if (item.kind === "step") return stepItem(item);
+  if (item.kind === "text" || item.kind === "reasoning") return textItem(item);
+  return toolItem(item);
+}
+
+/**
+ * An item's whole content as one text, for showing in parts: each field
+ * labelled, strings as text and anything else as JSON, nothing left out.
+ */
+export function itemDocument(item) {
+  const block = (value) => (typeof value === "string" ? value : json(value));
+  const out = [];
+  for (const [key, value] of Object.entries(item ?? {})) {
+    if (key === "content" && Array.isArray(value)) {
+      value.forEach((part, index) => out.push(`content[${index}]${part?.type === "text" ? " (text)" : ""}\n${part?.type === "text" && typeof part.text === "string" ? part.text : json(part)}`));
+    } else out.push(`${key}\n${block(value)}`);
+  }
+  return out.join("\n\n");
+}
+
+const partCache = new WeakMap();
+
+/** The parts of a large loaded item, worked out once per version read. */
+export function itemParts(item) {
+  let parts = partCache.get(item);
+  if (!parts) {
+    parts = splitUtf8(itemDocument(item), PART_BYTES);
+    partCache.set(item, parts);
+  }
+  return parts;
+}
+
+/** A large loaded item: one part at a time, with First, Previous, Next and Last. */
+function partsView(turnId, item, shown, part) {
+  const parts = itemParts(shown);
+  const at = Math.min(Math.max(0, part), parts.length - 1);
+  const go = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-activity-part": to, "data-activity-turn": turnId, "data-activity-item": item.id, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
+  const nav = h(
+    "div",
+    { class: "act-parts", role: "group", "aria-label": "Parts" },
+    go("first", "First", at === 0),
+    go("previous", "Previous", at === 0),
+    h("span", { class: "act-sub" }, `Part ${at + 1} of ${parts.length}`),
+    go("next", "Next", at === parts.length - 1),
+    go("last", "Last", at === parts.length - 1),
+  );
+  return [nav, pre(parts[at], "act-part")];
+}
+
+/** One item of a turn. `full` is the item read in full when it is paged; `part` the part shown of a large one. */
+export function itemTree(turnId, item, full = null, part = 0) {
+  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full, part) : itemBody(item));
 }
 
 /** A turn's summary line. */
@@ -197,17 +296,14 @@ export function headerTree(view, officer) {
   const messages = [];
   if (view.status === "loading") messages.push(h("p", { class: "act-note" }, view.waiting ? "Waiting for the event stream before reading activity…" : "Reading activity…"));
   if (view.status === "unavailable") messages.push(h("p", { class: "act-warn" }, ACTIVITY_MESSAGES.unavailable));
-  if (view.status === "failed") messages.push(h("p", { class: "act-warn" }, "Could not read activity: ", txt(view.error)), h("button", { class: "btn", type: "button", "data-activity-retry": "" }, "Try again"));
+  const tryAgain = () => (view.refreshing ? h("p", { class: "act-note" }, "Reading activity again…") : [view.retrying ? h("p", { class: "act-note" }, "Trying again shortly.") : null, h("button", { class: "btn", type: "button", "data-activity-retry": "" }, "Try again")]);
+  if (view.status === "failed") messages.push(h("p", { class: "act-warn" }, "Could not read activity: ", txt(view.error)), tryAgain());
   if (view.status === "ready") {
     if (view.agent && !view.agent.collected) messages.push(h("p", { class: "act-warn" }, ACTIVITY_MESSAGES.notCollected));
     else if (!view.turns.length) messages.push(h("p", { class: "act-note" }, "No turns yet. A turn appears when the officer's input is submitted."));
-    if (view.stale) {
-      messages.push(
-        h("p", { class: "act-warn" }, "Could not refresh: ", txt(view.error), ". Showing the last activity read; newer changes appear once it is read again."),
-        view.refreshing ? h("p", { class: "act-note" }, "Reading activity again…") : h("button", { class: "btn", type: "button", "data-activity-retry": "" }, "Try again"),
-      );
-    }
-    if (!officer.live) messages.push(h("p", { class: "act-note" }, "Not live: the event stream is not connected, so this may be out of date."));
+    if (view.stale) messages.push(h("p", { class: "act-warn" }, "Could not refresh: ", txt(view.error), ". Showing the last activity read; newer changes appear once it is read again."), tryAgain());
+    if (view.polling) messages.push(h("p", { class: "act-note" }, ACTIVITY_MESSAGES.polling));
+    else if (!officer.live) messages.push(h("p", { class: "act-note" }, "Not live: the event stream is not connected, so this may be out of date."));
   }
   return h(
     "header",
@@ -215,7 +311,7 @@ export function headerTree(view, officer) {
     h("button", { class: "btn act-back", type: "button", "data-activity-close": "" }, "‹ Back"),
     h("p", { class: "eyebrow" }, `${role} · Activity`),
     h("h2", { tabindex: "-1" }, txt(officer.name)),
-    h("p", { class: "meta mono" }, txt(view.agentId), view.agent?.backend ? ` · ${view.agent.backend}` : ""),
+    h("p", { class: "meta mono" }, txt(view.agentId), view.agent?.backend ? [" · ", txt(view.agent.backend)] : null),
     messages.length ? h("div", { class: "act-messages", role: "status" }, messages) : null,
   );
 }
@@ -234,7 +330,7 @@ export function mount(node, doc) {
   return element;
 }
 
-const itemVersion = (item, full) => `${item.seq}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}` : ""}`;
+const itemVersion = (item, full, part) => `${item.seq}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}|${part}` : ""}`;
 const turnVersion = (turn) => `${turn.seq}|${turn.status}|${turn.reconnects}|${turn.endedAt}|${turn.items.length === 0}`;
 
 /** Put `element` at `index` among `parent`'s children, moving it only if needed (moving drops a selection). */
@@ -258,11 +354,31 @@ export function createActivityPanel({ doc, onClose, onLoad, onRetry }) {
   /** turn ID -> {element, summary, notes, items, version, kids: Map(item ID -> {element, version})} */
   const turns = new Map();
   let headerKey = "";
+  /** The part shown of each large item, by turn and item ID. */
+  const parts = new Map();
+  let last = null;
+  const partKey = (turn, item) => `${turn}\u0000${item}`;
+
+  function movePart(button) {
+    const { activityTurn: turn, activityItem: item, activityPart: to } = button.dataset;
+    const key = partKey(turn, item);
+    const full = last?.view.full(turn, item);
+    if (!full?.item) return;
+    const count = itemParts(full.item).length;
+    const at = Math.min(parts.get(key) ?? 0, count - 1);
+    const next = { first: 0, previous: Math.max(0, at - 1), next: Math.min(count - 1, at + 1), last: count - 1 }[to] ?? at;
+    if (next === at) return;
+    parts.set(key, next);
+    update(last.view, last.officer);
+    const escape = globalThis.CSS?.escape ?? ((value) => value.replace(/["\\]/g, "\\$&"));
+    root.querySelector?.(`[data-activity-part="${to}"][data-activity-item="${escape(item)}"]`)?.focus?.();
+  }
 
   root.addEventListener("click", (event) => {
     const target = event.target;
     if (target.closest("[data-activity-close]")) onClose?.();
     else if (target.closest("[data-activity-retry]")) onRetry?.();
+    else if (target.closest("[data-activity-part]")) movePart(target.closest("[data-activity-part]"));
     else {
       const load = target.closest("[data-activity-load]");
       if (load) onLoad?.(load.dataset.activityTurn, load.dataset.activityLoad);
@@ -288,49 +404,55 @@ export function createActivityPanel({ doc, onClose, onLoad, onRetry }) {
     return entry;
   }
 
-  return {
-    root,
-    update(view, officer) {
-      const key = JSON.stringify([view.status, view.waiting, view.stale, view.refreshing && view.stale, view.error, view.agent, view.agentId, view.turns.length === 0, officer.name, officer.role, officer.live]);
-      if (key !== headerKey) {
-        header.replaceChildren(mount(headerTree(view, officer), doc));
-        headerKey = key;
+  function update(view, officer) {
+    last = { view, officer };
+    const key = JSON.stringify([view.status, view.waiting, view.stale, view.refreshing, view.retrying, view.polling, view.error, view.agent, view.agentId, view.turns.length === 0, officer.name, officer.role, officer.live]);
+    if (key !== headerKey) {
+      header.replaceChildren(mount(headerTree(view, officer), doc));
+      headerKey = key;
+    }
+    const shown = view.status === "unavailable" || (view.status === "failed" && !view.turns.length) ? [] : view.turns;
+    const keep = new Set(shown.map((turn) => turn.id));
+    for (const [id, entry] of turns) {
+      if (keep.has(id)) continue;
+      entry.element.remove();
+      turns.delete(id);
+    }
+    // Forget the part shown of items no longer read in full.
+    for (const key of parts.keys()) {
+      const [turn, item] = key.split("\u0000");
+      if (!view.full(turn, item)?.item) parts.delete(key);
+    }
+    shown.forEach((turn, index) => {
+      const entry = turnEntry(turn);
+      const version = turnVersion(turn);
+      if (version !== entry.version) {
+        entry.summary.replaceChildren(...turnSummary(turn).map((node) => mount(node, doc)));
+        entry.notes.replaceChildren(...turnNotes(turn).filter(Boolean).map((node) => mount(node, doc)));
+        entry.version = version;
       }
-      const shown = view.status === "unavailable" || (view.status === "failed" && !view.turns.length) ? [] : view.turns;
-      const keep = new Set(shown.map((turn) => turn.id));
-      for (const [id, entry] of turns) {
-        if (keep.has(id)) continue;
-        entry.element.remove();
-        turns.delete(id);
+      const ids = new Set(turn.items.map((item) => item.id));
+      for (const [id, kid] of entry.kids) {
+        if (ids.has(id)) continue;
+        kid.element.remove();
+        entry.kids.delete(id);
       }
-      shown.forEach((turn, index) => {
-        const entry = turnEntry(turn);
-        const version = turnVersion(turn);
-        if (version !== entry.version) {
-          entry.summary.replaceChildren(...turnSummary(turn).map((node) => mount(node, doc)));
-          entry.notes.replaceChildren(...turnNotes(turn).filter(Boolean).map((node) => mount(node, doc)));
-          entry.version = version;
+      turn.items.forEach((item, at) => {
+        const full = item.paged ? view.full(turn.id, item.id) : null;
+        const part = parts.get(partKey(turn.id, item.id)) ?? 0;
+        const itemKey = itemVersion(item, full, part);
+        let kid = entry.kids.get(item.id);
+        if (!kid || kid.version !== itemKey) {
+          const element = mount(itemTree(turn.id, item, full, part), doc);
+          if (kid) kid.element.replaceWith(element);
+          kid = { element, version: itemKey };
+          entry.kids.set(item.id, kid);
         }
-        const ids = new Set(turn.items.map((item) => item.id));
-        for (const [id, kid] of entry.kids) {
-          if (ids.has(id)) continue;
-          kid.element.remove();
-          entry.kids.delete(id);
-        }
-        turn.items.forEach((item, at) => {
-          const full = item.paged ? view.full(turn.id, item.id) : null;
-          const itemKey = itemVersion(item, full);
-          let kid = entry.kids.get(item.id);
-          if (!kid || kid.version !== itemKey) {
-            const element = mount(itemTree(turn.id, item, full), doc);
-            if (kid) kid.element.replaceWith(element);
-            kid = { element, version: itemKey };
-            entry.kids.set(item.id, kid);
-          }
-          place(entry.items, kid.element, at);
-        });
-        place(list, entry.element, index);
+        place(entry.items, kid.element, at);
       });
-    },
-  };
+      place(list, entry.element, index);
+    });
+  }
+
+  return { root, update };
 }

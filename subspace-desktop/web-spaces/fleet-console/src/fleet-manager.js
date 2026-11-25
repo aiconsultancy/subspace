@@ -51,8 +51,15 @@ export function createFleetManager({ entries, createClient, createLive, onChange
   let hidden = false;
   let timer = null;
   let stopped = false;
-  /** The open activity view, if any: {fleet, agent, onEvent, onOpen}. One stream carries it. */
+  /** The open activity view, if any: {fleet, agent, onEvent, onOpen, onDown, onRefused, onReset, onEnded}. One stream carries it. */
   let watch = null;
+
+  /** The fleet behind the open view lost its client or went: the view ends. */
+  function endWatch() {
+    const ended = watch;
+    watch = null;
+    ended?.onEnded?.();
+  }
 
   const apply = (id, event) => {
     const runtime = runtimes.get(id);
@@ -119,18 +126,23 @@ export function createFleetManager({ entries, createClient, createLive, onChange
     const runtime = runtimes.get(id);
     if (!runtime?.client) return;
     runtime.streaming = true;
+    // Only this runtime's stream speaks for the view: a replaced one's late answer is ignored.
+    const watching = () => runtimes.get(id) === runtime && watch?.fleet === id;
     runtime.live = createLive({
       client: runtime.client,
       agents: watch?.fleet === id ? [watch.agent] : [],
       onEvent: (event) => {
         if (event.type !== "agent-activity") apply(id, event);
-        else if (watch?.fleet === id) watch.onEvent(event.data);
+        else if (watching()) watch.onEvent(event.data);
       },
       onOpen: (agents) => {
-        if (watch?.fleet === id && agents.includes(watch.agent)) watch.onOpen();
+        if (watching() && agents.includes(watch.agent)) watch.onOpen();
+      },
+      onDown: (agents) => {
+        if (watching() && agents.includes(watch.agent)) watch.onDown?.();
       },
       onAgentsRefused: (agents, status) => {
-        if (watch?.fleet === id && agents.includes(watch.agent)) watch.onRefused?.(status);
+        if (watching() && agents.includes(watch.agent)) watch.onRefused?.(status);
       },
       onConnection: (connection) => {
         if (runtimes.get(id) !== runtime) return;
@@ -157,6 +169,7 @@ export function createFleetManager({ entries, createClient, createLive, onChange
       runtime.live?.stop();
       runtimes.delete(id);
       if (active === id) active = null;
+      if (watch?.fleet === id) endWatch();
     }
     for (const entry of next) {
       const existing = runtimes.get(entry.id);
@@ -166,7 +179,14 @@ export function createFleetManager({ entries, createClient, createLive, onChange
       }
       const wasActive = active === entry.id;
       if (existing) existing.live?.stop();
-      runtimes.set(entry.id, makeRuntime(entry, createClient, now()));
+      const runtime = makeRuntime(entry, createClient, now());
+      runtimes.set(entry.id, runtime);
+      // A new address or token: what the view read from the old one must go,
+      // before the new stream can answer. Without a token there is nothing to read.
+      if (existing && watch?.fleet === entry.id) {
+        if (runtime.client) watch.onReset?.();
+        else endWatch();
+      }
       if (wasActive) stream(entry.id);
     }
     order = next.map((entry) => entry.id);
@@ -229,21 +249,33 @@ export function createFleetManager({ entries, createClient, createLive, onChange
     /**
      * Follow one officer's activity on fleet `id`: its stream re-opens with
      * `?agent=<agent>` (never a second stream) and hands over that agent's
-     * events; `onOpen` runs each time the stream opens with it, `onRefused`
-     * when the gateway refuses the subscription (the stream carries on
-     * without it). Returns the
-     * client to read snapshots with and `stop()`, which re-opens the stream
-     * without the agent; or null when the fleet has no client.
+     * events. `onOpen` runs each time the stream opens with it, `onDown` when
+     * that attempt is gone, `onRefused` when the gateway refuses the
+     * subscription (the stream carries on without it), `onReset` when the
+     * fleet's address or token changes (the view drops what it read and waits
+     * for the new stream) and `onEnded` when the fleet loses its token or
+     * goes. Returns a client whose reads always use the fleet's current
+     * client, so none goes to an old address or with an old token, and
+     * `stop()`, which re-opens the stream without the agent; or null when the
+     * fleet has no client.
      */
-    watchActivity(id, agent, { onEvent, onOpen, onRefused }) {
+    watchActivity(id, agent, { onEvent, onOpen, onDown, onRefused, onReset, onEnded }) {
       const runtime = runtimes.get(id);
       if (!runtime?.client) return null;
-      const own = { fleet: id, agent, onEvent, onOpen, onRefused };
+      const own = { fleet: id, agent, onEvent, onOpen, onDown, onRefused, onReset, onEnded };
       if (watch && watch.fleet !== id) runtimes.get(watch.fleet)?.live?.setAgents([]);
       watch = own;
       runtime.live?.setAgents([agent]);
+      const current = () => {
+        const client = watch === own ? runtimes.get(id)?.client : null;
+        if (!client) throw new Error("The activity view no longer has a fleet to read.");
+        return client;
+      };
       return {
-        client: runtime.client,
+        client: {
+          activity: async (...args) => current().activity(...args),
+          activityItemPage: async (...args) => current().activityItemPage(...args),
+        },
         stop() {
           if (watch !== own) return;
           watch = null;

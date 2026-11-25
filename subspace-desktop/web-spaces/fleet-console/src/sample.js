@@ -2,6 +2,8 @@
 // simulation that keeps it changing by emitting the same events the live
 // stream sends. Every name, repository and host here is fictional.
 
+import { splitUtf8, utf8Length } from "./utf8.js";
+
 const M = 60_000;
 const H = 60 * M;
 const GiB = 1024 ** 3;
@@ -524,7 +526,7 @@ export function createSampleSim({ now = Date.now, random = Math.random, variant 
 
 /** Item JSON above this many UTF-8 bytes is paged, as the gateway does. */
 export const SAMPLE_PAGE_BYTES = 64 * 1024;
-const utf8 = (text) => new TextEncoder().encode(text).length;
+const utf8 = utf8Length;
 
 /** A long, invented test log: big enough to be paged. */
 function longLog() {
@@ -645,7 +647,7 @@ export function createSampleActivitySim({ agent, role = "captain", backend = "op
   function present(entry) {
     const bytes = utf8(JSON.stringify(entry));
     if (bytes <= SAMPLE_PAGE_BYTES) return entry;
-    const pages = Math.ceil(JSON.stringify(entry).length / SAMPLE_PAGE_BYTES);
+    const pages = splitUtf8(JSON.stringify(entry), SAMPLE_PAGE_BYTES).length;
     const out = { id: entry.id, seq: entry.seq, startedAt: entry.startedAt, updatedAt: entry.updatedAt, kind: entry.kind, status: entry.status, paged: { pages, bytes } };
     if (entry.kind === "tool") Object.assign(out, { callId: entry.callId, name: entry.name });
     return out;
@@ -679,9 +681,10 @@ export function createSampleActivitySim({ agent, role = "captain", backend = "op
       const entry = turns.find((turn) => turn.id === turnId)?.items.find((candidate) => candidate.id === itemId);
       if (!entry) return null;
       const text = JSON.stringify(entry);
-      const pages = Math.max(1, Math.ceil(text.length / SAMPLE_PAGE_BYTES));
-      if (!(page >= 0 && page < pages)) return null;
-      return { agent, turn: turnId, item: itemId, seq: entry.seq, page, pages, bytes: utf8(text), data: text.slice(page * SAMPLE_PAGE_BYTES, (page + 1) * SAMPLE_PAGE_BYTES) };
+      // Pages hold at most 64 KiB of UTF-8, split between code points, as the gateway's do.
+      const parts = splitUtf8(text, SAMPLE_PAGE_BYTES);
+      if (!(page >= 0 && page < parts.length)) return null;
+      return { agent, turn: turnId, item: itemId, seq: entry.seq, page, pages: parts.length, bytes: utf8(text), data: parts[page] };
     },
     /** The next change of the running turn, as `agent-activity` event data; [] when there is none. */
     tick() {

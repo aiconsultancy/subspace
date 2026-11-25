@@ -3,6 +3,8 @@
 // The only module that calls fetch. Requests never follow redirects, so the
 // token only goes to the address it was given for.
 
+import { utf8Length } from "./utf8.js";
+
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /**
@@ -51,10 +53,10 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
   const headers = { Authorization: `Bearer ${token}` };
   const url = (path) => `${endpoint}/api/v1${path}`;
 
-  async function getJson(path, signal) {
+  async function getJson(path, signal, maxBytes = 0) {
     const response = await fetchImpl(url(path), { headers: { ...headers, Accept: "application/json" }, signal, cache: "no-store", credentials: "omit", redirect: "error" });
     if (!response.ok) throw new HttpError(response.status, retryAfter(response));
-    return response.json();
+    return maxBytes ? readJsonCapped(response, maxBytes) : response.json();
   }
 
   const activityPath = (agent, query) => {
@@ -66,9 +68,9 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
   return {
     fleet: (signal) => getJson("/fleet", signal),
     /** An officer's recent turns (`V1AgentActivity`), or one turn's with `{turn}`. 404 when the gateway lacks the route or the agent or turn. */
-    activity: (agent, { turn } = {}, signal) => getJson(activityPath(agent, { turn }), signal),
-    /** One page (`V1ActivityItemPage`) of a paged item's complete JSON. */
-    activityItemPage: (agent, turn, item, page, signal) => getJson(activityPath(agent, { turn, item, page }), signal),
+    activity: (agent, { turn } = {}, signal) => getJson(activityPath(agent, { turn }), signal, MAX_SNAPSHOT_BYTES),
+    /** One page (`V1ActivityItemPage`) of a paged item's complete JSON; a body over MAX_PAGE_BODY_BYTES is refused unread. */
+    activityItemPage: (agent, turn, item, page, signal) => getJson(activityPath(agent, { turn, item, page }), signal, MAX_PAGE_BODY_BYTES),
     ship: (id, signal) => getJson(`/ships/${encodeURIComponent(id)}`, signal),
     crew: (ship, member, signal) => getJson(`/ships/${encodeURIComponent(ship)}/crew/${encodeURIComponent(member)}`, signal),
     /**
@@ -98,46 +100,126 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
   };
 }
 
+/** The most a snapshot body may be; Channels uses the same cap. */
+export const MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024;
+/** A page holds at most 64 KiB of UTF-8 data (Stargate `docs/api.md`). */
+export const PAGE_DATA_BYTES = 64 * 1024;
+/** A page's JSON body: 64 KiB of data, escaped, and its envelope. */
+export const MAX_PAGE_BODY_BYTES = 512 * 1024;
+/** The largest paged item this console reads: its view keeps no more than this loaded in all. */
+export const MAX_ITEM_BYTES = 64 * 1024 * 1024;
+
+/** A response this console refuses to read further: too large, or not the shape it asked for. */
+export class InvalidResponseError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "InvalidResponseError";
+  }
+}
+
+/** Read a JSON body, refusing it once it passes `maxBytes`, before it is decoded. */
+async function readJsonCapped(response, maxBytes) {
+  const tooLarge = () => new InvalidResponseError(`Stargate sent a response over ${maxBytes} bytes.`);
+  const declared = Number(response.headers?.get?.("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel?.().catch(() => {});
+    throw tooLarge();
+  }
+  let text;
+  if (typeof response.body?.getReader === "function") {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let size = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+    const joined = new Uint8Array(size);
+    let at = 0;
+    for (const chunk of chunks) {
+      joined.set(chunk, at);
+      at += chunk.byteLength;
+    }
+    text = new TextDecoder().decode(joined);
+  } else if (typeof response.text === "function") {
+    text = await response.text();
+    if (utf8Length(text) > maxBytes) throw tooLarge();
+  } else {
+    return response.json();
+  }
+  return JSON.parse(text);
+}
+
 /** How many times reading a paged item starts again because it changed between pages. */
 export const PAGE_RESTARTS = 8;
 
 /**
  * Read every page of a paged activity item and return its complete JSON,
- * parsed. Pages with a different `seq` belong to another version of the item,
- * and joined data whose UTF-8 length is not the page's `bytes` is incomplete,
- * so either way the read starts again from page 0. Nothing is cut: it either returns the
+ * parsed. Each page is checked as it arrives, before more is held: it must be
+ * the page asked for (agent, turn, item and index), hold at most 64 KiB, and
+ * the item's `bytes` must fit its page count and this console's limit; the
+ * data joined so far may never pass `bytes`, and the whole must equal it.
+ * Anything else is an invalid response and the read stops. Pages with a
+ * different `seq` or page count belong to another version of the item, so
+ * the read starts again from page 0. Nothing is cut: it either returns the
  * whole item or throws.
  *
- * @param {(page: number) => Promise<{seq: number, page: number, pages: number, bytes: number, data: string}>} readPage
- * @returns {Promise<{seq: number, item: object}>}
+ * @param {(page: number) => Promise<object>} readPage  one `V1ActivityItemPage`
+ * @param {{agent?: string, turn?: string, item?: string, restarts?: number, maxBytes?: number}} [expect]
+ * @returns {Promise<{seq: number, bytes: number, item: object}>}
  */
-export async function readPagedItem(readPage, restarts = PAGE_RESTARTS) {
+export async function readPagedItem(readPage, { agent, turn, item, restarts = PAGE_RESTARTS, maxBytes = MAX_ITEM_BYTES } = {}) {
+  const expect = { agent, turn, item };
   for (let attempt = 0; attempt <= restarts; attempt += 1) {
     const first = await readPage(0);
-    checkPage(first, 0);
+    checkPage(first, 0, expect);
+    if (first.bytes > first.pages * PAGE_DATA_BYTES) throw new InvalidResponseError(`The item claims ${first.bytes} bytes in ${first.pages} pages.`);
+    if (first.bytes > maxBytes) throw new InvalidResponseError(`The item is ${first.bytes} bytes, over this console's ${maxBytes}-byte limit.`);
+    let total = pageBytes(first, first.bytes);
     const parts = [first.data];
     let changed = false;
     for (let page = 1; page < first.pages; page += 1) {
       const next = await readPage(page);
-      checkPage(next, page);
+      checkPage(next, page, expect);
       if (next.seq !== first.seq || next.pages !== first.pages) {
         changed = true;
         break;
       }
+      if (next.bytes !== first.bytes) throw new InvalidResponseError(`Page ${page} of the item gives another length for the same version.`);
+      total += pageBytes(next, first.bytes - total);
       parts.push(next.data);
     }
     if (changed) continue;
-    const data = parts.join("");
-    // A short or long read is another version, or a broken one: never parse it as the item.
-    if (utf8Length(data) !== first.bytes) continue;
-    return { seq: first.seq, item: JSON.parse(data) };
+    if (total !== first.bytes) throw new InvalidResponseError(`The item's pages join to ${total} bytes, not ${first.bytes}.`);
+    let parsed;
+    try {
+      parsed = JSON.parse(parts.join(""));
+    } catch {
+      throw new InvalidResponseError("The item's pages do not join into JSON.");
+    }
+    return { seq: first.seq, bytes: first.bytes, item: parsed };
   }
   throw new Error("The item kept changing while its pages were read.");
 }
 
-const utf8Length = (text) => new TextEncoder().encode(text).length;
+/** A page's data length, refused when it passes 64 KiB or what is left of the item. */
+function pageBytes(page, left) {
+  const bytes = utf8Length(page.data);
+  if (bytes > PAGE_DATA_BYTES) throw new InvalidResponseError(`Page ${page.page} of the item holds more than 64 KiB.`);
+  if (bytes > left) throw new InvalidResponseError(`Page ${page.page} of the item runs past its length.`);
+  return bytes;
+}
 
-function checkPage(page, number) {
+function checkPage(page, number, expect) {
   const ok = page && typeof page.data === "string" && Number.isInteger(page.pages) && page.pages >= 1 && page.page === number && Number.isFinite(page.seq) && Number.isInteger(page.bytes) && page.bytes >= 0;
-  if (!ok) throw new Error(`Page ${number} of the item is not a valid page.`);
+  if (!ok) throw new InvalidResponseError(`Page ${number} of the item is not a valid page.`);
+  for (const field of ["agent", "turn", "item"]) {
+    if (expect[field] !== undefined && page[field] !== expect[field]) throw new InvalidResponseError(`Page ${number} is for another ${field}.`);
+  }
 }

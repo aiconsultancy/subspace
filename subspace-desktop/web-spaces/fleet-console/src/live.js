@@ -5,7 +5,10 @@
 //
 // It is the page's only stream for its fleet: the gateway allows few viewers.
 // Officer activity rides on it, by re-opening it with `?agent=<id>` while an
-// activity view is open and without once it closes (`setAgents`).
+// activity view is open and without once it closes (`setAgents`). `onDown`
+// tells the view each time the attempt that carried its agent is gone (a new
+// attempt begins, or the stream closes or fails), so it waits for the next
+// answer before reading its snapshot again.
 
 import { initialConnection, nextConnection } from "./connection.js";
 import { createSseParser } from "./sse.js";
@@ -18,7 +21,7 @@ export const HEALTHY_MS = 20_000;
 export const CONNECT_TIMEOUT_MS = 15_000;
 export const DETAIL_TIMEOUT_MS = 10_000;
 
-export function createLiveSource({ client, onEvent, onConnection, onOpen, onAgentsRefused, agents: initialAgents = [], now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout }) {
+export function createLiveSource({ client, onEvent, onConnection, onOpen, onDown, onAgentsRefused, agents: initialAgents = [], now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let connection = initialConnection();
   let controller = null;
   let retryTimer = null;
@@ -98,6 +101,8 @@ export function createLiveSource({ client, onEvent, onConnection, onOpen, onAgen
     const own = new AbortController();
     controller = own;
     watchdogFired = false;
+    // Whatever the last attempt answered no longer holds.
+    if (agents.length) onDown?.([...agents]);
     if (!(quiet && connection.status === "connected")) update({ type: "connecting" });
     try {
       if (!haveFleet) {
@@ -119,7 +124,10 @@ export function createLiveSource({ client, onEvent, onConnection, onOpen, onAgen
         if (controller === own && !stopped) update({ type: "healthy" });
       }, HEALTHY_MS);
       await readStream(response.body);
-      if (controller === own && !stopped) update({ type: "closed" });
+      if (controller === own && !stopped) {
+        if (agents.length) onDown?.([...agents]);
+        update({ type: "closed" });
+      }
     } catch (error) {
       if (controller !== own || stopped) return;
       if (own.signal.aborted && !watchdogFired) return;
@@ -132,6 +140,7 @@ export function createLiveSource({ client, onEvent, onConnection, onOpen, onAgen
         if (!stopped) connect(true);
         return;
       }
+      if (agents.length) onDown?.([...agents]);
       update({ type: "failed", status: error?.status, retryAfterMs: error?.retryAfterMs });
     } finally {
       if (controller === own) {
