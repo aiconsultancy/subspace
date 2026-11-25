@@ -1899,6 +1899,32 @@ class PlainNamesTests(unittest.TestCase):
             runtime.check_crew_ids(cfg)
         with patch.object(runtime, "stargate_crew_names_free", return_value=True):
             runtime.check_crew_ids(cfg)
+        # The dry run cannot read a Stargate that is not checked out yet (a release newer than the installed one):
+        # it says the install checks it, and refuses only a checkout that is there and has the rule.
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            paths = [work / "fleet.json", work / "fleet.secrets.json"]
+            for path, value in zip(paths, (self.config, self.secrets), strict=True):
+                path.write_text(json.dumps(value))
+                path.chmod(0o600)
+            ref = validate(self.config, self.secrets)["stargate"]["ref"]
+
+            def plan():
+                output = io.StringIO()
+                with patch.object(runtime, "ETC", work / "etc"), patch.object(runtime, "STATE", work / "state"), \
+                        patch.object(runtime, "SESSIONS", work / "none"), patch.object(runtime, "APP", work / "app"), \
+                        patch.object(runtime, "check_new_crew_named"), contextlib.redirect_stdout(output):
+                    runtime.main(["plan", *map(str, paths), "", "false"])
+                return output.getvalue()
+
+            self.assertIn("is not checked out here yet: the install checks", plan())
+            team = work / "app/src" / f"stargate-{ref}" / "src/coordination/crew/team.ts"
+            team.parent.mkdir(parents=True)
+            team.write_text("throw new Error('Agent IDs must match assigned names')\n")
+            with self.assertRaisesRegex(Invalid, "requires a crew member's name to match its ID"):
+                plan()
+            team.write_text("export {}\n")
+            self.assertNotIn("is not checked out here yet", plan())
         self.config["captains"][0]["crewIds"] = {"claude-9": "x"}
         with self.assertRaisesRegex(Invalid, "crewIds may give only enabled crew slots"):
             validate(self.config, self.secrets)

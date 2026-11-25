@@ -3235,7 +3235,11 @@ def main(args):
             print(officer_models_line(cfg))
             for line in names_plan(cfg):
                 print(line)
-            check_crew_ids(cfg)
+            if (APP / "src" / f"stargate-{cfg['stargate']['ref']}").is_dir():
+                check_crew_ids(cfg)
+            elif any(crew_id(worker["name"]) != worker["id"] for person in cfg["members"] for worker in person["crew"]):
+                print(f"Stargate {cfg['stargate']['ref'][:12]} is not checked out here yet: the install checks, once "
+                      "it is, that its crew plugin lets a crew member keep its installed ID under a new name.")
             print(f"Standard IRC channels: {' '.join(cfg['irc']['channels'])} (Starbase, fleet command, then one "
                   "ship channel per captain)." + ("" if cfg["irc"]["mode"] == "local" else
                                                    " On a remote server the officers create them by joining, so they "
