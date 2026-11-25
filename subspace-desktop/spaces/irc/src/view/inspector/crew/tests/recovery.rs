@@ -248,3 +248,38 @@ fn try_again_clears_a_hold_and_reads_at_once() {
     assert_eq!(state.retry_delay(), None);
     assert!(state.begin().is_some());
 }
+
+#[test]
+fn a_stale_assignment_read_still_holds_the_same_route_for_retry_after() {
+    let mut state = DetailState::new(roster("first", "Working…", 1), 0);
+    let flight = state.begin().unwrap();
+    assert!(state.update(roster("second", "Reviewing…", 2), 0));
+    state.finish(flight, Err(Error::Busy(Some(31))));
+    assert_eq!(state.begin(), None, "the new assignment must wait");
+    assert_eq!(state.retry_delay(), Some(Duration::from_secs(31)));
+    assert!(state.shown(true).1.is_none(), "the old error is not shown");
+    assert_progress(&state, "Reviewing…");
+
+    state.retry_elapsed();
+    assert_eq!(state.retry_delay(), None);
+    let follow_up = state
+        .begin()
+        .expect("read the new assignment after the hold");
+    state.finish(follow_up, Err(Error::Unreachable));
+    assert_eq!(state.begin(), None, "the hold released exactly one read");
+    assert_eq!(
+        state.retry_delay(),
+        Some(Duration::from_secs(1)),
+        "retry budget starts at zero"
+    );
+}
+
+#[test]
+fn a_reply_from_the_old_connection_does_not_hold_the_new_route() {
+    let mut state = DetailState::new(roster("first", "Working…", 1), 0);
+    let flight = state.begin().unwrap();
+    assert!(state.update(roster("second", "Reviewing…", 2), 1));
+    state.finish(flight, Err(Error::Busy(Some(31))));
+    assert_eq!(state.retry_delay(), None);
+    assert!(state.begin().is_some());
+}

@@ -145,6 +145,11 @@ impl DetailState {
             return;
         };
         if generation != self.generation {
+            // An assignment change leaves the same route in flight. A probe
+            // or connection change would already have cleared that flight.
+            if let Err(Error::Busy(Some(seconds))) = result {
+                self.wait = Some(ReadWait::Hold(Duration::from_secs(seconds)));
+            }
             return;
         }
         match result {
