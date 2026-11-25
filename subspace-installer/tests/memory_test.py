@@ -740,9 +740,9 @@ class LiveTests(unittest.TestCase):
         found = memory.kills(self.LOG)
         self.assertEqual(found, [
             {"time": "2026-01-02T03:04:05+0000", "unit": "subspace-fleet-engine-orion.service", "task": "MainThread",
-             "pid": "4242", "rss": 58593, "whole": True},
+             "pid": "4242", "rss": 58593, "whole": True, "limit": None},
             {"time": "2026-01-02T05:06:07+0000", "unit": "subspace-fleet-engine-rigel.service", "task": "cargo",
-             "pid": "5151", "rss": 20410, "whole": False},
+             "pid": "5151", "rss": 20410, "whole": False, "limit": "/system.slice/subspace-fleet-engine-rigel.service"},
         ])
 
     def test_the_live_view_shows_limits_use_differences_and_kills(self):
@@ -767,7 +767,50 @@ class LiveTests(unittest.TestCase):
         with patch.object(memory, "kernel_log", return_value=None):
             unread = memory.live_lines(units, result, state(), show={})
         self.assertIn("  atlas (subspace-fleet-engine-atlas.service): not loaded.", unread)
-        self.assertIn("could not read the kernel log", unread[-1])
+        self.assertEqual(unread[-1], "Memory: could not read the journal, so the fleet processes killed for memory "
+                                     "since boot are unknown (sudo journalctl -k -b).")
+
+    def test_the_report_says_only_what_the_kernel_and_the_journal_say(self):
+        # journalctl that fails, as without a journal or the right to read it: unknown, never "no kills".
+        failed = lambda command, **_options: subprocess.CompletedProcess(command, 1, "", "No journal files.\n")  # noqa: E731
+        self.assertIsNone(memory.kernel_log(run=failed))
+        read = lambda command, **_options: subprocess.CompletedProcess(command, 0, self.LOG, "")  # noqa: E731
+        self.assertEqual(memory.kernel_log(run=read), self.LOG)
+        # The cgroup's oom_kill count is every kill for memory, the whole VM's included: not "at its cap".
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        cgroup = Path(work.name)
+        events = cgroup / "system.slice/subspace-fleet-engine-atlas.service/memory.events"
+        events.parent.mkdir(parents=True)
+        events.write_text("low 0\nhigh 12\nmax 3\noom 2\noom_kill 2\noom_group_kill 0\n")
+        show = self.show()
+        show["subspace-fleet-engine-atlas.service"]["ControlGroup"] = "/system.slice/subspace-fleet-engine-atlas.service"
+        units = {"atlas": "subspace-fleet-engine-atlas.service"}
+        with patch.object(memory, "CGROUP", cgroup):
+            lines = memory.live_lines(units, sized(VMS[64], 1), state(), show=show, log="")
+        self.assertTrue(lines[1].endswith(", last result success, 2 processes killed for memory since it started."),
+                        lines[1])
+        # The journal names the cgroup whose limit a process met (oom_memcg): its own engine's, another's, or none.
+        log = "\n".join([
+            "2026-01-02T05:06:07+0000 example-vm kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),"
+            "cpuset=/,mems_allowed=0,oom_memcg=/system.slice/subspace-fleet-engine-rigel.service,"
+            "task_memcg=/system.slice/subspace-fleet-engine-rigel.service,task=cargo,pid=5151,uid=991",
+            "2026-01-02T06:00:00+0000 example-vm kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),"
+            "cpuset=/,mems_allowed=0,oom_memcg=/system.slice,"
+            "task_memcg=/system.slice/subspace-fleet-engine-deneb.service,task=node,pid=6161,uid=992",
+            "2026-01-02T07:00:00+0000 example-vm kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),"
+            "cpuset=/,mems_allowed=0,task_memcg=/system.slice/subspace-fleet-engine-mira.service,task=go,pid=7171,"
+            "uid=993",
+        ])
+        lines = memory.live_lines({}, sized(VMS[64], 1), state(), show={}, log=log)
+        self.assertEqual(lines[-3:], [
+            "  2026-01-02T05:06:07+0000 subspace-fleet-engine-rigel.service: cargo (pid 5151); it reached its engine's "
+            "hard cap, which kept the rest of the VM safe.",
+            "  2026-01-02T06:00:00+0000 subspace-fleet-engine-deneb.service: node (pid 6161); it reached the memory "
+            "limit of /system.slice.",
+            "  2026-01-02T07:00:00+0000 subspace-fleet-engine-mira.service: go (pid 7171); the kernel's log does not say "
+            "which memory limit it reached.",
+        ])
 
     def test_systemctl_show_is_read_per_unit(self):
         output = ("Id=subspace-fleet-engine-atlas.service\nMemoryMax=4294967296\nTasksMax=4096\n\n"

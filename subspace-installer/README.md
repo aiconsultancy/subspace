@@ -2127,7 +2127,11 @@ peak, its restarts and last result, any limit that differs from the
 installer's, the VM's swap, and every fleet process the kernel has killed
 for memory since boot: when, which engine, which process and how big, and
 whether the whole VM had run out of memory (what caps prevent) or the
-process met its engine's own cap (what caps are for).
+process met its engine's own cap (what caps are for) or another limit the
+kernel names. That list comes from the journal (`journalctl -k -b`); when
+the journal cannot be read, it says the kills are unknown. An engine's own
+count of processes killed for memory since it started is every such kill,
+whether at its cap or with the whole VM out of memory.
 
 ## Configuration reference
 

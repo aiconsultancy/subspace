@@ -881,16 +881,19 @@ def oom_events(control_group):
 
 
 def kernel_log(run=subprocess.run):
+    """The kernel's messages since boot, from the journal, or None when journalctl cannot read them."""
     try:
-        return run(["journalctl", "-k", "-b", "0", "-o", "short-iso", "--no-pager", "-q"], capture_output=True,
-                   text=True, check=False).stdout
+        done = run(["journalctl", "-k", "-b", "0", "-o", "short-iso", "--no-pager", "-q"], capture_output=True,
+                   text=True, errors="replace", check=False)
     except OSError:
         return None
+    return done.stdout if done.returncode == 0 else None
 
 
 def kills(text):
-    """The fleet's processes the kernel killed for memory, from its log: [{time, unit, task, pid, rss, whole}],
-    whole when the whole VM had run out, not just the unit's own cap."""
+    """The fleet's processes the kernel killed for memory, from its log: [{time, unit, task, pid, rss, whole,
+    limit}]. whole when the whole VM had run out; otherwise limit is the cgroup whose limit the process met, as the
+    kernel names it (oom_memcg), or None where its log does not say."""
     found, sizes = [], {}
     for line in text.splitlines():
         killed = re.search(r"Killed process (\d+) \(([^)]*)\).*?anon-rss:(\d+)kB", line)
@@ -905,7 +908,8 @@ def kills(text):
         if unit:
             found.append({"time": line.split()[0], "unit": unit, "task": values.get("task", "?"),
                           "pid": values.get("pid", "?"), "rss": None,
-                          "whole": values.get("constraint") == "CONSTRAINT_NONE" or "global_oom" in details})
+                          "whole": values.get("constraint") == "CONSTRAINT_NONE" or "global_oom" in details,
+                          "limit": values.get("oom_memcg")})
     for kill in found:
         kill["rss"] = sizes.get(kill["pid"])
     return found
@@ -940,7 +944,9 @@ def live_lines(officers, result, state, show=None, log=None):
                  f"OOMPolicy={values.get('OOMPolicy', '?')}",
                  f"restarts {values.get('NRestarts', '?')}, last result {values.get('Result', '?')}"]
         if events:
-            parts.append(f"{count(events, 'process')} killed at its cap since it started")
+            # The cgroup's oom_kill count: kills for memory of any kind, at its cap or with the whole VM out of
+            # memory. The journal, below, says which.
+            parts.append(f"{count(events, 'process')} killed for memory since it started")
         lines.append(f"  {agent_id} ({unit}): {', '.join(parts)}.")
         expected = result["limits"].get(agent_id)
         if expected:
@@ -957,7 +963,8 @@ def live_lines(officers, result, state, show=None, log=None):
                  + (f" vm.swappiness is {state['swappiness']}." if state["swappiness"] is not None else ""))
     log = kernel_log() if log is None else log
     if log is None:
-        lines.append("Memory: could not read the kernel log, so kills since boot are unknown (sudo journalctl -k -b).")
+        lines.append("Memory: could not read the journal, so the fleet processes killed for memory since boot are "
+                     "unknown (sudo journalctl -k -b).")
     else:
         events = kills(log)
         if not events:
@@ -966,7 +973,13 @@ def live_lines(officers, result, state, show=None, log=None):
             lines.append(f"Memory: the kernel killed {count(len(events), 'fleet process')} for memory since boot:")
             for event in events:
                 size = f", {gib(event['rss'])} resident" if event["rss"] is not None else ""
-                scope = ("the whole VM had run out of memory, which takes engines down with it; caps stop that"
-                         if event["whole"] else "it reached its engine's hard cap, which kept the rest of the VM safe")
+                if event["whole"]:
+                    scope = "the whole VM had run out of memory, which takes engines down with it; caps stop that"
+                elif event["limit"] and event["limit"].rstrip("/").rsplit("/", 1)[-1] == event["unit"]:
+                    scope = "it reached its engine's hard cap, which kept the rest of the VM safe"
+                elif event["limit"]:
+                    scope = f"it reached the memory limit of {event['limit']}"
+                else:
+                    scope = "the kernel's log does not say which memory limit it reached"
                 lines.append(f"  {event['time']} {event['unit']}: {event['task']} (pid {event['pid']}){size}; {scope}.")
     return lines
