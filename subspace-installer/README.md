@@ -655,14 +655,284 @@ server password and firewall identity, so a captain and its crew cannot read
 the rear admiral's or another captain's files, and the agents still cannot
 reach operator services or the cloud metadata service.
 
-The base tools include Git, Bun, a C/C++ build toolchain, and system Python with
-virtual environments. Mise installs Node 24 by default. Use `toolchains` to
-select versions of Node, Rust, Go, Python, kubectl, gh, Zig or Deno. For
-example, `"toolchains": {"node":"24","go":"1.26","rust":"stable","kubectl":"1.35"}`
-adds Go, Rust and kubectl. Use a full version to pin a tool or `false` to
-disable it. Managed tools are placed on the PATH for fleet processes and
-`fleetctl attach`. Repository-specific versions can still use the agent's own
-tool setup.
+The base tools include Git, Bun, a C/C++ build toolchain, system Python with
+virtual environments, and the [screenshot tools](#screenshots). Mise installs
+Node 24 by default; the [toolchains](#toolchains) the repositories need come
+on top.
+
+### Screenshots
+
+Agents always need to take screenshots, of web pages and of desktop apps, so
+every fleet VM gets the means in its base install, whatever its toolchains:
+
+- **A virtual display**: Xvfb (with `xvfb-run` and `xauth`) and working
+  keyboard maps (`x11-xkb-utils`, whose `xkbcomp` Xvfb needs to start, and
+  `xkb-data`), with basic fonts (DejaVu, Liberation, FreeFont, Noto colour
+  emoji and the X core fonts). A desktop app runs under
+  `xvfb-run -a -s "-screen 0 1280x800x24" <app>`.
+- **A headless browser**: Playwright's Chromium and its headless shell, at the
+  revision the pinned Playwright names, installed by root into
+  `/opt/subspace-fleet/browsers`. Its shared libraries come from the
+  distribution's packages, never from Playwright's `--with-deps`.
+- **The Playwright command line**: `playwright` on every officer's and crew
+  member's `PATH` (`/opt/subspace-fleet/bin/playwright`), the pinned
+  Playwright run by a pinned Node from the shared toolchain store, pointed at
+  those browsers. Officers and crew have no outbound network to download a
+  browser, so it never does: `playwright screenshot https://example.com
+  shot.png`, or `playwright screenshot --full-page` for a whole page.
+
+Every version is pinned in one place,
+[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright
+(with its `package-lock.json`, so `npm ci` checks each package's integrity
+hash and runs no package scripts), the Chromium revision that Playwright
+names, the Node that runs it, and the distribution packages for Ubuntu
+24.04 and Debian 12 on amd64 and arm64. An upgrade is a deliberate change
+there, then `npm install --package-lock-only --ignore-scripts` in that
+directory. The installer's dry run says what a run adds, so an existing
+fleet gains the tools on its next run and its dry run says so. A package
+apt does not offer, or a browser download that fails, is reported and does
+not stop the install; the next run tries again.
+
+After every install, the installer checks that a crew member can take one
+screenshot of a local page: as the user of a captain with crew, with its
+tool environment, under `xvfb-run`. It prints `Screenshot check ... PASS` or a
+`WARNING` with what failed, and never fails the install.
+
+A repository's own Playwright downloads its own browsers into the officer's
+`~/.cache/ms-playwright`, which needs network the lockdown does not give
+officers; one pinned to this Playwright version can use the installed
+browsers with `PLAYWRIGHT_BROWSERS_PATH=/opt/subspace-fleet/browsers`.
+
+To do without them, set `"screenshots": false` in `fleet.json` (on a VM set
+up with `subspace-setup`, `/root/fleet/fleet.json`, which setup keeps) and run
+the installer or `sudo subspace-setup` again. Nothing is removed; to remove
+what an earlier run installed, `sudo rm -rf /opt/subspace-fleet/playwright
+/opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright` (the
+distribution packages stay).
+
+### Toolchains
+
+`toolchains` in `fleet.json` names the tools the fleet's repositories need,
+by [mise](https://mise.jdx.dev) tool specification, and `systemPackages` the
+Debian packages:
+
+```json
+"toolchains": {
+  "node": ["22.11.0", "24"],
+  "dotnet": "8.0.404",
+  "pnpm": "9.12.3",
+  "rust": { "version": "1.99.0", "options": { "components": "clippy,rustfmt" } },
+  "cargo:cargo-nextest": "0.9.100",
+  "github:example/release-tool": "2.4.0",
+  "conda:openssl": "3.4.0"
+},
+"systemPackages": ["zsh", "clang", "pkg-config", "libssl-dev"]
+```
+
+- **A tool** is a plain mise name (`node`, `dotnet`, `terraform`) or a
+  backend and a name: `aqua:`, `asdf:`, `cargo:`, `conda:`, `dotnet:`, `gem:`,
+  `github:`, `gitlab:`, `go:`, `npm:`, `pipx:`, `ubi:` or `vfox:`. Its value is
+  a version or channel (`24`, `1.99.0`, `stable`, `latest`), a list of up to
+  eight, `false` (only useful to turn off the default Node), or an object with
+  `version`, optional `install` (`shared` or `user`, below) and optional
+  `options`. The first version is the default where a repository pins none.
+- **Options** are mise tool options and apply to every version of the tool.
+  The installer passes `components`, `targets`, `profile`, `bin`, `bin_path`,
+  `exe`, `rename_exe`, `asset_pattern`, `matching`, `version_prefix`,
+  `filter_bins`, `runtime`, `features`, `default-features`, `crate`, `locked`
+  and `channel`, and refuses any other, such as `postinstall` or
+  `install_env`: root installs the shared tools, and no setting may make it
+  run a command. Each is checked for what it is for: `bin`, `exe` and
+  `rename_exe` are file names, never paths; `bin_path` is a directory inside
+  the tool's install directory (relative, without `.` or `..`); `components`,
+  `targets`, `filter_bins` and `features` are names separated by commas;
+  `profile` is `minimal`, `default` or `complete`; `locked` and
+  `default-features` are `true` or `false`; the rest are plain names (a
+  `channel` is a name, never an address). Detection reports an option it
+  cannot carry over in its "could not determine" list. Since mise applies one
+  set of options to every version of a tool, confirming a version whose
+  options differ from the tool's joins them: `components`, `targets`,
+  `filter_bins` and `features` are combined (two repositories pinning Rust
+  1.99.0 with `clippy` and 1.98.0 with `rustfmt` give both versions both),
+  and any other option must agree, or setup stops and says which to choose.
+  The proposal shows the result on each item before anyone confirms it, and a
+  version that is configured already but without an option a repository asks
+  for is proposed again, so confirming it adds the option.
+- **Names are strict.** They end up on command lines run as root, so a tool,
+  version, option or package that is not plainly a name or a version is
+  refused before anything is installed.
+- **Packages are only ever installed.** A package name must be one apt knows
+  exactly, with no version (`=`), release (`/`), architecture (`:`) or
+  pattern, and never ending in `-`, which `apt-get install` reads as "remove
+  this package". apt runs from `/` with `--no-remove`, so it stops rather than
+  remove anything to make room.
+- Existing fleets' values, such as `{"node":"24","go":"1.26","rust":"stable"}`,
+  keep their meaning.
+
+**What installs where.**
+
+| What | Installed by | Where | Who sees it |
+| --- | --- | --- | --- |
+| `systemPackages` | root, with apt | the system | everyone |
+| A shared tool (the default) | root, with mise, as explicit `tool@version` arguments, from `/opt/subspace-fleet` | `/opt/subspace-fleet/toolchains`, the shared store | every officer and crew member, through mise's system data directory |
+| A per-user tool: `rust`, `dotnet` and `yarn`, and the tools of backends that run third-party code while they install (`cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:`, `conda:`), by default; or `"install": "user"` | each officer's Linux user, with mise, as explicit `tool@version` arguments, from its home | the officer's own `~/.local/share/mise` | that officer and, since crew run as their captain's user, its crew |
+
+Neither install runs mise, a package manager or anything else inside an
+agent's checkout, so no repository's configuration reaches root. Rust is per
+user because rustup keeps its toolchains in the user's home and installs a
+repository's pinned toolchain and components when they are first used, which a
+read-only shared store cannot; `cargo:` tools build with that Rust.
+
+**Install-time code never runs as root by default.** `cargo:` runs build
+scripts, `npm:` lifecycle scripts, `gem:` native extension builds, `pipx:`
+package builds, `asdf:` and `vfox:` plugin scripts, and `conda:` packages may
+carry link scripts, all from third parties. Their tools install as each
+officer's user. Root's mise has those backends disabled
+(`MISE_DISABLE_BACKENDS`, with `pypi:` too), so a plain tool name that mise's
+registry resolves to one of them, such as a tool published only on npm, fails
+as root instead of running its code, and the install stops saying so; give it
+`"install": "user"` (Yarn, which the registry installs with a plugin or npm,
+is per user by default). In mise's registry, `azure-cli`, `gcloud`, `lua`,
+`php`, `playwright`, `poetry`, `prettier`, `trunk`, `turbo` and `vercel` are
+among them. To install
+such a tool once for the whole fleet as root, mark it explicitly:
+`"npm:@example/cli": {"version": "1.2.0", "install": "shared"}`, which also
+enables that backend for root's installs. Detection never proposes `shared`
+for them; only the operator can mark it, in `fleet.json`.
+
+**.NET is per user too.** The `dotnet` host finds SDKs in one root,
+`DOTNET_ROOT`, and nowhere else, so every SDK must be in the same root for
+`global.json` to choose among them, and an SDK a repository pins that the
+fleet has not got installs into that root on first use. Each officer's root is
+its own, `~/.local/share/mise/dotnet-root`, which it can write. A .NET marked
+`"install": "shared"` goes into `/opt/subspace-fleet/toolchains/dotnet-root`
+instead, once for the fleet, but then an SDK a repository pins that the
+fleet has not got cannot install (officers cannot write the shared root):
+confirm every SDK the repositories pin. The installer never removes a tool or
+package taken off the list; the dry run names them as left installed. The
+weekly tools service updates shared tools as root and per-user tools as each
+officer, within their configured versions.
+
+**The environment officers and crew run their tools in.** Each OpenCode
+engine, and the gateway of a Claude Agent SDK officer, which runs that
+officer's tools, gets:
+
+- a mise data directory of its own, `~/.local/share/mise`, with its shims first
+  on `PATH`, then the shared store's shims, then `/opt/subspace-fleet/bin`;
+- the shared store as mise's system data directory (`MISE_SYSTEM_DATA_DIR`) and
+  `/etc/subspace-fleet/toolchains.toml`, rendered from `toolchains`, as mise's
+  system configuration, so every configured tool is the default where a
+  repository pins nothing else;
+- mise configuration trusted in its workspace and its crew's worktrees (the
+  rear admiral's: its workspace and reference checkouts), so a repository's
+  own `mise.toml` applies there, and a version it pins that the fleet has not
+  got installs into the officer's own data directory on first use;
+- a private temporary directory, `TMPDIR=/tmp/ss-<id>`, mode `0700`, which the
+  engine makes in its service's private `/tmp`: tests that drive Git fail
+  with a temporary directory inside the home;
+- `DOTNET_ROOT` when a .NET SDK is configured: its own
+  `~/.local/share/mise/dotnet-root`, or the shared store's for a .NET marked
+  shared.
+
+The separation between officers is unchanged: each officer's data directory
+lives in its own home (mode `0700`), and crew share their captain's.
+
+**Working the list out from the repositories.** `subspace-setup` asks: derive
+the toolchains from the repositories, list them, or none ([INSTALL.md](../INSTALL.md#decide-with-the-user),
+question 20).
+
+- `--toolchains derive`: once the run has cloned the repositories, setup reads
+  them on the VM, private ones included, from the rear admiral's reference
+  checkouts, and prints a proposal. Nothing in it is installed until someone
+  confirms it.
+- `--toolchains node@22.11.0,pnpm@9.12.3` and `--system-packages zsh,clang`
+  confirm items, from a proposal or by hand. `--toolchains=-pnpm@9.12.3` or
+  `--system-packages=-zsh` takes one off the list (with `=`, since the value
+  starts with a hyphen).
+- `--toolchains none`, the default, proposes nothing.
+- `sudo subspace-setup toolchains` shows what is confirmed, where each item
+  came from, what was declined and what waits for an answer;
+  `sudo subspace-setup toolchains detect` proposes now, `--all` reads every
+  repository again, and `--json` prints the proposal as JSON for an agent.
+  With the fleet installer alone, `sudo /opt/subspace-fleet/lib/toolchains.py
+  detect` prints the same proposal.
+
+Detection reads files as data. It never runs mise, a package manager, Git or
+anything else from a repository, and skips dependency and build directories
+and files over 1 MiB. It never follows a symbolic link, at any component of a
+path, even while the mirror service refreshes the checkout: it opens each
+directory relative to the one it already holds open and each file relative to
+its directory. A repository's files are less trusted than the operator, so
+nothing in them can stop setup: a file detection cannot read is listed under
+"could not determine", and if detection fails altogether, setup says so and
+carries on to the lockdown. Its sources, most confident first:
+
+| Confidence | Source | Proposes |
+| --- | --- | --- |
+| high | `mise.toml` and mise's other file names, at any depth; asdf's `.tool-versions` | each tool and version, with the options above |
+| high | `rust-toolchain`, `rust-toolchain.toml` | Rust's channel, components and targets |
+| high | `global.json` | the SDK, honouring `rollForward`: `disable` and the patch policies the exact SDK, `latestFeature` the minor version (`8.0`), `latestMinor` and `latestMajor` the major |
+| high | `packageManager` (and `volta`) in `package.json` | an exact pnpm, Yarn or Bun |
+| high | version files: `.node-version`, `.nvmrc`, `.python-version`, `.ruby-version`, `.terraform-version`, `.go-version` and others | that version |
+| medium | `engines` in `package.json`, `go.mod`, `requires-python` in `pyproject.toml` | a request whose installed version meets the range: mise installs the newest version a prefix names, so `>=22.11.0 <22.12.0` proposes `22.11`, never `22` |
+| medium | CI workflows: set-up actions with their `with:` keys, and `apt-get install` lines | that tool and version; those packages |
+| low | documentation: `apt-get install` in code blocks of READMEs, install and contributing guides and `docs/` | those packages, proposed only |
+
+A version belongs to the `uses:` of its own workflow step, wherever `with:`
+sits in the step; `jdx/mise-action`'s `version:` is mise's own. Workflows are
+read with a small YAML reader (the VM's Python has no YAML module) that
+handles block and flow collections (`with: {version: '9.12.3'}`), quoted
+keys and values, and literal and folded (`run: >`) block scalars. A workflow
+that uses what it does not read, such as anchors, aliases, tags or merge
+keys, is listed under "could not determine" with the line, since requirements
+there may be missing from the proposal. A range or
+prefix that another proposed version meets is joined to it, with both
+sources, so `engines: {"node": ">=20"}` beside a `.tool-versions` pin of
+`22.11.0` proposes that one version; one that a configured version (or, for
+Python, the system's) meets is listed as already configured.
+
+Each item says its confidence, every file and line it came from, where it
+would be installed and whether it is already. The proposal then lists what
+detection could not determine: repositories it cannot read, versions from a
+matrix, a secret or an expression, Docker-only steps and Compose services,
+licensed builds, jobs for macOS or Windows, and tests that need a database. It
+ends with the setup command that confirms every high and medium item, for the
+person to edit; documentation-only items are left out of it.
+
+**Re-runs.** Setup records what was confirmed in `/root/fleet/toolchains.json`,
+each item with its source and date, and writes `toolchains` and
+`systemPackages` in `fleet.json` from it. A fleet's first run under this
+installer records `fleet.json`'s toolchains as they are. Later runs:
+
+- keep every confirmed item; one taken out of `fleet.json` by hand is kept,
+  with a line saying how to remove it, and one added by hand is recorded. A
+  hand edit is a difference from what setup last wrote into `fleet.json`,
+  which the record keeps, so a run that stopped between writing the record
+  and writing `fleet.json` is finished by the next, never undone by it;
+- propose only from repositories added since the last answered proposal;
+- record a proposal's unconfirmed items as declined once it is answered, and
+  never propose them again unless `toolchains detect --all` asks. A proposal
+  with nothing to confirm, because everything in it is configured already or
+  named only by documentation, counts as answered at once, and says so.
+
+**Dry run.** `--dry-run` lists each tool with where it goes and whether it is
+installed, each system package with whether apt has it, what is no longer
+configured (and stays installed), and the officers' environment. Setup's dry
+run also prints the proposal when the repositories are already cloned.
+
+**Checking that the tools work.** `--verify-toolchains`, on `subspace-setup`
+or the fleet installer, runs each repository's basic check after installing,
+as a crew member would: as its captain's Linux user, in a crew worktree, with
+the engine's environment. It asks each tool the repository's files name for
+its version (`node --version`, `dotnet --version`, `rustc --version`, ...) in
+the directory of the file that names it, so `global.json`, `rust-toolchain`
+and the repository's mise files resolve as they will for the crew, and
+compares that version with what the file asks for: a tool that runs at
+another version fails, and one the system already provides, such as Python
+for a `requires-python`, passes when its version meets the request. Then it
+runs the repository's own `check`, if `fleet.json` gives one (`"check": "make
+check"` on the repository). It prints pass or fail per repository, with every
+failure, and never fails the install.
 
 ### Channels
 
@@ -2145,7 +2415,7 @@ whether at its cap or with the whole VM out of memory.
 | `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model`, `effort` and `extraPermissions`, apply to one. Explicit OpenCode V2 rules in `permissions` replace the starter policy; rules in `extraPermissions` (fleet, role and officer, appended in that order) extend whichever applies. Each rule has `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`, as for a fleet installed before the setting; `subspace-setup` and `fleet.example.json` give a new fleet `delegate`. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
-| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
+| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions), and an optional `check` (one command line, at most 300 characters) that `--verify-toolchains` runs ([Toolchains](#toolchains)). The ID, URL and visibility are fixed once installed; the description, tracker and check may change. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<id>` for a captain (`#<slug>-<id>` with fleet-prefixed names). Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
@@ -2154,7 +2424,9 @@ whether at its cap or with the whole VM out of memory.
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
 | `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
-| `toolchains` | Mise versions. Defaults to Node 24 plus the base OS tooling. |
+| `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust`, `dotnet` and `yarn` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
+| `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
+| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots): Xvfb with keyboard maps, fonts, and Playwright with its Chromium. `false` installs nothing for them and leaves in place what an earlier run installed. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap), or `auto` for the installer's own value. Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. `localApi: true` says the Subspace API and its PostgreSQL run on this VM, so the sizing leaves them their room; `subspace-setup` sets it whenever it runs the API here. |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
@@ -2297,7 +2569,8 @@ To change an assignment, also update any fleet configs that still claim it.
 
 The mirror service refreshes public refs and the rear admiral's reference
 checkouts. It leaves active captain and crew branches in place. The tool
-service updates Mise packages within their configured versions or channels.
+service updates the [toolchains](#toolchains) within their configured versions
+or channels: the shared ones as root, the per-user ones as each officer.
 The prune service vacuums archived fleet service journals and Git records of
 missing worktrees. Existing worktree directories and journals outside the
 fleet's namespace are retained. Set any calendar to `false` to disable its
@@ -2351,6 +2624,13 @@ setting together before it changes the fleet, in the dry run and the real
 run alike, so when an upgrade introduces several new settings at once and
 one is refused, none of them is applied.
 
+- **Screenshot tools on every fleet VM.** The next run of an existing fleet
+  installs the [screenshot tools](#screenshots): Xvfb, `x11-xkb-utils`,
+  fonts and the browser's libraries from apt, Node 24 into the shared store
+  if it has not got that version, Playwright into `/opt/subspace-fleet/playwright`
+  and its Chromium into `/opt/subspace-fleet/browsers` (several hundred
+  megabytes), and `playwright` on the officers' `PATH`. The dry run lists
+  what it adds. `"screenshots": false` in `fleet.json` leaves them out.
 - **Memory limits and swap.** The upgrade gives every officer's engine
   [memory and task limits](#memory-limits-and-swap) sized for the VM, with
   `OOMPolicy=continue`, and restarts the engines with them, as any changed
@@ -2396,6 +2676,55 @@ one is refused, none of them is applied.
 - **An existing PostgreSQL** is a `subspace-setup` setting, kept in its
   answers; it changes nothing in the fleet installer's inputs and combines
   with any of the above.
+- **Toolchains and the engine environment.** A re-run gives every OpenCode
+  engine, and every Claude Agent SDK officer's gateway, the
+  [toolchain environment](#toolchains): its own mise data directory, the shared
+  store as mise's system data directory, trusted mise configuration in its
+  workspace and worktrees, `TMPDIR=/tmp/ss-<id>` and, with .NET, `DOTNET_ROOT`.
+  The engine units, and a Claude Agent SDK officer's gateway unit, no longer
+  set `PATH` and mise's variables themselves; their settings files do.
+  `toolchains` values keep their meaning, with one change: `rust` (and any
+  `cargo:` tool) now installs per officer, so the first run installs it once
+  for each officer's user, and a shared copy in `/opt/subspace-fleet/toolchains`
+  stays there unused (set `"install": "shared"` to keep using it). A fleet set up with
+  `subspace-setup` records its toolchains on the next run, in
+  `/root/fleet/toolchains.json`, and proposes nothing unless it asks with
+  `--toolchains derive`.
+
+  **A fleet whose tools were installed by hand.** Write what is installed into
+  the configuration, and the installer adopts it without reinstalling: mise
+  skips a `tool@version` it finds installed in the shared store or in the
+  officer's `~/.local/share/mise`, and apt skips an installed package. Then
+  take away the hand-made engine environment, which the installer's replaces,
+  before the run that restarts the engines:
+
+  ```sh
+  sudo ls /opt/subspace-fleet/toolchains/installs     # the shared tools, one directory per version
+  sudo ls /var/lib/subspace-fleet/agents/<id>/.local/share/mise/installs   # an officer's own
+  sudo subspace-setup --dry-run --toolchains derive   # what the repositories ask for, and what is installed
+  sudo subspace-setup --dry-run --toolchains 'node@22.11.0,dotnet@8.0.404,pnpm@9.12.3,rust@1.99.0' \
+    --system-packages zsh,clang,pkg-config            # each item should say installed
+  systemctl cat 'subspace-fleet-engine-*.service'     # shows each drop-in and the ExecStart it sets
+  sudo rm /etc/systemd/system/subspace-fleet-engine-<id>.service.d/<the hand-made one>.conf
+  sudo systemctl daemon-reload
+  sudo subspace-setup --toolchains 'node@22.11.0,dotnet@8.0.404,pnpm@9.12.3,rust@1.99.0' \
+    --system-packages zsh,clang,pkg-config
+  ```
+
+  Remove only the drop-ins, and the wrapper script one of them names, that set
+  the engines' `PATH`, mise variables, `TMPDIR` or `DOTNET_ROOT` or replace
+  their `ExecStart`; a drop-in left in place overrides the installer's
+  environment. Use the versions the installed directories show, exactly: a
+  request such as `22` where `22.11.0` is installed may install a newer 22. A
+  tool installed by hand into another directory than these is installed again.
+  .NET is per user by default: a .NET SDK installed by hand into the shared
+  store stays in use only if `fleet.json` marks it shared
+  (`"dotnet": {"version": "8.0.404", "install": "shared"}`, then `sudo
+  subspace-setup`, which records the change); otherwise each officer installs
+  its own.
+  With the fleet installer alone, write the same into `toolchains` and
+  `systemPackages` in `fleet.json` and run `sudo ./install.sh upgrade --config
+  ~/fleet.json --dry-run` first.
 - **Captain policies.** A fleet without `captainTools` keeps the standard
   policy. Captains with crew may now read their crew's worktrees, and with a
   hosted API every officer may run `subspace-request`. A delegate fleet's
@@ -2515,8 +2844,13 @@ the container and checks rule generation otherwise. For the offline checks,
 run `python3 -B subspace-installer/tests/policy_test.py`,
 `python3 -B subspace-installer/tests/sessions_test.py`,
 `python3 -B subspace-installer/tests/setup_test.py`,
-`python3 -B subspace-installer/tests/memory_test.py` and
-`python3 -B subspace-installer/tests/medical_test.py`.
+`python3 -B subspace-installer/tests/memory_test.py`,
+`python3 -B subspace-installer/tests/medical_test.py` and
+`python3 -B subspace-installer/tests/toolchains_test.py` (Python 3.11 or
+later: detection reads TOML). The last builds small fixture repositories of
+the kinds the toolchain detection must read, and checks the proposal,
+including that a workflow step's `with: version:` belongs to that step's
+`uses:`.
 
 ## Licence
 
