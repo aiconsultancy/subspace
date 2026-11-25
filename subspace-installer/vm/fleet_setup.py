@@ -423,9 +423,10 @@ def gather(args, saved):
             answers["toolchains"] = "list"
     elif "toolchains" not in answers:
         if interactive and not saved and repositories:
+            # The default is the documented one, none, as for unattended runs (INSTALL.md, question 20).
             choice = prompt("Toolchains the repositories need: derive (setup reads them after cloning and proposes "
-                            "what they need, for you to confirm), none, or tools as TOOL@VERSION,...", "derive",
-                            interactive) or "derive"
+                            "what they need, for you to confirm), none, or tools as TOOL@VERSION,...", "none",
+                            interactive) or "none"
             if choice not in ("derive", "none"):
                 args.toolchains, choice = choice, "list"
             answers["toolchains"] = choice

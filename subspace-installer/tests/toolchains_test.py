@@ -1257,6 +1257,22 @@ class SetupRecordTests(unittest.TestCase):
                      "toolchains": "derive", "crew": {"claude": 0, "codex": 0}, "operator": "operator",
                      "officerModels": {}}
             self.assertEqual(fleet_setup.gather(args, saved)["toolchains"], "derive")
+            # Asked interactively, pressing Enter gives the documented default, none.
+            args = fleet_setup.parse_args(["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                                           "--operator", "operator", "--repositories",
+                                           "https://github.com/example/project.git"])
+            asked = []
+
+            def prompt(label, default=None, interactive=True):
+                if label.startswith("Toolchains"):
+                    asked.append(default)
+                    return default
+                return {"Crew per captain using Claude models": "0"}.get(label, default)
+            with patch.object(fleet_setup.sys.stdin, "isatty", return_value=True), \
+                    patch.object(fleet_setup, "prompt", side_effect=prompt), \
+                    patch.object(fleet_setup, "yes_no", side_effect=lambda label, default, interactive: default):
+                self.assertEqual(fleet_setup.gather(args, {})["toolchains"], "none")
+            self.assertEqual(asked, ["none"])
 
 
 if __name__ == "__main__":
