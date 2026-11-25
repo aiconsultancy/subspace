@@ -169,6 +169,8 @@ struct SearchData {
 #[serde(rename_all = "camelCase")]
 struct Repository<T> {
     issue_or_pull_request: Option<T>,
+    #[serde(flatten)]
+    merge_settings: pull_request_writes::MergeSettings,
 }
 
 #[derive(Deserialize)]
@@ -293,7 +295,6 @@ mod agent_tools_tests {
 
 impl Client {
     /// Capture one credential and verify that it owns the requested login.
-    // qual:api
     pub fn bind_read(&self, login: &str) -> Result<BoundRead, Error> {
         BoundRead::bind(self, login)
     }
@@ -644,7 +645,7 @@ impl Client {
         let variables = json!({ "owner": item.owner, "name": item.name, "number": item.number });
         let data: RepositoryData<RawDetail> =
             self.graphql(Some(login), &queries::detail_query(), variables, false)?;
-        detail_from_data(data)
+        detail_from_data(data, login)
     }
 
     /// The detail of `key` (`owner/name#number`).
@@ -699,17 +700,24 @@ impl Client {
         event: ReviewEvent,
         body: &str,
     ) -> Result<GhItemDetail, Error> {
-        check_login(login)?;
         let item = check_key(key)?;
         let body = check_review_body(event, body)?;
-        let subject = self.subject(login, &item)?;
+        let account = self.bind_read(login)?;
+        let variables = json!({ "owner": item.owner, "name": item.name, "number": item.number });
+        let data = account.graphql(queries::SUBJECT_QUERY, variables)?;
+        let data: RepositoryData<Subject> =
+            serde_json::from_value(data).map_err(|_| unexpected("response"))?;
+        let subject = data
+            .repository
+            .and_then(|repository| repository.issue_or_pull_request)
+            .ok_or_else(not_found)?;
         if subject.typename != "PullRequest" {
             return Err(invalid("Reviews apply only to pull requests."));
         }
         let body = (!body.is_empty()).then_some(body);
         let variables = json!({ "id": subject.id, "event": event.as_str(), "body": body });
-        self.graphql_value(Some(login), queries::REVIEW_MUTATION, variables, false)?;
-        self.load_detail(login, &item)
+        account.graphql(queries::REVIEW_MUTATION, variables)?;
+        account.item(key)
     }
 
     /// The repository's default branch, which a cloud agent task branches
@@ -734,6 +742,17 @@ impl Client {
     // qual:api - Consumed by app crates through the Framework facade.
     pub fn close_pull_request(&self, login: &str, key: &str) -> Result<(), Error> {
         pull_request_writes::close(self, login, key)
+    }
+
+    /// Merge exactly the head the viewer confirmed, using the selected account.
+    // qual:api (used by the desktop PRs Space)
+    pub fn merge_pull_request(
+        &self,
+        login: &str,
+        key: &str,
+        target: &model::MergeTarget,
+    ) -> Result<(), Error> {
+        pull_request_writes::merge(self, login, key, target)
     }
 
     /// Comments on an issue or pull request; returns the fresh detail.
@@ -979,12 +998,13 @@ impl Client {
     }
 }
 
-fn detail_from_data(data: RepositoryData<RawDetail>) -> Result<GhItemDetail, Error> {
-    let node = data
-        .repository
-        .and_then(|repository| repository.issue_or_pull_request)
-        .ok_or_else(not_found)?;
-    Ok(raw::to_detail(&node))
+fn detail_from_data(data: RepositoryData<RawDetail>, login: &str) -> Result<GhItemDetail, Error> {
+    let repository = data.repository.ok_or_else(not_found)?;
+    let node = repository.issue_or_pull_request.ok_or_else(not_found)?;
+    let mut detail = raw::to_detail(&node);
+    detail.merge_target = repository.merge_settings.target(&node, &detail.item);
+    detail.viewer_approved = raw::viewer_approved(&node, login);
+    Ok(detail)
 }
 
 /// Match a saved account using gh's spelling, else detect the first EMU login.

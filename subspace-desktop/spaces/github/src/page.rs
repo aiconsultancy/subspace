@@ -105,16 +105,22 @@ impl Github {
 
     /// The open pull request's path, then the review actions its account
     /// may take.
-    fn item_tools(&self, toolbar: Toolbar, item: &GhItem, cx: &App) -> Toolbar {
+    fn item_tools(&self, toolbar: Toolbar, item: &GhItem, cx: &mut Context<Self>) -> Toolbar {
         let detail = self
             .account_data()
             .and_then(|account| account.details.get(&item.key));
         let on = self.panel_actions();
-        peek::review_actions(Allowed::of(item, detail))
-            .into_iter()
-            .fold(toolbar.leading(path(item, cx)), |toolbar, action| {
-                toolbar.trailing(self.item_action_button(action, "page", &on))
-            })
+        let allowed = Allowed::of(item, detail);
+        let toolbar = peek::review_actions(allowed).into_iter().fold(
+            toolbar.leading(path(item, cx)),
+            |toolbar, action| {
+                toolbar.trailing(self.item_action_button(action, "page", allowed.approved, &on))
+            },
+        );
+        match crate::merge_pull_request::button(self, item, allowed.merge_is_primary(), cx) {
+            Some(button) => toolbar.trailing(button),
+            None => toolbar,
+        }
     }
 
     /// The reading column, centred in the pane, scrolling.

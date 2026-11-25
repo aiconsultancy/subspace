@@ -200,6 +200,9 @@ fn apply(
 fn failure(board: &mut Github, key: &str, message: String, cx: &mut Context<Github>) {
     if let Some(account) = board.account_data_mut() {
         account.detail_errors.insert(key.into(), message);
+        if let Some(detail) = account.details.get_mut(key) {
+            detail.merge_target = None;
+        }
     }
     cx.notify();
 }
