@@ -440,10 +440,11 @@ most 4,096 entries, expand to at most 250 MB and use relative paths. DOCX and
 XLSX packages also have a 250 MB expansion limit.
 
 Press **Enter** to send. Subspace uploads every attachment first, then sends
-your text with one `UPL-… name (size)` reference per file. When everything fits
-in one IRC line it is one line; otherwise your text goes first, followed by the
-references packed into as few lines as fit. A reference is never split. You can
-send attachments without text. Commands such as `/me` can't carry attachments.
+your text with one `UPL-… name (size)` reference per file as one IRC message.
+Longer messages use a single multiline batch when the server supports it.
+If the draft and references cannot fit together, shorten the draft and try
+again. Subspace keeps the draft and attachments. You can send attachments
+without text. Commands such as `/me` can't carry attachments.
 If any upload fails, nothing is sent to IRC and your text and attachments stay
 for another try. If you lose the connection after the uploads finish,
 reconnect and press **Enter** again; the files aren't uploaded twice. While a

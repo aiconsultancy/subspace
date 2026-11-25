@@ -1,4 +1,4 @@
-//! Review fixes: a `SendAll` the server's limits refuse, Enter
+//! Review fixes: a `SendAllTogether` the server's limits refuse, Enter
 //! again while queued, a missing or expired upload uploads afresh only on
 //! an explicit send, and "Send as attachment…" waits for earlier files.
 use super::super::completion::{composer, text};

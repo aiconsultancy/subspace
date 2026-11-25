@@ -77,7 +77,7 @@ pub(crate) enum Phase {
     Idle,
     /// Uploading in tray order; `text` goes with the references.
     Uploading { text: String },
-    /// The lines went to the runtime as one `SendAll`, `id`.
+    /// The lines went to the runtime as one `SendAllTogether`, `id`.
     /// Once the runtime accepts them, the tray clears when every key
     /// echoes, or on Dismiss; a refusal returns the tray to `Idle` with the
     /// draft. Nothing is ever sent again from here.
