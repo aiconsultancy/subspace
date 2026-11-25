@@ -106,7 +106,7 @@ pub(super) fn block(id: &str, text: &str, shown: &Shown, cx: &Context<Irc>) -> A
         .w_full()
         .min_w_0()
         .gap_1()
-        .child(part_controls(id, part, last, cx))
+        .child(part_controls((id, "part"), (part, last), show_part(id), cx))
         .child(whole(id, parts[part], cx))
         .into_any_element()
 }
@@ -128,8 +128,15 @@ pub(super) fn split(text: &str) -> Vec<&str> {
     parts
 }
 
-/// First, Previous, Next and Last, and which part shows.
-fn part_controls(id: &str, part: usize, last: usize, cx: &Context<Irc>) -> AnyElement {
+/// First, Previous, Next and Last, and which part shows: `go` moves to a
+/// part, by its index. Their IDs are `{id}:{kind}-first` and so on, the caption's
+/// `{id}:{kind}`.
+pub(super) fn part_controls(
+    (id, kind): (&str, &str),
+    (part, last): (usize, usize),
+    go: impl Fn(&mut Irc, usize, &mut Context<Irc>) + Clone + 'static,
+    cx: &Context<Irc>,
+) -> AnyElement {
     let moves = [
         ("first", "First part", IconName::ChevronsLeft, 0),
         (
@@ -147,14 +154,14 @@ fn part_controls(id: &str, part: usize, last: usize, cx: &Context<Irc>) -> AnyEl
         ("last", "Last part", IconName::ChevronsRight, last),
     ];
     let buttons = moves.into_iter().map(|(name, label, icon, to)| {
-        let block = id.to_owned();
+        let go = go.clone();
         action_button(
-            SharedString::from(format!("{id}:part-{name}")),
+            SharedString::from(format!("{id}:{kind}-{name}")),
             Intent::Quiet,
             Some(icon),
             label,
         )
-        .on_click(cx.listener(move |board, _, _, cx| super::show_part(board, &block, to, cx)))
+        .on_click(cx.listener(move |board, _, _, cx| go(board, to, cx)))
         .into_any_element()
     });
     h_flex()
@@ -165,11 +172,17 @@ fn part_controls(id: &str, part: usize, last: usize, cx: &Context<Irc>) -> AnyEl
         .gap_1()
         .children(buttons)
         .child(caption(
-            &format!("{id}:part"),
+            &format!("{id}:{kind}"),
             &format!("Part {} of {}", part + 1, last + 1),
             cx,
         ))
         .into_any_element()
+}
+
+/// Shows a part of the long text in the block `id`.
+fn show_part(id: &str) -> impl Fn(&mut Irc, usize, &mut Context<Irc>) + Clone + 'static {
+    let block = id.to_owned();
+    move |board, part, cx| super::show_part(board, &block, part, cx)
 }
 
 /// Untrusted text whole, in the monospace font.

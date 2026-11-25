@@ -32,14 +32,28 @@ item too large to send inline is paged and loads on demand, never hidden.
   part this version does not know shows as its indented JSON, never
   dropped.
 - **Paged items.** An item the snapshot sends as paged shows its kind, name,
-  status and size, with **Load in full**. The client reads every page,
-  restarting if the item's `seq` changes midway, and the view shows the
-  joined item whole. A newer `seq` in the snapshot offers **Load the
-  latest**. Page counts and sizes are checked before anything is
+  status and size, with **Load in full**. No item is too large to read (SUB
+  decision `a17870f4`). The client reads every page, restarting if the
+  item's `seq` changes midway, and the view shows the joined item whole:
+  as its kind, or, for a kind or shape this version does not know, as its
+  JSON, as an inline item shows. The joined item's ID and `seq` must be
+  the ones its pages carry. A newer `seq` in the snapshot offers **Load
+  the latest**. Page counts and sizes are checked before anything is
   allocated: a size the pages could not carry, or a joined length other
-  than the declared one, is an invalid answer. Loaded items are kept up
-  to 64 MiB per view, the least recently opened going first (it shows
-  **Load in full** again), and go when their turn leaves the snapshot.
+  than the declared one, is an invalid answer.
+- **One budget.** Everything the view holds counts against 64 MiB: the
+  snapshot's inline content (estimated from its strings and values) and
+  every item read. Room is made before each read, the least recently
+  opened item going first (it shows **Load in full** again); items go when
+  their turn leaves the snapshot. A reply that arrives after its item was
+  let go, or after it was read again, is dropped.
+- **Larger than the budget.** An item larger than the room left is read
+  one page at a time: its JSON, one 64 KiB page per part, with **First
+  part**, **Previous part**, **Next part**, **Last part** and `Part k of
+  N`. Only the page shown is held. Each part is pinned to the `seq`,
+  page count and size of the part before; when the item changed, the view
+  starts again once from the newest version's first part and says a newer
+  version is on the gateway.
 - **Long text in parts.** A text over 256 KiB shows one 64 KiB part at a
   time, cut on character boundaries, with **First part**, **Previous
   part**, **Next part**, **Last part** and `Part k of N`, so every byte,
@@ -79,7 +93,9 @@ handle goes and the service's next check (every 250 ms) reopens the
 stream without the agent. No second stream is opened. The query carries
 at most eight officers; a ninth, or any officer the gateway refuses (404
 or 400), is treated as refused: the view says so and reads the snapshot
-every five seconds. Only that explicit fallback, or a fleet the service
+every five seconds. A refusal is about the officers the refused stream
+asked for: one that arrives after the watched officers changed never
+refuses those watched since. Only that explicit fallback, or a fleet the service
 reads on a timer without a stream, polls: a stream that is connecting or
 reconnecting is waited for. Each officer's kept events are capped at 512
 events and 8 MiB.
@@ -88,7 +104,9 @@ events and 8 MiB.
 
 - Events are buffered until the snapshot answers, then applied when their
   `seq` is above the snapshot's cursor. Events at or below the cursor are
-  dropped without a refetch. A skipped `seq` is not a gap.
+  dropped without a refetch. An event at or below the cursor as fetched is
+  covered: it neither refetches nor resets the `seq` later events must
+  pass. A skipped `seq` is not a gap.
 - The snapshot is fetched again, one fetch at a time, when the stream
   closes or reopens, the generation changes, an event's `seq` does not rise
   above the last one, or an item names a turn the join does not hold.
@@ -103,8 +121,8 @@ events and 8 MiB.
   cursor are applied. One retry runs at a time, on the backoff above, at
   once on a new stream connection, or on **Try again**.
 - **Cancellation.** Reading a paged item checks a cancel flag before every
-  page. Closing the view, hiding the inspector, and evicting or pruning
-  the item set it, so no page is asked for afterwards and no answer is
+  page. Closing the view, hiding the inspector, leaving Channels, and
+  evicting or pruning the item set it, so no page is asked for afterwards and no answer is
   shown.
 
 ## Delivery and follow-up
@@ -129,6 +147,15 @@ events and 8 MiB.
   JSON, the chat-free menu, closing on hide, tab and the ship leaving,
   **Load in full** to **Load the latest**, parts reaching the last bytes,
   an item released with its turn, and a closed view reading nothing.
+- Round 3 of review added: a paged item of an unknown kind and of a known
+  kind in a changed shape loaded to its last bytes; a joined item with
+  another ID or `seq` refused; an item over the budget read page by page
+  with its first and last parts in reach and the budget never passed; a
+  part restarting once on a newer version; a late reply after eviction
+  dropped; leaving Channels mid-read asking for no page and dropping
+  `?agent=` while another follow keeps the stream; a late 400 or 404
+  refusing only the officers its stream asked for; and a covered event
+  never fetching again.
 - Not in this change: opening the turns from the status line, crew
   activity, and **View diff**.
 

@@ -17,13 +17,17 @@
 //! `Retry-After`, up to the same cap), and at once on a new connection.
 //! A gateway without the route says so and is not retried.
 //!
-//! What the captain saw is shown in full: an item too large to send
-//! inline loads on demand, page by page, then shows whole, a long text in
-//! parts of 64 KiB. Items read in full are kept up to 64 MiB, the least
-//! recently opened going first, and go with their turn. Closing the view
-//! cancels any read: no page is asked for after it. The content lives in
-//! this selection only: nothing is written to disk, cached or logged, and
-//! none of it can be added to the chat.
+//! What the captain saw is shown in full, whatever its size (SUB decision
+//! `a17870f4`): an item too large to send inline loads on demand, page by
+//! page, then shows whole, a long text in parts of 64 KiB. Everything the
+//! view holds, the inline content too, counts against one budget of
+//! 64 MiB. Room is made before each read, the least recently opened item
+//! going first; an item larger than the room left shows one page of its
+//! JSON at a time, every page in reach, and is never held whole. Items go
+//! with their turn. Closing the view, or leaving Channels, cancels any
+//! read: no page is asked for after it, and a late reply is dropped. The
+//! content lives in this selection only: nothing is written to disk,
+//! cached or logged, and none of it can be added to the chat.
 
 mod fetch;
 mod item;
@@ -49,8 +53,8 @@ use subspace_framework::dashboard::workspace;
 
 use crate::Irc;
 use fetch::{poll, start_fetch};
-use load::Loaded;
-use load::{load, prune};
+use load::{Held, Loaded, MAX_LOADED, Parts};
+use load::{load, prune, show_page};
 
 /// How often the snapshot is read again while no live stream carries the
 /// captain's events.
@@ -72,8 +76,14 @@ pub(crate) struct Selection {
     /// The part shown of each text long enough to show in parts, by the
     /// ID of its block.
     parts: HashMap<String, usize>,
-    /// Counts each item opened, for evicting the least recently opened.
+    /// Counts each item opened and each read, for evicting the least
+    /// recently opened and dropping late replies.
     opened: u64,
+    /// The most bytes the view holds ([`MAX_LOADED`]).
+    budget: u64,
+    /// About how many bytes the snapshot's inline content holds, which
+    /// count against [`Self::budget`] before any item read.
+    inline: u64,
     fetch: Option<Task<()>>,
     /// Retries a failed fetch when its backoff is over.
     retry: Option<Task<()>>,
@@ -111,6 +121,8 @@ pub(super) fn open(
         loaded: HashMap::new(),
         parts: HashMap::new(),
         opened: 0,
+        budget: MAX_LOADED,
+        inline: 0,
         fetch: None,
         retry: None,
         _watch: watch,
@@ -322,6 +334,41 @@ pub(crate) fn loaded_keys(selection: &Selection) -> Vec<(String, String)> {
     let mut keys: Vec<_> = selection.loaded.keys().cloned().collect();
     keys.sort();
     keys
+}
+
+/// Holds at most `bytes` in `selection`, in place of [`MAX_LOADED`].
+#[cfg(test)]
+pub(crate) fn set_budget(selection: &mut Selection, bytes: u64) {
+    selection.budget = bytes;
+}
+
+/// The bytes `selection` holds: the inline content and the items read.
+#[cfg(test)]
+pub(crate) fn held_bytes(selection: &Selection) -> u64 {
+    selection.inline + load::held(selection)
+}
+
+/// The read under way or last made of item `item` of turn `turn`.
+#[cfg(test)]
+pub(crate) fn read_of(selection: &Selection, turn: &str, item: &str) -> Option<u64> {
+    load::read_of(selection, &(turn.to_owned(), item.to_owned()))
+}
+
+/// Delivers `result` as the reply to read `read` of item `item` of turn
+/// `turn`, as a read in the background would, however late.
+#[cfg(test)]
+pub(crate) fn late_reply(
+    board: &mut Irc,
+    (turn, item, read): (&str, &str, u64),
+    result: Result<subspace_client_fleet::activity::ItemRead, Error>,
+    cx: &mut Context<Irc>,
+) {
+    load::reply(
+        board,
+        (&(turn.to_owned(), item.to_owned()), read),
+        result,
+        cx,
+    );
 }
 
 /// Makes `selection` read items with `client` in place of the service's.

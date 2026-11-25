@@ -6,7 +6,7 @@
 use gpui_kit::{AnyElement, Context};
 use serde_json::Value;
 use subspace_client_fleet::activity::{
-    ActivityContent, ActivityError, ActivityItem, StepItem, TextItem, ToolItem,
+    ActivityContent, ActivityError, ActivityItem, StepItem, TextItem, ToolItem, UnknownItem,
 };
 
 use super::parts::{Shown, block, caption, card, labelled};
@@ -21,6 +21,29 @@ pub(super) fn item(id: &str, item: &ActivityItem, shown: &Shown, cx: &Context<Ir
         ActivityItem::Reasoning(text) => words(id, ("Reasoning", text), shown, cx),
         ActivityItem::Tool(tool) => self::tool(id, tool, shown, cx),
     }
+}
+
+/// An item of a kind or shape this version does not know: what was sent,
+/// as its JSON, whole.
+pub(super) fn unknown(
+    id: &str,
+    unknown: &UnknownItem,
+    shown: &Shown,
+    cx: &Context<Irc>,
+) -> AnyElement {
+    card(
+        id,
+        &visible(&format!("Item · {}", unknown.kind)),
+        vec![
+            caption(
+                &format!("{id}:unknown"),
+                "This version can't show this item, so here is what was sent.",
+                cx,
+            ),
+            block(&format!("{id}:json"), &pretty(&unknown.raw), shown, cx),
+        ],
+        cx,
+    )
 }
 
 pub(super) fn words(

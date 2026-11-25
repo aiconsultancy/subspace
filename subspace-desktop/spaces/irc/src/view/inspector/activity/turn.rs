@@ -15,9 +15,7 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
 use super::Selection;
-use super::item::pretty;
-use super::parts::{block, caption, card};
-use super::text::visible;
+use super::parts::caption;
 use crate::Irc;
 
 /// The turns, newest first.
@@ -112,23 +110,6 @@ pub(super) fn entry(
     match entry {
         ActivityEntry::Item(item) => super::item::item(&id, item, &selection.parts, cx),
         ActivityEntry::Paged(paged) => super::paged::paged(selection, turn, paged, cx),
-        ActivityEntry::Unknown(unknown) => card(
-            &id,
-            &visible(&format!("Item · {}", unknown.kind)),
-            vec![
-                caption(
-                    &format!("{id}:unknown"),
-                    "This version can't show this item, so here is what was sent.",
-                    cx,
-                ),
-                block(
-                    &format!("{id}:json"),
-                    &pretty(&unknown.raw),
-                    &selection.parts,
-                    cx,
-                ),
-            ],
-            cx,
-        ),
+        ActivityEntry::Unknown(unknown) => super::item::unknown(&id, unknown, &selection.parts, cx),
     }
 }

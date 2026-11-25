@@ -5,9 +5,10 @@
 //!
 //! Stargate neither redacts nor truncates this route, and nor does this
 //! client: an item too large for one answer is read page by page and
-//! joined in full ([`crate::FleetClient::activity_item`]). The content is kept in
-//! memory only. Its types deliberately do not implement `Debug`, so no
-//! log line or panic message can carry what a tool printed.
+//! joined in full, whatever its size, when its reader can hold it, or
+//! else read part by part ([`crate::FleetClient::activity_item`]). The
+//! content is kept in memory only. Its types deliberately do not implement
+//! `Debug`, so no log line or panic message can carry what a tool printed.
 
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -17,8 +18,9 @@ mod read;
 
 pub use join::{ActivityJoin, ActivityNews, Fetch};
 pub(crate) use join::{MAX_HELD_BYTES, MAX_HELD_EVENTS};
+pub use read::{ItemPart, ItemRead};
 #[cfg(test)]
-use read::join_pages;
+use read::{Joined, decode_item, join_pages, read_part};
 
 /// `V1AgentActivity`: an officer and its recent turns, oldest first.
 #[derive(Clone, Deserialize, PartialEq)]
