@@ -1,5 +1,5 @@
 use super::super::panel::{Fact, fact};
-use super::reveal;
+use crate::view::reveal_focus as reveal;
 use crate::{
     Issues,
     decision::{self, Entry, words},

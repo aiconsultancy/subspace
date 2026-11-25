@@ -1,7 +1,7 @@
 //! Pure Agent Client Protocol (v1) messages: JSON-RPC 2.0 requests Subspace
 //! sends, and the answers, requests and notifications an agent sends back.
 use super::{ModelChoice, SlashCommand, Usage, Value, json};
-use crate::runtime::transcript;
+use crate::runtime::summary;
 
 /// The ACP major version Subspace speaks.
 pub(super) const PROTOCOL_VERSION: u64 = 1;
@@ -195,8 +195,8 @@ pub(super) fn permission_summary(agent: &str, params: &Value) -> String {
         .as_str()
         .filter(|title| !title.trim().is_empty())
         .unwrap_or("use a tool");
-    let detail = transcript::argument_summary(&call["rawInput"]);
-    let title = transcript::one_line(title, SUMMARY_TITLE_LIMIT);
+    let detail = summary::argument_summary(&call["rawInput"]);
+    let title = summary::one_line(title, SUMMARY_TITLE_LIMIT);
     if detail.is_empty() || crate::repeats(&title, &detail) {
         format!("{agent} asks to {title}")
     } else {

@@ -545,26 +545,39 @@ def check_pinned_session():
     assert plugin["options"]["projectDirectory"] == record["project"] == f"{workspace}/sample"
 
 
-def check_shape():
+def check_shape(phase):
     etc = Path("/etc/subspace-fleet")
-    roster = json.loads((etc / "stargate.json").read_text())["irc"]
-    rear, captain = roster
+    settings = json.loads((etc / "stargate.json").read_text())
+    rear, *captains = settings["irc"]
+    assert phase in ("uncommissioned", "commissioned")
+    pinned = phase == "commissioned"
+    assert (etc / "sessions/orion.json").is_file() == pinned
+    # A newly installed captain joins the gateway once its engine has commissioned its root session.
+    assert [person["id"] for person in captains] == (["orion"] if pinned else [])
+    guard = settings["usageGuard"]
+    assert guard["sender"] == rear["id"] == "atlas"
+    assert guard["captains"] == [{"account": "example-orion", "channel": "#example-fleet-orion"}]
+    for provider in ("claude", "codex"):
+        assert guard["providers"][provider]["limits"] == [
+            {"remainingPercent": 20, "action": "warn"}, {"remainingPercent": 10, "action": "pause"},
+        ]
     # The standard set: the rear admiral joins all of it, a captain its ship, command and the other ships.
     assert rear["channels"] == ["#example-fleet-starbase", COMMAND, "#example-fleet-orion"]
-    assert captain["channels"] == ["#example-fleet-orion", COMMAND]
     assert rear["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-starbase", "replies": "all"}]
-    assert captain["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
-    assert captain["access"]["channelRequests"] == "nick-mention"
-    # A direct message starts no turn: Stargate points the sender at the agent's first channel.
-    assert rear["dmPolicy"] == captain["dmPolicy"] == "redirect"
-    # Crew have no IRC registration of their own: they are reached through the captain.
-    assert not rear.get("crew") and not captain.get("crew")
-    assert captain["access"]["peerCaptains"] == ["example-atlas"]
-    assert captain["backend"]["agent"] == "build" and "sessionID" not in rear["backend"]
+    assert rear["dmPolicy"] == "redirect" and not rear.get("crew") and "sessionID" not in rear["backend"]
+    if pinned:
+        [captain] = captains
+        assert captain["channels"] == ["#example-fleet-orion", COMMAND]
+        assert captain["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
+        assert captain["access"]["channelRequests"] == "nick-mention"
+        assert captain["dmPolicy"] == "redirect" and not captain.get("crew")
+        assert captain["access"]["peerCaptains"] == ["example-atlas"]
+        assert captain["backend"]["agent"] == "build"
     firewall = (etc / "firewall.nft").read_text()
     operator = pwd.getpwnam("fixture-operator").pw_uid
     assert f'tcp dport 8070 meta skuid != {{ 0, {operator} }}' in firewall
-    assert f'tcp dport 8080 meta skuid != {{ 0, {operator} }}' in firewall
+    view_users = {0, operator, pwd.getpwnam("ss-fleet-view").pw_uid}
+    assert f'tcp dport 8080 meta skuid != {{ {", ".join(map(str, sorted(view_users)))} }}' in firewall
     model_uids = {0, operator, pwd.getpwnam("ss-fleet-gateway").pw_uid, *(pwd.getpwnam(f"ss-{agent}").pw_uid for agent in MEMBERS)}
     for worker in CREW:
         try:
@@ -575,7 +588,7 @@ def check_shape():
     units = (etc / "units").read_text().splitlines()
     assert sorted(unit for unit in units if "-engine-" in unit) == [f"subspace-fleet-engine-{agent}.service" for agent in MEMBERS]
     gateway_unit = Path("/etc/systemd/system/subspace-fleet-gateway.service").read_text()
-    assert f"ConditionPathExists={etc}/sessions/orion.json" in gateway_unit
+    assert (f"ConditionPathExists={etc}/sessions/orion.json" in gateway_unit) == pinned
     assert f'tcp dport 8317 meta skuid != {{ {", ".join(map(str, sorted(model_uids)))} }}' in firewall
     for service in ("proxy", "view", "dashboard", "engine-atlas", "gateway"):
         unit = Path(f"/etc/systemd/system/subspace-fleet-{service}.service").read_text()

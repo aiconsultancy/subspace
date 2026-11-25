@@ -1,5 +1,4 @@
 //! Shared decision detail: structure stays the same for either opener.
-mod reveal;
 mod sections;
 
 use crate::Issues;

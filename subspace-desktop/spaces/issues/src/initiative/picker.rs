@@ -1,6 +1,7 @@
 //! The standard searchable initiative menu in the Issues toolbar and palette.
 
 use gpui_kit::{AnyElement, Context, Entity, Window};
+use subspace_api_client::initiatives::Catalog;
 use subspace_framework::dashboard::menu::MenuEvent;
 
 use crate::Issues;
@@ -42,11 +43,13 @@ pub(crate) fn command(
 }
 
 fn open(issues: &mut Issues, window: &mut Window, cx: &mut Context<Issues>) {
-    let catalog = issues.initiatives.read(cx);
-    let revision = catalog.revision();
-    let contents = catalog.menu();
-    let anchor = issues.menu_anchors.anchor(ANCHOR, cx);
-    let Some(menu) = issues.menu_anchors.open(anchor, contents, window, cx) else {
+    let Some((menu, revision)) = Catalog::open_picker(
+        &issues.initiatives,
+        &issues.menu_anchors,
+        ANCHOR,
+        window,
+        cx,
+    ) else {
         return;
     };
     subscribe_menu(&menu, revision, cx);

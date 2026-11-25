@@ -1,7 +1,9 @@
 //! The chat engine and ACP agent choices on the Chat page. The agent applies
-//! only when the engine is ACP, and the page shows it only then.
+//! only when the engine is ACP, and the page shows it only then. Copilot is
+//! offered only in a build that includes it (`subspace_chat::COPILOT_BUILT_IN`).
 use super::form::{Choice, choice};
 use gpui_kit::{App, Window};
+use subspace_chat::COPILOT_BUILT_IN;
 use subspace_core::config::{AcpAgent, ChatEngine};
 use subspace_core::features::{ACP_CHAT, FeatureSpec, FeatureStage, PI_CHAT};
 
@@ -20,28 +22,58 @@ pub(super) fn chat_engine_from_label(label: Option<&str>) -> ChatEngine {
 pub(super) fn chat_engine_choice(engine: ChatEngine, window: &mut Window, cx: &mut App) -> Choice {
     let pi_label = pi_engine_label(&PI_CHAT);
     let acp_label = acp_engine_label(&ACP_CHAT);
-    let mut choices = chat_engine_labels(&PI_CHAT);
+    let mut choices = chat_engine_labels(&PI_CHAT, COPILOT_BUILT_IN);
     if ACP_CHAT.stage != FeatureStage::Removed {
         choices.push(acp_label.clone());
     }
     let selected = match (engine, PI_CHAT.stage, ACP_CHAT.stage) {
         (ChatEngine::Pi, FeatureStage::Experimental | FeatureStage::Stable, _) => pi_label,
         (ChatEngine::Acp, _, FeatureStage::Experimental | FeatureStage::Stable) => acp_label,
-        (ChatEngine::Copilot, _, _) => ChatEngine::Copilot.label().into(),
+        (ChatEngine::Copilot, _, _) => copilot_selection(COPILOT_BUILT_IN).into(),
         _ => ChatEngine::Off.label().into(),
     };
     choice(choices, Some(&selected), false, window, cx)
 }
 
-fn chat_engine_labels(spec: &FeatureSpec) -> Vec<String> {
-    let mut labels = vec![
-        ChatEngine::Off.label().into(),
-        ChatEngine::Copilot.label().into(),
-    ];
+/// What the select shows for a saved Copilot choice: Copilot, or Off in a
+/// build without it, which has no Copilot entry.
+fn copilot_selection(copilot_built_in: bool) -> &'static str {
+    if copilot_built_in {
+        ChatEngine::Copilot.label()
+    } else {
+        ChatEngine::Off.label()
+    }
+}
+
+fn chat_engine_labels(spec: &FeatureSpec, copilot_built_in: bool) -> Vec<String> {
+    let mut labels = vec![ChatEngine::Off.label().into()];
+    if copilot_built_in {
+        labels.push(ChatEngine::Copilot.label().into());
+    }
     if spec.stage != FeatureStage::Removed {
         labels.push(pi_engine_label(spec));
     }
     labels
+}
+
+/// The engine Save writes. A build without Copilot shows a saved Copilot
+/// choice as Off and keeps it while Off stays selected, so the config file
+/// still starts Copilot in a build that includes it. Choosing Pi or ACP
+/// replaces it.
+pub(super) fn kept_engine(
+    selected: ChatEngine,
+    saved: ChatEngine,
+    copilot_built_in: bool,
+) -> ChatEngine {
+    match (selected, saved) {
+        (ChatEngine::Off, ChatEngine::Copilot) if !copilot_built_in => ChatEngine::Copilot,
+        _ => selected,
+    }
+}
+
+/// Whether the Chat page says the saved Copilot choice is kept but not used.
+pub(super) fn copilot_kept(saved: ChatEngine, written: ChatEngine, copilot_built_in: bool) -> bool {
+    !copilot_built_in && saved == ChatEngine::Copilot && written == ChatEngine::Copilot
 }
 
 fn pi_engine_label(spec: &FeatureSpec) -> String {
@@ -121,7 +153,8 @@ pub(super) fn validate_acp_feature(
 mod tests {
     use super::{
         acp_agent_from_label, acp_engine_label, chat_engine_from_label, chat_engine_labels,
-        pi_engine_label, pi_save_error, validate_acp_feature, validate_chat_feature,
+        copilot_kept, copilot_selection, kept_engine, pi_engine_label, pi_save_error,
+        validate_acp_feature, validate_chat_feature,
     };
     use subspace_core::config::{AcpAgent, ChatEngine};
     use subspace_core::features::{ACP_CHAT, FeatureSpec, FeatureStage, PI_CHAT};
@@ -146,12 +179,12 @@ mod tests {
             ..PI_CHAT
         };
         assert_eq!(pi_engine_label(&stable), "Pi");
-        assert_eq!(chat_engine_labels(&stable), ["Off", "Copilot", "Pi"]);
+        assert_eq!(chat_engine_labels(&stable, true), ["Off", "Copilot", "Pi"]);
         let removed = FeatureSpec {
             stage: FeatureStage::Removed,
             ..PI_CHAT
         };
-        assert_eq!(chat_engine_labels(&removed), ["Off", "Copilot"]);
+        assert_eq!(chat_engine_labels(&removed, true), ["Off", "Copilot"]);
         assert!(validate_chat_feature(ChatEngine::Copilot, false, &PI_CHAT).is_ok());
         assert!(validate_chat_feature(ChatEngine::Pi, true, &PI_CHAT).is_ok());
         assert!(pi_save_error(&PI_CHAT).contains("Experiments"));
@@ -159,6 +192,32 @@ mod tests {
         assert!(!pi_save_error(&stable).contains("Experiments"));
         assert!(pi_save_error(&removed).contains("removed"));
         assert!(!pi_save_error(&removed).contains("Enable"));
+    }
+
+    #[test]
+    fn a_build_without_copilot_offers_no_copilot_and_keeps_a_saved_choice() {
+        let stable = FeatureSpec {
+            stage: FeatureStage::Stable,
+            ..PI_CHAT
+        };
+        assert_eq!(chat_engine_labels(&stable, false), ["Off", "Pi"]);
+        assert_eq!(copilot_selection(false), "Off");
+        assert_eq!(copilot_selection(true), "Copilot");
+        let copilot = ChatEngine::Copilot;
+        // Off stays selected: the saved Copilot choice is written back.
+        assert_eq!(kept_engine(ChatEngine::Off, copilot, false), copilot);
+        assert!(copilot_kept(copilot, copilot, false));
+        // Another engine replaces it.
+        assert_eq!(kept_engine(ChatEngine::Pi, copilot, false), ChatEngine::Pi);
+        assert!(!copilot_kept(copilot, ChatEngine::Pi, false));
+        // With Copilot built in, Off means Off.
+        assert_eq!(kept_engine(ChatEngine::Off, copilot, true), ChatEngine::Off);
+        assert!(!copilot_kept(copilot, copilot, true));
+        // Nothing else changes.
+        assert_eq!(
+            kept_engine(ChatEngine::Off, ChatEngine::Pi, false),
+            ChatEngine::Off
+        );
     }
 
     #[test]

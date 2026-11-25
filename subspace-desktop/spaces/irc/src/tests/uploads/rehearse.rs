@@ -15,7 +15,7 @@ pub(super) enum Rehearsed<'a> {
     Registering(&'a str),
 }
 
-/// Answers the newest recorded `SendAll` as the real client does
+/// Answers the newest recorded `SendAllTogether` as the real client does
 /// when connected as `how`, and hands its events to the hub. Returns what
 /// went to the server.
 pub(super) fn rehearse(
@@ -28,7 +28,7 @@ pub(super) fn rehearse(
         hub.sent()
             .iter()
             .rev()
-            .find(|command| matches!(command, Command::SendAll { .. }))
+            .find(|command| matches!(command, Command::SendAllTogether { .. }))
             .cloned()
     });
     let command = command.expect("a recorded send");

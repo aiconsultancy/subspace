@@ -14,13 +14,16 @@ description = "Update Cargo.lock to the latest compatible dependency versions"
 run = "cargo update"
 
 [tasks.test]
-description = "Run the tests, optional text and report-issue cases, and the README's examples"
+description = "Run the tests, optional text, report-issue and Copilot cases, and the README's examples"
 run = [
     "cargo test --workspace --locked",
     "cargo test -p subspace-dashboard --features gpui-kit-text-patch --locked",
     # Report issue is an optional shell feature that nothing in the workspace enables.
     "cargo test -p subspace-shell --features report-issue --locked",
     "cargo test -p subspace-framework --features report-issue --doc --locked",
+    # Copilot chat is an optional agent feature that nothing in the workspace
+    # enables: the runtime, the chat panel and Settings with the engine.
+    "cargo test -p subspace-agent -p subspace-chat -p subspace-shell --features subspace-agent/copilot --locked",
 ]
 
 [tasks.fmt]
@@ -37,6 +40,7 @@ run = [
     "cargo clippy --workspace --all-targets --keep-going -- -D warnings",
     "cargo clippy -p subspace-dashboard --features gpui-kit-text-patch --all-targets -- -D warnings",
     "cargo clippy -p subspace-shell -p subspace-framework --features subspace-shell/report-issue,subspace-framework/report-issue --all-targets -- -D warnings",
+    "cargo clippy -p subspace-agent -p subspace-chat -p subspace-shell -p subspace-framework --features subspace-framework/copilot --all-targets -- -D warnings",
 ]
 
 [tasks.quality]

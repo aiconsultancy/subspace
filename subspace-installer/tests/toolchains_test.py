@@ -1374,7 +1374,7 @@ class SetupRecordTests(unittest.TestCase):
         (self.inputs / "fleet.json").unlink()
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
                 "--captains", "Orion", "--crew-claude", "0", "--crew-codex", "0", "--inputs", str(self.inputs),
-                "--stargate-ref", "c" * 40, "--no-demo", "--no-api", "--repositories",
+                "--stargate-ref", runtime.STARGATE_REF, "--no-demo", "--no-api", "--repositories",
                 "harbour-api=https://github.com/example/harbour-api.git", "--toolchains", "derive",
                 "--system-packages", "zsh", "--dry-run"]
         planned, said = [], []
@@ -1403,7 +1403,7 @@ class SetupRecordTests(unittest.TestCase):
         (self.inputs / "fleet.json").unlink()
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
                 "--captains", "Orion", "--crew-claude", "0", "--crew-codex", "0", "--inputs", str(self.inputs),
-                "--stargate-ref", "c" * 40, "--no-demo", "--no-api", "--repositories",
+                "--stargate-ref", runtime.STARGATE_REF, "--no-demo", "--no-api", "--repositories",
                 "harbour-api=https://github.com/example/harbour-api.git", "--toolchains", "derive"]
         order, said = [], []
 

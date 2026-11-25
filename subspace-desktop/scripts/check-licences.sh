@@ -21,8 +21,9 @@ check_copy() {
     fi
 }
 
-# Check the union in one metadata pass. Terminal retains the default
-# features, and each archive also checks its exact target and feature flags.
+# Check the union in one metadata pass: the default features plus the opt-in
+# terminal and Copilot features, so a build with either is covered. Each
+# archive also checks its exact target and feature flags.
 target_args=()
 for target in "${RELEASE_TARGETS[@]}"; do
     target_args+=(--target "$target")
@@ -32,7 +33,7 @@ trap 'rm -rf "$scratch"' EXIT
 # Policy needs the manifest expressions and top-level licence files. Archive
 # generation also scans nested sources for bundled third-party notices.
 { printf 'max-depth = 1\n'; cat about.toml; } >"$scratch/about.toml"
-check_rust_licences "${target_args[@]}" --features terminal --config "$scratch/about.toml" \
+check_rust_licences "${target_args[@]}" --features terminal,copilot --config "$scratch/about.toml" \
     >"$scratch/licences.json"
 framework_manifest="$(jq -er '
     [.crates[].package | select(.name == "subspace-framework")] |

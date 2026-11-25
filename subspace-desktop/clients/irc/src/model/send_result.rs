@@ -1,6 +1,6 @@
 //! How a `SendAll` ended.
 
-/// How a [`Command::SendAll`] ended.
+/// How a [`Command::SendAll`] or [`Command::SendAllTogether`] ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendResult {
     /// Every line was written to the connection. That is not the server's

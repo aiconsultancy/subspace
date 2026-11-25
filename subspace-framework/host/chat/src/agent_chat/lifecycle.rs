@@ -60,6 +60,54 @@ mod tests {
         });
     }
 
+    /// A build without Copilot opens a saved Copilot choice as Chat off, says
+    /// why, and starts nothing; a build with Copilot keeps the engine.
+    #[gpui_kit::test]
+    fn a_saved_copilot_choice_follows_whether_the_build_includes_copilot(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_reduce_motion(true);
+            gpui_kit::init(cx);
+            prefs::init_file(None, cx);
+            let mut config = subspace_core::config::Config::default();
+            config.chat.engine = ChatEngine::Copilot;
+            cx.set_global(subspace_dashboard::Services {
+                credentials: std::sync::Arc::new(
+                    subspace_core::credentials::Credentials::from_system(&config),
+                ),
+                config: std::sync::Arc::new(config),
+                tools: Default::default(),
+                search: None,
+                config_file: Default::default(),
+            });
+        });
+        let (chat, cx) = cx.add_window_view(ChatPanel::new);
+        if subspace_agent::COPILOT_BUILT_IN {
+            chat.read_with(cx, |chat, _| {
+                assert_eq!(chat.engine(), ChatEngine::Copilot);
+                assert!(!chat.copilot_kept);
+            });
+            return;
+        }
+        cx.update(|window, cx| {
+            chat.update(cx, |chat, cx| {
+                assert!(chat.is_disabled());
+                assert!(chat.copilot_kept);
+                assert_eq!(chat.engine_label(), "Chat");
+                chat.on_open(window, cx);
+                assert!(chat.handle.is_none(), "nothing starts");
+                assert!(chat.sign_in.is_none(), "nothing offers a sign-in");
+            });
+        });
+        settle(cx);
+        cx.update(|window, _| {
+            assert!(window.find("chat-off").visible());
+            assert!(window.try_find("chat-reconnect").is_none());
+        });
+        chat.read_with(cx, |chat, _| {
+            assert_eq!(chat.guidance(), subspace_agent::COPILOT_UNAVAILABLE);
+        });
+    }
+
     fn settle(cx: &mut VisualTestContext) {
         for _ in 0..3 {
             cx.update(|window, cx| window.draw(cx).clear(cx));

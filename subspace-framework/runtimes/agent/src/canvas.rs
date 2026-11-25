@@ -6,6 +6,7 @@ mod state;
 mod svg;
 
 pub use input::prepare;
+#[cfg(feature = "copilot")]
 pub(crate) use input::validate_id;
 pub use state::CanvasList;
 use std::sync::Arc;

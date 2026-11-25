@@ -288,6 +288,12 @@ def parse_args(argv):
                         "PostgreSQL server, when the system trust store lacks it; '' removes it")
     parser.add_argument("--migrate", action="store_true", help="apply the API's database migrations to that existing "
                         "PostgreSQL on this run (never by default; see the installer README)")
+    parser.add_argument("--usage-guard", action=argparse.BooleanOptionalAction, default=None,
+                        help="enable Claude and Codex quota notices and crew cutoffs (default on)")
+    parser.add_argument("--usage-guard-warning", action="append", default=[], metavar="[PROVIDER=]PERCENT",
+                        help=f"quota warning for Claude and Codex, or one provider (default {runtime.USAGE_GUARD_DEFAULTS['warning']})")
+    parser.add_argument("--usage-guard-cutoff", action="append", default=[], metavar="[PROVIDER=]PERCENT",
+                        help=f"block crew starts and resumptions at this quota (default {runtime.USAGE_GUARD_DEFAULTS['cutoff']})")
     parser.add_argument("--stargate-api", choices=["auto", "on", "off"],
                         help="enable Stargate's Fleet API (default auto: when the pinned Stargate has it)")
     parser.add_argument("--fleet-api-url", help="the HTTPS address at which a desktop reaches Stargate's Fleet API, "
@@ -320,6 +326,9 @@ def parse_args(argv):
                         help="delegate (the default for a new fleet) leaves edits, commits and pushes to the crew and "
                         "gives captains an open shell without them; standard lets captains code. Kept on later runs; "
                         "a fleet set up before this option keeps standard")
+    parser.add_argument("--captain-merge-repositories",
+                        help="GitHub owner/repository names, comma-separated, where captains may squash-merge "
+                        "reviewed heads. Use 'none' to turn it off. Kept on later runs")
     parser.add_argument("--toolchains", help="the toolchains the repositories need: 'derive' (after cloning, setup "
                         "reads the repositories and proposes what they need, installing nothing until you confirm "
                         "it), 'none' (the default: Node 24 and the base tools), or tools as TOOL@VERSION, "
@@ -424,6 +433,14 @@ def gather(args, saved):
                         "requests) or standard (captains code too)", "delegate", interactive)
         require(policy in ("standard", "delegate"), "Choose standard or delegate for --captain-tools.")
         answers["captainTools"] = policy
+    merge_repos = args.captain_merge_repositories
+    if merge_repos is None and interactive and not saved and repositories and not (INPUTS / "fleet.json").exists():
+        merge_repos = prompt("May captains squash-merge pull requests? Enter the GitHub owner/repository names "
+                             "(comma-separated), or 'none'", "none")
+    if merge_repos is not None:
+        answers["captainMergeRepositories"] = (
+            [] if merge_repos.strip() in ("", "none") else [repo.strip() for repo in merge_repos.split(",")]
+        )
     if args.toolchains in ("derive", "none"):
         answers["toolchains"] = args.toolchains
     elif args.toolchains is not None:
@@ -432,7 +449,7 @@ def gather(args, saved):
             answers["toolchains"] = "list"
     elif "toolchains" not in answers:
         if interactive and not saved and repositories:
-            # The default is the documented one, none, as for unattended runs (INSTALL.md, question 20).
+            # The default is the documented one, none, as for unattended runs (INSTALL.md, question 21).
             choice = prompt("Toolchains the repositories need: derive (setup reads them after cloning and proposes "
                             "what they need, for you to confirm), none, or tools as TOOL@VERSION,...", "none",
                             interactive) or "none"
@@ -574,6 +591,7 @@ def gather(args, saved):
         # Off unless asked: an unattended run never switches it on.
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
+    answers["usageGuard"] = usage_guard_answers(args, answers)
     answers["stargateApi"] = args.stargate_api or answers.get("stargateApi", "auto")
     if args.fleet_api_url == "tunnel":
         answers.pop("fleetApiUrl", None)
@@ -947,8 +965,9 @@ def roster(answers, rear, captains):
 
 
 def save_answers(answers):
-    # Repositories are kept in fleet.json, where an operator may also add private ones by hand.
-    write_json(INPUTS / "answers.json", {key: value for key, value in answers.items() if key != "repositories"})
+    # The repository list and merge policy live in fleet.json, where the operator can edit them.
+    write_json(INPUTS / "answers.json", {key: value for key, value in answers.items()
+                                        if key not in {"repositories", "captainMergeRepositories"}})
 
 
 def demo_channels():
@@ -1068,6 +1087,28 @@ def latest_stargate():
     return tag, releases[tag][1]
 
 
+def usage_guard_answers(args, answers):
+    try:
+        installed = read_json(INPUTS / "fleet.json", {}) or {}
+        saved = installed.get("usageGuard", answers.get("usageGuard", {}))
+        guard = dict(runtime.fields(saved, "usageGuard", "enabled claude codex"))
+        if args.usage_guard is not None:
+            guard["enabled"] = args.usage_guard
+        for key in ("warning", "cutoff"):
+            for value in getattr(args, f"usage_guard_{key}"):
+                provider, separator, number = value.partition("=")
+                if not separator:
+                    provider, number = "", provider
+                require((not provider or provider in runtime.PROVIDERS) and re.fullmatch(r"[0-9]{1,2}", number),
+                        f"--usage-guard-{key} expects [claude=|codex=]PERCENT from 0 to 99.")
+                for name in (provider,) if provider else runtime.PROVIDERS:
+                    provider_limits = runtime.fields(guard.get(name, {}), f"usageGuard.{name}", "warning cutoff")
+                    guard[name] = {**provider_limits, key: int(number)}
+        return runtime.usage_guard_config(guard)
+    except runtime.Invalid as error:
+        raise SetupError(str(error)) from None
+
+
 def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, stargate_ref=None, history=None):
     # The fleet installer names Starbase, the command channel and the ship channels itself (standard_channels).
     slug = answers["slug"]
@@ -1116,6 +1157,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 "githubPolicy", "dashboard", "proxy", "agentsview", "screenshots", "memory"):
         if key in previous:
             config[key] = previous[key]
+    if "captainMergeRepositories" in answers:
+        config["githubPolicy"] = {**config.get("githubPolicy", {}),
+                                  "captainMergeRepositories": answers["captainMergeRepositories"]}
     # Each role's memory hard cap and the VM's swap: this or an earlier run's answer, over one set by hand. A role's
     # auto is written as auto, which the installer reads as its sizing over a fleet-wide memory.max (an officer's
     # own memory still wins); auto is swap's default, so it needs no entry.
@@ -1192,6 +1236,7 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
             person.setdefault(key, value)
     operators = previous.get("operatorUsers", [])
     config["operatorUsers"] = list(dict.fromkeys([answers["operator"], *operators]))
+    config["usageGuard"] = runtime.usage_guard_config(answers.get("usageGuard", {}))
     stargate = {}
     ref = stargate_ref or answers.get("stargateRef")
     if ref:
@@ -1713,6 +1758,22 @@ def stargate_release(answers):
     if answers.get("stargateRef"):
         return "pinned", answers["stargateRef"]
     return latest_stargate()
+
+
+def check_usage_guard_source(answers, rear, ref):
+    # Setup changes officer models and effort, while the saved harness types stay in effect.
+    previous = read_json(INPUTS / "fleet.json", {})
+    harness = previous.get("harness") or {}
+    officer = previous.get("rearAdmiral") or {}
+    role_type = (harness.get("rearAdmiral") or {}).get("type", harness.get("type", "opencode"))
+    officer_type = (officer.get("harness") or {}).get("type", role_type) if officer.get("id") == rear else role_type
+    if officer_type == "opencode":
+        try:
+            runtime.require_usage_guard_source({
+                "usageGuard": answers["usageGuard"], "stargate": {"repo": STARGATE_REPO, "ref": ref},
+            })
+        except runtime.Invalid as error:
+            raise SetupError(str(error)) from None
 
 
 def run_inputs(answers, members, secret_store, stargate_ref, irc_ref, api_block=None, stargate_api=False, token="",
@@ -3185,6 +3246,7 @@ def configure(args):
             "--database-url-file (installer README, 'An existing PostgreSQL').")
     stargate_tag, stargate_ref = stargate_release(answers)
     say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
+    check_usage_guard_source(answers, rear, stargate_ref)
     enrolment = None
     if answers.get("apiUrl"):
         # Every check of the hosted API comes before setup saves anything, so a refused run, a switch from an

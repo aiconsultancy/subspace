@@ -18,8 +18,8 @@ pub(super) fn handle(session: &mut Session, command: Command, out: &mut Output) 
             text,
             action,
         } => say(session, &buffer.target, &text, action, out),
-        Command::SendAll { buffer, id, lines } => {
-            super::send_all::send_all(session, &buffer, id, &lines, out);
+        command @ (Command::SendAll { .. } | Command::SendAllTogether { .. }) => {
+            super::send_all::command(session, command, out);
         }
         Command::Reply {
             buffer,

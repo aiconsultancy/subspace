@@ -213,6 +213,8 @@ each one declares the same three roles as `irc` under its own configured ID
 (`spaces/web/src/bridge/issues.rs`). Only a page whose manifest asks for
 `issues`, and whose user allowed it, reaches the contract.
 
+Projects follows the shared initiative catalogue. It declares no board contracts and exposes no desktop agent tools.
+
 The Issues board answers whenever enabled, including fixture builds. With it
 disabled, requests are unavailable and references stay plain. Debug capture
 builds can alternatively route a stand-in responder for isolated IRC evidence
