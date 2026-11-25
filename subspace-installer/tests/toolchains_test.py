@@ -1146,10 +1146,11 @@ class ScreenshotTests(unittest.TestCase):
             passed, report = screenshots.check("ss-orion", home, environment)
         self.assertFalse(passed)
         self.assertIn("Xvfb failed to start", report)
+        self.assertIn("a 800x600 Mermaid PNG", report)
         failing["xvfb-run"] = subprocess_result(0, "")
         with patch.object(screenshots.subprocess, "run", side_effect=run_failing):
             self.assertEqual(screenshots.check("ss-orion", home, environment),
-                             (False, "Playwright wrote no valid PNG"))
+                             (False, "Playwright wrote no valid PNG and a 800x600 Mermaid PNG"))
 
 
 def setup_args(*argv):

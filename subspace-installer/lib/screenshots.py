@@ -234,27 +234,31 @@ def check(user, home, environment, timeout=180):
     officer = ["runuser", "-u", user, "--", *toolchains.clean_environment(
         user, home, {**environment, "TMPDIR": temporary})]
     checks = [
-        ("Playwright", ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1280x800x24",
+        ("Playwright", "PNG of a local page under Xvfb", ["xvfb-run", "--auto-servernum",
+                        "--server-args=-screen 0 1280x800x24",
                         str(WRAPPER), "screenshot", "--browser", "chromium", "--viewport-size", "800,600",
                         PAGE, shot], None),
-        ("Mermaid", [str(MERMAID_WRAPPER), "-", diagram], DIAGRAM),
+        ("Mermaid", "Mermaid PNG", [str(MERMAID_WRAPPER), "-", diagram], DIAGRAM),
     ]
     try:
-        sizes = []
-        for name, command, source in checks:
+        results = []
+        for name, label, command, source in checks:
             try:
                 result = subprocess.run([*officer, *command], input=source, cwd=home, capture_output=True,
                                         text=True, timeout=timeout, check=False)
             except subprocess.TimeoutExpired:
-                return False, f"the {name} screenshot did not finish within {timeout} seconds"
+                results.append((False, f"the {name} screenshot did not finish within {timeout} seconds"))
+                continue
             if result.returncode:
                 tail = (result.stderr or result.stdout).strip().splitlines()[-3:]
-                return False, f"{name} screenshot failed ({result.returncode}): " + " / ".join(tail)
+                results.append((False, f"{name} screenshot failed ({result.returncode}): " + " / ".join(tail)))
+                continue
             size = png_size(command[-1])
             if not size or min(size) <= 0:
-                return False, f"{name} wrote no valid PNG"
-            sizes.append(f"{size[0]}x{size[1]}")
-        return True, f"a {sizes[0]} PNG of a local page under Xvfb and a {sizes[1]} Mermaid PNG"
+                results.append((False, f"{name} wrote no valid PNG"))
+            else:
+                results.append((True, f"a {size[0]}x{size[1]} {label}"))
+        return all(passed for passed, _ in results), " and ".join(report for _, report in results)
     finally:
         subprocess.run(["runuser", "-u", user, "--", "rm", "-rf", "--", temporary], check=False)
 
