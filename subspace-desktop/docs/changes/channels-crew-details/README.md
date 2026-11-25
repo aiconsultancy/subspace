@@ -38,9 +38,20 @@ are written out as code points, except line breaks and tabs.
 - The Channels tests cover roster changes, missing Git state, no checkout,
   and pull request display. Ship tab tests check accessible names, keyboard
   focus into and out of the detail view, and clearing the view on a buffer change.
-- Before marking the pull request ready, capture the Ship tab and crew view
-  in Twilight Two using the fictional Fleet and IRC fixtures described in
-  [Desktop capture](../../capture.md).
+
+### Captures
+
+Captured on Linux with `make capture` in Twilight Two at 1440 × 900, using
+the fictional Fleet API and loopback IRC fixtures described in
+[Desktop capture](../../capture.md). The Ship tab stays beside the open
+conversation as the inspector moves from the roster to a crew member.
+
+![The Ship tab with Lyra’s crew roster beside the conversation](evidence/ship-crew-roster.png)
+
+![Quill’s crew details with the current task, progress and project Git state](evidence/crew-detail-quill.png)
+
+Not captured: the before state and the older-gateway fallback. The Fleet
+API fixture serves the crew detail route and has no switch to omit it.
 
 ## Space checklist
 
