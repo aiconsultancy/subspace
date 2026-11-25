@@ -18,7 +18,7 @@ service or a route to the member, the roster rows are plain text.
 The view reads the crew detail endpoint in the background and refreshes it
 when the member changes on the live roster. Routine changes such as Git's
 last check time or a queue count neither start a read nor discard one in
-flight. Only task assignment or text changes queue a roster-driven read,
+flight. A current task's identity, status or `updatedAt` queues a roster-driven read,
 with at most one follow-up. Newer roster task text is shown while its
 refreshed full detail is being read.
 A change of fleet directory, selected member identity or task assignment
@@ -27,8 +27,10 @@ effect immediately. Directory changes drop the old request and allow a
 new one without waiting for it. A transient failure offers **Try again**
 and up to five automatic retries, with delays of one to 16 seconds or
 the gateway's longer requested wait (up to 30 seconds). Reloading Channels
-or reconnecting to the fleet also re-arms the read. Hidden crew views do
-not start reads. A missing route falls back to the roster without retries.
+or reconnecting to the fleet also rearms the read. Hidden crew views do
+not start reads; showing a retained view rearms the read and ignores any
+older response. A 404 falls back to the roster without polling. Reload,
+a reconnect or a returning member explicitly probes the route again.
 Task text has no length limit. Control and bidirectional formatting codes
 are written out as code points, except line breaks and tabs.
 

@@ -94,7 +94,8 @@ pub(crate) fn retry(board: &mut Irc, cx: &mut Context<Irc>) {
         && let Some(selection) = &mut board.inspector_crew
     {
         selection.retry_timer = None;
-        selection.state.rearm();
+        selection.request = None;
+        selection.state.probe();
         sync(board, api, cx);
         cx.notify();
     }
@@ -159,7 +160,8 @@ impl Selection {
         let live = api.state(&self.fleet).is_live();
         if live && !self.live {
             self.retry_timer = None;
-            self.state.rearm();
+            self.request = None;
+            self.state.probe();
         }
         self.live = live;
         changed
@@ -170,12 +172,13 @@ impl Selection {
         let state = client.as_ref().err().cloned();
         let changed = self.client_state != state;
         self.client_state = state;
-        if let Ok(client) = client
-            && self.retry_timer.is_none()
-        {
+        if let Ok(client) = client {
             if let Some(generation) = self.state.begin() {
+                self.retry_timer = None;
                 self.request = Some(self.read(client, generation, api, cx));
-            } else if let Some(delay) = self.state.retry_delay() {
+            } else if self.retry_timer.is_none()
+                && let Some(delay) = self.state.retry_delay()
+            {
                 self.retry_timer = Some(self.schedule_retry(delay, api, cx));
             }
         }

@@ -275,11 +275,29 @@ fn missing_route_uses_the_current_roster() {
     assert!(!state.can_retry());
     assert_eq!(state.retry_delay(), None);
     state.queue();
-    assert_eq!(
-        state.begin(),
-        None,
-        "reloading does not retry a missing route"
-    );
+    assert_eq!(state.begin(), None, "ordinary updates do not poll a 404");
+    // Reload and reconnect both explicitly probe the route once.
+    state.probe();
+    let probe = state.begin().unwrap();
+    state.finish(probe, Err(Error::NotFound));
+    assert_eq!(state.begin(), None);
+    assert_eq!(state.retry_delay(), None);
+}
+
+#[test]
+fn a_missing_member_gets_one_probe_when_it_returns() {
+    let mut state = DetailState::new(roster("first", "Working…", 1), 0);
+    let first = state.begin().unwrap();
+    state.finish(first, Err(Error::NotFound));
+    assert!(state.update(roster("first", "Working…", 2), 0));
+    assert_eq!(state.begin(), None);
+    assert!(state.update(Roster::Gone, 0));
+    assert_eq!(state.begin(), None);
+    assert!(state.update(roster("first", "Working…", 3), 0));
+    let probe = state.begin().unwrap();
+    state.finish(probe, Ok(member("first", "Full detail on return", 3)));
+    assert_progress(&state, "Full detail on return");
+    assert_eq!(state.begin(), None);
 }
 
 #[test]

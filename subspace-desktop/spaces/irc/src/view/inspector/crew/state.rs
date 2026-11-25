@@ -90,6 +90,8 @@ impl DetailState {
         }
         let invalidated = directory_changed || !self.roster.same_assignment(&roster);
         let task_changed = !invalidated && !self.roster.same_task_revision(&roster);
+        let returned =
+            !matches!(self.roster, Roster::Present(_)) && matches!(roster, Roster::Present(_));
         if invalidated {
             self.detail = None;
             self.generation = self.generation.wrapping_add(1);
@@ -100,7 +102,9 @@ impl DetailState {
         }
         self.directory = directory;
         self.roster = roster;
-        if invalidated {
+        if returned {
+            self.probe();
+        } else if invalidated {
             self.rearm();
         } else if task_changed {
             self.queue();
@@ -115,6 +119,14 @@ impl DetailState {
     pub fn rearm(&mut self) {
         self.retries = 0;
         self.queue();
+    }
+
+    /// Reload, reconnect or a returning member can supersede a missing
+    /// route (or an older read). Ordinary updates still do not poll a 404.
+    pub fn probe(&mut self) {
+        self.retries = 0;
+        self.flight = None;
+        self.pending = true;
     }
 
     /// Reports a transition so the owner can let go of obsolete work.
