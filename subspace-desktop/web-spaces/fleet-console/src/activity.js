@@ -291,6 +291,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    */
   const full = new Map();
   const budget = createBudget(maxLoadedBytes);
+  /** Where the view shows each item read whole: key -> {at, bytes}, `place` below. */
+  const positions = new Map();
   /** Keys waiting to be read; one item is read at a time. */
   let queue = [];
   /** The item being read: {key, controller}, or null. */
@@ -319,7 +321,22 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   function chargeInline() {
     let bytes = 0;
     for (const turn of state.turns) bytes += bytesOfTurn(turn);
+    const grew = bytes > budget.bytes(INLINE_KEY);
     if (bytes !== budget.bytes(INLINE_KEY) || !budget.has(INLINE_KEY)) budget.reserve(INLINE_KEY, bytes, null, { pinned: true });
+    if (grew) recheckWholes();
+  }
+
+  /**
+   * The pinned charge grew: an item read whole that no longer fits beside
+   * it (and the latest request, when that is another item) reads in parts
+   * instead. Being the latest request never keeps a whole read past its
+   * allowance (SUB decision 533c2b29).
+   */
+  function recheckWholes() {
+    for (const key of [...full.keys()]) {
+      // Each switch reserves a part, which may free another entry meanwhile.
+      if (full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key))) wholeToParts(key);
+    }
   }
 
   const changed = () => {
@@ -486,6 +503,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     queue = queue.filter((entry) => entry !== key);
     full.get(key)?.pager?.drop();
     full.delete(key);
+    positions.delete(key);
     budget.release(key);
     settle(key);
   }
@@ -500,6 +518,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       budget.release(key);
     }
     full.clear();
+    positions.clear();
   }
 
   /** How the budget frees an item read whole: as if it had never been read, so it offers Load in full again. */
@@ -511,6 +530,11 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
 
   /** Hold `bytes` for an item read whole, or, when the budget refuses (another request is the floor), forget it. */
   function holdWhole(key, bytes) {
+    if (!budget.fits(key, bytes)) {
+      // Past its allowance beside the floor, however recently asked for: read it in parts.
+      wholeToParts(key);
+      return false;
+    }
     if (budget.reserve(key, bytes, evictor(key))) return true;
     drop(key);
     return false;
@@ -549,10 +573,11 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * at a time through a pager. Its parts are addressed by page number, so
    * any part can be read directly; each is pinned to the version shown.
    */
-  function partsEntry(turnId, itemId) {
+  function partsEntry(turnId, itemId, known) {
     const key = fullKey(turnId, itemId);
-    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null };
+    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null, replacing: known !== null };
     entry.pager = createPager({
+      known,
       budget,
       key,
       partBytes: PART_MAX_BYTES,
@@ -585,14 +610,40 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     return entry;
   }
 
-  /** Show an item too large to hold in parts, from its first part. */
-  function openParts(turnId, itemId) {
+  /**
+   * Show an item too large to hold in parts, from its first part, or from
+   * part `at` of a version already `known` (an item read whole).
+   */
+  function openParts(turnId, itemId, known = null, at = 0) {
     const key = fullKey(turnId, itemId);
     budget.release(key);
-    const entry = partsEntry(turnId, itemId);
+    const entry = partsEntry(turnId, itemId, known);
     full.set(key, entry);
-    const done = entry.pager.open("first");
+    const done = entry.pager.open(at);
     done.then(() => settle(key));
+    return done;
+  }
+
+  /**
+   * An item read whole that no longer fits reads in parts instead (SUB
+   * decision 533c2b29): of the version read, from the part at the place its
+   * window shows (`place`). That window stays on show, and charged, until
+   * the part arrives. Resolves once the part's read settles.
+   */
+  function wholeToParts(key) {
+    const entry = full.get(key);
+    if (reading?.key === key) {
+      reading.controller.abort();
+      reading = null;
+    }
+    queue = queue.filter((each) => each !== key);
+    const shown = positions.get(key);
+    positions.delete(key);
+    if (!entry.item || !entry.pages) return openParts(entry.turnId, entry.itemId);
+    const count = Math.max(1, Math.ceil(entry.pages / PART_PAGES));
+    const known = { version: { seq: entry.seq, bytes: entry.bytes, pages: entry.pages }, count, carried: shown?.bytes ?? 0 };
+    const done = openParts(entry.turnId, entry.itemId, known, Math.min(count - 1, Math.floor((shown?.at ?? 0) * count)));
+    pump();
     return done;
   }
 
@@ -656,7 +707,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (abandoned(key, own, at, generation)) return;
     const now = full.get(key);
     if (result) {
-      full.set(key, { ...now, seq: result.seq, state: "ready", item: result.item, bytes: result.bytes, error: null });
+      full.set(key, { ...now, seq: result.seq, state: "ready", item: result.item, bytes: result.bytes, pages: result.pages, error: null });
       holdWhole(key, result.bytes * FORMAT_FACTOR);
     } else if (failure instanceof TooLargeError) {
       // Larger than the budget: never read whole. Read its first part instead.
@@ -706,7 +757,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (previous?.state === "ready" && previous.item && previous.seq >= item.seq) return Promise.resolve();
     const done = settled(key);
     if (previous?.state !== "loading" && previous?.state !== "queued") {
-      full.set(key, { turnId, itemId, mode: "whole", generation: state.cursor?.generation ?? null, seq: previous?.seq ?? item.seq, state: "queued", item: previous?.item ?? null, bytes: previous?.bytes ?? 0, error: null });
+      full.set(key, { turnId, itemId, mode: "whole", generation: state.cursor?.generation ?? null, seq: previous?.seq ?? item.seq, state: "queued", item: previous?.item ?? null, bytes: previous?.bytes ?? 0, pages: previous?.pages ?? 0, error: null });
       queue.push(key);
       pump();
       changed();
@@ -733,7 +784,9 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (entry.mode !== "parts") return entry;
     const pager = entry.pager.view;
     const error = pager.error === null ? null : pager.error instanceof ChangingError ? pager.error.message : readFailure(pager.error);
-    return { turnId: entry.turnId, itemId: entry.itemId, mode: "parts", ...pager, seq: pager.version?.seq ?? null, error };
+    // An item read whole whose window stays on show until its first part arrives.
+    const replacing = entry.replacing && pager.data === null && pager.state !== "evicted";
+    return { turnId: entry.turnId, itemId: entry.itemId, mode: "parts", ...pager, seq: pager.version?.seq ?? null, error, replacing };
   }
 
   function view() {
@@ -751,6 +804,15 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       retrying: retryTimer !== null,
       waiting,
       full: (turnId, itemId) => shownFull(full.get(fullKey(turnId, itemId))),
+      /**
+       * The view says where it shows an item read whole: `at`, the share of
+       * its text before the window on show (0 to 1), and `bytes`, the
+       * window's size as shown. Read in parts, it opens at that place.
+       */
+      place: (turnId, itemId, at, bytes) => {
+        const key = fullKey(turnId, itemId);
+        if (full.get(key)?.mode === "whole") positions.set(key, { at, bytes });
+      },
       /** Bytes held for items read (whole or a part); the panel's share of the budget is not counted here. */
       loadedBytes: [...full.keys()].reduce((total, key) => total + budget.bytes(key), 0),
       budget,

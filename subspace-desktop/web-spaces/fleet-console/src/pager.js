@@ -97,8 +97,11 @@ export class PagerError extends Error {
  * @param {((part: number, version: unknown) => unknown)|null} [options.cursorAt]  a cursor for any part, for sources paged by number
  * @param {() => void} [options.onChange] the pager's view changed
  * @param {() => void} [options.onEvict]  the budget freed it; it reads from the start when opened again
+ * @param {{version: unknown, count: number, carried: number}|null} [options.known]  a version already known (its
+ *   part count), so any of its parts can be opened first, and the bytes of a window still on show from
+ *   before the pager (an item read whole), held beside the first read until a part arrives
  */
-export function createPager({ budget, key, read, partBytes, drawn = (data) => utf8Length(data), cursorAt = null, onChange = () => {}, onEvict = () => {} }) {
+export function createPager({ budget, key, read, partBytes, drawn = (data) => utf8Length(data), cursorAt = null, onChange = () => {}, onEvict = () => {}, known = null }) {
   /** A part's charge once it shows: the part held and what it draws. */
   const charge = (part) => utf8Length(part) + drawn(part);
   /** Bumped by every read started, eviction, restart and drop: a reply from before is discarded. */
@@ -106,8 +109,10 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
   let controller = null;
   /** starts[i] is the cursor of part i, once known; part 0 starts at null. */
   let starts = [null];
-  let count = null;
-  let version = null;
+  let count = known?.count ?? null;
+  let version = known?.version ?? null;
+  /** The window on show from before the pager, charged until its first part arrives. */
+  let carried = known?.carried ?? 0;
   let part = 0;
   let want = 0;
   let data = null;
@@ -127,6 +132,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     part = 0;
     want = 0;
     data = null;
+    carried = 0;
   }
 
   function evicted() {
@@ -159,6 +165,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     error = failure;
     // The part already shown stays, charged as it is, with its drawn window.
     if (data !== null) hold(charge(data));
+    else if (carried > 0) hold(carried);
     else budget.release(key);
   }
 
@@ -192,6 +199,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     part = at;
     want = at;
     data = reply.data;
+    carried = 0;
     state = "ready";
     error = null;
     // The part on show before it is let go: only this part and its window stay charged.
@@ -223,7 +231,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     // it arrives, as the outgoing part goes. The budget decides whether this
     // may pass its limit (its latest request); when it refuses, the pager
     // lets go of what it held and reads from the start when opened again.
-    if (!budget.reserve(key, (data === null ? 0 : charge(data)) + partBytes, evicted)) {
+    if (!budget.reserve(key, (data === null ? carried : charge(data)) + partBytes, evicted)) {
       evicted();
       return;
     }

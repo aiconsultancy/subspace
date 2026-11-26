@@ -205,7 +205,7 @@ const sameVersion = (a, b) => a.seq === b.seq && a.bytes === b.bytes && a.pages 
  *
  * @param {(page: number) => Promise<object>} readPage  one `V1ActivityItemPage`
  * @param {{agent?: string, turn?: string, item?: string, attempts?: number, room?: (bytes: number) => boolean}} [expect]
- * @returns {Promise<{seq: number, bytes: number, item: object}>}
+ * @returns {Promise<{seq: number, bytes: number, pages: number, item: object}>}
  */
 export async function readPagedItem(readPage, { agent, turn, item, attempts = PAGE_ATTEMPTS, room = defaultRoom } = {}) {
   const expect = { agent, turn, item };
@@ -238,7 +238,7 @@ export async function readPagedItem(readPage, { agent, turn, item, attempts = PA
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || (item !== undefined && parsed.id !== item)) {
       throw new InvalidResponseError("The item's pages do not join into the item asked for.");
     }
-    return { seq: first.seq, bytes: first.bytes, item: parsed };
+    return { seq: first.seq, bytes: first.bytes, pages: first.pages, item: parsed };
   }
   throw new ChangingError();
 }

@@ -3,13 +3,83 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PART_MAX_BYTES } from "../src/activity.js";
+import { INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
 import { formatItem, itemDocument, itemTree, json, mount } from "../src/activity-view.js";
 import { createBudget } from "../src/budget.js";
 import { partBlocks, restOf, shownJsonPieces } from "../src/document.js";
 import { createPager } from "../src/pager.js";
-import { activityEvent, stepItem, tokens, toolItem } from "./activity-fixtures.js";
-import { buttons, fakeDoc, officer, pagedWith, pagesOf, prepare, settle, windowsIn } from "./activity-helpers.js";
+import { activityEvent, stepItem, textItem, tokens, toolItem } from "./activity-fixtures.js";
+import { buttons, clickOn, fakeDoc, officer, pagedWith, pagesOf, prepare, settle, windowsIn } from "./activity-helpers.js";
+
+// ---------- 2. A whole read is rechecked when the inline charge grows ----------
+
+test("2: an item read whole that no longer fits beside grown inline content reads in parts from where its window shows, the window kept until the part arrives", async () => {
+  const { item, pages, snapshot } = pagedWith("a".repeat(600 * 1024));
+  const whole = pages[0].bytes * 2;
+  const { watcher, client, panel, inline } = await prepare(snapshot, whole + 20_000);
+  const budget = watcher.view.budget;
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  panel.update(watcher.view, officer);
+  assert.equal(watcher.view.full("turn-b", "ia").mode, "whole", "it fits whole at first");
+  assert.equal(budget.requested, "turn-b\u0000ia", "and is the latest request");
+  clickOn(panel, panel.root.findAll((node) => node.attributes["data-activity-window"] === "last")[0]);
+  const window = windowsIn(panel.root)[0];
+  assert.ok(window, "its last window is drawn");
+  // Live content grows the pinned inline charge past what the whole leaves.
+  const held = [];
+  client.activityItemPage = (agent, turn, id, page) => new Promise((resolve) => held.push({ page, resolve }));
+  watcher.event(activityEvent(10, { type: "item", item: textItem("grown", 10, "b".repeat(100 * 1024)) }));
+  await settle();
+  const steady = budget.limit - budget.bytes(INLINE_KEY);
+  assert.ok(budget.bytes(INLINE_KEY) > inline, "the inline charge grew");
+  const switching = watcher.view.full("turn-b", "ia");
+  assert.equal(switching.mode, "parts", "the latest request does not keep a whole read past the floor");
+  assert.equal(switching.replacing, true);
+  assert.ok(budget.bytes("turn-b\u0000ia") <= steady, `within the steady allowance (${budget.bytes("turn-b\u0000ia")} of ${steady})`);
+  const count = Math.ceil(pages.length / 4);
+  assert.deepEqual(held.map((each) => each.page), [(count - 1) * 4], "the part where its window shows, the last");
+  panel.update(watcher.view, officer);
+  assert.equal(windowsIn(panel.root)[0], window, "the window shown stays until the part arrives");
+  assert.match(panel.root.textContent, /the window below stays on show until it arrives/);
+  for (let page = (count - 1) * 4; held.length; page += 1) {
+    held.shift().resolve(pages[page]);
+    await settle();
+  }
+  panel.update(watcher.view, officer);
+  const part = watcher.view.full("turn-b", "ia");
+  assert.equal(part.state, "ready");
+  assert.equal(part.part, count - 1);
+  assert.equal(part.replacing, false);
+  assert.notEqual(windowsIn(panel.root)[0], window, "the part's window replaced it");
+  assert.match(panel.root.textContent, new RegExp(`Part ${count} of ${count}`));
+  assert.ok(budget.bytes("turn-b\u0000ia") <= steady);
+  watcher.stop();
+});
+
+test("2: inline content that grows while an item is read whole sends the read to parts, though it is the latest request", async () => {
+  const { pages, snapshot } = pagedWith("a".repeat(600 * 1024));
+  const { watcher, client } = await prepare(snapshot, pages[0].bytes * 2 + 20_000);
+  const budget = watcher.view.budget;
+  const held = [];
+  client.activityItemPage = (agent, turn, id, page) => new Promise((resolve) => held.push({ page, resolve }));
+  const load = watcher.loadItem("turn-b", "ia");
+  await settle();
+  held.shift().resolve(pages[0]);
+  await settle();
+  watcher.event(activityEvent(10, { type: "item", item: textItem("grown", 10, "b".repeat(100 * 1024)) }));
+  while (held.length) {
+    const { page, resolve } = held.shift();
+    resolve(pages[page]);
+    await settle();
+  }
+  await load;
+  await settle();
+  assert.equal(budget.requested, "turn-b\u0000ia");
+  assert.equal(watcher.view.full("turn-b", "ia").mode, "parts", "never held whole past the floor");
+  assert.ok(budget.bytes("turn-b\u0000ia") <= budget.limit - budget.bytes(INLINE_KEY), "within the steady allowance");
+  watcher.stop();
+});
 
 // ---------- 3. Load the latest keeps the part on show until its replacement arrives ----------
 

@@ -334,7 +334,9 @@ function pagedSegments(turnId, item, full, body) {
     const note =
       full.state === "loading"
         ? full.data === null
-          ? `Large item (${pages}), more than this view holds at once. Reading its first part…`
+          ? full.replacing
+            ? `Large item (${pages}), no longer held whole beside the rest, so it shows a part at a time. Reading part ${full.want + 1}; the window below stays on show until it arrives…`
+            : `Large item (${pages}), more than this view holds at once. Reading its first part…`
           : full.reloading
             ? "Reading the latest version. This part stays on show until it arrives…"
             : `Reading part ${full.want + 1}…`
@@ -819,11 +821,14 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
         kid.element.setAttribute("class", `act-item k-${item.kind}`);
         kid.kind = item.kind;
       }
-      // Each segment is rebuilt only when what it is drawn from changed.
+      // Each segment is rebuilt only when what it is drawn from changed. An
+      // item read whole that now reads in parts keeps its window on show
+      // until the part arrives (SUB decision 533c2b29).
+      const keepBody = full?.replacing === true && kid.body.key !== null;
       let segments = null;
       for (const name of ["head", "body", "foot"]) {
         const segment = kid[name];
-        if (segment.key === keys[name]) continue;
+        if (segment.key === keys[name] || (name === "body" && keepBody)) continue;
         segments ??= itemSegments(turn.id, item, full, source ? { source, measure, window, held } : null);
         const tree = segments[name]();
         segment.element.replaceChildren(...h("div", {}, tree).children.map((node) => mount(node, doc)));
@@ -889,7 +894,13 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     const room = budget ? budget.limit - budget.used : Infinity;
     const plan = planBodies(ranked, room);
     if (floor) plan.drawn.add(floor.key);
-    for (const { turn, entry, bodies } of open) drawItems(turn, entry, bodies, plan.drawn);
+    for (const { turn, entry, bodies } of open) {
+      drawItems(turn, entry, bodies, plan.drawn);
+      // Where each item read whole shows, so it reads in parts from there should it no longer fit.
+      for (const { item, source, measure, window, key } of bodies) {
+        if (source?.kind === "whole") view.place?.(turn.id, item.id, window / windowCount(measure), plan.drawn.has(key) ? drawnBytes(measure, window) : 0);
+      }
+    }
     // Fitted to the room above, so it frees nothing and always fits.
     if (plan.cost > 0) budget?.reserve(DRAW_KEY, plan.cost, null, { makeRoom: false });
   }
