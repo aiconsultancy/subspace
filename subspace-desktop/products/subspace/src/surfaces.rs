@@ -77,13 +77,14 @@ pub(crate) fn adjust_descriptor(descriptor: &mut ProductDescriptor) {
 
 /// The built-in switcher order. Saved user order takes precedence.
 pub(crate) fn order(board: BoardRegistration) -> BoardRegistration {
-    const DEFAULT: [&str; 7] = [
+    const DEFAULT: [&str; 8] = [
         "irc",
         "issues",
         "github",
         "fleet-console",
         "projects",
         "decisions",
+        "agentsview",
         "actions",
     ];
     let rank = DEFAULT.iter().position(|id| *id == board.id);

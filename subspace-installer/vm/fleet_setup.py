@@ -296,6 +296,8 @@ def parse_args(argv):
                         "PostgreSQL server, when the system trust store lacks it; '' removes it")
     parser.add_argument("--migrate", action="store_true", help="apply the API's database migrations to that existing "
                         "PostgreSQL on this run (never by default; see the installer README)")
+    parser.add_argument("--agentsview", action=argparse.BooleanOptionalAction, default=None,
+                        help="install the AgentsView session browser (default on; remembers your choice)")
     parser.add_argument("--usage-guard", action=argparse.BooleanOptionalAction, default=None,
                         help="enable Claude and Codex quota notices and crew cutoffs (default on)")
     parser.add_argument("--usage-guard-warning", action="append", default=[], metavar="[PROVIDER=]PERCENT",
@@ -622,6 +624,13 @@ def gather(args, saved):
         # Off unless asked: an unattended run never switches it on.
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
+    installed_view = (read_json(INPUTS / "fleet.json", {}) or {}).get("agentsview", {})
+    if args.agentsview is not None:
+        answers["agentsview"] = args.agentsview
+    elif "enabled" in installed_view:
+        answers["agentsview"] = installed_view["enabled"]
+    elif "agentsview" not in answers:
+        answers["agentsview"] = yes_no("Install the AgentsView session browser (recommended)?", True, interactive)
     answers["usageGuard"] = usage_guard_answers(args, answers)
     answers["stargateApi"] = args.stargate_api or answers.get("stargateApi", "auto")
     if args.fleet_api_url == "tunnel":
@@ -1204,6 +1213,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 "githubPolicy", "dashboard", "proxy", "agentsview", "screenshots", "memory"):
         if key in previous:
             config[key] = previous[key]
+    view = config.get("agentsview", {})
+    if not answers.get("agentsview", True) or "enabled" in view:
+        config["agentsview"] = {**view, "enabled": answers.get("agentsview", True)}
     if "captainMergeRepositories" in answers:
         config["githubPolicy"] = {**config.get("githubPolicy", {}),
                                   "captainMergeRepositories": answers["captainMergeRepositories"]}
@@ -3355,7 +3367,12 @@ def irc_bundle(answers, members, secret_store, certificates=None):
 
 def summary(answers, members, stargate_api, lockdown_id=""):
     local = answers["irc"] == "local"
-    ports = [DASHBOARD, AGENTSVIEW]
+    view = (read_json(INPUTS / "fleet.json", {}) or {}).get("agentsview", {})
+    agentsview = view.get("enabled", answers.get("agentsview", True))
+    view_port = view.get("port", AGENTSVIEW)
+    ports = [DASHBOARD]
+    if agentsview:
+        ports.append(view_port)
     if local:
         ports = [IRC_PLAIN, IRC_TLS, *ports]
     if answers["api"]:
@@ -3377,6 +3394,8 @@ def summary(answers, members, stargate_api, lockdown_id=""):
         "SUBSPACE_API": "1" if answers["api"] else "0",
         "SUBSPACE_STARGATE_API": "1" if stargate_api else "0",
         "SUBSPACE_STARGATE_API_PORT": str(STARGATE_API_PORT),
+        "SUBSPACE_AGENTSVIEW": "1" if agentsview else "0",
+        "SUBSPACE_AGENTSVIEW_PORT": str(view_port),
         "SUBSPACE_PORTS": " ".join(str(port) for port in ports),
         "SUBSPACE_OPERATOR": answers["operator"],
         "SUBSPACE_ACCESS": answers["access"],

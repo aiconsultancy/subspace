@@ -97,6 +97,14 @@ SUBSPACE_BUILD_CONFIG=/path/outside/the/repository/example.json make run
 [Build configuration](installation.md#build-configuration) has more on the
 OAuth App and Report issue.
 
+Standard macOS and Windows builds include the
+[AgentsView Space](../spaces/web/agentsview-help.md). To build the desktop
+without it while keeping Report issue, run this from `subspace-desktop`.
+
+```sh
+cargo build --locked -p subspace --no-default-features --features report-issue
+```
+
 ## What a fork changes in the code
 
 | Constant | File | What it sets |

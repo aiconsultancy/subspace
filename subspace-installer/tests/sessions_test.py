@@ -439,6 +439,27 @@ class InstalledFleet(unittest.TestCase):
         unit = (self.systemd / "subspace-fleet-gateway.service").read_text()
         return {entry["id"]: entry["backend"] for entry in config["irc"]}, unit
 
+    def test_disabling_agentsview_retires_only_its_service(self):
+        config, secrets = crew_fleet("orion")
+        unit = "subspace-fleet-view.service"
+        current = self.etc / "units"
+        retired = self.etc / "retired-units"
+        self.render(config, secrets)
+        all_units = set(current.read_text().splitlines())
+        self.assertIn(unit, all_units)
+
+        config["agentsview"] = {"enabled": False}
+        runtime.render_view.reset_mock()
+        self.render(config, secrets)
+        runtime.render_view.assert_not_called()
+        self.assertEqual(set(current.read_text().splitlines()), all_units - {unit})
+        self.assertEqual(retired.read_text().splitlines(), [unit])
+
+        config["agentsview"]["enabled"] = True
+        self.render(config, secrets)
+        self.assertEqual(set(current.read_text().splitlines()), all_units)
+        self.assertFalse(retired.exists())
+
     def test_the_gateway_waits_for_a_rendered_pin_not_just_a_confirmed_record(self):
         config, secrets = crew_fleet("orion")
         marker = self.etc / "sessions/orion.ready"

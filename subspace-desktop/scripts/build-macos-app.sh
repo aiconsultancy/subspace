@@ -32,7 +32,7 @@ aarch64-apple-darwin) ;;
 esac
 
 require_product_licences "$target"
-load_product
+load_product "$target"
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION"
 rustup target add "$target" >&2
 scratch="$(mktemp -d)"

@@ -37,6 +37,8 @@ impl PageState {
                 }
                 return target;
             }
+            #[cfg(all(feature = "agentsview", any(target_os = "macos", windows)))]
+            PageEvent::AgentsView(_) => {}
             PageEvent::Download => self.notice = Some(NO_DOWNLOADS.into()),
             PageEvent::Message { .. } => {}
             #[cfg(target_os = "macos")]

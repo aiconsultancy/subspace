@@ -11,6 +11,8 @@ use super::{AppFolder, PageEvent, Profile, Start};
 use crate::app::{APP_SCHEME, serve};
 use crate::policy::navigation_allowed;
 
+#[cfg(feature = "agentsview")]
+mod agentsview;
 #[cfg(target_os = "macos")]
 mod cookies;
 #[cfg(target_os = "macos")]

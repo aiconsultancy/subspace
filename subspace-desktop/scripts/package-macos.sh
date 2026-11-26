@@ -42,7 +42,7 @@ aarch64-apple-darwin) arch=arm64 ;;
 	exit 2
 	;;
 esac
-load_product
+load_product "$target"
 
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/github-oauth-secret.sh

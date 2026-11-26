@@ -20,7 +20,7 @@ if ! release_target_supported "$target"; then
     exit 2
 fi
 require_product_licences "$target"
-load_product
+load_product "$target"
 if [[ -n "$expected_version" ]] && [[ "$version" != "${expected_version#v}" ]]; then
     echo "Cargo.toml has version $version, but the release is $expected_version" >&2
     exit 1

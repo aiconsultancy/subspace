@@ -17,6 +17,10 @@ Commands, options and fleet options are the same as install.sh:
   --local | --remote USER@HOST   --target NAME   --identity FILE   --ssh-port N
   --host-key SHA256:...   --ssh-proxy CMD   --cpus N --memory GIB --disk GIB   --install-deps
   --irc-server NAME   --api-target NAME   --yes   --background   -h | --help
+--agentsview / --no-agentsview selects whether to install AgentsView on the fleet VM (default on).
+--agentsview-url URL (desktop) saves the fleet's AgentsView address.
+--agentsview-key-file FILE (desktop) reads its API key from a private file.
+--agentsview-clear-key (desktop) removes the saved key.
 --api-target NAME installs a further fleet without its own Subspace API and
 registers it with the API of the fleet installed as --target NAME; later runs
 reuse it. --host-key always checks the VM's key, and repins a rebuilt VM.
@@ -45,7 +49,7 @@ $SubspaceHome = if ($env:SUBSPACE_HOME) { $env:SUBSPACE_HOME } else { Join-Path 
 $PayloadDir = '/opt/subspace/bootstrap'
 $SetupCmd = '/opt/subspace/bootstrap/subspace-installer/vm/setup.sh'
 
-$FleetConsole = 'fleet-console'
+$FleetConsole = 'fleet-console'; $AgentsViewUrl = ''; $AgentsViewKeyFile = ''; $AgentsViewClearKey = $false
 $Command = 'install'; $Mode = ''; $Target = ''; $Remote = ''; $Identity = ''; $SshPort = 22; $HostKey = ''; $SshProxy = ''
 $Cpus = 4; $Memory = 8; $Disk = 60; $InstallDeps = $false; $IrcTarget = ''; $ApiTarget = ''; $AssumeYes = $false
 $Background = $false; $SkillsFailed = $false; $DatabaseUrlFile = ''; $DatabaseCaFile = ''; $IrcOperatorPasswordFile = ''; $IrcOperatorAccountPasswordFile = ''; $ApiEnrolmentTokenFile = ''; $Passthrough = New-Object System.Collections.Generic.List[string]
@@ -97,6 +101,9 @@ for (; $i -lt $list.Count; $i++) {
         '--irc-operator-account-password-file' { $IrcOperatorAccountPasswordFile = Next-Value }
         '--api-enrolment-token-file' { $ApiEnrolmentTokenFile = Next-Value }
         '--fleet-console' { $FleetConsole = Next-Value }
+        '--agentsview-url' { $AgentsViewUrl = Next-Value }
+        '--agentsview-key-file' { $AgentsViewKeyFile = Next-Value }
+        '--agentsview-clear-key' { $AgentsViewClearKey = $true }
         { $_ -in @('--yes', '-y') } { $AssumeYes = $true }
         '--background' { $Background = $true }
         { $_ -in @('-h', '--help') } {
@@ -107,6 +114,12 @@ for (; $i -lt $list.Count; $i++) {
         default { $Passthrough.Add($arg) }
     }
 }
+if ($AgentsViewUrl -or $AgentsViewKeyFile -or $AgentsViewClearKey) {
+    if ($Command -ne 'desktop') { Die 'AgentsView options go with the desktop command.' }
+    if (-not $AgentsViewUrl) { Die 'AgentsView key options go with --agentsview-url.' }
+    if ($AgentsViewKeyFile -and $AgentsViewClearKey) { Die 'Choose either --agentsview-key-file or --agentsview-clear-key.' }
+}
+$RequestedTarget = $Target
 if (-not $Target) { $Target = if ($Command -eq 'irc-server') { 'subspace-irc' } else { 'subspace-fleet' } }
 foreach ($name in @($Target, $IrcTarget, $ApiTarget)) {
     if ($name -and $name -cnotmatch '^[a-z0-9][a-z0-9-]*$') { Die 'Target names must be lower-case letters, digits and hyphens.' }
@@ -114,8 +127,9 @@ foreach ($name in @($Target, $IrcTarget, $ApiTarget)) {
 if ($HostKey -and $HostKey -cnotmatch '^SHA256:[A-Za-z0-9+/]{43}$') { Die '--host-key needs a fingerprint such as SHA256:AbC... (43 characters after SHA256:).' }
 foreach ($value in $Passthrough) { if ($value.Contains('"')) { Die 'Values cannot contain double quotes.' } }
 $State = Join-Path (Join-Path $SubspaceHome 'targets') $Target
+$StandaloneAgentsView = $AgentsViewUrl -and -not $RequestedTarget
 
-if ($Command -ne 'skills' -and -not (Get-Command ssh.exe -ErrorAction SilentlyContinue)) {
+if ($Command -ne 'skills' -and -not $StandaloneAgentsView -and -not (Get-Command ssh.exe -ErrorAction SilentlyContinue)) {
     Die 'The OpenSSH client is missing. Add it in Settings > System > Optional features > OpenSSH Client, then rerun.'
 }
 
@@ -515,9 +529,118 @@ function Get-DesktopDir {
     return (Join-Path $env:APPDATA 'subspace')
 }
 
+function Read-AgentsViewKeyFile([string]$Path) {
+    try {
+        $source = Get-Item -LiteralPath $Path
+        if ($source -isnot [IO.FileInfo] -or $source.Attributes -band [IO.FileAttributes]::ReparsePoint -or $source.Length -gt 4098) {
+            Die 'The AgentsView key file must be a small regular file.'
+        }
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $acl = Get-Acl -LiteralPath $source.FullName
+        $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+        # New files in a Windows profile normally inherit access for SYSTEM and local Administrators.
+        $trusted = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
+        $other = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) |
+            Where-Object { $_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Value -notin $trusted }
+        if ($owner -ne $sid -or $other) {
+            Die 'You must own the AgentsView key file and limit access to yourself, SYSTEM and local Administrators.'
+        }
+        $key = [IO.File]::ReadAllText($source.FullName).Trim()
+    } catch { Die 'Could not read the AgentsView key file.' }
+    if ($key -cnotmatch '^[!-~]{1,4096}$') { Die 'The AgentsView key file must contain one API key without spaces.' }
+    return $key
+}
+
+function Write-AgentsViewConfig {
+    $address = $AgentsViewUrl.Trim()
+    $url = $null
+    if ($address -match '[?#%\\\s\x00-\x1F]' -or
+        -not [Uri]::TryCreate($address, [UriKind]::Absolute, [ref]$url) -or
+        -not $url.Host -or $url.UserInfo -or $url.Authority -match '@' -or
+        $url.AbsolutePath -cnotmatch '^[a-zA-Z0-9._~/-]*$') {
+        Die 'Enter an AgentsView address without credentials, a query or a fragment.'
+    }
+    $ip = $null
+    $loopback = $url.IdnHost -eq 'localhost' -or
+        ([Net.IPAddress]::TryParse($url.IdnHost, [ref]$ip) -and [Net.IPAddress]::IsLoopback($ip))
+    if ($url.Scheme -ne 'https' -and ($url.Scheme -ne 'http' -or -not $loopback)) {
+        Die 'Use an HTTPS AgentsView address or an HTTP address on this computer.'
+    }
+    $key = ''
+    $file = Join-Path (Get-DesktopDir) 'agentsview/config.json'
+    if ($AgentsViewKeyFile) {
+        $key = Read-AgentsViewKeyFile $AgentsViewKeyFile
+    } elseif (-not $AgentsViewClearKey -and (Test-Path -LiteralPath $file)) {
+        try {
+            $json = [IO.File]::ReadAllText($file)
+            if (-not $json.TrimStart().StartsWith('{')) { throw 'Expected a JSON object.' }
+            $saved = ConvertFrom-Json -InputObject $json
+            $storedKey = $saved.PSObject.Properties['apiKey']
+            if ($storedKey -and $storedKey.Value) {
+                $storedAddress = ([string]$saved.address).TrimEnd('/')
+                if ($storedAddress -cne $address.TrimEnd('/')) {
+                    Die 'To change this AgentsView address, pass a new key file or --agentsview-clear-key.'
+                }
+                Say 'Kept the saved AgentsView connection.'
+                return
+            }
+        } catch { Die 'Could not read the saved AgentsView connection. Pass a new key file or --agentsview-clear-key.' }
+    }
+    try { Write-PrivateAtomically $file ((@{ address = $address; apiKey = $key } | ConvertTo-Json) + "`n") }
+    catch { Die 'Could not save the AgentsView connection.' }
+    Say 'Saved the AgentsView connection. Reopen Subspace to load it.'
+}
+
+function Write-PrivateAtomically([string]$File, [string]$Text) {
+    $tmp = "$file.$([Guid]::NewGuid().ToString('N')).new"
+    try {
+        Write-Private $tmp $Text
+        if (Test-Path -LiteralPath $file) {
+            Protect-File $file
+            [IO.File]::Replace($tmp, $file, [NullString]::Value)
+        } else {
+            [IO.File]::Move($tmp, $file)
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+    }
+}
+
+function Write-AgentsViewVisibility($Summary) {
+    $choice = $Summary['SUBSPACE_AGENTSVIEW']
+    if ($choice -notin @('0', '1')) { return }
+    $enabled = $choice -eq '1'
+    $marker = 'agentsViewDisabledByInstaller'
+    $file = Join-Path (Get-DesktopDir) 'config.json'
+    try {
+        $before = if (Test-Path -LiteralPath $file) { [IO.File]::ReadAllText($file) } else { $null }
+        $config = if ($null -ne $before) { ConvertFrom-Json -InputObject $before } else { [pscustomobject]@{} }
+        if ($config -isnot [pscustomobject]) { throw 'Expected a JSON object.' }
+        if (-not $config.PSObject.Properties['boards']) { $config | Add-Member boards ([pscustomobject]@{}) }
+        if ($config.boards -isnot [pscustomobject]) { throw 'Expected a boards object.' }
+        $saved = $config.boards.PSObject.Properties['agentsview']
+        $hidden = $saved -and $saved.Value -is [bool] -and -not $saved.Value
+        if ($enabled) {
+            $managed = $config.PSObject.Properties[$marker]
+            if (-not ($managed -and $managed.Value -is [bool] -and $managed.Value)) { return }
+            $config.PSObject.Properties.Remove($marker)
+            if ($hidden) { $config.boards | Add-Member agentsview $true -Force }
+        } else {
+            if ($hidden) { return }
+            $config.boards | Add-Member agentsview $false -Force
+            $config | Add-Member $marker $true -Force
+        }
+        $current = if (Test-Path -LiteralPath $file) { [IO.File]::ReadAllText($file) } else { $null }
+        if ($current -cne $before) { Die 'The desktop config changed while saving. Close Subspace and run the desktop command again.' }
+        Write-PrivateAtomically $file (($config | ConvertTo-Json -Depth 100) + "`n")
+    } catch { Die 'Could not save AgentsView visibility for the next desktop launch. Check that config.json contains a JSON object and a boards object.' }
+}
+
 function Write-DesktopConfig([string]$IrcName) {
     $s = Read-Env (Join-Path $State 'summary.env')
     if (-not $s.SUBSPACE_FLEET_SLUG) { Die 'No fleet summary yet; run the install first.' }
+    Write-AgentsViewVisibility $s
     if (-not $IrcName -and (Test-Path (Join-Path $State 'irc-target'))) { $IrcName = (Get-Content (Join-Path $State 'irc-target') -Raw).Trim() }
     if ($IrcName) {
         $ircSummary = Read-Env (Join-Path (Join-Path (Join-Path $SubspaceHome 'targets') $IrcName) 'summary.env')
@@ -609,7 +732,11 @@ function Start-Tunnel {
     if ($busy.Count) { Die "Ports already in use here: $($busy -join ' '). Stop whatever uses them first." }
     $sshArgs = @('-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=30', '-F', (Join-Path $State 'ssh_config')) + $forwards + @('subspace-target')
     Say "Forwarding 127.0.0.1 ports $($s.SUBSPACE_PORTS) to the fleet VM."
-    Note 'API http://127.0.0.1:3000  IRC 127.0.0.1:6667  dashboard http://127.0.0.1:8070  AgentsView http://127.0.0.1:8080'
+    Note 'API http://127.0.0.1:3000  IRC 127.0.0.1:6667  dashboard http://127.0.0.1:8070'
+    if ($s['SUBSPACE_AGENTSVIEW'] -ne '0') {
+        $viewPort = if ($s['SUBSPACE_AGENTSVIEW_PORT']) { $s['SUBSPACE_AGENTSVIEW_PORT'] } else { '8080' }
+        Note "AgentsView http://127.0.0.1:$viewPort"
+    }
     if ($Background) {
         $process = Start-Process ssh.exe -ArgumentList (Format-Arguments $sshArgs) -WindowStyle Hidden -PassThru
         Write-Private (Join-Path $State 'tunnel.pid') "$($process.Id)`n"
@@ -957,7 +1084,12 @@ switch ($Command) {
     'irc-server' { Invoke-IrcServer }
     'tunnel' { Start-Tunnel }
     'desktop' {
+        if ($StandaloneAgentsView) { Write-AgentsViewConfig; exit 0 }
         Get-TargetEnv | Out-Null
+        if ($AgentsViewUrl) {
+            if (-not (Read-Env (Join-Path $State 'summary.env')).SUBSPACE_FLEET_SLUG) { Die 'No fleet summary yet; run the install first.' }
+            Write-AgentsViewConfig
+        }
         Update-SshConfig
         if ((Read-Env (Join-Path $State 'summary.env')).SUBSPACE_STARGATE_API -eq '1' -and (Invoke-Vm @('true')) -eq 0) {
             Save-Private (Join-Path $State 'stargate-api.token') @('sudo', '-n', 'subspace-setup', 'stargate-token')

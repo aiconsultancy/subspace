@@ -452,6 +452,31 @@ class SetupInputsTests(unittest.TestCase):
         with patch.object(fleet_setup.pwd, "getpwnam"):
             return fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
 
+    def test_agentsview_defaults_on_and_keeps_an_explicit_opt_out(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", *CREW]
+        answers, members, config, secrets, _ = self.generate(argv)
+        self.assertIs(answers["agentsview"], True)
+        self.assertEqual(validate(config, secrets, check_files=False)["agentsview"], {"enabled": True, "port": 8080})
+        self.assertIn("8080", fleet_setup.summary(answers, members, False)["SUBSPACE_PORTS"].split())
+
+        config["agentsview"] = {"port": 8081}
+        off = self.rerun(answers, config, "--no-agentsview")
+        disabled = fleet_setup.fleet_config(off, members, "a" * 40)
+        self.assertEqual(disabled["agentsview"], {"port": 8081, "enabled": False})
+        # The installed choice also wins if an operator edits fleet.json directly between setup runs.
+        self.assertIs(self.rerun(answers, disabled)["agentsview"], False)
+        summary = fleet_setup.summary(off, members, False)
+        self.assertEqual(summary["SUBSPACE_AGENTSVIEW"], "0")
+        self.assertNotIn("8081", summary["SUBSPACE_PORTS"].split())
+
+        on = self.rerun(off, disabled, "--agentsview")
+        enabled = fleet_setup.fleet_config(on, members, "a" * 40)
+        self.assertEqual(enabled["agentsview"], {"port": 8081, "enabled": True})
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", enabled)
+        summary = fleet_setup.summary(on, members, False)
+        self.assertEqual(summary["SUBSPACE_AGENTSVIEW"], "1")
+        self.assertIn("8081", summary["SUBSPACE_PORTS"].split())
+
     def test_a_new_fleet_runs_its_officers_on_the_default_models(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
         answers, _, config, secrets, _ = self.generate(argv)
@@ -3647,6 +3672,146 @@ class IrcServerTests(unittest.TestCase):
                 with self.assertRaisesRegex(fleet_setup.SetupError, f"#two-{COMMAND_SUFFIX}"):
                     irc_server.add("-")
                 render.assert_not_called()
+
+
+@unittest.skipUnless(sys.platform in {"darwin", "linux"}, "install.sh runs on macOS and Linux")
+class DesktopAgentsViewTests(unittest.TestCase):
+    def configure(self, directory, *args):
+        script = Path(__file__).resolve().parents[2] / "install.sh"
+        return subprocess.run(
+            ["bash", str(script), "desktop", *args],
+            env={**os.environ, "SUBSPACE_HOME": str(directory / "state"), "SUBSPACE_DESKTOP_DIR": str(directory)},
+            check=False, capture_output=True, text=True,
+        )
+
+    def test_provisions_and_replaces_an_owner_only_connection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            key = folder / "agentsview.key"
+            key.touch(mode=0o600)
+            key.write_text("fixture-view-key\n")
+            path = folder / "agentsview" / "config.json"
+            url = "https://fleet.example.com/agentsview"
+            result = self.configure(folder, "--agentsview-url", url, "--agentsview-key-file", str(key))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("fixture-view-key", result.stdout + result.stderr)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(path.read_text()), {"address": url, "apiKey": "fixture-view-key"})
+
+            result = self.configure(folder, "--agentsview-url", url + "/")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(path.read_text())["apiKey"], "fixture-view-key")
+
+            key.chmod(0o644)
+            result = self.configure(folder, "--agentsview-url", url, "--agentsview-key-file", str(key))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("accessible only to its owner", result.stderr)
+            self.assertEqual(json.loads(path.read_text())["apiKey"], "fixture-view-key")
+
+            for address in ("http://fleet.example.com", "https://fleet.example.com/view{team}/", "https://fleet%zz.example.com/"):
+                result = self.configure(folder, "--agentsview-url", address)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(path.read_text())["address"], url)
+
+            result = self.configure(folder, "--agentsview-url", "http://127.0.0.1:8080")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(path.read_text())["apiKey"], "fixture-view-key")
+
+            result = self.configure(folder, "--agentsview-url", "http://127.0.0.1:8080", "--agentsview-clear-key")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(path.read_text()), {"address": "http://127.0.0.1:8080", "apiKey": ""})
+
+    def test_applies_the_fleet_choice_to_the_desktop_config(self):
+        installer = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "targets" / "example"
+            state.mkdir(parents=True)
+            (state / "target.env").write_text("KIND=remote\nHOST=ops@vm.example.com\nPORT=22\nIDENTITY=\nPROXY=\n")
+            summary = state / "summary.env"
+            config = root / "desktop" / "config.json"
+            config.parent.mkdir()
+            environment = {**os.environ, "SUBSPACE_HOME": str(root), "SUBSPACE_DESKTOP_DIR": str(config.parent)}
+            commands = [["bash", str(installer / "install.sh")]]
+            if shutil.which("pwsh"):
+                ssh = root / "ssh.exe"
+                ssh.write_text("#!/bin/sh\nexit 1\n")
+                ssh.chmod(0o755)
+                environment["PATH"] = f"{root}:{environment['PATH']}"
+                # Only Windows can run the real ACL helper. Run the rest of install.ps1 unchanged.
+                script = re.sub(r"(?ms)^function Protect-File\b.*?^}\n", "function Protect-File([string]$Path) { }\n",
+                                (installer / "install.ps1").read_text(), count=1)
+                (root / "install.ps1").write_text(script)
+                commands.append(["pwsh", "-NoProfile", "-File", str(root / "install.ps1")])
+
+            def provision(choice, *options):
+                summary.write_text(
+                    "SUBSPACE_FLEET_SLUG=example\nSUBSPACE_IRC_MODE=remote\nSUBSPACE_IRC_HOST=irc.example.com\n"
+                    "SUBSPACE_IRC_PORT=6697\nSUBSPACE_ADMIN_ACCOUNT=operator\nSUBSPACE_STARGATE_API=0\n" + choice)
+                result = subprocess.run([*command, "desktop", "--target", "example", *options], env=environment,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            for command in commands:
+                with self.subTest(shell=command[0]):
+                    config.unlink(missing_ok=True)
+                    provision("SUBSPACE_AGENTSVIEW=1\n")
+                    self.assertFalse(config.exists())
+                    original = {"boards": {"irc": False}, "autoRefresh": False}
+                    config.write_text(json.dumps(original))
+                    provision("SUBSPACE_AGENTSVIEW=0\n")
+                    self.assertEqual(json.loads(config.read_text()),
+                                     {**original, "boards": {"irc": False, "agentsview": False},
+                                      "agentsViewDisabledByInstaller": True})
+                    before = config.read_bytes()
+                    provision("")  # Older installers exported neither the choice nor a port.
+                    self.assertEqual(config.read_bytes(), before)
+                    provision("SUBSPACE_AGENTSVIEW=1\n")
+                    self.assertEqual(json.loads(config.read_text()),
+                                     {**original, "boards": {"irc": False, "agentsview": True}})
+                    config.write_text(json.dumps({**original, "boards": {"irc": False, "agentsview": False}}))
+                    manual = config.read_bytes()
+                    provision("SUBSPACE_AGENTSVIEW=0\n")
+                    provision("SUBSPACE_AGENTSVIEW=1\n")
+                    self.assertEqual(config.read_bytes(), manual)
+
+                    view = config.parent / "agentsview" / "config.json"
+                    view.parent.mkdir(exist_ok=True)
+                    address = "https://fleet.example.com/agentsview"
+                    saved = {"address": address, "apiKey": "fixture-view-key"}
+                    view.write_text(json.dumps(saved))
+                    config.unlink()
+                    provision("SUBSPACE_AGENTSVIEW=0\n", "--agentsview-url", address + "/")
+                    self.assertEqual(json.loads(view.read_text()), saved)
+                    self.assertIs(json.loads(config.read_text())["boards"]["agentsview"], False)
+                    provision("SUBSPACE_AGENTSVIEW=1\n", "--agentsview-url", address, "--agentsview-clear-key")
+                    self.assertEqual(json.loads(view.read_text()), {"address": address, "apiKey": ""})
+                    self.assertIs(json.loads(config.read_text())["boards"]["agentsview"], True)
+
+                    default_state = root / "targets" / "subspace-fleet"
+                    default_state.mkdir(exist_ok=True)
+                    shutil.copyfile(state / "target.env", default_state / "target.env")
+                    (default_state / "summary.env").write_text(
+                        summary.read_text().replace("SUBSPACE_AGENTSVIEW=1", "SUBSPACE_AGENTSVIEW=0"))
+                    before = config.read_bytes()
+                    standalone = [*command, "desktop", "--agentsview-url", address]
+                    result = subprocess.run(standalone, env=environment, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(config.read_bytes(), before)
+
+                    view.write_text(json.dumps([saved]))
+                    result = subprocess.run(standalone, env=environment, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+
+
+            command = commands[0]
+            python = root / "python3"
+            python.write_text("#!/bin/sh\nexit 1\n")
+            python.chmod(0o755)
+            environment["PATH"] = f"{root}:{environment['PATH']}"
+            config.write_bytes(manual)
+            provision("SUBSPACE_AGENTSVIEW=1\n")
+            self.assertEqual(config.read_bytes(), manual)
 
 
 if __name__ == "__main__":

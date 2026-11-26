@@ -95,7 +95,7 @@ flowchart LR
   installer installs it and uses it by default. Stargate can also drive agents
   through the **Claude Agent SDK** or the **OpenAI Codex SDK**, but OpenCode is
   the most tested and the recommended choice. The Stargate dashboard and
-  **AgentsView** show what the agents are doing.
+  optional **AgentsView** session browser show what the agents are doing.
 - **Ergo IRC** carries conversations between you and the agents. Every fleet
   has the same [standard channels](subspace-installer/README.md#channels):
   **Starbase** for talking to the rear admiral, **fleet command** where the
@@ -486,6 +486,12 @@ answer it now.
     caps add up to more than the VM; the VM looks small for its fleet),
     with the options that change them. **Default: the installer's sizing,
     and swap when the VM has none.**
+23. **Install AgentsView on the fleet VM?** Recommend enabling it so the
+    user can browse their fleet's OpenCode sessions from Subspace Desktop.
+    Ask the user to choose and pass `--agentsview` for yes or `--no-agentsview`
+    for no. Unattended setup defaults to on and remembers the choice on later
+    runs. When off, there is no AgentsView listener or tunnel port and the
+    desktop installer hides the AgentsView Space on the app's next launch.
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -1093,7 +1099,7 @@ subnets in the user's virtual network. Run it only when the user asks.
    - runs the [fleet installer](subspace-installer/README.md): the latest
      Stargate (its newest `vX.Y.Z` release, looked up on every run and pinned
      in `fleet.json`; pass `--stargate-ref <SHA>` to stay on one commit),
-     CLIProxyAPI, OpenCode, AgentsView, the dashboard, a Linux user and tmux
+     CLIProxyAPI, OpenCode, optional AgentsView, the dashboard, a Linux user and tmux
      session for the rear admiral and each captain, the crew's worktrees and
      each captain's pinned session, and Ergo IRC;
    - starts PostgreSQL and the Subspace API on loopback, creates IRC's
@@ -1161,7 +1167,8 @@ does the same as `./install.sh providers`.
 
 1. **Start the tunnel.** It forwards the fleet's ports to `127.0.0.1` on your
    computer: the API (3000), IRC (6667 and 6697), the dashboard (8070),
-   AgentsView (8080) and the Stargate Fleet API (8484) when it is on.
+   and the AgentsView (8080) and Stargate Fleet API (8484) ports when those
+   services are enabled.
 
    ```sh
    ./install.sh tunnel --background
@@ -1222,9 +1229,40 @@ does the same as `./install.sh providers`.
      address; `--fleet-api-url tunnel` goes back to the tunnel's). The token is
      still required, and stays on your computer.
 
-Open the dashboard at <http://127.0.0.1:8070> and AgentsView at
-<http://127.0.0.1:8080> while the tunnel runs. They show prompts and code, so
-keep them private.
+Open the dashboard at <http://127.0.0.1:8070> while the tunnel runs. If you
+installed AgentsView, open it at <http://127.0.0.1:8080>. These pages show
+prompts and code, so keep them private.
+
+Standard macOS and Windows desktop builds can open the fleet's session
+browser in the **AgentsView** Space. Close Subspace, then provision an
+AgentsView server that already requires a key using a private local key file:
+
+```sh
+./install.sh desktop --agentsview-url https://fleet.example.com/agentsview/ \
+  --agentsview-key-file /path/to/private/agentsview.key
+```
+
+On macOS, set the key file to mode `0600` and remove extended ACL entries
+with `chmod -N` if they are present. On Windows, use the same options with
+`.\install.ps1 desktop`. You must own the key file, and its ACL can grant
+access to your account, SYSTEM and local Administrators.
+
+Add `--target NAME` to apply the fleet's desktop settings in the same run.
+Use `--target subspace-fleet` if you installed with the default target name.
+Without a target, these options configure the AgentsView connection on its own.
+Rerunning with the same AgentsView address keeps the saved
+key. To use a fleet's SSH tunnel, pass `--agentsview-url http://127.0.0.1:8080`.
+For a server without a key, omit the key file on first setup or pass
+`--agentsview-clear-key` to clear an existing key. Reopen Subspace and select
+**AgentsView**. You can also save these settings directly in
+**Settings › Spaces › AgentsView**.
+Use a different local port for each authenticated fleet's SSH tunnel so
+each saved address continues to identify the same fleet.
+
+The host installer applies the selected fleet's AgentsView visibility to
+Subspace Desktop. Close Subspace before applying the setting. After using
+`subspace-setup` directly on the VM, rerun the host installer to refresh its
+saved fleet summary and apply the choice to the desktop.
 
 ## Use your local agents with the fleet
 

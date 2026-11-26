@@ -2576,7 +2576,8 @@ whether at its cap or with the whole VM out of memory.
 | `usageGuard` | On by default. Configure `enabled` and the `claude` and `codex` warning and cutoff percentages. See [Usage guard](#usage-guard). |
 | `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released. Keep v0.46.0 or newer when the usage guard is enabled. `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
-| `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
+| `proxy` | Loopback only. `port` defaults to 8317 and `requestRetries` to 2. |
+| `agentsview` | Loopback only. `enabled` defaults to `true` and `port` to 8080. With `enabled: false`, the installer skips the download and removes the service from an existing install. Existing session history is kept. Use `subspace-setup --agentsview` or `--no-agentsview` to set the same option in guided setup. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
 | `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust`, `dotnet` and `yarn` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
 | `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
@@ -2677,6 +2678,9 @@ sudo subspace-fleetctl attach orion
 sudo journalctl --namespace=subspace-fleet -u subspace-fleet-gateway.service -f
 ssh -N -L 8070:127.0.0.1:8070 -L 8080:127.0.0.1:8080 operator@fleet.example.com
 ```
+
+Omit the `8080` forwarding option if you disabled AgentsView. The host
+installer's `tunnel` command forwards only the configured services.
 
 `sudo subspace-fleetctl api-token` prints the Stargate Fleet API token for a
 desktop or other operator client when `stargate.api` is set.

@@ -93,6 +93,7 @@ PY
         cp "$1/subspace.json" "$fixture/metadata/subspace.json"
     else
         cargo run --quiet --locked -p subspace-descriptor --bin subspace-product-metadata -- subspace "$version" >"$fixture/metadata/subspace.json"
+        cargo run --quiet --locked -p subspace-descriptor --bin subspace-product-metadata -- subspace "$version" aarch64-apple-darwin >"$fixture/metadata/native.json"
     fi
     cat >"$fixture/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
@@ -127,7 +128,14 @@ case "$1" in
         fi
         exec "$FIXTURE_REAL_CARGO" "$@"
         ;;
-    run) cat "$FIXTURE/metadata/subspace.json" ;;
+    run)
+        target="${args[$#-1]}"
+        if [[ -f "$FIXTURE/metadata/native.json" && ( "$target" = *-apple-darwin || "$target" = *-windows-* ) ]]; then
+            cat "$FIXTURE/metadata/native.json"
+        else
+            cat "$FIXTURE/metadata/subspace.json"
+        fi
+        ;;
     metadata)
         if [[ " $* " == *" --filter-platform "* ]]; then
             jq -nc --arg source "$registry" --arg manifest "$FIXTURE/native/ort/Cargo.toml" '

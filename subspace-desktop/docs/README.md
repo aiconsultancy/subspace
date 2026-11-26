@@ -259,6 +259,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Unreleased Spaces](changes/unreleased-spaces/intent.md): Space Lab (then
   Board Lab) and the Component gallery as Cargo features left out of release
   builds.
+- [AgentsView Space](changes/agentsview/README.md): the fleet's session
+  browser, included in standard macOS and Windows builds, with installer and
+  in-app connection settings.
 - [Fleet Console built in](changes/fleet-console-built-in/README.md): Fleet
   Console in every macOS and Windows build without an install, and the
   fictional Stargate Fleet API that captures show it live against.

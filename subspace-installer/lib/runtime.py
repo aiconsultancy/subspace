@@ -1329,7 +1329,8 @@ def validate(config, credentials, check_files=True):
     require(len(accounts) == len(agents), "Member SASL accounts must be unique.")
     require(not accounts.intersection(name.lower() for name in irc["allowedAccounts"]), "Human and fleet SASL accounts must differ.")
     dashboard = listener(cfg.get("dashboard", {}), "dashboard", 8070, True)
-    view = listener(cfg.get("agentsview", {}), "agentsview", 8080)
+    view_options = fields(cfg.get("agentsview", {}), "agentsview", "enabled port")
+    view = {"enabled": boolean(view_options.get("enabled", True)), "port": port(view_options.get("port", 8080))}
     proxy = fields(cfg.get("proxy", {}), "proxy", "port requestRetries")
     proxy_port = port(proxy.get("port", 8317))
     retries = proxy.get("requestRetries", 2)
@@ -1346,7 +1347,9 @@ def validate(config, credentials, check_files=True):
             pattern(origin, r"[a-z][a-z0-9+.-]*://[a-z0-9*](?:[a-z0-9*.-]*[a-z0-9*])?(?::[0-9]{1,5})?",
                     "Fleet API CORS origin")
         stargate_api = {"port": port(options.get("port", 8484)), "corsOrigins": origins}
-    listeners = [dashboard["port"], proxy_port, view["port"]]
+    listeners = [dashboard["port"], proxy_port]
+    if view["enabled"]:
+        listeners.append(view["port"])
     if stargate_api:
         listeners.append(stargate_api["port"])
     if irc["mode"] == "local":
@@ -2805,7 +2808,9 @@ def render_firewall(cfg):
         dns = network.resolvers()
     except OSError as error:
         raise Invalid(f"Could not resolve the officer network policy: {error}") from None
-    ports = {service: cfg[service]["port"] for service in ("dashboard", "agentsview", "proxy")}
+    ports = {service: cfg[service]["port"] for service in ("dashboard", "proxy")}
+    if cfg["agentsview"]["enabled"]:
+        ports["agentsview"] = cfg["agentsview"]["port"]
     if cfg["stargate"]["api"]:
         ports["stargate-api"] = cfg["stargate"]["api"]["port"]
     config = ETC / "firewall.nft"
@@ -3471,6 +3476,7 @@ def render(cfg, extra, prune=False):
     units = [render_proxy(cfg, tokens), *repository_refresh_units(cfg)]
     # Every officer's memory and task limits, sized from this VM's memory and the fleet (lib/memory.py).
     limits = memory_plan(cfg)["limits"]
+    # Keep the session directory's group stable when the optional viewer is switched off and on.
     view_home = account(VIEW, STATE / "view")
     for path in (STATE / "agents", STATE / "sessions"):
         directory(path, 0o711)
@@ -3678,7 +3684,8 @@ def render(cfg, extra, prune=False):
     dash = cfg["dashboard"]
     bind = dash["bind"]
     units.append(serve_unit("dashboard", "Stargate dashboard", f"{APP}/lib/dashboard.py {bind} {dash['port']} {dashboard_socket}", dashboard_user, [f"{PREFIX}gateway.service"]))
-    units.append(render_view(cfg, databases, view_home))
+    if cfg["agentsview"]["enabled"]:
+        units.append(render_view(cfg, databases, view_home))
     units.insert(0, render_firewall(cfg))
     write(ETC / "toolchains.toml", toolchains.mise_config(cfg["toolchains"]), 0o644)
     install_toolchains(cfg, homes)
@@ -3933,6 +3940,8 @@ def main(args):
             # The base screenshot tools' packages for this distribution, unless screenshots are off.
             wanted = screenshots.packages(screenshots.pins(), screenshots.release()) if cfg["screenshots"] else []
             (stage / "screenshot-packages").write_text("".join(f"{name}\n" for name in wanted))
+            if not cfg["agentsview"]["enabled"]:
+                (stage / "skip-agentsview").touch()
             sources = [cfg["stargate"]["repo"], cfg["stargate"]["ref"], cfg["irc"]["mode"]]
             if cfg["irc"]["mode"] == "local":
                 sources.extend(cfg["irc"]["compose"][key] for key in ("repo", "ref"))
@@ -3950,6 +3959,7 @@ def main(args):
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
             print(officer_models_line(cfg))
+            print(f"AgentsView: {'on' if cfg['agentsview']['enabled'] else 'off'}.")
             if cfg["usageGuard"]["enabled"] and saved_config and "usageGuard" not in saved_config:
                 print("This upgrade enables the usage guard. Pass --no-usage-guard in guided setup to keep it off.")
             print(usage_guard_line(cfg["usageGuard"], cfg["members"][0]))

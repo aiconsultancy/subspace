@@ -58,7 +58,7 @@ load_product() {
     product=subspace
     metadata="$(cargo metadata --format-version=1 --no-deps --locked)"
     version="$(jq -er --arg name "$product" '.packages[] | select(.name == $name) | .version' <<<"$metadata")"
-    product_metadata="$(cargo run --quiet --locked -p subspace-descriptor --bin subspace-product-metadata -- "$product" "$version")"
+    product_metadata="$(cargo run --quiet --locked -p subspace-descriptor --bin subspace-product-metadata -- "$product" "$version" "$@")"
     binary_name="$(jq -er '.binary_name' <<<"$product_metadata")"
     # Public output consumed by scripts that source this library.
     # shellcheck disable=SC2034

@@ -198,6 +198,8 @@ fn all_board_registrations() -> Vec<BoardRegistration> {
         #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
         BoardRegistration::new::<subspace_space_lab_board::SpaceLab>()
             .description("Native dashboards and managed runtimes (alpha)"),
+        #[cfg(all(feature = "agentsview", any(target_os = "macos", windows)))]
+        BoardRegistration::new::<subspace_web_board::agentsview::AgentsView>(),
         BoardRegistration::new::<subspace_actions_board::Actions>()
             .description("GitHub Actions runs, deployments and releases (experimental)"),
         #[cfg(feature = "component-gallery")]

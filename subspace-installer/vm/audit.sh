@@ -106,7 +106,7 @@ else
 fi
 if [[ -f /etc/subspace-fleet/fleet.json ]]; then
     if nft list table inet subspace_fleet >/dev/null 2>&1; then
-        pass "Fleet service firewall (operator-only dashboard, AgentsView and model proxy) is loaded."
+        pass "Fleet service firewall for the configured loopback services is loaded."
     else
         fail 'Fleet service firewall (inet subspace_fleet) is not loaded. Re-run the installer.'
     fi

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AnyElement, AppContext as _, Bounds, Context, InteractiveElement as _, IntoElement,
+    AnyElement, App, AppContext as _, Bounds, Context, InteractiveElement as _, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels, Point, RenderImage,
     Styled as _, canvas, div, img,
 };
@@ -45,44 +45,73 @@ impl Mirror {
 /// Follows the shown page with a new snapshot, decoded off the UI thread;
 /// called from the board's poll.
 pub(crate) fn refresh(board: &mut WebBoard, cx: &mut Context<WebBoard>) {
-    let now = Instant::now();
-    let due = board
-        .mirror
-        .requested
-        .is_none_or(|last| now.duration_since(last) >= REFRESH);
-    let shown = board.active && !board.covered;
-    if !board.mirror.on || !due || !shown || board.mirror.decoding {
-        return;
+    if board.active
+        && !board.covered
+        && let Some(page) = &board.page
+    {
+        board.mirror.snapshot(page, |board| &mut board.mirror, cx);
     }
-    let Some(page) = &board.page else { return };
-    board.mirror.requested = Some(now);
-    let Some(png) = snapshot(page, cx) else {
-        return;
-    };
-    board.mirror.decoding = true;
-    let decoded = cx.background_spawn(async move {
-        subspace_framework::dashboard::images::decode(&png, "image/png").ok()
-    });
-    cx.spawn(async move |this, cx| {
-        let image = decoded.await;
-        _ = this.update(cx, |board, cx| {
-            board.mirror.decoding = false;
-            if image.is_some() {
-                board.mirror.image = image;
-                cx.notify();
-            }
+}
+
+impl Mirror {
+    pub(crate) fn snapshot<T: 'static>(
+        &mut self,
+        page: &crate::page::Page,
+        mirror: fn(&mut T) -> &mut Self,
+        cx: &mut Context<T>,
+    ) {
+        let now = Instant::now();
+        let due = self
+            .requested
+            .is_none_or(|last| now.duration_since(last) >= REFRESH);
+        if !self.on || !due || self.decoding {
+            return;
+        }
+        self.requested = Some(now);
+        let Some(png) = snapshot(page, cx) else {
+            return;
+        };
+        self.decoding = true;
+        let decoded = cx.background_spawn(async move {
+            subspace_framework::dashboard::images::decode(&png, "image/png").ok()
         });
-    })
-    .detach();
+        cx.spawn(async move |this, cx| {
+            let image = decoded.await;
+            _ = this.update(cx, |board, cx| {
+                let mirror = mirror(board);
+                if mirror.requested == Some(now) {
+                    mirror.decoding = false;
+                    if image.is_some() {
+                        mirror.image = image;
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(all(feature = "agentsview", any(target_os = "macos", windows)))]
+    pub(crate) fn image_over(&self, page: AnyElement) -> AnyElement {
+        let Some(image) = &self.image else {
+            return page;
+        };
+        div()
+            .relative()
+            .size_full()
+            .child(page)
+            .child(img(image.clone()).absolute().top_0().left_0().size_full())
+            .into_any_element()
+    }
 }
 
 #[cfg(all(target_os = "macos", debug_assertions))]
-fn snapshot(page: &crate::page::Page, cx: &Context<WebBoard>) -> Option<Vec<u8>> {
+fn snapshot(page: &crate::page::Page, cx: &App) -> Option<Vec<u8>> {
     page.snapshot(cx)
 }
 
 #[cfg(not(all(target_os = "macos", debug_assertions)))]
-fn snapshot(_: &crate::page::Page, _: &Context<WebBoard>) -> Option<Vec<u8>> {
+fn snapshot(_: &crate::page::Page, _: &App) -> Option<Vec<u8>> {
     None
 }
 

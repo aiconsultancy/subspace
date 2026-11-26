@@ -62,6 +62,9 @@
 #                        fleet's enrolment token; removed from the VM after the run
 #   --fleet-console ID   (desktop) the Board ID of the Fleet Console web Space
 #                        (default fleet-console, the one built into Subspace)
+#   --agentsview-url URL (desktop) save the fleet's AgentsView address
+#   --agentsview-key-file FILE  (desktop) read its API key from a private file
+#   --agentsview-clear-key      (desktop) remove the saved key
 #   --yes                never prompt; fail when an answer is missing
 #   --background         (tunnel) run the tunnel in the background
 #   -h, --help           show this help and the fleet options
@@ -70,6 +73,7 @@
 #   --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega
 #   --admin admiral --demo | --no-demo --crew-claude 2 --crew-codex 2
 #   --repositories https://github.com/example/project.git
+#   --agentsview | --no-agentsview (default on)
 #   --agent-dispatch | --no-agent-dispatch (default off)
 #   --usage-guard | --no-usage-guard (default on)
 #   --usage-guard-warning | --usage-guard-cutoff [PROVIDER=]PERCENT
@@ -107,6 +111,9 @@ irc_operator_password_file=
 irc_operator_account_password_file=
 api_enrolment_token_file=
 fleet_console=fleet-console
+agentsview_url=
+agentsview_key_file=
+agentsview_clear_key=0
 assume_yes=false
 background=false
 passthrough=()
@@ -160,6 +167,9 @@ while [ $# -gt 0 ]; do
         --irc-operator-account-password-file) irc_operator_account_password_file=${2:?}; shift 2 ;;
         --api-enrolment-token-file) api_enrolment_token_file=${2:?}; shift 2 ;;
         --fleet-console) fleet_console=${2:?}; shift 2 ;;
+        --agentsview-url) agentsview_url=${2:?--agentsview-url needs an address}; shift 2 ;;
+        --agentsview-key-file) agentsview_key_file=${2:?--agentsview-key-file needs a path}; shift 2 ;;
+        --agentsview-clear-key) agentsview_clear_key=1; shift ;;
         --yes|-y) assume_yes=true; shift ;;
         --background) background=true; shift ;;
         -h|--help)
@@ -172,6 +182,13 @@ while [ $# -gt 0 ]; do
         *) passthrough+=("$1"); shift ;;
     esac
 done
+if [ -n "$agentsview_url$agentsview_key_file" ] || [ "$agentsview_clear_key" = 1 ]; then
+    [ "$command" = desktop ] || die "AgentsView options go with the desktop command."
+    [ -n "$agentsview_url" ] || die "AgentsView key options go with --agentsview-url."
+    [ -z "$agentsview_key_file" ] || [ "$agentsview_clear_key" = 0 ] ||
+        die "Choose either --agentsview-key-file or --agentsview-clear-key."
+fi
+requested_target=$target
 if [ -z "$target" ]; then
     if [ "$command" = irc-server ]; then target=subspace-irc; else target=subspace-fleet; fi
 fi
@@ -560,6 +577,7 @@ read_summary() {
     [ -f "$state/summary.env" ] || die "No fleet summary yet; run the install first."
     SUBSPACE_PORTS='' SUBSPACE_IRC_MODE='' SUBSPACE_STARGATE_API='' SUBSPACE_FLEET_NAME='' SUBSPACE_FLEET_SLUG=''
     SUBSPACE_ADMIN_ACCOUNT='' SUBSPACE_CHANNELS='' SUBSPACE_IRC_HOST='' SUBSPACE_IRC_PORT=''
+    SUBSPACE_AGENTSVIEW='' SUBSPACE_AGENTSVIEW_PORT=''
     SUBSPACE_LOCKDOWN='' SUBSPACE_LOCKDOWN_ID=''
     local key value
     while IFS='=' read -r key value; do
@@ -610,6 +628,7 @@ network_entry() {
 
 write_desktop_config() {
     read_summary
+    write_agentsview_visibility
     IRC_TARGET=${IRC_TARGET:-}
     if [ "$SUBSPACE_IRC_MODE" = remote ] && [ -z "$IRC_TARGET" ]; then
         [ -f "$state/irc-target" ] && IRC_TARGET=$(cat "$state/irc-target")
@@ -662,6 +681,150 @@ PY
 
 have_python() {
     command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1
+}
+
+write_agentsview_visibility() {
+    # Legacy summaries omit this choice. The selected fleet's summary controls the Space on next launch.
+    case $SUBSPACE_AGENTSVIEW in 0|1) ;; *) return 0 ;; esac
+    if ! have_python; then
+        [ "$SUBSPACE_AGENTSVIEW" = 1 ] && return 0
+        die "Python 3 is required to hide AgentsView in the desktop settings."
+    fi
+    local file
+    file=$(desktop_dir)/config.json
+    python3 -B - "$file" "$SUBSPACE_AGENTSVIEW" <<'PYCODE' ||
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+file = Path(sys.argv[1])
+enabled = sys.argv[2] == "1"
+marker = "agentsViewDisabledByInstaller"
+tmp = None
+
+def read_config():
+    return file.read_text(encoding="utf-8") if file.exists() else None
+
+try:
+    before = read_config()
+    config = json.loads(before) if before is not None else {}
+    boards = config.setdefault("boards", {})
+    if enabled:
+        if config.pop(marker, None) is not True:
+            sys.exit(0)
+        if boards.get("agentsview") is False:
+            boards["agentsview"] = True
+    else:
+        if boards.get("agentsview") is False:
+            sys.exit(0)
+        boards["agentsview"] = False
+        config[marker] = True
+    file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=file.parent, delete=False, encoding="utf-8") as handle:
+        tmp = Path(handle.name)
+        if sys.platform == "darwin":
+            subprocess.run(["/bin/chmod", "-N", tmp], check=True)
+        json.dump(config, handle, indent=2)
+        handle.write("\n")
+    if read_config() != before:
+        sys.exit("The desktop config changed while saving. Close Subspace and run the desktop command again.")
+    tmp.replace(file)
+except (AttributeError, OSError, ValueError, subprocess.CalledProcessError):
+    sys.exit("Could not update the desktop config. Check that it contains a JSON object and a boards object.")
+finally:
+    if tmp is not None:
+        tmp.unlink(missing_ok=True)
+PYCODE
+        die "Could not save AgentsView visibility for the next desktop launch."
+}
+
+write_agentsview() {
+    have_python || die "Python 3 is required to write the AgentsView connection."
+    local dir
+    dir=$(desktop_dir)/agentsview
+    python3 -B - "$dir" "$agentsview_url" "$agentsview_key_file" "$agentsview_clear_key" <<'PYCODE' ||
+import ipaddress
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from urllib.parse import urlsplit
+
+directory, address, key_file, clear_key = sys.argv[1:]
+address = address.strip()
+try:
+    url = urlsplit(address)
+    _ = url.port  # Reject malformed or out-of-range ports.
+    host = url.hostname
+    loopback = host == "localhost"
+    if host and not loopback:
+        try:
+            loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            pass
+    if (not host or url.username is not None or url.password is not None
+            or any(char in address for char in "?#%\\")
+            or any(char.isspace() or ord(char) < 32 for char in address)
+            or not re.fullmatch(r"[a-zA-Z0-9._~/-]*", url.path)
+            or (url.scheme != "https" and not (url.scheme == "http" and loopback))):
+        raise ValueError
+except ValueError:
+    sys.exit("Use an HTTPS AgentsView address or an HTTP address on this computer, with a simple path and without credentials, a query or a fragment.")
+
+key = ""
+directory = Path(directory)
+path = directory / "config.json"
+if key_file:
+    try:
+        source = os.open(key_file, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(source, encoding="ascii") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                sys.exit("The AgentsView key file must be a regular file accessible only to its owner.")
+            if sys.platform == "darwin":
+                acl = subprocess.check_output(["/bin/ls", "-Lde", "--", key_file])
+                if len(acl.splitlines()) > 1:
+                    sys.exit("Remove the access control list from the private AgentsView key file.")
+            text = handle.read(4099)
+        key = text.strip()
+        if len(text) > 4098 or not key or len(key) > 4096 or not all(33 <= ord(char) <= 126 for char in key):
+            sys.exit("The AgentsView key file must contain one API key without spaces.")
+    except (OSError, UnicodeError, subprocess.CalledProcessError):
+        sys.exit("Could not read the AgentsView key file.")
+elif clear_key == "0":
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        if saved.get("apiKey"):
+            if saved.get("address", "").rstrip("/") != address.rstrip("/"):
+                sys.exit("To change this AgentsView address, pass a new key file or --agentsview-clear-key.")
+            sys.exit(0)
+    except FileNotFoundError:
+        pass
+    except (AttributeError, OSError, ValueError):
+        sys.exit("Could not read the saved AgentsView connection. Pass a new key file or --agentsview-clear-key.")
+
+directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+tmp = None
+try:
+    with tempfile.NamedTemporaryFile("w", dir=directory, delete=False, encoding="utf-8") as handle:
+        tmp = Path(handle.name)
+        if sys.platform == "darwin":
+            subprocess.run(["/bin/chmod", "-N", tmp], check=True)
+        json.dump({"address": address, "apiKey": key}, handle, indent=2)
+        handle.write("\n")
+    tmp.replace(path)
+finally:
+    if tmp is not None:
+        tmp.unlink(missing_ok=True)
+PYCODE
+        die "Could not save the AgentsView connection."
+    say "AgentsView connection configured. Reopen Subspace to load it."
 }
 
 write_fleet_console() {
@@ -927,7 +1090,10 @@ do_tunnel() {
     [ -z "$busy" ] || die "Ports already in use here:$busy. Stop whatever uses them (for example 'make stack-down') first."
     ssh_opts
     say "Forwarding 127.0.0.1 ports$SUBSPACE_PORTS to the fleet VM."
-    note "API http://127.0.0.1:3000  IRC 127.0.0.1:6667  dashboard http://127.0.0.1:8070  AgentsView http://127.0.0.1:8080"
+    note "API http://127.0.0.1:3000  IRC 127.0.0.1:6667  dashboard http://127.0.0.1:8070"
+    if [ "$SUBSPACE_AGENTSVIEW" != 0 ]; then
+        note "AgentsView http://127.0.0.1:${SUBSPACE_AGENTSVIEW_PORT:-8080}"
+    fi
     [ "$SUBSPACE_STARGATE_API" = 1 ] && note "Stargate Fleet API http://127.0.0.1:8484 (token in $state/stargate-api.token)"
     local -a extra=()
     [ "$background" = true ] && extra+=(-f)
@@ -1068,7 +1234,11 @@ case $command in
     irc-server) do_irc_server ;;
     tunnel) do_tunnel ;;
     desktop)
+        if [ -n "$agentsview_url" ] && [ -z "$requested_target" ]; then
+            write_agentsview; exit 0
+        fi
         load_target
+        if [ -n "$agentsview_url" ]; then read_summary; write_agentsview; fi
         if grep -q '^SUBSPACE_STARGATE_API=1' "$state/summary.env" 2>/dev/null && vm true 2>/dev/null; then
             fetch_private "$state/stargate-api.token" sudo -n subspace-setup stargate-token || true
         fi

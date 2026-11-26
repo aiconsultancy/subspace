@@ -252,6 +252,7 @@ install_releases() {
     local tool target_arch version repo asset checksum member tag record previous
     while read -r tool target_arch version repo asset checksum member; do
         [[ $target_arch == "$arch" ]] || continue
+        [[ $tool != agentsview || ! -e $scratch/skip-agentsview ]] || continue
         record="$app/bin/.$tool"
         if [[ -x $app/bin/$tool && -f $record ]] &&
             read -r previous < "$record" && [[ $previous == "$checksum" ]]; then

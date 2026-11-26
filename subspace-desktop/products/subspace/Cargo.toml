@@ -28,10 +28,12 @@ serde_json.workspace = true
 subspace-space-lab-board = { path = "../../spaces/space-lab", optional = true }
 
 [features]
-default = ["report-issue"]
+default = ["report-issue", "agentsview"]
 # Report issue, filing into the repository `build/config.rs` names.
 report-issue = ["subspace-framework/report-issue"]
 terminal = ["dep:subspace-terminal-panel"]
+# Native web view of an AgentsView fleet server on macOS and Windows.
+agentsview = ["subspace-web-board/agentsview", "subspace-descriptor/agentsview"]
 # The Copilot chat engine and Copilot Agents Space. Not in `default`: the Copilot SDK's build script
 # downloads the Copilot CLI and its runtime and the app embeds them (about
 # 240 MB on macOS ARM64). Without it, Settings offers no Copilot engine and a
