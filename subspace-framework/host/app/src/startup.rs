@@ -50,6 +50,11 @@ pub struct ProductBuild {
     /// gets it on every platform; automatic choices still use the platform's
     /// fonts. `&[]` embeds none.
     pub fonts: &'static [crate::BundledFont],
+    /// Theme documents the product embeds beside the Framework's catalogue,
+    /// as `(id, json)`. List an id in the descriptor's `themes`, and name one
+    /// of its variants as `default_theme`, to use it. An id must not repeat a
+    /// Framework theme id. `&[]` adds none.
+    pub product_themes: crate::ProductThemes,
     /// The GitHub repository (`owner/name`) Report issue files into. `None`
     /// or blank hides Report issue; a malformed one hides it with a notice.
     #[cfg(feature = "report-issue")]
@@ -144,6 +149,7 @@ pub fn launch(
                 dock_panel: build.dock_panel,
                 github_oauth: build.github_oauth,
                 fonts: build.fonts,
+                product_themes: build.product_themes,
                 #[cfg(feature = "report-issue")]
                 report_issue_repository: build.report_issue_repository,
             },

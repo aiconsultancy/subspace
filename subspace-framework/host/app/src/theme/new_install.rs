@@ -10,28 +10,43 @@ use subspace_core::state::State;
 use subspace_product::{ProductContext, ValidatedProduct};
 
 use super::THEME_PREF;
+use super::loader::ProductThemes;
 use crate::product::ProductFiles;
 
 /// Records `theme` as the saved theme when `context`'s product has neither a
 /// config file nor a state file: a new install. Returns whether it recorded.
-/// An existing install, including one whose files are unreadable or
-/// malformed, is left alone. Nothing is written, and an error returned, when
-/// a new install's `theme` is not a variant of the product's theme catalogue
-/// or when the files' folder cannot be read, so a new install cannot be told
-/// from an existing one. Only the desktop app calls this, before it starts;
+/// `product_themes` are the app's own theme documents
+/// (`ProductBuild.product_themes`, `&[]` for none), which `theme` may be a
+/// variant of. An existing install, including one whose files are unreadable
+/// or malformed, is left alone. Nothing is written, and an error returned,
+/// when a new install's product themes fail the checks startup makes, when
+/// `theme` is not a variant of the product's theme catalogue, or when the
+/// files' folder cannot be read, so a new install cannot be told from an
+/// existing one. Only the desktop app calls this, before it starts;
 /// command-line and headless runs must not.
 // qual:api (apps call it from their entrypoint, before the desktop starts)
-pub fn record_new_install_theme(context: &ProductContext, theme: &str) -> Result<bool, String> {
+pub fn record_new_install_theme(
+    context: &ProductContext,
+    theme: &str,
+    product_themes: ProductThemes,
+) -> Result<bool, String> {
     let files = ProductFiles::for_context(context);
     let new = is_new_install(&files).map_err(|error| file_error(&files, &error))?;
-    new.then(|| record(&context.product, &files, theme))
+    new.then(|| record(&context.product, &files, theme, product_themes))
         .transpose()
         .map(|recorded| recorded.is_some())
 }
 
-/// Saves `theme`, a variant of `product`'s catalogue, into a new state file.
-fn record(product: &ValidatedProduct, files: &ProductFiles, theme: &str) -> Result<(), String> {
-    super::loader::require_catalogue_variant(product, "new install theme", theme)?;
+/// Saves `theme`, a variant of `product`'s catalogue, into a new state file,
+/// once `documents` pass startup's checks.
+fn record(
+    product: &ValidatedProduct,
+    files: &ProductFiles,
+    theme: &str,
+    documents: ProductThemes,
+) -> Result<(), String> {
+    super::loader::validate_product_themes(product, documents)?;
+    super::loader::require_catalogue_variant(product, "new install theme", theme, documents)?;
     save_theme(&files.state, theme).map_err(|error| file_error(files, &error))
 }
 

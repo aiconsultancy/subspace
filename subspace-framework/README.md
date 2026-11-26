@@ -144,6 +144,7 @@ fn main() -> ExitCode {
         // A native account from an identity provider; see Accounts below.
         account: None,
         descriptor,
+        product_themes: &[],
         // Prefixes window titles and About, such as an organisation's name.
         display_name_prefix: None,
         version: env!("CARGO_PKG_VERSION"),
