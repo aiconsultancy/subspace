@@ -671,6 +671,22 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   }
 
   /**
+   * An item read whole whose newest version must be read in parts (Load the
+   * latest, or a read larger than its placeholder said) reads that
+   * version's first part, unpinned. The window on show stays on show, and
+   * charged, until the part arrives, and stays with the error when the read
+   * fails, so it can be tried again (SUB decision a5275d81). One with no
+   * window on show reads its first part as any item too large.
+   */
+  function reloadInParts(key) {
+    const entry = full.get(key);
+    const shown = positions.get(key);
+    positions.delete(key);
+    const known = entry.item && shown?.bytes > 0 ? { version: null, count: null, carried: shown.bytes } : null;
+    return openParts(entry.turnId, entry.itemId, known);
+  }
+
+  /**
    * Show on an item read whole, at the floor (SUB decision 533c2b29): hold
    * the window the panel draws, `extra` bytes beyond the read's allowance,
    * in the read's own charge, freeing other entries for it; or, when the
@@ -705,7 +721,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       const held = entry.item ? entry.bytes * FORMAT_FACTOR : 0;
       const need = held + item.paged.bytes * FORMAT_FACTOR;
       if (!budget.fits(key, need) || !budget.reserve(key, need, evictor(key))) {
-        openParts(entry.turnId, entry.itemId);
+        reloadInParts(key);
         changed();
         continue;
       }
@@ -754,7 +770,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       holdWhole(key, result.bytes * FORMAT_FACTOR);
     } else if (failure instanceof TooLargeError) {
       // Larger than the budget: never read whole. Read its first part instead.
-      openParts(now.turnId, now.itemId);
+      reloadInParts(key);
       refreshFull();
       changed();
       return;
