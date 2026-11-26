@@ -611,6 +611,8 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   /** The key the floor body is charged under in the budget (the latest request, shown), or null. */
   let floorKey = null;
   let last = null;
+  /** Set once the view closed: nothing draws again. */
+  let disposed = false;
   const itemKey = (turn, item) => `${turn}\u0000${item}`;
   const budgetOf = () => last?.view.budget ?? null;
   /** How many bodies have been measured: a body is measured once per version, never on each draw. */
@@ -836,6 +838,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   }
 
   function update(view, officer) {
+    if (disposed) return;
     last = { view, officer };
     const key = JSON.stringify([view.status, view.waiting, view.stale, view.refreshing, view.retrying, view.polling, view.error, view.agent, view.agentId, view.turns.length === 0, officer.name, officer.role, officer.live]);
     if (key !== headerKey) {
@@ -895,9 +898,23 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     if (plan.cost > 0) budget?.reserve(DRAW_KEY, plan.cost, null, { makeRoom: false });
   }
 
+  /** The view closed: unmount what it drew and forget what it kept; it never draws again. */
+  function dispose() {
+    disposed = true;
+    for (const entry of turns.values()) closeTurn(entry);
+    turns.clear();
+    list.replaceChildren();
+    measures.clear();
+    windows.clear();
+    asked.clear();
+    turnOpened.clear();
+    last = null;
+  }
+
   return {
     root,
     update,
+    dispose,
     /** What the panel keeps between frames, for tests: the versions measured, the windows chosen and how many measures were made. */
     held: () => ({ measures: [...measures].map(([key, held]) => [key, held.version]), windows: [...windows].map(([key, held]) => [key, held.version, held.index]), measured }),
   };

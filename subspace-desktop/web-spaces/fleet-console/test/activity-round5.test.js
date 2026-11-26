@@ -4,8 +4,10 @@
 // regressions, each named for what it checks.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { createActivityWatcher, INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
+import { createActivityController } from "../src/activity-controller.js";
 import { createActivityPanel, DRAW_KEY, formatItem, itemDocument, itemTree, mount, WINDOW_BYTES } from "../src/activity-view.js";
 import { createBudget } from "../src/budget.js";
 import { createPager } from "../src/pager.js";
@@ -349,4 +351,105 @@ test("5: fields a friendly view leaves out of an item, its error or a file part 
   assert.ok(step.includes("STEP-SIDE") && step.includes("firstTokenAt"));
   const plain = mount(itemTree("turn-a", toolItem("p", 4, { content: [{ type: "text", text: "only" }] })), fakeDoc).textContent;
   assert.ok(!plain.includes("Other fields"), "nothing extra when nothing is left out");
+});
+
+// ---------- 6. The activity controller ----------
+
+/** A controller over fakes: its frames run when `runFrames()` is called. */
+function controllerOver({ token = true } = {}) {
+  const snapshot = pagedSnapshot(["ia"]);
+  const client = fakeActivityClient([snapshot, snapshot, snapshot]);
+  const inspector = fakeDoc.createElement("aside");
+  inspector.querySelector = () => null;
+  const frames = new Map();
+  let nextFrame = 0;
+  const log = { subscribed: [], stopped: 0, toasts: [], closed: [], drawn: 0 };
+  const hooks = [];
+  const controller = createActivityController({
+    inspector,
+    doc: fakeDoc,
+    watch: (agent, hook) => {
+      log.subscribed.push(agent);
+      hooks.push(hook);
+      return token ? { client, stop: () => (log.stopped += 1) } : null;
+    },
+    live: (subscribed) => subscribed,
+    toast: (words) => log.toasts.push(words),
+    announce: () => {},
+    onDrawn: () => (log.drawn += 1),
+    onClosed: (agent, restore) => log.closed.push([agent, restore]),
+    frame: (draw) => {
+      nextFrame += 1;
+      frames.set(nextFrame, draw);
+      return nextFrame;
+    },
+    cancelFrame: (id) => frames.delete(id),
+  });
+  const runFrames = () => {
+    const due = [...frames.values()];
+    frames.clear();
+    for (const draw of due) draw();
+  };
+  return { controller, inspector, client, frames, runFrames, log, hooks };
+}
+
+test("6: the controller opens the view in the inspector, draws on change in one frame and tears it all down on close", async () => {
+  const { controller, inspector, frames, runFrames, log, hooks } = controllerOver();
+  assert.equal(controller.open("example-captain", "Example", "captain"), true);
+  assert.equal(controller.isOpen, true);
+  assert.equal(controller.agent, "example-captain");
+  assert.equal(inspector.children.length, 1, "the panel is in the inspector");
+  await settle();
+  assert.ok(frames.size <= 1, "changes share one frame");
+  runFrames();
+  assert.match(inspector.textContent, /Example/);
+  const drawn = log.drawn;
+  controller.close(true);
+  assert.equal(controller.isOpen, false);
+  assert.equal(log.stopped, 1, "the stream is given back its plain form");
+  assert.deepEqual(log.closed, [["example-captain", true]]);
+  assert.equal(frames.size, 0, "the frame asked for is cancelled");
+  // Late callbacks of the closed view do nothing.
+  hooks[0].onEvent({ agentId: "example-captain", generation: "g", seq: 99, change: { type: "turn" } });
+  hooks[0].onEnded();
+  runFrames();
+  assert.equal(log.drawn, drawn, "nothing draws after close");
+  assert.equal(log.closed.length, 1, "and it closes once");
+  assert.equal(log.toasts.length, 0);
+});
+
+test("6: opening another officer closes the first, whose callbacks then do nothing", async () => {
+  const { controller, log, hooks } = controllerOver();
+  controller.open("example-captain", "Example", "captain");
+  controller.open("example-admiral", "Admiral", "rear_admiral");
+  assert.deepEqual(log.subscribed, ["example-captain", "example-admiral"]);
+  assert.deepEqual(log.closed, [["example-captain", false]]);
+  assert.equal(log.stopped, 1);
+  hooks[0].onEnded();
+  assert.equal(controller.agent, "example-admiral", "the first view's end does not close the second");
+  controller.close(false);
+  assert.equal(log.stopped, 2);
+});
+
+test("6: the fleet's stream ending closes the view and says why; with no token it never opens", () => {
+  const open = controllerOver();
+  open.controller.open("example-captain", "Example", "captain");
+  open.hooks[0].onEnded();
+  assert.equal(open.controller.isOpen, false);
+  assert.deepEqual(open.log.closed, [["example-captain", true]]);
+  assert.equal(open.log.stopped, 0, "the ended subscription is not stopped again");
+  assert.match(open.log.toasts[0], /address or token changed/);
+  const refused = controllerOver({ token: false });
+  assert.equal(refused.controller.open("example-captain", "Example", "captain"), false);
+  assert.equal(refused.controller.isOpen, false);
+  assert.match(refused.log.toasts[0], /needs the fleet's token/);
+  assert.equal(refused.inspector.children.length, 0);
+});
+
+test("6: main.js keeps selection, focus and shell wiring, under 1,000 lines, and leaves the activity lifecycle to the controller", () => {
+  const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+  const lines = main.split("\n").length - (main.endsWith("\n") ? 1 : 0);
+  assert.ok(lines < 1000, `main.js has ${lines} lines`);
+  for (const gone of ["createActivityWatcher", "createActivityPanel", "requestAnimationFrame(drawActivity", "app.activity"]) assert.ok(!main.includes(gone), gone);
+  assert.ok(main.includes("createActivityController"));
 });

@@ -7,8 +7,7 @@ import { connectBridge } from "./bridge.js";
 import { createApiClient, normalizeEndpoint } from "./api.js";
 import { createLiveSource } from "./live.js";
 import { createSampleActivitySource, createSampleSource } from "./sample-source.js";
-import { createActivityWatcher } from "./activity.js";
-import { createActivityPanel } from "./activity-view.js";
+import { createActivityController } from "./activity-controller.js";
 import { initialFleetState, livePackets } from "./reducer.js";
 import { describeConnection, initialConnection, tokenProblem } from "./connection.js";
 import { chain, createNavigator, fleetTier, LANDSCAPE, parentOf, sameSelection } from "./camera.js";
@@ -76,9 +75,6 @@ const app = {
   lastSel: fleetTier(null),
   freshActivity: false,
   confirmRemove: null,
-  /** The open Activity view: {agent, name, role, handle, watcher, panel}, or null. */
-  activity: null,
-  activityFrame: 0,
 };
 
 // Read once and kept current: the media query's getter is costly in a frame loop.
@@ -621,7 +617,7 @@ document.addEventListener("keydown", (event) => {
     form.close();
     return;
   }
-  if (app.activity && (chrome.el.inspector.contains(event.target) || event.target === document.body)) {
+  if (activity.isOpen && (chrome.el.inspector.contains(event.target) || event.target === document.body)) {
     event.preventDefault();
     closeActivity(true);
     return;
@@ -636,9 +632,9 @@ document.addEventListener("keydown", (event) => {
 
 document.addEventListener("click", (event) => {
   if (fleetClick(event.target)) return;
-  const activity = event.target.closest("[data-activity]");
-  if (activity) {
-    openActivity(activity.dataset.activity, activity.dataset.activityName, activity.dataset.activityRole);
+  const officer = event.target.closest("[data-activity]");
+  if (officer) {
+    openActivity(officer.dataset.activity, officer.dataset.activityName, officer.dataset.activityRole);
     return;
   }
   const goTarget = event.target.closest("[data-go]");
@@ -710,8 +706,8 @@ function renderInspector(navigated, focus) {
   // The form owns the inspector while it is open; data updates wait.
   if (form.isOpen) return;
   // So does the Activity view, which redraws itself.
-  if (app.activity) {
-    drawActivity();
+  if (activity.isOpen) {
+    activity.draw();
     return;
   }
   const sel = nav.state.sel;
@@ -721,84 +717,30 @@ function renderInspector(navigated, focus) {
 
 // ---------- officer activity ----------
 
-/**
- * Open the Activity view for an officer (registration ID `agent`) of the
- * fleet you are inside. Its events ride on that fleet's one stream, re-opened
- * with `?agent=`; it is never a second stream. Content stays in memory.
- */
+// The Activity view's lifecycle is the controller's (activity-controller.js);
+// the shell opens it for the fleet you are inside and restores the inspector
+// and focus when it closes.
+const activity = createActivityController({
+  inspector: chrome.el.inspector,
+  doc: document,
+  watch: (agent, hooks) => app.manager.watchActivity?.(app.manager.active, agent, hooks),
+  live: (subscribed) => app.sample || (subscribed && activeFleet()?.connection.status === "connected"),
+  toast: (words) => chrome.toast(words),
+  announce: (words) => chrome.announce(words),
+  onDrawn: () => chrome.tickTimes(serverNow()),
+  onClosed: (agent, restore) => {
+    if (!restore) return;
+    renderInspector(true);
+    [...chrome.el.inspector.querySelectorAll("[data-activity]")].find((button) => button.dataset.activity === agent)?.focus();
+  },
+});
+
 function openActivity(agent, name, role) {
-  if (!agent || !app.manager?.active) return;
-  closeActivity(false);
-  const view = { agent, name: name || agent, role, handle: null, watcher: null, panel: null };
-  view.handle = app.manager.watchActivity?.(app.manager.active, agent, {
-    onEvent: (data) => view.watcher?.event(data),
-    onOpen: () => view.watcher?.reopened(),
-    onDown: () => view.watcher?.disconnected(),
-    onRefused: () => view.watcher?.refused(),
-    // The fleet's address or token changed: start again from the new stream.
-    onReset: () => view.watcher?.reset(),
-    // The fleet lost its token or went: nothing read from it stays on show.
-    onEnded: () => {
-      if (app.activity !== view) return;
-      view.handle = null;
-      closeActivity(true);
-      chrome.toast("Activity closed: the fleet's address or token changed.");
-    },
-  });
-  if (!view.handle) {
-    chrome.toast("Activity needs the fleet's token.");
-    return;
-  }
-  view.watcher = createActivityWatcher({ client: view.handle.client, agent, onChange: () => markActivity() });
-  view.panel = createActivityPanel({
-    doc: document,
-    onClose: () => closeActivity(true),
-    onLoad: (turn, item) => view.watcher?.loadItem(turn, item),
-    onPart: (turn, item, to) => view.watcher?.loadPart(turn, item, to),
-    onRetry: () => view.watcher?.retry(),
-  });
-  app.activity = view;
-  const inspector = chrome.el.inspector;
-  inspector.replaceChildren(view.panel.root);
-  inspector.scrollTop = 0;
-  view.watcher.start();
-  drawActivity();
-  inspector.querySelector("h2")?.focus({ preventScroll: true });
-  chrome.announce(`Activity for ${view.name}`);
+  if (app.manager?.active) activity.open(agent, name, role);
 }
 
-function markActivity() {
-  if (!app.activityFrame) app.activityFrame = requestAnimationFrame(drawActivity);
-}
-
-function drawActivity() {
-  if (app.activityFrame) cancelAnimationFrame(app.activityFrame);
-  app.activityFrame = 0;
-  const view = app.activity;
-  if (!view) return;
-  const state = view.watcher.view;
-  // Nothing to follow on this gateway: give the stream back its plain form.
-  if (state.status === "unavailable" && view.handle) {
-    view.handle.stop();
-    view.handle = null;
-  }
-  const live = app.sample || (view.handle !== null && activeFleet()?.connection.status === "connected");
-  view.panel.update(state, { name: view.name, role: view.role, live });
-  chrome.tickTimes(serverNow());
-}
-
-/** Close the Activity view: the stream re-opens without the agent and the content is dropped. */
 function closeActivity(restore) {
-  const view = app.activity;
-  if (!view) return;
-  app.activity = null;
-  if (app.activityFrame) cancelAnimationFrame(app.activityFrame);
-  app.activityFrame = 0;
-  view.handle?.stop();
-  view.watcher?.stop();
-  if (!restore) return;
-  renderInspector(true);
-  [...chrome.el.inspector.querySelectorAll("[data-activity]")].find((button) => button.dataset.activity === view.agent)?.focus();
+  activity.close(restore);
 }
 
 function markInspector() {
