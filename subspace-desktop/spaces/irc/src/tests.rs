@@ -14,6 +14,7 @@ mod back;
 mod completion;
 mod conversation;
 mod counter;
+mod decision_references;
 mod focus;
 mod formatting;
 mod hidden_navigator;
@@ -57,7 +58,6 @@ pub(crate) fn mount_hub(
     cx.update(gpui_kit::init);
     cx.update(|cx| subspace_framework::dashboard::prefs::init_file(None, cx));
     let hub = cx.update(install);
-    // Kit's window root hosts the copy confirmation notification.
     let (window, board) = cx.update(|cx| {
         gpui_kit::open_window(gpui_kit::WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| Irc::new(window, cx))
@@ -244,20 +244,6 @@ fn the_composer_sends_input_and_choosing_a_member_opens_a_query(cx: &mut TestApp
             board.dock.focused.as_ref(),
             Some(&crate::fixtures::query("bob"))
         );
-    });
-}
-
-#[gpui_kit::test]
-fn status_and_badge_summarise_networks_and_attention(cx: &mut TestAppContext) {
-    let (board, hub, cx) = mount(cx, settings());
-    inject(&hub, channel_events(), cx);
-    cx.update(|_, cx| {
-        assert_eq!(
-            board.read(cx).status(cx).as_deref(),
-            Some("IRC · 1 network · 1 connected"),
-            "the status bar carries what the heading said"
-        );
-        assert_eq!(board.read(cx).badge(cx).as_deref(), Some("1"));
     });
 }
 

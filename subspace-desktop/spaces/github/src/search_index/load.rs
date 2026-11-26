@@ -177,14 +177,14 @@ fn apply(
             crate::references::landed(board, &request.login, request.since, cx);
         }
         Err(error) => {
-            crate::references::detail_refused(
+            let access_lost = crate::references::detail_refused(
                 board,
                 (&request.login, &request.key),
                 &error,
                 tick,
                 cx,
             );
-            failure(board, &request.key, error_text(&error), cx);
+            failure(board, &request.key, error_text(&error), access_lost, cx);
         }
     }
     board.rebuild(cx);
@@ -197,10 +197,19 @@ fn apply(
     }
 }
 
-fn failure(board: &mut Github, key: &str, message: String, cx: &mut Context<Github>) {
+fn failure(
+    board: &mut Github,
+    key: &str,
+    message: String,
+    access_lost: bool,
+    cx: &mut Context<Github>,
+) {
     if let Some(account) = board.account_data_mut() {
         account.detail_errors.insert(key.into(), message);
-        if let Some(detail) = account.details.get_mut(key) {
+        if access_lost {
+            account.details.remove(key);
+            account.unconfirmed_details.remove(key);
+        } else if let Some(detail) = account.details.get_mut(key) {
             detail.merge_target = None;
         }
     }

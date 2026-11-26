@@ -500,7 +500,7 @@ pub(crate) fn mentions(this: &Conversation, cx: &App) -> Mentions {
         .unwrap_or_default();
     nicks
         .with_issues(hub.issues.keys().clone())
-        .with_decisions(crate::decision_references::available(cx))
+        .with_decisions(crate::decision_references::available(hub, cx))
 }
 
 /// Reference clicks become the conversation's [`ConversationEvent::Open`].

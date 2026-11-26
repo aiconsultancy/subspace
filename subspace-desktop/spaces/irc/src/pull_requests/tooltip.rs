@@ -1,6 +1,7 @@
 //! A pull request reference's tooltip. It reads the hub each time it draws,
 //! so a `Pending` reference's loading line turns into its card when the
-//! answer arrives, and a `changed` clears it back. It is a passive popover
+//! answer arrives. Same-account refreshes keep its last answer visible.
+//! It is a passive popover
 //! with no menu or button. Without readable details it says only "Details
 //! unavailable": never whether the pull request exists.
 

@@ -125,3 +125,36 @@ fn an_inactive_view_never_asks_for_what_is_in_play(cx: &mut TestAppContext) {
     settle(cx);
     assert!(asked(&hub, cx), "asked once the view is in front");
 }
+
+#[gpui_kit::test]
+fn refreshing_a_pull_request_keeps_its_ship_inspector_row(cx: &mut TestAppContext) {
+    use subspace_framework::contracts::github::{
+        PullRequestDetails, PullRequestStatus, Resolution, ResolutionState,
+    };
+    const ROW: &str = "irc-inspector-play:acme/web#492";
+    let (board, hub, cx) = ship(cx);
+    tile_out_of_view((&board, &hub), &channel("#aurora-lyra"), cx);
+    let summary = PullRequestDetails::new(
+        IN_PLAY,
+        "Keep viewport updates stable",
+        "https://github.com/acme/web/pull/492",
+        PullRequestStatus::Merged,
+    );
+    let show = |state: ResolutionState, cx: &mut VisualTestContext| {
+        hub.update(cx, |hub, cx| {
+            hub.pull_requests
+                .record(vec![Resolution::new(IN_PLAY, state)]);
+            cx.notify();
+        });
+        settle(cx);
+    };
+    show(ResolutionState::Available(summary), cx);
+    let label = |cx: &mut VisualTestContext| {
+        cx.update(|window, _| window.find(ROW).label().unwrap().to_owned())
+    };
+    let before = label(cx);
+    assert_eq!(before, "acme/web#492 Keep viewport updates stable Merged");
+
+    show(ResolutionState::Pending, cx);
+    assert_eq!(label(cx), before);
+}

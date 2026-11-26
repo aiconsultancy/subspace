@@ -213,6 +213,10 @@ fn answer(
     request: &ResolvePullRequests,
     cx: &mut Context<Github>,
 ) -> Vec<Resolution> {
+    // Channels can ask before the PRs Space has been opened or refreshed.
+    if !board.started && board.client.is_some() {
+        board.start(cx);
+    }
     let states: Vec<(String, Option<ResolutionState>)> = request
         .keys()
         .iter()

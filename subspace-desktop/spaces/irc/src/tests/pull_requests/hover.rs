@@ -6,9 +6,10 @@ use std::time::Duration;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Role, TestAppContext, VisualTestContext};
-use subspace_framework::contracts::github::ResolutionState;
+use subspace_framework::contracts::github::{AccessChanged, ResolutionState};
+use subspace_framework::dashboard::contracts;
 
-use super::{KEY, Prs, answer, chips, details, open_board};
+use super::{KEY, PRS, Prs, answer, chips, details, open_board};
 
 const TOOLTIP: &str = "irc-pr-tooltip";
 const TEXT: &str = "[PR:octo-org/api#421]";
@@ -136,4 +137,34 @@ fn an_account_change_clears_details_before_the_new_account_answers(cx: &mut Test
     let text = visible_text(cx);
     assert_eq!(text, "Details unavailable");
     assert!(!text.contains("Keep pull request context"));
+}
+
+#[gpui_kit::test]
+fn refresh_keeps_the_open_tile_until_an_account_event_clears_it(cx: &mut TestAppContext) {
+    let (_, hub, board, cx) = open_board(cx, Prs::Running, TEXT);
+    let board = board.expect("a PRs fixture");
+    answer(&board, ResolutionState::Available(details()), cx);
+    let target = chip(cx);
+    hover(&target, cx);
+    let before = visible_text(cx);
+    assert!(before.contains("Checks passed"));
+
+    answer(&board, ResolutionState::Pending, cx);
+    assert_eq!(chip(cx), target);
+    assert_eq!(
+        visible_text(cx),
+        before,
+        "a refresh keeps the rendered card intact"
+    );
+
+    cx.update(|_, cx| assert!(contracts::publish(PRS, AccessChanged, cx).is_ok()));
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(!matches!(
+            hub.read(cx).pull_requests.state(KEY),
+            Some(ResolutionState::Available(_))
+        ));
+    });
+    assert!(!visible_text(cx).contains("Keep pull request context"));
 }

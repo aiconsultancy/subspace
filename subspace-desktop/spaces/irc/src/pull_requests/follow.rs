@@ -33,8 +33,9 @@ pub(crate) fn attach(hub: &Entity<Hub>, cx: &mut App) {
         ID,
         hub,
         |hub: &mut Hub, _: &Changed, cx| {
-            hub.pull_requests.refreshed();
-            cx.notify();
+            if hub.pull_requests.refreshed() {
+                cx.notify();
+            }
         },
         cx,
     );

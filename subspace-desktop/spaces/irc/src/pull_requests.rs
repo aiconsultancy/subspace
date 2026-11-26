@@ -2,9 +2,9 @@
 //! IRC never names the Space that answers: the hub asks for short summaries
 //! of the pull requests on screen, the distinct ones a frame shows in one
 //! request of at most 50, keyed by canonical `owner/repo#n`. The answering
-//! Space reads them with its own current account. On `changed` (another
-//! account, a sign-out, or reads that landed) every answer is forgotten, so
-//! no detail outlives the account that could read it. With no answering
+//! Space reads them with its own current account. `changed` revalidates
+//! each answer and keeps it visible while the read runs. `access-changed`
+//! forgets the answers as soon as their account changes. With no answering
 //! Space the chips stay and say their details are unavailable. Answers live
 //! in memory only, never in IRC's store or search.
 
@@ -26,7 +26,7 @@ pub(crate) use slot::slot;
 pub(crate) use tooltip::tooltip;
 
 /// What the answering Space said about the pull requests shown, since the
-/// last `changed`.
+/// current account was selected.
 #[derive(Default)]
 pub(crate) struct PullRequestReferences {
     answers: HashMap<String, ResolutionState>,
@@ -43,7 +43,7 @@ impl PullRequestReferences {
         self.answers.get(key)
     }
 
-    /// After `changed`: forget every answer, so each is asked again.
+    /// After `access-changed`: forget every answer, so each is asked again.
     pub fn changed(&mut self) {
         self.answers.clear();
         self.stale.clear();
@@ -51,8 +51,10 @@ impl PullRequestReferences {
     }
 
     /// Revalidate summaries without dropping the contents of existing tiles.
-    pub fn refreshed(&mut self) {
-        self.stale = self.answers.keys().cloned().collect();
+    pub fn refreshed(&mut self) -> bool {
+        let before = self.stale.len();
+        self.stale.extend(self.answers.keys().cloned());
+        self.stale.len() != before
     }
 
     /// Notes the keys a row shows. Those not yet answered are wanted; true

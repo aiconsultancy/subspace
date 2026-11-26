@@ -195,24 +195,26 @@ pub(crate) fn detail_landed(
 /// This Space's own read of pull request `key` by `login`, started at tick
 /// `started`, failed. An access refusal answers for it, ahead of the
 /// detail and lists held from before, unless a read that started later
-/// succeeded; any other failure changes nothing.
+/// succeeded; any other failure changes nothing. True when this read
+/// established that the displayed detail is no longer accessible.
 pub(crate) fn detail_refused(
     board: &mut Github,
     (login, key): (&str, &str),
     error: &Error,
     started: u64,
     cx: &mut Context<Github>,
-) {
+) -> bool {
     let state = reads::refused(error);
     let references = &mut board.references;
     let key = cache_key(login, key);
     if !is_refusal(&state) || !decide(references, &key, started, Decision::Refusal) {
-        return;
+        return false;
     }
     references.read_at.insert(key.clone(), started);
     references.stale.remove(&key);
     references.answers.insert(key, state);
     announce(cx);
+    true
 }
 
 #[cfg(test)]

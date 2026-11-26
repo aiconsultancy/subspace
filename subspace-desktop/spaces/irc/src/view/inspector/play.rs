@@ -1,16 +1,16 @@
 //! **In play here**: the issues and pull requests the conversation has
 //! shown, from its tile owners (`crate::tiles`), in the order it first
 //! showed them, each with its state as the chips and tiles draw it. A
-//! reference not answered yet says `Loading`, and one that cannot be shown
-//! (no access, signed out, or the read failed) says `Unavailable`, so no
-//! row is a bare key. The section asks for its references itself
+//! reference awaiting its first answer says `Loading`. Unavailable issues
+//! stay out of the list. Unavailable pull requests keep their row and say
+//! `Unavailable`. The section asks for its references itself
 //! ([`want`]): a tile's message may be out of view, where its row never
 //! asked.
 
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, TestSupportExt as _, div,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
 use subspace_client_irc::BufferKey;
 use subspace_framework::contracts::github::{
@@ -110,11 +110,12 @@ pub(crate) fn want(board: &Irc, cx: &mut gpui_kit::Context<Irc>) {
         return;
     }
     let current = hub.read(cx);
-    let found = current
-        .tiles
-        .get(&buffer)
-        .in_play_first(MAX_IN_PLAY, |found| visible(current, found));
-    let (issues, prs) = split(found);
+    let tiles = current.tiles.get(&buffer);
+    let shown = tiles.in_play_first(MAX_IN_PLAY, |found| visible(current, found));
+    // Keep a bounded set of hidden issues eligible for the next resolution
+    // round. They do not take a slot away from the visible references.
+    let hidden = tiles.in_play_first(MAX_IN_PLAY, |found| !visible(current, found));
+    let (issues, prs) = split(shown.into_iter().chain(hidden));
     hub.update(cx, |hub, cx| {
         crate::issues::want(hub, issues, cx);
         crate::pull_requests::want(hub, prs, cx);
@@ -133,7 +134,7 @@ fn shows(board: &Irc, cx: &App) -> bool {
 }
 
 /// `found` as issue identifiers and pull request keys.
-fn split(found: Vec<TileRef>) -> (Vec<String>, Vec<String>) {
+fn split(found: impl IntoIterator<Item = TileRef>) -> (Vec<String>, Vec<String>) {
     let mut issues = Vec::new();
     let mut prs = Vec::new();
     for found in found {
@@ -207,22 +208,25 @@ pub(super) fn section(board: &Irc, cx: &App) -> Option<AnyElement> {
     Some(
         workspace::section("In play here", cx)
             .child(
-                v_flex().w_full().gap_2().children(
-                    lines
-                        .iter()
-                        .enumerate()
-                        .map(|(index, line)| row(index, line, &tokens)),
-                ),
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .children(lines.iter().map(|line| row(line, &tokens))),
             )
             .into_any_element(),
     )
 }
 
-fn row(index: usize, line: &PlayLine, tokens: &Tokens) -> AnyElement {
+fn row(line: &PlayLine, tokens: &Tokens) -> AnyElement {
     let title = line.title.clone().unwrap_or_default();
+    let state = line.state().unwrap_or_default();
     h_flex()
-        .id(SharedString::from(format!("irc-inspector-play:{index}")))
+        .id(SharedString::from(format!(
+            "irc-inspector-play:{}",
+            line.key
+        )))
         .test_support()
+        .aria_label(format!("{} {title} {state}", line.key))
         .w_full()
         .min_w_0()
         .gap_2()
@@ -237,7 +241,7 @@ fn row(index: usize, line: &PlayLine, tokens: &Tokens) -> AnyElement {
                 .child(line.key.clone()),
         )
         .child(
-            truncated::text(format!("irc-inspector-play-title:{index}"), title)
+            truncated::text(format!("irc-inspector-play-title:{}", line.key), title)
                 .flex_1()
                 .text_color(tokens.fg),
         )
@@ -246,7 +250,7 @@ fn row(index: usize, line: &PlayLine, tokens: &Tokens) -> AnyElement {
                 .flex_shrink_0()
                 .text_size(tokens.caption_size())
                 .text_color(tokens.muted)
-                .child(line.state().unwrap_or_default()),
+                .child(state),
         )
         .into_any_element()
 }

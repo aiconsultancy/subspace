@@ -72,6 +72,7 @@ pub(crate) struct Hub {
     /// Issue references: the contract's scope and the answers shown.
     pub issues: IssueReferences,
     pub pull_requests: PullRequestReferences,
+    pub decision_support: crate::decision_references::Support,
     /// Which message keeps each reference's tile, per conversation.
     pub tiles: crate::tiles::Sessions,
     /// Clock sampled by the existing drain timer, never by tile rendering.
@@ -285,6 +286,7 @@ impl Hub {
             recall: persist::Recall::waiting(running),
             issues: IssueReferences::default(),
             pull_requests: PullRequestReferences::default(),
+            decision_support: Default::default(),
             tiles: crate::tiles::Sessions::default(),
             now: Utc::now(),
             captain_notifications: Default::default(),
@@ -348,6 +350,13 @@ impl Hub {
     fn tick(&mut self, cx: &mut Context<Self>) {
         if !self.shown.is_empty() && self.uploads.has_cards() {
             self.uploads.demand.activate();
+        }
+        // A visible conversation can be read while another window has focus.
+        if subspace_api_client::has_backend()
+            && subspace_api_client::backend() == subspace_api_client::Backend::Subspace
+        {
+            self.decision_support
+                .probe(subspace_api_client::Client::new, cx);
         }
         crate::uploads::session::refresh(self, cx);
         self.serve_tools(cx);

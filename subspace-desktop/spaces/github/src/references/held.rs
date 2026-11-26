@@ -14,7 +14,11 @@ use crate::Github;
 /// else what a read of it said.
 pub(super) fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     let (Some(_), Some(login)) = (&board.client, board.account.as_deref()) else {
-        return Some(ResolutionState::SignedOut);
+        return Some(if board._accounts_task.is_some() {
+            ResolutionState::Pending
+        } else {
+            ResolutionState::SignedOut
+        });
     };
     if board.references.signed_out.contains(&login.to_lowercase()) {
         return Some(ResolutionState::SignedOut);

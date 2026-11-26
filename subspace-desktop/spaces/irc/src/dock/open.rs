@@ -216,7 +216,7 @@ fn conversation_event(
         }
         ConversationEvent::Open(Ref::Issue(identifier)) => issues::open(identifier, &buffer, cx),
         ConversationEvent::Open(Ref::Decision(identifier)) => {
-            crate::decision_references::open(identifier, &buffer, cx);
+            crate::decision_references::open(board, identifier, &buffer, cx);
         }
         ConversationEvent::Open(Ref::PullRequest(found)) => {
             pull_requests::open(found, &buffer, cx);

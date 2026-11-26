@@ -543,6 +543,9 @@ impl Github {
     }
 
     fn load_accounts(&mut self, cx: &mut Context<Self>) {
+        if self._accounts_task.is_some() {
+            return;
+        }
         let Some(client) = self.client.clone() else {
             self.accounts_error = Some("GitHub is not configured.".into());
             self.rebuild(cx);
@@ -551,25 +554,29 @@ impl Github {
         self.accounts_error = None;
         self._accounts_task = Some(cx.spawn(async move |this, cx| {
             let result = cx.background_spawn(async move { client.accounts() }).await;
-            _ = this.update(cx, |this, cx| match result {
-                Ok(accounts) => {
-                    // Settings may have changed the saved account since this view started.
-                    let saved = prefs::get(cx, ACCOUNT_KEY).or_else(|| this.account.clone());
-                    let pick = accounts.pick(saved.as_deref());
-                    this.accounts = accounts.logins;
-                    match pick {
-                        Some(login) => this.set_account(login, cx),
-                        None => {
-                            this.accounts_error =
-                                Some("No gh accounts found; run gh auth login.".into());
-                            this.rebuild(cx);
+            _ = this.update(cx, |this, cx| {
+                this._accounts_task = None;
+                match result {
+                    Ok(accounts) => {
+                        // Settings may have changed the saved account since this view started.
+                        let saved = prefs::get(cx, ACCOUNT_KEY).or_else(|| this.account.clone());
+                        let pick = accounts.pick(saved.as_deref());
+                        this.accounts = accounts.logins;
+                        match pick {
+                            Some(login) => this.set_account(login, cx),
+                            None => {
+                                this.accounts_error =
+                                    Some("No gh accounts found; run gh auth login.".into());
+                                this.rebuild(cx);
+                            }
                         }
                     }
+                    Err(error) => {
+                        this.accounts_error = Some(error_text(&error));
+                        this.rebuild(cx);
+                    }
                 }
-                Err(error) => {
-                    this.accounts_error = Some(error_text(&error));
-                    this.rebuild(cx);
-                }
+                references::announce(cx);
             });
         }));
     }
@@ -693,7 +700,7 @@ impl Github {
             .unwrap_or_default()
     }
 
-    fn invalidate_for_reload(&mut self) {
+    fn invalidate_for_reload(&mut self, cx: &mut Context<Self>) {
         let Some(account_key) = self.account.as_ref().map(|login| login.to_lowercase()) else {
             return;
         };
@@ -704,6 +711,7 @@ impl Github {
         {
             self.advance_read_generation(account_key);
             references::reset_reads(self);
+            references::announce(cx);
         }
     }
 
@@ -748,6 +756,7 @@ impl Github {
         self.detail_key = Some(key.clone());
         let fresh = self.find_item(&key).is_some_and(|item| {
             self.account_data()
+                .filter(|account| !account.unconfirmed_details.contains(&key))
                 .and_then(|account| account.details.get(&key))
                 .is_some_and(|detail| detail.item.updated_at == item.updated_at)
         });
@@ -804,9 +813,6 @@ impl Github {
         let (Some(client), Some(login)) = (self.client.clone(), self.account.clone()) else {
             return;
         };
-        if let Some(account) = self.account_data_mut() {
-            account.detail_errors.remove(&key);
-        }
         search_index::load(
             self,
             search_index::Request {
@@ -1798,7 +1804,7 @@ impl Dashboard for Github {
             self.start(cx);
             return;
         }
-        self.invalidate_for_reload();
+        self.invalidate_for_reload(cx);
         self._detail_task = None;
         if self.account.is_none() || self.accounts.is_empty() {
             self.load_accounts(cx);

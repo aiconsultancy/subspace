@@ -97,8 +97,8 @@ fn a_link_reads_by_reference_and_back_restores_its_source(cx: &mut TestAppContex
         location: Some("ops-buffer".into()),
     };
     let returned = Rc::new(RefCell::new(None));
-    let received = returned.clone();
     let _subscription = cx.update(|_, cx| {
+        let received = returned.clone();
         cx.subscribe(&board, move |_, event: &DashboardEvent, _| {
             if let DashboardEvent::Return(point) = event {
                 *received.borrow_mut() = Some(point.clone());

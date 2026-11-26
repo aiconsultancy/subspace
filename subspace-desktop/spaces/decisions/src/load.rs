@@ -14,9 +14,12 @@ use subspace_api_client::{Client, DecisionQuery, Error, MAX_DECISION_PAGE_SIZE, 
 
 use crate::words::People;
 
+mod scope;
+
 /// The list reads at most this many pages, a thousand decisions; the status
 /// says when there are more.
 const MAX_PAGES: usize = 10;
+const MAX_ITEMS: usize = MAX_PAGES * MAX_DECISION_PAGE_SIZE as usize;
 
 /// What a list read asks for: the decisions for this query, and first the
 /// account, its projects and its people when `directory` is set. `stop`
@@ -222,43 +225,13 @@ fn read_list(plan: &Plan) -> Leased<Answer> {
             .as_ref()
             .and_then(|directory| directory.as_ref().ok())
             .map_or(plan.projects.as_ref(), |directory| &directory.projects);
-        let found = read_decisions(client, plan, projects);
+        let found = scope::read(
+            plan,
+            projects,
+            subspace_api_client::backend(),
+            |query, page| client.decisions(query, page),
+        );
         Answer { directory, found }
-    })
-}
-
-fn read_decisions(client: &Client, plan: &Plan, projects: &[Project]) -> Result<Found, Error> {
-    let Some(initiative) = plan.initiative.as_deref() else {
-        return all_pages(&plan.stop, |page| client.decisions(&plan.query, page));
-    };
-    let keys: HashSet<_> = projects
-        .iter()
-        .filter(|project| crate::initiative::includes(project, Some(initiative)))
-        .map(|project| project.key.as_str())
-        .collect();
-    if keys.is_empty() {
-        return Ok(Found {
-            items: Vec::new(),
-            more: false,
-        });
-    }
-    let mut query = plan.query.clone();
-    if query
-        .project
-        .as_deref()
-        .is_some_and(|key| !keys.contains(key))
-    {
-        query.project = None;
-    }
-    if query.project.is_none() && keys.len() == 1 {
-        query.project = keys.iter().next().map(|key| (*key).to_owned());
-    }
-    all_pages(&plan.stop, |page| {
-        let mut reply = client.decisions(&query, page)?;
-        reply
-            .items
-            .retain(|item| keys.contains(item.project_key.as_str()));
-        Ok(reply)
     })
 }
 
@@ -281,11 +254,7 @@ fn read_directory(client: &Client, projects: &[Project]) -> Result<Directory, Er
         .iter()
         .filter_map(|choice| Some((choice.human_id()?.to_owned(), choice.name().to_owned())))
         .collect();
-    let projects = match client.all_projects() {
-        Ok(projects) => projects,
-        Err(Error::Network) => projects.to_vec(),
-        Err(error) => return Err(error),
-    };
+    let projects = directory_projects(client.all_projects(), projects)?;
     Ok(Directory {
         me,
         projects,
@@ -295,6 +264,19 @@ fn read_directory(client: &Client, projects: &[Project]) -> Result<Directory, Er
             .collect(),
         human_makers,
     })
+}
+
+/// Project permissions are independent of permission to read decisions.
+fn directory_projects(
+    result: Result<Vec<Project>, Error>,
+    held: &[Project],
+) -> Result<Vec<Project>, Error> {
+    match result {
+        Ok(projects) => Ok(projects),
+        Err(Error::Forbidden) => Ok(Vec::new()),
+        Err(error @ (Error::SignInNeeded | Error::OrganisationNeeded)) => Err(error),
+        Err(_) => Ok(held.to_vec()),
+    }
 }
 
 pub(crate) fn bound_client(lease: Option<&Lease>) -> Result<Client, Error> {
@@ -320,18 +302,32 @@ fn read_detail(id: &str, lease: Option<&Lease>) -> Leased<Result<DecisionDetail,
 /// further page; its answer is dropped, so what it returns does not matter.
 pub(crate) fn all_pages(
     stop: &Stop,
+    read: impl FnMut(&PageRequest) -> Result<Page<DecisionListItem>, Error>,
+) -> Result<Found, Error> {
+    collect_pages(stop, MAX_PAGES, read)
+}
+
+/// The NETT path can skip unrelated rows before applying the item limit.
+fn collect_pages(
+    stop: &Stop,
+    page_limit: usize,
     mut read: impl FnMut(&PageRequest) -> Result<Page<DecisionListItem>, Error>,
 ) -> Result<Found, Error> {
     let mut page = PageRequest::default();
     page.limit = MAX_DECISION_PAGE_SIZE;
     let mut items = Vec::new();
     let mut cursors = HashSet::new();
-    for _ in 0..MAX_PAGES {
+    for _ in 0..page_limit {
         if stop.stopped() {
             return Ok(Found { items, more: true });
         }
         let found = read(&page)?;
         items.extend(found.items);
+        if items.len() >= MAX_ITEMS {
+            let more = items.len() > MAX_ITEMS || found.next_cursor.is_some();
+            items.truncate(MAX_ITEMS);
+            return Ok(Found { items, more });
+        }
         let Some(cursor) = found.next_cursor else {
             return Ok(Found { items, more: false });
         };
@@ -352,8 +348,25 @@ mod tests {
     use subspace_api_client::Error;
     use subspace_api_client::model::{DecisionListItem, Page};
 
-    use super::{Failure, Leased, Stop, all_pages, failure, leased};
+    use super::{Failure, Leased, Stop, all_pages, directory_projects, failure, leased};
     use crate::fixtures;
+
+    #[test]
+    fn a_project_directory_failure_is_independent_of_the_decisions_session() {
+        let held = fixtures::projects();
+        for error in [Error::Network, Error::UnexpectedStatus(502)] {
+            let retained = directory_projects(Err(error), &held).unwrap();
+            assert_eq!(retained.len(), held.len());
+        }
+        assert!(
+            directory_projects(Err(Error::Forbidden), &held)
+                .unwrap()
+                .is_empty()
+        );
+        for error in [Error::SignInNeeded, Error::OrganisationNeeded] {
+            assert_eq!(directory_projects(Err(error), &held).err(), Some(error));
+        }
+    }
 
     /// A client whose account the test changes, as a sign-out or a switch
     /// of account or organisation does.

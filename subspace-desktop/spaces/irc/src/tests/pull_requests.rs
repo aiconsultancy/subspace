@@ -12,8 +12,8 @@ use gpui_kit::base::test_support::snapshots;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{App, AppContext as _, Entity, TestAppContext, VisualTestContext};
 use subspace_framework::contracts::github::{
-    Changed, CheckStatus, OpenPullRequest, PullRequestDetails, PullRequestStatus, Resolution,
-    ResolutionState, ResolvePullRequests, ReviewStatus,
+    AccessChanged, Changed, CheckStatus, OpenPullRequest, PullRequestDetails, PullRequestStatus,
+    Resolution, ResolutionState, ResolvePullRequests, ReviewStatus,
 };
 use subspace_framework::dashboard::Dashboard as _;
 use subspace_framework::dashboard::contracts::{self, BoardContracts, Declaration};
@@ -27,6 +27,7 @@ const PRS_CONTRACTS: BoardContracts = BoardContracts::new(&[
     Declaration::responds::<ResolvePullRequests>(),
     Declaration::responds::<OpenPullRequest>(),
     Declaration::publishes::<Changed>(),
+    Declaration::publishes::<AccessChanged>(),
 ]);
 pub(super) const KEY: &str = "octo-org/api#421";
 pub(super) const URL: &str = "https://github.com/Octo-Org/API/pull/421/files?w=1#r9";

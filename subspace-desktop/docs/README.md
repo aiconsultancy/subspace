@@ -224,6 +224,8 @@ record. [Change records](changes/README.md) explains the convention.
   proposals, handle version conflicts and read immutable revisions.
 - [Decision references and workspace refinements](changes/desktop-decision-identifiers/README.md):
   decision links, initiative selection, refresh controls, PR review and typography.
+- [Decision and pull request reference refresh](changes/desktop-reference-refresh/README.md)
+  covers initiative reads, decision chip compatibility and Channels summary refresh.
 - [Fleet roles in Channels](changes/channels-fleet-roles/README.md): rank
   marks for captains and the rear admiral, a ship channel's live status,
   connection commands in **More**, state dots on references and a counted
