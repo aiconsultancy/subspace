@@ -92,8 +92,11 @@ item too large to send inline is paged and loads on demand, never hidden.
   Inline content is the snapshot itself and is never let go. Only the item
   last asked for may pass the room, and only when no room is left: the view
   then holds the inline content, one part of that item at the pager's part
-  size (at most 64 KiB) and its drawn window. With any room left, every
-  request stays within it. While the reader moves between parts, the
+  size (at most 64 KiB) and its drawn window. When it is an item read,
+  the floor is that read's alone: what its placeholder names draws only
+  within the room left, held back when none is, with a pager of its own
+  when drawn in parts beside the read's (SUB decision `084f5236` item 1).
+  With any room left, every request stays within it. While the reader moves between parts, the
   outgoing part and its drawn window stay charged beside the page in flight
   until the new part arrives. A snapshot refresh never lets go of the part
   last asked for. One ledger enforces both, for admission, a reply

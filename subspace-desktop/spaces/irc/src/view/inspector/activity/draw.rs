@@ -35,10 +35,13 @@
 //! content is the snapshot itself and is never let go. Only the latest
 //! request may pass the room, and only when no room is left (less than one
 //! character and its copy); when it is an item read, its read keeps the
-//! floor, never an earlier body. A body that is the latest request is then
-//! drawn whole up to one part, or one part of at most 64 KiB at a time,
-//! the part and its drawn copy held beside the inline content. With any
-//! room left, every body asked for is drawn within it.
+//! floor, never an earlier body, and never its placeholder too: while the
+//! read is under way or holds what was read, what the placeholder names
+//! draws only within the room left (SUB decision `084f5236` item 1), its
+//! parts moved by a pager of its own. A body that is the latest request
+//! is then drawn whole up to one part, or one part of at most 64 KiB at a
+//! time, the part and its drawn copy held beside the inline content. With
+//! any room left, every body asked for is drawn within it.
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
@@ -160,7 +163,7 @@ pub(super) fn replan(selection: &mut Selection) {
     measure(selection);
     let bodies = bodies(selection);
     let room = room(selection).saturating_sub(held(selection));
-    let fit = fit(&bodies, (&selection.asked, latest(selection)), room);
+    let fit = fit(&bodies, (&selection.asked, latest_body(selection)), room);
     let old = selection.plan.pieced.take();
     let pieced = fit
         .pieced
@@ -224,6 +227,16 @@ fn read_draws(entry: &ActivityEntry, loaded: Option<&Loaded>) -> bool {
         && loaded.is_some_and(|loaded| matches!(loaded.held, Held::Whole(_)))
 }
 
+/// The latest request, and whether its body keeps the floor: not when a
+/// read presents it, under way or holding what was read, which keeps the
+/// floor itself; its placeholder then draws only within the room left
+/// (SUB decision `084f5236` item 1).
+fn latest_body(selection: &Selection) -> Option<(&Key, bool)> {
+    let key = latest(selection)?;
+    let read = selection.loaded.get(key).is_some_and(Loaded::presents);
+    Some((key, !read))
+}
+
 /// The items of the open turns, in the order they draw, and their items
 /// in order.
 fn open_entries(selection: &Selection) -> Vec<(Key, &ActivityEntry)> {
@@ -277,15 +290,17 @@ struct Fit {
 }
 
 /// Draws the bodies asked for, the latest first, then the rest in order,
-/// each while it fits `room`. The body of the latest request (`latest`),
-/// if it is one of them, is never held back: past the room it is drawn in
-/// parts within what is left of it; with no room left at all, the floor,
-/// whole when it is no more than one part, otherwise in parts of one part
-/// each. No other body passes the room, even when the latest request is
-/// an item read that draws within its own allowance.
+/// each while it fits `room`. The body of the latest request (`latest`,
+/// with whether it keeps the floor), if it is one of them, is drawn in
+/// parts past the room within what is left of it; with no room left at
+/// all, when it keeps the floor, the floor: whole when it is no more than
+/// one part, otherwise in parts of one part each. When a read of it keeps
+/// the floor instead, its placeholder is held back then, so the floor is
+/// charged once. No other body passes the room, even when the latest
+/// request is an item read that draws within its own allowance.
 fn fit(
     bodies: &[(Key, u64)],
-    (asked, latest): (&HashMap<Key, u64>, Option<&Key>),
+    (asked, latest): (&HashMap<Key, u64>, Option<(&Key, bool)>),
     room: u64,
 ) -> Fit {
     let mut order: Vec<&(Key, u64)> = bodies.iter().collect();
@@ -298,18 +313,25 @@ fn fit(
             fit.drawn = fit.drawn.saturating_add(*bytes);
             continue;
         }
-        if latest != Some(key) {
-            fit.held_back.insert(key.clone(), *bytes);
-            continue;
-        }
-        match piece_size(left) {
-            None if *bytes <= PART as u64 => fit.drawn = fit.drawn.saturating_add(*bytes),
-            size => {
-                let size = size.unwrap_or(PIECE);
-                fit.drawn = fit.drawn.saturating_add(pieced_bytes(size));
-                fit.pieced = Some((key.clone(), *bytes, size));
+        // `None` unless it is the latest request's: then whether it keeps
+        // the floor.
+        let floor = latest
+            .filter(|(latest, _)| *latest == key)
+            .map(|(_, floor)| floor);
+        let size = match (floor, piece_size(left)) {
+            (Some(_), Some(size)) => size,
+            (Some(true), None) if *bytes <= PART as u64 => {
+                fit.drawn = fit.drawn.saturating_add(*bytes);
+                continue;
             }
-        }
+            (Some(true), None) => PIECE,
+            _ => {
+                fit.held_back.insert(key.clone(), *bytes);
+                continue;
+            }
+        };
+        fit.drawn = fit.drawn.saturating_add(pieced_bytes(size));
+        fit.pieced = Some((key.clone(), *bytes, size));
     }
     fit
 }
@@ -344,24 +366,47 @@ fn cut_piece(
     Some(cut(&blocks, (key, version), (size, bytes), old))
 }
 
-/// Shows part `wanted` of the body of `key` drawn in parts, in the plan
-/// or within its read's allowance: that part alone is written out.
-pub(super) fn show_piece(selection: &mut Selection, key: &Key, wanted: usize) {
+/// Which body drawn in parts a pager moves: the one the plan draws, or
+/// the one an item read draws within its own allowance. An item in parts
+/// read in parts may show both, each with its own pager (SUB decision
+/// `084f5236` item 1).
+#[derive(Clone, Copy)]
+pub(super) enum Drawer {
+    Plan,
+    Read,
+}
+
+/// Shows part `wanted` of the body of `key` drawn in parts by `drawer`:
+/// that part alone is written out.
+pub(super) fn show_piece(selection: &mut Selection, (key, drawer): (&Key, Drawer), wanted: usize) {
+    match drawer {
+        Drawer::Plan => show_planned_piece(selection, key, wanted),
+        Drawer::Read => show_read_piece(selection, key, wanted),
+    }
+}
+
+/// Shows part `wanted` of the body of `key` the plan draws in parts.
+fn show_planned_piece(selection: &mut Selection, key: &Key, wanted: usize) {
     let Selection {
         join, loaded, plan, ..
     } = selection;
-    if let Some(pieced) = plan.pieced.as_mut().filter(|pieced| pieced.key == *key) {
-        if let Some(entry) = entry_of(join, key) {
-            let held = loaded.get(key).map(|loaded| &loaded.held);
-            pieced.show(&entry_blocks(entry, held), wanted);
-        }
+    let Some(pieced) = plan.pieced.as_mut().filter(|pieced| pieced.key == *key) else {
         return;
+    };
+    if let Some(entry) = entry_of(join, key) {
+        let held = loaded.get(key).map(|loaded| &loaded.held);
+        pieced.show(&entry_blocks(entry, held), wanted);
     }
+}
+
+/// Shows part `wanted` of the body the read of `key` draws in parts
+/// within its own allowance.
+fn show_read_piece(selection: &mut Selection, key: &Key, wanted: usize) {
     let Some(Loaded {
         held,
         window: Window::Pieced(pieced),
         ..
-    }) = loaded.get_mut(key)
+    }) = selection.loaded.get_mut(key)
     else {
         return;
     };
@@ -483,7 +528,7 @@ mod tests {
         let bodies = [(key("a"), 40), (key("b"), 50), (key("c"), 10_000)];
         let asked = HashMap::from([(key("b"), 1), (key("c"), 2)]);
         let room = 60 + INDEX_BYTES as u64;
-        let plan = fit(&bodies, (&asked, Some(&key("c"))), room);
+        let plan = fit(&bodies, (&asked, Some((&key("c"), true))), room);
         assert_eq!(plan.pieced, Some((key("c"), 10_000, 30)));
         assert_eq!(plan.drawn, room);
         assert_eq!(
@@ -499,13 +544,13 @@ mod tests {
     fn only_the_body_last_asked_for_passes_no_room_and_by_one_part() {
         let bodies = [(key("a"), 40), (key("b"), 50)];
         let asked = HashMap::from([(key("a"), 1), (key("b"), 2)]);
-        let plan = fit(&bodies, (&asked, Some(&key("b"))), 0);
+        let plan = fit(&bodies, (&asked, Some((&key("b"), true))), 0);
         assert_eq!(plan.drawn, 50);
         assert!(plan.pieced.is_none());
         assert_eq!(plan.held_back, HashMap::from([(key("a"), 40)]));
 
         let big = PART as u64 + 1;
-        let plan = fit(&[(key("b"), big)], (&asked, Some(&key("b"))), 0);
+        let plan = fit(&[(key("b"), big)], (&asked, Some((&key("b"), true))), 0);
         assert_eq!(plan.pieced, Some((key("b"), big, PIECE)));
         assert_eq!(plan.drawn, 2 * PART as u64);
     }
@@ -518,7 +563,7 @@ mod tests {
         let big = 10 * PART as u64;
         let bodies = [(key("a"), 40), (key("b"), big)];
         let asked = HashMap::from([(key("b"), 1)]);
-        let plan = fit(&bodies, (&asked, Some(&key("b"))), 3 * PART as u64);
+        let plan = fit(&bodies, (&asked, Some((&key("b"), true))), 3 * PART as u64);
         assert_eq!(plan.pieced, Some((key("b"), big, PIECE)));
         assert_eq!(plan.drawn, 2 * PART as u64 + 40);
         assert!(plan.held_back.is_empty());
@@ -530,9 +575,28 @@ mod tests {
     #[test]
     fn the_floor_never_passes_to_a_body_asked_for_before_the_latest_read() {
         let asked = HashMap::from([(key("a"), 1), (key("read"), 2)]);
-        let plan = fit(&[(key("a"), 40)], (&asked, Some(&key("read"))), 0);
+        let plan = fit(&[(key("a"), 40)], (&asked, Some((&key("read"), true))), 0);
         let held_back = HashMap::from([(key("a"), 40)]);
         assert_eq!((plan.drawn, plan.held_back), (0, held_back));
+    }
+
+    /// Round 7 delta (P1), SUB decision `084f5236` item 1: when a read of
+    /// the latest request keeps the floor, its placeholder never takes a
+    /// second floor: with no room left it is held back; with room left it
+    /// draws in parts within it, never past it.
+    #[test]
+    fn a_placeholder_whose_read_keeps_the_floor_takes_none_of_its_own() {
+        let asked = HashMap::from([(key("read"), 1)]);
+        let latest = Some((&key("read"), false));
+        let plan = fit(&[(key("read"), 40)], (&asked, latest), 0);
+        let held_back = HashMap::from([(key("read"), 40)]);
+        assert_eq!((plan.drawn, plan.held_back), (0, held_back));
+        assert!(plan.pieced.is_none());
+
+        let room = MIN_WINDOW;
+        let plan = fit(&[(key("read"), 10_000)], (&asked, latest), room);
+        assert_eq!(plan.pieced, Some((key("read"), 10_000, MIN_PIECE)));
+        assert_eq!(plan.drawn, room);
     }
 
     /// A part, its copy and the index of where the parts start fit what

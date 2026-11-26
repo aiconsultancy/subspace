@@ -19,10 +19,10 @@
 
 use std::collections::HashMap;
 
-use super::Selection;
 use super::draw::{Key, MIN_WINDOW, measure};
 use super::load::{PAGE, PAGE_READ, give_back, refit};
 use super::parts::PART;
+use super::{Loaded, Selection};
 
 /// The bytes the budget leaves for items once the inline content is
 /// counted.
@@ -139,8 +139,12 @@ pub(super) fn make_room(selection: &mut Selection, wanted: u64, keep: Option<&Ke
     }
 }
 
-/// What `keep`'s body draws in the plan, if it is planned.
+/// What `keep`'s body draws in the plan, if it is planned and keeps the
+/// floor. None when a read of it is under way or holds what was read: that
+/// read is fitted first, and what its placeholder names draws only within
+/// the room left beside it (SUB decision `084f5236` item 1).
 fn body(selection: &Selection, keep: Option<&Key>) -> u64 {
+    let keep = keep.filter(|keep| !selection.loaded.get(*keep).is_some_and(Loaded::presents));
     keep.and_then(|keep| selection.measures.get(keep))
         .map_or(0, |measure| measure.bytes)
 }

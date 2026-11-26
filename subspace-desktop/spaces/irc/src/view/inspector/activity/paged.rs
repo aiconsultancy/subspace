@@ -4,12 +4,13 @@
 //! words, its status and its size; its name is in its body.
 
 use gpui_kit::{AnyElement, Context, IntoElement as _, SharedString};
+use subspace_client_fleet::Error;
 use subspace_client_fleet::activity::{ActivityEntry, PagedItem};
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
 use super::blocks::{page_block, paged_blocks};
-use super::draw::Pieced;
+use super::draw::{Drawer, Pieced};
 use super::load::{Reload, Window};
 use super::parts::{Draw, body_block, caption, card, part_controls};
 use super::{Held, Loaded, Parts, Selection};
@@ -35,7 +36,10 @@ pub(super) fn paged(
     let mut parts = match (loaded.map(|loaded| &loaded.held), held_back, pieced) {
         (Some(Held::Whole(_)), ..) => Vec::new(),
         (_, Some(bytes), _) => super::draw::held_back_parts(&id, (&key, bytes), cx),
-        (_, None, Some(pieced)) => super::draw::pieced_parts(&id, pieced, cx),
+        // Its own IDs: the read's window may be drawn in parts beside it.
+        (_, None, Some(pieced)) => {
+            super::draw::pieced_parts(&format!("{id}:named"), (pieced, Drawer::Plan), cx)
+        }
         (_, None, None) => named(&id, paged, draw, cx),
     };
     parts.extend(load_parts(&id, (&key, paged, whole), loaded, draw, cx));
@@ -114,7 +118,7 @@ pub(super) fn load_parts(
             match &loaded.window {
                 Window::Pieced(pieced) => {
                     drawn.extend(super::item::note(id, entry, cx));
-                    drawn.extend(super::draw::pieced_parts(id, pieced, cx));
+                    drawn.extend(super::draw::pieced_parts(id, (pieced, Drawer::Read), cx));
                 }
                 _ => drawn.push(whole(id, entry, draw, cx)),
             }
@@ -175,6 +179,28 @@ fn whole(id: &str, entry: &ActivityEntry, draw: &Draw<'_>, cx: &Context<Irc>) ->
     }
 }
 
+/// Why reading part `failed` failed, and **Try again** to read it again.
+fn page_failed(
+    id: &str,
+    (key, failed, error): (&(String, String), u32, &Error),
+    cx: &Context<Irc>,
+) -> [AnyElement; 2] {
+    let key = key.clone();
+    [
+        caption(&format!("{id}:page-failed"), &error.to_string(), cx),
+        action_button(
+            SharedString::from(format!("{id}:page-retry")),
+            Intent::Neutral,
+            Some(IconName::Download),
+            "Try again",
+        )
+        .on_click(cx.listener(move |board, _, _, cx| {
+            super::show_page(board, &key, failed, cx);
+        }))
+        .into_any_element(),
+    ]
+}
+
 /// An item larger than the view can hold: why it shows in parts, a note
 /// when it changed while read, the controls, and the part shown, as the
 /// JSON it carries. A part is one page: at most 64 KiB, drawn within its
@@ -216,29 +242,14 @@ fn in_parts(
         ));
     }
     if let Some((failed, error)) = &parts.failed {
-        let (failed, key) = (*failed, key.clone());
-        shown.push(caption(
-            &format!("{id}:page-failed"),
-            &error.to_string(),
-            cx,
-        ));
-        shown.push(
-            action_button(
-                SharedString::from(format!("{id}:page-retry")),
-                Intent::Neutral,
-                Some(IconName::Download),
-                "Try again",
-            )
-            .on_click(cx.listener(move |board, _, _, cx| {
-                super::show_page(board, &key, failed, cx);
-            }))
-            .into_any_element(),
-        );
+        shown.extend(page_failed(id, (key, *failed, error), cx));
     }
     // One page: at most 64 KiB, drawn in parts of its own when its
     // markers draw more, or when its window is smaller.
     match window {
-        Window::Pieced(pieced) => shown.extend(super::draw::pieced_parts(id, pieced, cx)),
+        Window::Pieced(pieced) => {
+            shown.extend(super::draw::pieced_parts(id, (pieced, Drawer::Read), cx));
+        }
         _ => shown.push(body_block(id, &page_block(&page.data), draw, cx)),
     }
     shown

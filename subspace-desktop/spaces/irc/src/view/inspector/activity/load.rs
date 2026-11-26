@@ -129,6 +129,13 @@ impl Loaded {
         matches!(self.held, Held::Whole(_) | Held::Parts(_))
     }
 
+    /// Whether it presents its item and counts for it in the ledger: under
+    /// way, or showing what was read. The floor is then its, never its
+    /// placeholder's too (SUB decision `084f5236` item 1).
+    pub(super) fn presents(&self) -> bool {
+        !matches!(self.held, Held::Failed(_))
+    }
+
     /// Replaces what it shows with read `read`, granted `allowance`, which
     /// counts as coming in until it arrives; what it shows stays shown and
     /// charged meanwhile.

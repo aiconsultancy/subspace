@@ -8,7 +8,7 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
 use super::super::parts::{caption, card, part_controls, whole};
-use super::{Key, Pieced, ask};
+use super::{Drawer, Key, Pieced, ask};
 use crate::Irc;
 
 /// Shows the body of the item `key`, as **Show** asks.
@@ -19,24 +19,25 @@ fn show(board: &mut Irc, key: &Key, cx: &mut Context<Irc>) {
     }
 }
 
-/// Shows part `piece` of the body of `key` drawn in parts.
-fn show_piece(board: &mut Irc, key: &Key, piece: usize, cx: &mut Context<Irc>) {
+/// Shows part `piece` of the body of `key` drawn in parts by `drawer`.
+fn show_piece(board: &mut Irc, (key, drawer): (&Key, Drawer), piece: usize, cx: &mut Context<Irc>) {
     if let Some(selection) = board.inspector_activity.as_mut() {
-        super::show_piece(selection, key, piece);
+        super::show_piece(selection, (key, drawer), piece);
         cx.notify();
     }
 }
 
-/// A body drawn in parts: why, the controls that move between its parts,
-/// and the part shown.
+/// A body drawn in parts by `drawer`: why, the controls that move between
+/// its parts, and the part shown. Their IDs start with `id`, which tells
+/// apart the bodies one card draws in parts, so each pager moves its own.
 pub(in super::super) fn pieced_parts(
     id: &str,
-    pieced: &Pieced,
+    (pieced, drawer): (&Pieced, Drawer),
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
     let key = pieced.key.clone();
     let go = move |board: &mut Irc, piece: usize, cx: &mut Context<Irc>| {
-        show_piece(board, &key, piece, cx);
+        show_piece(board, (&key, drawer), piece, cx);
     };
     let piece = &pieced.piece;
     vec![
@@ -69,7 +70,7 @@ pub(in super::super) fn pieced(
     let mut parts: Vec<AnyElement> = super::super::item::note(id, entry, cx)
         .into_iter()
         .collect();
-    parts.extend(pieced_parts(id, pieced, cx));
+    parts.extend(pieced_parts(id, (pieced, Drawer::Plan), cx));
     card(id, &super::super::item::heading(entry), parts, cx)
 }
 
