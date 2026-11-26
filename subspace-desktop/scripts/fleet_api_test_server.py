@@ -218,7 +218,7 @@ QUILL_PROGRESS = (
     'The next check is to tab through the sequence with a screen reader and verify that the marker has the '
     'same name before and after the route refreshes. Then I will record the keyboard walk-through for review.'
 )
-QUILL_PREVIEW = QUILL_PROGRESS[:399] + '…'
+QUILL_PREVIEW = QUILL_PROGRESS[-400:]
 
 
 def lyra(c):

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use subspace_client_fleet::model::{CrewContext, CrewMember, Git, PullRequest};
 
-use super::preview::overlay_text;
+use super::preview::{PartialFields, overlay_text};
 use super::roster::{same_checkout, task_revision};
 use crate::markup::PrRef;
 
@@ -16,7 +16,11 @@ macro_rules! overlay {
     )+}};
 }
 
-pub(super) fn overlay_facts(shown: &mut Cow<'_, CrewMember>, old: &CrewContext, new: &CrewContext) {
+pub(super) fn overlay_facts(
+    shown: &mut Cow<'_, CrewMember>,
+    old: &CrewContext,
+    new: &CrewContext,
+) -> PartialFields {
     let git_changed = git_changed(&old.git, &new.git);
     let pr_changed =
         old.pull_request != new.pull_request || old.pull_request_known != new.pull_request_known;
@@ -25,27 +29,37 @@ pub(super) fn overlay_facts(shown: &mut Cow<'_, CrewMember>, old: &CrewContext, 
         && old.activity == new.activity
         && old.provisioned == new.provisioned
     {
-        return;
+        return PartialFields::default();
     }
 
     let contexts = &mut shown.to_mut().contexts;
     let Some(context) = contexts.iter_mut().find(|ctx| ctx.project == new.project) else {
         contexts.push(new.clone());
-        return;
+        return PartialFields::from_roster(new.current.as_ref());
     };
     if git_changed || pr_changed {
         overlay_checkout(context, old, new, git_changed, pr_changed);
     }
+    overlay!(context, old, new; activity, provisioned);
     if task_changed {
-        match (&mut context.current, &old.current, &new.current) {
-            (Some(shown), Some(old), Some(new)) if shown.id == new.id => {
-                overlay_text(shown, old, new);
-                overlay!(shown, old, new; status, updated_at)
-            }
-            (shown, _, new) => shown.clone_from(new),
+        overlay_task(context, old, new)
+    } else {
+        PartialFields::default()
+    }
+}
+
+fn overlay_task(context: &mut CrewContext, old: &CrewContext, new: &CrewContext) -> PartialFields {
+    match (&mut context.current, &old.current, &new.current) {
+        (Some(shown), Some(old), Some(new)) if shown.id == new.id => {
+            let partial = overlay_text(shown, old, new);
+            overlay!(shown, old, new; status, updated_at);
+            partial
+        }
+        (shown, _, new) => {
+            shown.clone_from(new);
+            PartialFields::from_roster(new.as_ref())
         }
     }
-    overlay!(context, old, new; activity, provisioned);
 }
 
 fn git_changed(old: &Option<Git>, new: &Option<Git>) -> bool {

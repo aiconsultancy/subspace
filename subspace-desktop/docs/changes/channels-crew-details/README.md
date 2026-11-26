@@ -19,9 +19,14 @@ The view reads the crew detail endpoint in the background and refreshes it
 when the member changes on the live roster. Routine changes such as Git's
 last check time or a queue count neither start a read nor discard one in
 flight. A current task's identity, status or `updatedAt` queues a roster-driven
-read, with at most one follow-up. A bounded preview of fetched text never
-replaces it. A divergent preview for the same task revision keeps the last
-fetched text and queues one reread; replaying that preview does not poll.
+read, with at most one follow-up. The roster carries the first 180 code points
+of the summary, the first 80 of the phase, and the last 400 of progress, with
+no ellipsis. A preview matching fetched text or its capped head or tail never
+replaces it. A changed field on a newer revision replaces the old text until
+the reread; at the cap it is marked as partial, with an ellipsis at the cut
+edge and a note. If the reread fails, the marked preview stays visible. A
+divergent preview for the same revision keeps the fetched text and queues one
+reread; replaying that preview does not poll.
 A change of fleet directory, selected member identity or task assignment
 invalidates an older response; removal or an unavailable roster takes
 effect immediately. Directory changes drop the old request and allow a

@@ -16,6 +16,7 @@ use crate::live::ship::state_word;
 use crate::{Irc, pull_requests};
 
 use super::super::ship::state_tone;
+use super::state::{PartialFields, TaskPreviews};
 
 mod observations;
 mod task_text;
@@ -27,6 +28,7 @@ type Facts = Vec<(&'static str, String)>;
 
 pub(super) fn view(
     member: &CrewMember,
+    previews: &TaskPreviews<'_>,
     pages: &TaskPages,
     buffer: &BufferKey,
     cx: &Context<Irc>,
@@ -43,11 +45,11 @@ pub(super) fn view(
         .is_empty()
         .then(|| feedback::empty_line(&tokens, "irc-crew-no-projects", "No projects reported."));
     let projects = workspace::section("Projects", cx).children(empty).children(
-        member
-            .contexts
-            .iter()
-            .enumerate()
-            .map(|(index, context)| project_row(context, index, pages, buffer, cx)),
+        member.contexts.iter().enumerate().map(|(index, context)| {
+            let key = project_key(context.project.as_deref(), index);
+            let partial = previews.fields(context.project.as_deref());
+            project_row(context, (key, partial), pages, buffer, cx)
+        }),
     );
     v_flex()
         .w_full()
@@ -102,13 +104,12 @@ fn fact_text(value: String) -> impl IntoElement {
 
 fn project_row(
     context: &CrewContext,
-    index: usize,
+    (key, partial): (String, PartialFields),
     pages: &TaskPages,
     buffer: &BufferKey,
     cx: &Context<Irc>,
 ) -> AnyElement {
     let tokens = Tokens::current(cx);
-    let key = project_key(context.project.as_deref(), index);
     let buffer = buffer.clone();
     let project = Project::of(context);
     let name = visible(&project.name);
@@ -133,7 +134,13 @@ fn project_row(
                 .child(name),
         )
         .children(project_state(context, cx))
-        .children(task_text::rows(context.current.as_ref(), &key, pages, cx))
+        .children(task_text::rows(
+            context.current.as_ref(),
+            &key,
+            partial,
+            pages,
+            cx,
+        ))
         .children(fact_rows(project.facts, cx))
         .children(actions)
         .into_any_element()

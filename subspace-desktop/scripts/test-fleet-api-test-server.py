@@ -171,7 +171,7 @@ class FleetFixtureTests(unittest.TestCase):
         full = self.get('/api/v1/ships/aurora-lyra/crew/quill')[1]['member']
         progress = full['contexts'][0]['current']['progress']
         self.assertGreater(len(progress), 512)
-        self.assertEqual(preview['contexts'][0]['current']['progress'], progress[:399] + '…')
+        self.assertEqual(preview['contexts'][0]['current']['progress'], progress[-400:])
 
     def test_only_subspace_origins_get_cors_headers(self):
         with self.open('/api/v1/fleet', token=None, method='OPTIONS', origin='subspace://fleet-console') as response:

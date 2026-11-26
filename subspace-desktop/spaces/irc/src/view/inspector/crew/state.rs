@@ -11,9 +11,16 @@ mod preview;
 mod retry;
 mod roster;
 use overlay::overlay_facts;
+pub(super) use preview::{Field, PartialFields, TaskPreviews};
 use retry::ReadWait;
 pub(super) use roster::Roster;
 use roster::current_in;
+
+type Shown<'a> = (
+    Option<Cow<'a, CrewMember>>,
+    Option<&'static str>,
+    TaskPreviews<'a>,
+);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CrewRead {
@@ -194,28 +201,35 @@ impl DetailState {
         }
     }
 
-    pub fn shown(
-        &self,
-        ship_available: bool,
-    ) -> (Option<Cow<'_, CrewMember>>, Option<&'static str>) {
+    pub fn shown(&self, ship_available: bool) -> Shown<'_> {
         let roster = if ship_available {
             &self.roster
         } else {
             &Roster::Unavailable
         };
         match roster {
-            Roster::Present(member) => (
-                Some(
-                    self.detail
-                        .as_ref()
-                        .map_or(Cow::Borrowed(member.as_ref()), |detail| {
-                            detail.shown(member)
-                        }),
-                ),
-                self.note(),
+            Roster::Present(member) => {
+                let (shown, previews) = self.detail.as_ref().map_or_else(
+                    || {
+                        (
+                            Cow::Borrowed(member.as_ref()),
+                            TaskPreviews::from_roster(member),
+                        )
+                    },
+                    |detail| detail.shown(member),
+                );
+                (Some(shown), self.note(), previews)
+            }
+            Roster::Gone => (
+                None,
+                Some("This member is no longer on the ship's roster."),
+                TaskPreviews::default(),
             ),
-            Roster::Gone => (None, Some("This member is no longer on the ship's roster.")),
-            Roster::Unavailable => (None, Some("The ship's current crew roster is unavailable.")),
+            Roster::Unavailable => (
+                None,
+                Some("The ship's current crew roster is unavailable."),
+                TaskPreviews::default(),
+            ),
         }
     }
 
@@ -244,8 +258,9 @@ struct FullDetail {
 }
 
 impl FullDetail {
-    fn shown<'a>(&'a self, latest: &CrewMember) -> Cow<'a, CrewMember> {
+    fn shown<'a>(&'a self, latest: &'a CrewMember) -> (Cow<'a, CrewMember>, TaskPreviews<'a>) {
         let mut shown = Cow::Borrowed(&self.member);
+        let mut previews = TaskPreviews::default();
         if self.roster.activity != latest.activity {
             shown.to_mut().activity = latest.activity;
         }
@@ -261,9 +276,16 @@ impl FullDetail {
             let previous = current_in(&self.roster, key);
             let next = current_in(latest, key);
             match (previous, next) {
-                (Some(previous), Some(next)) => overlay_facts(&mut shown, previous, next),
+                (Some(previous), Some(next)) => previews.insert(
+                    next.project.as_deref(),
+                    overlay_facts(&mut shown, previous, next),
+                ),
                 (None, Some(next)) if current_in(&shown, key).is_none() => {
                     shown.to_mut().contexts.push(next.clone());
+                    previews.insert(
+                        next.project.as_deref(),
+                        PartialFields::from_roster(next.current.as_ref()),
+                    );
                 }
                 (Some(_), None) => shown
                     .to_mut()
@@ -272,6 +294,6 @@ impl FullDetail {
                 (None, _) => (),
             }
         }
-        shown
+        (shown, previews)
     }
 }

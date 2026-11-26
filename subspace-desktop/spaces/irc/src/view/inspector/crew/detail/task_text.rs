@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
+use gpui_kit::base::TestTextExt as _;
 use gpui_kit::base::{Pagination, PaginationState};
 use gpui_kit::component::{
     Disableable as _, Sizable as _, Size,
@@ -10,15 +11,17 @@ use gpui_kit::component::{
     menu::{PopupMenu, PopupMenuItem},
     v_flex,
 };
-use gpui_kit::{AnyElement, Context, IntoElement, ParentElement as _, Styled as _, px};
+use gpui_kit::{AnyElement, Context, IntoElement, ParentElement as _, Styled as _, div, px};
 use subspace_client_fleet::model::{Task, TaskStatus};
 use subspace_framework::dashboard::{
+    Tokens,
     action::{Intent, icon_button},
-    anchored,
+    anchored, feedback,
     panel::IconName,
     workspace,
 };
 
+use super::super::state::{Field, PartialFields};
 use super::{Irc, fact_text, nonempty};
 use crate::live::ship::is_bidi_control;
 
@@ -60,16 +63,7 @@ fn visible_codes(text: &str, mark_whitespace: bool) -> String {
 
 const PAGE_CODE_POINTS: usize = 512;
 
-#[derive(Clone, Copy)]
-enum Field {
-    Summary,
-    Phase,
-    Progress,
-}
-
 impl Field {
-    const ALL: [Self; 3] = [Self::Summary, Self::Phase, Self::Progress];
-
     fn key(self) -> &'static str {
         match self {
             Self::Summary => "summary",
@@ -147,6 +141,7 @@ impl<'a> TextPage<'a> {
 pub(super) fn rows(
     task: Option<&Task>,
     project: &str,
+    partial: PartialFields,
     pages: &TaskPages,
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
@@ -181,11 +176,49 @@ pub(super) fn rows(
                     .w_full()
                     .min_w_0()
                     .children(pager)
-                    .child(workspace::fact(label, fact_text(page.visible()), cx))
+                    .child(workspace::fact(
+                        label,
+                        field_value(field, page.visible(), partial, project, cx),
+                        cx,
+                    ))
                     .into_any_element(),
             )
         })
         .collect()
+}
+
+fn field_value(
+    field: Field,
+    text: String,
+    partial: PartialFields,
+    project: &str,
+    cx: &Context<Irc>,
+) -> AnyElement {
+    let text = fact_text(text);
+    if !partial.contains(field) {
+        return text.into_any_element();
+    }
+    let tail = field.is_tail();
+    let edge = if tail { "latest" } else { "first" };
+    // Keep the ellipsis a separate element on the cut edge, including when
+    // the preview wraps or contains multiple lines.
+    let marker = || div().child("…").test_text("…");
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .gap_1()
+        .children(tail.then(marker))
+        .child(text)
+        .children((!tail).then(marker))
+        .child(feedback::empty_line(
+            &Tokens::current(cx),
+            format!("irc-crew-preview:{project}:{}", field.key()),
+            format!(
+                "Showing the {edge} {} characters until the full detail loads.",
+                field.limit()
+            ),
+        ))
+        .into_any_element()
 }
 
 fn pager(id: String, label: &str, state: PaginationState) -> impl IntoElement {

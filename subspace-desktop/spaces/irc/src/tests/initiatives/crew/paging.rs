@@ -7,6 +7,56 @@ use super::{BACK, ROW, install_fleet_api, live, set_fleet, settle, ship, view};
 use crate::tests::remove::choose;
 
 #[gpui_kit::test]
+fn capped_roster_text_marks_the_cut_side_without_altering_the_value(cx: &mut TestAppContext) {
+    use gpui_kit::base::test_support::texts;
+
+    let (board, hub, cx) = ship(cx);
+    let mut member = crate::live::tests::snapshot().ships["aurora-lyra"]
+        .crew_members
+        .iter()
+        .find(|member| member.id == "wren")
+        .unwrap()
+        .clone();
+    let task = member.contexts[0].current.as_mut().unwrap();
+    task.summary = "s".repeat(180);
+    task.progress = "p".repeat(390) + " Done now.";
+    let summary = task.summary.clone();
+    let progress = task.progress.clone();
+    set_fleet(&hub, live(), cx);
+    install_fleet_api(cx);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.click(ROW, cx);
+        board.update(cx, |board, cx| {
+            view::inspector::crew::seed_roster_for_test(board, member, cx)
+        });
+        window.render_frame(cx);
+        let drawn = texts(window);
+        let index = |value: &str| drawn.iter().position(|text| text.text() == value).unwrap();
+        assert_eq!(
+            drawn[index(&summary) + 1].text(),
+            "…",
+            "summary marker follows the head"
+        );
+        assert_eq!(
+            drawn[index(&progress) - 1].text(),
+            "…",
+            "progress marker precedes the tail"
+        );
+        assert!(
+            drawn
+                .iter()
+                .any(|text| text.text().contains("the first 180 characters"))
+        );
+        assert!(
+            drawn
+                .iter()
+                .any(|text| text.text().contains("the latest 400 characters"))
+        );
+    });
+}
+
+#[gpui_kit::test]
 fn crew_task_progress_pages_fit_and_work_at_the_minimum_width(cx: &mut TestAppContext) {
     use gpui_kit::base::test_support::texts;
     use subspace_framework::dashboard::density::Density;

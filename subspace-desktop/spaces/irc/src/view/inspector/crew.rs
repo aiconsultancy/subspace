@@ -277,7 +277,7 @@ pub(super) fn body(
     let selection = board.inspector_crew.as_ref().filter(|selection| {
         fleet == Some(&selection.fleet) && selection.ship.eq_ignore_ascii_case(captain)
     })?;
-    let (member, note) = selection
+    let (member, note, previews) = selection
         .state
         .shown(ship.is_some_and(|ship| ship.unavailable.is_none()));
     let tokens = Tokens::current(cx);
@@ -307,7 +307,7 @@ pub(super) fn body(
     });
     let detail = member
         .zip(board.dock.focused.as_ref())
-        .map(|(member, buffer)| detail::view(&member, &selection.pages, buffer, cx));
+        .map(|(member, buffer)| detail::view(&member, &previews, &selection.pages, buffer, cx));
     Some(
         v_flex()
             .w_full()

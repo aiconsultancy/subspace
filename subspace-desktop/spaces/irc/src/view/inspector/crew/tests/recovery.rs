@@ -76,7 +76,7 @@ fn missing_route_uses_the_current_roster() {
     let mut state = DetailState::new(Roster::find(Some(ship), "wren"), 0);
     let first = state.begin().unwrap();
     state.finish(first, Err(Error::NotFound));
-    let (shown, note) = state.shown(true);
+    let (shown, note, _) = state.shown(true);
     assert_eq!(shown.unwrap().name, "Wren");
     assert_eq!(
         note,
