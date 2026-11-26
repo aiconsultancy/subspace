@@ -41,3 +41,21 @@ fn registered_kind_is_stored_and_matched_while_others_stay_refused() {
         .unwrap();
     assert_eq!(related.len(), 1);
 }
+
+#[test]
+fn kind_names_are_bounded_lower_case_and_start_with_a_letter() {
+    for refused in [
+        "",
+        "1ref",
+        "-ref",
+        "example_ref",
+        "exampleRef",
+        "example:ref",
+    ] {
+        assert!(register_reference_kind(refused).is_err(), "{refused:?}");
+    }
+    let longest = format!("x{}", "0".repeat(63));
+    register_reference_kind(&longest).unwrap();
+    assert!(ReferenceIdentity::of_kind(&longest, &["1"]).is_ok());
+    assert!(register_reference_kind(&format!("{longest}0")).is_err());
+}
