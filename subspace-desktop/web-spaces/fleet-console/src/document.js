@@ -150,6 +150,32 @@ export function partBlocks(part, index) {
   return [...(rest ? [{ label: `content[${index}] (other fields)`, json: rest }] : []), { label: `content[${index}] (text)`, text: part.text }];
 }
 
+/** The members of a step's `model` and `tokens` its short view puts in words. */
+const STEP_MEMBERS = { model: ["provider", "id", "variant"], tokens: ["input", "output", "reasoning", "cacheRead", "cacheWrite"] };
+
+/** Whether `value` is a record whose members a friendly view can read. */
+export const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * What a step's short view leaves out of its `model` and `tokens`, as
+ * blocks in the shape of `partBlocks` (SUB decision 533c2b29): the members
+ * it does not put in words, or the whole value when it is not a record.
+ * The document holds both fields whole, so these are always inside what
+ * was measured.
+ *
+ * @returns {Array<{label: string, json: unknown}>}
+ */
+export function stepBlocks(item) {
+  const blocks = [];
+  for (const [field, members] of Object.entries(STEP_MEMBERS)) {
+    const value = item[field];
+    if (value === null || value === undefined) continue;
+    const rest = isRecord(value) ? restOf(value, members) : value;
+    if (rest !== null) blocks.push({ label: isRecord(value) ? `${field} (other fields)` : field, json: rest });
+  }
+  return blocks;
+}
+
 /** An item's document in pieces: each field labelled, strings as text, the rest as shown JSON; content parts as `partBlocks`. */
 export function* documentPieces(item) {
   let first = true;

@@ -33,7 +33,7 @@
 // its caption when there is no room.
 
 import { ACTIVITY_MESSAGES, isWellFormedItem } from "./activity.js";
-import { documentPieces, HIDDEN, marker, measurePieces, partBlocks, restOf, sliceOfPieces, sourcePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
+import { documentPieces, HIDDEN, isRecord, marker, measurePieces, partBlocks, restOf, shownJsonPieces, sliceOfPieces, sourcePieces, stepBlocks, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
 import { formatBytes, formatClock, formatDuration } from "./format.js";
 
 export { marker, WINDOW_BYTES, WINDOW_LINES };
@@ -68,29 +68,16 @@ function txt(value) {
 }
 
 const pre = (value, cls = "") => h("pre", { class: `act-pre${cls ? ` ${cls}` : ""}` }, txt(value));
-const JSON_ESCAPE = /\\(u[0-9a-fA-F]{4}|.)/g;
-const SHORT_CONTROLS = { b: "\b", f: "\f", r: "\r" };
 
 /**
  * Indented JSON in which a hidden character in any string or key stays the
- * character itself, so the view marks it `⟨U+XXXX⟩` as everywhere else.
- * JSON.stringify writes C0 controls as escapes (`\u0000`, `\r`), which would
- * read like text typed that way; those become characters again here, while
- * a typed backslash stays escaped (`\\u0000`) and so stays distinguishable.
- * Newlines and tabs keep their escapes, which JSON needs to read as one value.
+ * character itself, so the view marks it `⟨U+XXXX⟩` as everywhere else; a
+ * typed backslash stays escaped (`\\u0000`) and so stays distinguishable.
+ * Newlines and tabs keep their escapes, which JSON needs to read as one
+ * value. The document's formatter (`shownJsonPieces`), so the short view
+ * and the windows show JSON alike.
  */
-export function json(value) {
-  const text = JSON.stringify(value, null, 2) ?? String(value);
-  return text.replace(JSON_ESCAPE, (whole, code) => {
-    if (code in SHORT_CONTROLS) return SHORT_CONTROLS[code];
-    if (code.length === 5) {
-      const unit = Number.parseInt(code.slice(1), 16);
-      // Only controls; an escaped lone surrogate stays as written.
-      if (unit < 0x20) return String.fromCharCode(unit);
-    }
-    return whole;
-  });
-}
+export const json = (value) => [...shownJsonPieces(value)].join("");
 
 /** A value in full: strings as text, anything else as indented JSON. */
 function valueBlock(value) {
@@ -162,13 +149,17 @@ const SHOWN_FIELDS = {
   tool: [...ROW_FIELDS, "status", "name", "callId", "executed", "input", "rawInput", "metadata", "content", "error"],
 };
 
+/** What a step's short view leaves out of its model and tokens (`stepBlocks`), each labelled. */
+const stepRest = (item) => stepBlocks(item).map((block) => [label(block.label), ...(isRecord(block.json) ? fields(block.json) : [valueBlock(block.json)])]);
+
 function stepItem(item) {
-  const model = item.model ? `${item.model.provider}/${item.model.id}${item.model.variant ? `#${item.model.variant}` : ""}` : "Model not reported";
+  const model = isRecord(item.model) ? `${item.model.provider}/${item.model.id}${item.model.variant ? `#${item.model.variant}` : ""}` : "Model not reported";
   const took = Number.isFinite(item.endedAt) ? ` · ${formatDuration(item.endedAt - item.startedAt)}` : "";
   return [
     h("div", { class: "act-head" }, h("b", {}, "Step"), h("span", { class: "act-sub mono" }, txt(model)), chip(item.status, STEP_STATUS)),
     h("p", { class: "act-note" }, `Started ${formatClock(item.startedAt)}${took}${item.finish ? ` · finish: ` : ""}`, item.finish ? txt(item.finish) : null),
     item.tokens ? h("p", { class: "act-note mono" }, `${tokensText(item.tokens)} · ${formatCost(item.cost)}`) : h("p", { class: "act-note" }, item.status === "running" ? "Tokens settle when the step ends." : "No token use reported."),
+    stepRest(item),
     errorBlock(item.error),
     otherFields(item, SHOWN_FIELDS.step),
   ];

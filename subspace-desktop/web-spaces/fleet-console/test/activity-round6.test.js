@@ -3,10 +3,36 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatItem, itemDocument, itemTree, mount } from "../src/activity-view.js";
-import { partBlocks, restOf } from "../src/document.js";
-import { toolItem } from "./activity-fixtures.js";
+import { formatItem, itemDocument, itemTree, json, mount } from "../src/activity-view.js";
+import { partBlocks, restOf, shownJsonPieces } from "../src/document.js";
+import { stepItem, tokens, toolItem } from "./activity-fixtures.js";
 import { fakeDoc } from "./activity-helpers.js";
+
+// ---------- 5. The short step view leaves nothing out ----------
+
+test("5: a step's model and tokens members the short view does not put in words still show, as the document has them", () => {
+  const step = stepItem("s", 3, { model: { provider: "example", id: "model-large", variant: null, region: "MODEL-SIDE" }, tokens: { ...tokens(1200, 80), detail: { cached: "TOKENS-SIDE" } } });
+  const shown = mount(itemTree("turn-a", step), fakeDoc).textContent;
+  assert.match(shown, /example\/model-large/, "the model in words");
+  assert.match(shown, /model \(other fields\)regionMODEL-SIDE/, "the model's other member");
+  assert.match(shown, /tokens \(other fields\)detail\{\n {2}"cached": "TOKENS-SIDE"\n\}/, "the tokens' other member, as the document's JSON");
+  const document = itemDocument(step);
+  for (const text of ["MODEL-SIDE", "TOKENS-SIDE"]) assert.ok(document.includes(text), `the document, which is measured, holds ${text}`);
+  const plain = mount(itemTree("turn-a", stepItem("p", 4)), fakeDoc).textContent;
+  assert.ok(!plain.includes("other fields"), "nothing extra when every member is in words");
+});
+
+test("5: a step's model or tokens that is not a record shows whole", () => {
+  const shown = mount(itemTree("turn-a", stepItem("s", 3, { model: "MODEL-AS-TEXT", tokens: [7, 8] })), fakeDoc).textContent;
+  assert.match(shown, /Model not reported/);
+  assert.match(shown, /modelMODEL-AS-TEXT/);
+  assert.match(shown, /tokens\[\n {2}7,\n {2}8\n\]/);
+});
+
+test("5: the short view's JSON is the document's formatter", () => {
+  const value = { outer: { "k\u202Eey": ["a\u0000b", "\ud800"], typed: "\\u0000", gone: undefined, nested: [undefined, 1.5] } };
+  assert.equal(json(value), [...shownJsonPieces(value)].join(""));
+});
 
 // ---------- 6. Every own field survives the projection ----------
 
