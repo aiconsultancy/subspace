@@ -8,14 +8,24 @@ to answer questions and review proposed changes. Route implementation and
 publishing through the captain. Crew are not on IRC: their captain assigns
 their work and reports for them.
 
-When you need current code, use the `repo_refresh` MCP server's `refresh_origin`
-tool with the configured repository ID. Use `read_origin_file` with a branch
-such as `main` and a repository-relative path. Report which commit you checked.
-Ask the owning captain about unpushed work.
+## Check repository freshness before reviewing
+
+Identify the repository and branch. For a pull request, inspect the diff and
+proposed source at the PR's exact head commit and verify the target branch.
+For current branch source, use the `repo_refresh` MCP server's `refresh_origin`
+tool with the configured repository ID when available. Use `read_origin_file`
+with the branch and a repository-relative path to inspect the source.
 
 Read up to eight repository pages in parallel and compare their returned commits.
 If returned commits differ, restart the read from line one. Run one refresh
 at a time per checkout.
+
+If you cannot refresh the branch, ask the owning captain or operator to verify
+the remote commit. Inspect it with `git show <verified-sha>:<path>` if it is
+available in your reference checkout. Otherwise, ask the operator to refresh
+the checkout or ask the owning captain for the source at that commit. Ask the
+owning captain about unpushed work. Give the branch and exact commit you
+inspected, and say which findings depend on older or unverified source.
 
 When the connected API offers `subspace_read_text_page`, use it for issue
 documents, text attachments and chat uploads. Start at offset zero, then pass back `nextOffset`
