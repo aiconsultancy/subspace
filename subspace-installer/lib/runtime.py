@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
 import memory
-from network import rules
+import network
 from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions, provision_role
 from roles import role_documents
 from roles import provision_workspace, workspace_documents
@@ -82,8 +82,8 @@ STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 # Stargate's latest release and the commit its tag names; every install gets exactly that commit. Agent
 # dispatch on the rear admiral's gateway needs v0.43.0 or later. scripts/stargate-pin.py checks the two
 # against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
-STARGATE_RELEASE = "v0.46.0"
-STARGATE_REF = "91f5cced309ff86dae6cc44454630abd7cbfcbc7"
+STARGATE_RELEASE = "v0.47.0"
+STARGATE_REF = "f25631eb3a7e880fb819df2c4521c7d400e3067c"
 # A hosted Subspace API (api.enrolment): Stargate's subspaceAgents section, its signing proxy and its MCP bridge,
 # first in this commit; a checkout has them when it has SUBSPACE_AGENTS_FILE. Releases up to v0.43 lack them.
 SUBSPACE_AGENTS_COMMIT = "5630a5ce9ca1e7cd533bc7a5ab951bb4681757be"
@@ -122,6 +122,9 @@ EFFORTS = {
     ("opencode", "codex"): ("low", "medium", "high"),
     ("claude-sdk", "claude"): ("low", "medium", "high", "xhigh", "max"),
 }
+# The compatible Responses provider omits extra-high from its fallback
+# catalogue. These models accept it, so offer it explicitly for them.
+CODEX_XHIGH_MODELS = frozenset(("gpt-5.4", "gpt-6.2-sol"))
 # OpenCode provider IDs per model family, as in Stargate's OpenCode template.
 PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
 USAGE_GUARD_DEFAULTS = {"warning": 20, "cutoff": 10}
@@ -146,6 +149,8 @@ CREW_GRANTS = [
     *({"action": action, "resource": "*", "effect": "allow"} for action in ("stargate_crew", "stargate_mail", "stargate_history")),
     {"action": "stargate_model", "resource": "get", "effect": "allow"},
 ]
+CREW_EFFORT_GRANTS = [{"action": "stargate_model", "resource": operation, "effect": "allow"}
+                     for operation in ("inspect", "effort")]
 
 
 def require(condition, message):
@@ -460,7 +465,7 @@ def irc_config(value, slug, check_files, plain=False):
     server_host = host(value.get("host", LOOPBACK if mode == "local" else None))
     server_port = port(value.get("port", 6697 if tls else 6667))
     if mode == "local":
-        require(not tls and server_host == LOOPBACK, "Local fleet members use loopback IRC. Configure advertise for desktop TLS.")
+        require(server_host == LOOPBACK, "Local fleet members use loopback IRC.")
     allowed = value["allowedAccounts"]
     require(isinstance(allowed, list) and 1 <= len(allowed) <= 50, "Specify 1 to 50 allowed IRC accounts.")
     for account in allowed:
@@ -488,6 +493,10 @@ def irc_config(value, slug, check_files, plain=False):
         bind = ip(compose.get("tlsBind", LOOPBACK))
         require(bind == LOOPBACK or {"tlsCert", "tlsKey", "serverName"} <= compose.keys(), "An exposed IRC TLS listener requires tlsCert, tlsKey and serverName.")
         require(("tlsCert" in compose) == ("tlsKey" in compose), "Specify both IRC TLS files.")
+        if tls:
+            require("caFile" in irc and {"tlsCert", "tlsKey"} <= compose.keys()
+                    and server_port == compose.get("tlsPort", 6697),
+                    "Local TLS needs irc.caFile, irc.compose.tlsCert and irc.compose.tlsKey at irc.compose.tlsPort.")
         server_name = pattern(
             compose.get("serverName", "irc.example.com"),
             r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*",
@@ -515,9 +524,6 @@ def irc_auth(value, mode, tls):
                    "irc.auth (certificate or password)")
     if auth == "certificate":
         # Stargate takes exactly one of passwordEnv and clientPemFile per account, and clientPemFile needs TLS.
-        require(mode == "remote", "irc.auth certificate needs a remote IRC server for now. The fleet reaches the "
-                "Ergo this installer manages over plain loopback IRC, and Stargate presents a client certificate "
-                "only over TLS. Leave irc.auth out, or set it to password (README, 'IRC sign-in').")
         require(tls, "IRC certificates (SASL EXTERNAL) need TLS: set irc.tls to true, or irc.auth to password.")
     return auth
 
@@ -701,6 +707,8 @@ def harness_config(value, inherited):
         offered = EFFORTS.get((backend, family), ())
         if backend == "opencode" and family == "claude":
             offered = claude_efforts(model)
+        elif backend == "opencode" and model in CODEX_XHIGH_MODELS:
+            offered = (*offered, "xhigh")
         require(effort in offered, f"Reasoning effort {effort!r} is not available for {model} with the {backend} "
                 f"harness, which offers {', '.join(offered) or 'none'}." if offered else
                 f"The {backend} harness cannot set a reasoning effort for the {family} family. Remove harness effort.")
@@ -1168,7 +1176,7 @@ def usage_guard_settings(cfg, home):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains systemPackages screenshots maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch agentEgress operatorUsers toolchains systemPackages screenshots maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
     naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
@@ -1272,7 +1280,7 @@ def validate(config, credentials, check_files=True):
     if stargate_api:
         listeners.append(stargate_api["port"])
     if irc["mode"] == "local":
-        listeners += [irc["port"], irc["compose"]["tlsPort"], 8097]
+        listeners += [6667 if irc["tls"] else irc["port"], irc["compose"]["tlsPort"], 8097]
     require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
     api = api_config(cfg["api"]) if "api" in cfg else None
     require(not (api or {}).get("fleetApiUrl") or stargate_api,
@@ -1395,6 +1403,7 @@ def validate(config, credentials, check_files=True):
     return {
         "slug": slug, "name": string(cfg["name"], "fleet name"), "officerNames": naming, "members": agents, "irc": irc,
         "medical": medical,
+        "agentEgress": agent_egress(cfg.get("agentEgress", [])),
         "repositories": repositories,
         "repositoryNotes": repository_notes(cfg.get("repositories", [])),
         "repositoryChecks": repository_checks(cfg.get("repositories", [])),
@@ -1730,8 +1739,16 @@ def model_provider(cfg, family, models):
     else:
         package = "@opencode/ai/providers/openai-compatible/responses"
         settings.update(encoding="none", transport="http")
+    catalogue = {model: {"name": model} for model in models}
+    # An unrecognised custom model keeps its provider defaults.
+    for model, entry in catalogue.items():
+        if model in {"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "gpt-5.4", "gpt-6.2-sol"}:
+            entry["capabilities"] = {"input": ["text", "image"]}
+        if family == "codex" and model in CODEX_XHIGH_MODELS:
+            entry["variants"] = [{"id": effort, "settings": {"reasoningEffort": effort}}
+                                 for effort in (*EFFORTS["opencode", "codex"], "xhigh")]
     return {"name": f"Fleet model proxy, {family.title()} family", "package": package, "settings": settings,
-            "models": {model: {"name": model} for model in models}}
+            "models": catalogue}
 
 
 # The Subspace API's MCP server, as the officer's harness names it, and the grant for its tools.
@@ -1756,6 +1773,13 @@ def agent_socket(agent_id):
 
 def stargate_entry(cfg):
     return APP / "src" / f"stargate-{cfg['stargate']['ref']}" / "src/main.ts"
+
+
+def officer_upload_command(cfg, person):
+    # The issuer and transport come from the installed profile, never from a tool argument.
+    target = (["socket", str(agent_socket(person["id"]))] if enrolled(cfg)
+              else ["http", subspace_mcp_url(cfg)])
+    return ["/usr/bin/python3", "-I", str(APP / "lib/officer_upload.py"), *target, person["account"]]
 
 
 def subspace_bridge(cfg, agent_id):
@@ -1855,7 +1879,7 @@ def agent_socket_directories(cfg):
     return [agent_socket(person["id"]).parent for person in cfg["members"]]
 
 
-def harness_permissions(cfg, person):
+def harness_permissions(cfg, person, starter_grants=()):
     """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener or a hosted API is
     configured, and with a hosted API the officer's REST command (SUBSPACE_REQUEST).
 
@@ -1865,7 +1889,7 @@ def harness_permissions(cfg, person):
     any operator rule that matches the command, such as a deny of `subspace-*`, decides.
     """
     permissions = person["harness"]["permissions"]
-    commands = []
+    commands = list(starter_grants)
     if cfg.get("captainPeerMessages") and person["crew"]:
         commands.extend({"action": "fleet_peer_message", "resource": peer["id"], "effect": "allow"}
                         for peer in cfg["members"] if peer["crew"] and peer["id"] != person["id"])
@@ -1889,9 +1913,9 @@ def harness_permissions(cfg, person):
 def captain_permissions(cfg, person):
     """The captain root's stored grants: its harness policy plus the crew tools when it hosts crew, and the
     dispatch answer tool when agent dispatch is on."""
-    permissions = harness_permissions(cfg, person)
     if not person["crew"]:
-        return permissions
+        return harness_permissions(cfg, person)
+    permissions = harness_permissions(cfg, person, CREW_EFFORT_GRANTS)
     return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
 
 
@@ -2215,6 +2239,8 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         engine["mcp"] = {"servers": {SUBSPACE_MCP: {
             "type": "remote", "url": mcp_url, "headers": {AGENT_HEADER: person["account"]},
         }}}
+    if "mcp" in engine:
+        engine["mcp"]["servers"]["subspace_files"] = {"type": "local", "command": officer_upload_command(cfg, person)}
     if has_repository_refresh(cfg, person):
         servers = engine.setdefault("mcp", {"servers": {}})["servers"]
         servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(), "timeout": 110000}
@@ -2337,6 +2363,9 @@ def claude_backend(cfg, person, workspace, documents):
             "type": "http", "url": mcp_url,
             "headersHelper": f"{APP}/lib/runtime.py agent-header {person['account']}",
         }}
+    if "mcpServers" in backend:
+        command, *args = officer_upload_command(cfg, person)
+        backend["mcpServers"]["subspace_files"] = {"type": "stdio", "command": command, "args": args}
     if has_repository_refresh(cfg, person):
         command, *args = repository_refresh_command()
         backend.setdefault("mcpServers", {})["repo_refresh"] = {"type": "stdio", "command": command, "args": args}
@@ -2581,6 +2610,15 @@ def render_view(cfg, session_roots, home):
     )
 
 
+def agent_egress(values):
+    require(isinstance(values, list) and all(isinstance(value, str) for value in values),
+            "agentEgress must be an array of HOST:PORT entries.")
+    try:
+        return list(dict.fromkeys((host(name), port) for name, port in map(network.endpoint, values)))
+    except (Invalid, ValueError):
+        raise Invalid("Invalid agent egress destination. Use HOST:PORT or [IPv6]:PORT.") from None
+
+
 def render_firewall(cfg):
     try:
         admins = {pwd.getpwnam(user).pw_uid for user in cfg["operators"]}
@@ -2588,13 +2626,27 @@ def render_firewall(cfg):
         raise Invalid("Every operatorUsers entry must name an existing Linux account.") from None
     service_ids = {int(path.read_text()) for path in (STATE / "identity").iterdir()}
     require(not admins & service_ids, "Fleet service UIDs cannot be operators.")
-    clients = {pwd.getpwnam(f"ss-{person['id']}").pw_uid for person in cfg["members"]}
-    clients.add(pwd.getpwnam(GATEWAY).pw_uid)
+    officers = {person["id"]: pwd.getpwnam(f"ss-{person['id']}").pw_uid for person in cfg["members"]}
+    clients = {*officers.values(), pwd.getpwnam(GATEWAY).pw_uid}
+    native = [person for person in cfg["members"] if person["harness"]["type"] == "claude-sdk"]
+    irc = cfg["irc"]
+    try:
+        allowed = {address for name, port in cfg["agentEgress"] for address in network.destinations(name, port)}
+        if native and irc["mode"] == "remote":
+            for person in native:
+                allowed.update(network.destinations(irc["host"], irc["port"], officers[person["id"]]))
+        rear = cfg["members"][0]
+        if rear in native and cfg["integrations"]["teams"]:
+            allowed.update(network.destinations("169.254.169.254", 80, officers[rear["id"]]))
+        dns = network.resolvers()
+    except OSError as error:
+        raise Invalid(f"Could not resolve the officer network policy: {error}") from None
     ports = {service: cfg[service]["port"] for service in ("dashboard", "agentsview", "proxy")}
     if cfg["stargate"]["api"]:
         ports["stargate-api"] = cfg["stargate"]["api"]["port"]
     config = ETC / "firewall.nft"
-    write(config, rules(ports, admins, clients, pwd.getpwnam(VIEW).pw_uid), 0o600)
+    write(config, network.rules(ports, admins, clients, pwd.getpwnam(VIEW).pw_uid,
+                                officers=officers.values(), dns=dns, allowed=allowed), 0o600)
     write(SYSTEMD / FIREWALL, "\n".join([
         "[Unit]", "Description=Subspace fleet local service firewall",
         "After=nftables.service",
@@ -2963,11 +3015,15 @@ def render_irc(cfg, extra):
         passwords[medical["account"]] = extra[MEDICAL_IRC_PASSWORD[-1]]
         channels.add(medical["channel"])
     entries = [{"name": name, "password": password} for name, password in sorted(passwords.items())]
+    if cfg["irc"]["auth"] == "certificate":
+        for person in cfg["members"]:
+            path = irc_client_pem(person["id"])
+            entries.append({"name": person["account"], "fingerprint": irc_fingerprint(path.read_text(), str(path))})
     write(account_path, json_text(entries), 0o440, ERGO_GID)
     write(operator_path, cfg["operatorPassword"] + "\n", 0o440, ERGO_GID)
     write(channel_path, json_text([{"name": name} for name in sorted(channels)]), 0o440, ERGO_GID)
     environment = {
-        "IRC_PLAIN_BIND": LOOPBACK, "IRC_PLAIN_PORT": cfg["irc"]["port"],
+        "IRC_PLAIN_BIND": LOOPBACK, "IRC_PLAIN_PORT": 6667 if cfg["irc"]["tls"] else cfg["irc"]["port"],
         "IRC_TLS_BIND": f"[{local['tlsBind']}]" if ":" in local["tlsBind"] else local["tlsBind"],
         "IRC_TLS_PORT": local["tlsPort"],
         "IRC_WS_BIND": LOOPBACK, "IRC_WS_PORT": 8097,
@@ -3288,14 +3344,14 @@ def render(cfg, extra, prune=False):
         environments[agent_id] = {**headers, **password}
     after = [f"{PREFIX}proxy.service", *engines]
     medical_after = []
+    if cfg["irc"]["auth"] == "certificate":
+        irc_certificates(cfg)
     if cfg["irc"]["mode"] == "local":
         local_unit = render_irc(cfg, extra.get("medical", {}))
         units.append(local_unit)
         after.append(local_unit)
         medical_after.append(local_unit)
     units.extend(medical_units(cfg, extra.get("medical", {}), medical_after))
-    if cfg["irc"]["auth"] == "certificate":
-        irc_certificates(cfg)
     groups = {}
     rear = cfg["members"][0]
     default_group = "gateway" if rear["harness"]["type"] == "opencode" else "gateway-opencode"

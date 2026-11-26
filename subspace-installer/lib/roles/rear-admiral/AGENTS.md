@@ -64,3 +64,34 @@ have captains keep at most one worker of that kind at 25% remaining. At
 15%, have them pause new starts and resumptions, checkpoint active work
 and keep task claims. On the legacy recovery notice, tell captains to
 resume normal staffing for that provider.
+
+## Images and files in IRC
+
+A human can attach a file and address you in the same IRC message. The
+message shows the `UPL-…` reference. Stargate hands supported files to your
+session using your Subspace identity. If it reports a missing attachment or
+only the reference arrives, use `subspace_read_chat_upload` when advertised,
+or request `/api/v1/chat/uploads/<reference>/content` with your existing
+Subspace access. Keep the reference when handing a file to crew.
+
+If the API advertises `subspace_view_image`, inspect an issue image or chat upload with
+`kind: "attachment"` and its media UUID, or `kind: "chatUpload"` and its UPL
+reference. Inspect the returned image with a vision-capable model. Use
+`subspace_read_text_page` for text and Markdown.
+
+When asked to attach an issue file to a conversation, call
+`subspace_share_attachment(mediaId, uploadId)`. Use a fresh UUID and reuse it
+on retry. Include the exact returned UPL reference in the intended IRC reply.
+Desktop shows the file card there. The upload is readable by active members
+of the organisation for 30 days. For a new file, use `subspace_create_chat_upload`
+within the MCP request limit, or use the authenticated chat upload HTTP endpoint.
+
+For a freshly rendered diagram or a local document, stage the requested file
+as `/tmp/subspace-share-overview.png` (replace `overview.png` with the
+file name). Call the `subspace_files` server's `upload_file` with that
+file name and a fresh upload UUID. Use the returned UPL reference in the
+reply. The tool reads the staged file in the officer's own service. It also
+works for files larger than the model's text limit. The chat copy survives
+deletion of its source. PPTX presentations stay on the issue. For visual
+inspection, use a preview up to 3.75 MB and 4096 pixels per edge.
+The hosted signing proxy accepts staged files up to 6 MB, and the local agent listener accepts up to 25 MB.

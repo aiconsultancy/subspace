@@ -23,7 +23,7 @@ import fixture  # noqa: E402
 import fleet_records  # noqa: E402
 import github_app
 from github_policy import PolicyError, check_push, cli_permissions, merge_repository
-from network import rules
+from network import ip_address, rules
 import roles
 from roles import default_permissions
 import runtime
@@ -85,6 +85,23 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertIn('oifname "lo" tcp dport 8080 meta skuid != { 0, 703, 1700 } reject', result)
         self.assertIn('oifname "lo" tcp dport 8317 meta skuid != { 0, 701, 702, 1700 } reject', result)
         self.assertIn('iifname != "lo" tcp dport { 8070, 8080, 8317 } reject', result)
+
+    def test_firewall_applies_private_egress_only_to_officers_before_dnat(self):
+        result = rules({"dashboard": 8070}, [1700], [701, 702, 900], 703,
+                       officers=[701, 702], dns={ip_address("10.0.0.53")},
+                       allowed={(ip_address("fd00::44"), 443, None), (ip_address("10.0.0.42"), 6697, 702)})
+        self.assertIn("type filter hook output priority -110; policy accept;", result)
+        self.assertIn("meta skuid { 701, 702 } jump officer_destinations", result)
+        reject = result.index("ip daddr { 10.0.0.0/8")
+        for allowance in ("ip daddr 10.0.0.53 tcp dport 53 return", "ip daddr 10.0.0.53 udp dport 53 return",
+                          "ip6 daddr fd00::44 tcp dport 443 return", "meta skuid 702 ip daddr 10.0.0.42 tcp dport 6697 return"):
+            self.assertLess(result.index(allowance), reject)
+        self.assertIn("ip6 daddr { fc00::/7, fe80::/10 } reject", result)
+        self.assertEqual(runtime.agent_egress(["git.example.com:443", "[fd00::44]:8443"]),
+                         [("git.example.com", 443), ("fd00::44", 8443)])
+        for destination in ("git.example.com", "git.example.com:0", "git.example.com:80/path", "fd00::44:8443"):
+            with self.subTest(destination), self.assertRaisesRegex(Invalid, "Invalid agent egress destination"):
+                runtime.agent_egress([destination])
 
     def test_github_high_level_and_api_policy(self):
         self.assertEqual(cli_permissions(["issue", "close", "12", "-R", "example/project"]), {"issues": "write"})
@@ -336,11 +353,30 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(backend["sessionID"], "ses_fixture")
         self.assertEqual((backend["agent"], backend["enforcePermissions"]), ("build", True))
         self.assertEqual(backend["permissions"][-len(runtime.CREW_GRANTS):], runtime.CREW_GRANTS)
+        self.assertEqual([rule["resource"] for rule in backend["permissions"]
+                          if rule["action"] == "stargate_model"],
+                         ["inspect", "effort", "get"])
+        self.assertEqual([variant["id"] for variant in
+                          engine["providers"]["openai-proxy"]["models"]["gpt-5.4"]["variants"]],
+                         ["low", "medium", "high", "xhigh"])
         self.assertEqual(engine["permissions"], captain["harness"]["permissions"])
         environment = saved["engine-orion"]["environment"]
         self.assertEqual(environment["OPENCODE_AUTHORIZATION"], next(iter(headers.values())))
         self.assertIn("fleet-crew", documents["skills"])
         self.assertIn("stargate_crew", documents["instructions"])
+
+    def test_operator_rules_can_restrict_the_captain_effort_grant(self):
+        config, secrets = example_config(), officer_secrets()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["harness"] = {"captain": {"extraPermissions": [
+            {"action": "stargate_model", "resource": "effort", "effect": "deny"},
+        ]}}
+        cfg = validate(config, secrets)
+        captain = cfg["members"][1]
+        rules = runtime.captain_permissions(cfg, captain)
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["inspect"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["effort"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["switch"]), "deny")
 
     def test_officers_reach_the_api_agent_listener_as_themselves(self):
         config = example_config()
@@ -402,7 +438,8 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertNotIn("effort", backend)
         self.assertEqual(runtime.claude_backend(cfg, {**person, "harness": {**person["harness"], "effort": "xhigh"}},
                                                 Path("/workspace"), documents)["effort"], "xhigh")
-        self.assertEqual(backend["mcpServers"], {"subspace": {
+        self.assertIn("subspace_files", backend["mcpServers"])
+        self.assertEqual({"subspace": backend["mcpServers"]["subspace"]}, {"subspace": {
             "type": "http", "url": "http://127.0.0.1:3001/mcp",
             "headersHelper": f"/opt/subspace-fleet/lib/runtime.py agent-header {person['account']}",
         }})
@@ -1577,6 +1614,19 @@ class OfficerSlackTests(unittest.TestCase):
         self.assertNotIn("s=slack", rear)
         self.assertNotIn("$", captain)
 
+    def test_shared_chat_upload_guidance_reaches_officers_and_crew(self):
+        cfg = validate(self.config, self.secrets)
+        home = Path("/var/lib/subspace-fleet/agents/example-captain")
+        rear, captain = (roles.role_documents(cfg, person, Path("/references/example"), home)
+                         for person in cfg["members"])
+        for documents, role in ((rear, "rear-admiral"), (captain, "captain")):
+            for content in (documents["instructions"], documents["skills"][f"fleet-{role}"]):
+                self.assertIn("UPL-…", content)
+                self.assertIn("subspace_read_chat_upload", content)
+        self.assertTrue(captain["crew"])
+        for prompt in (*captain["crew"].values(), captain["skills"]["fleet-crew"]):
+            self.assertIn("subspace_read_chat_upload", prompt)
+
     def test_a_workspace_rooted_captain_keeps_its_slack_guidance_beside_the_workspace_instructions(self):
         # The workspace AGENTS.md is the project file OpenCode loads in the workspace; the role instructions with
         # the Slack section are its global file. Both are written as the captain, and neither replaces the other.
@@ -2221,8 +2271,8 @@ class OfficerModelTests(unittest.TestCase):
 
     def test_an_effort_the_harness_cannot_give_is_refused(self):
         cases = [
-            ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "xhigh"}},
-             "'xhigh' is not available for gpt-5.4 with the opencode harness, which offers low, medium, high"),
+            ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "max"}},
+             "'max' is not available for gpt-5.4 with the opencode harness, which offers low, medium, high, xhigh"),
             ({"captain": {"model": "claude-sonnet-4-6", "effort": "xhigh"}},
              "offers low, medium, high, max"),
             ({"captain": {"model": "claude-sonnet-4-5", "effort": "low"}}, "offers high, max"),
@@ -2243,6 +2293,18 @@ class OfficerModelTests(unittest.TestCase):
             with self.subTest(model):
                 self.assertEqual(self.harnesses(self.config({"captain": {"model": model, "effort": effort}}))["orion"],
                                  ("claude", model, effort))
+
+    def test_codex_extra_high_is_explicit_for_supported_models(self):
+        for model in ("gpt-5.4", "gpt-6.2-sol"):
+            with self.subTest(model):
+                cfg = validate(self.config({"captain": {"model": model, "effort": "xhigh"}}),
+                               officer_secrets("example-vega"))
+                self.assertEqual(cfg["members"][1]["harness"]["effort"], "xhigh")
+                catalogue = runtime.model_provider(cfg, "codex", [model, "custom-review-model"])["models"]
+                self.assertEqual(catalogue[model]["variants"],
+                                 [{"id": effort, "settings": {"reasoningEffort": effort}}
+                                  for effort in ("low", "medium", "high", "xhigh")])
+                self.assertNotIn("variants", catalogue["custom-review-model"])
 
     def test_officers_whose_model_no_signed_in_account_serves_stop_both_runs(self):
         temporary = tempfile.TemporaryDirectory()
@@ -2377,7 +2439,7 @@ class IrcCertificateTests(unittest.TestCase):
         secrets = {**officer_secrets(), "ircOperatorPassword": "fixture-operator-password"}
         self.assertEqual(validate(self.config, secrets)["irc"]["auth"], "password")
         self.config["irc"]["auth"] = "certificate"
-        with self.assertRaisesRegex(Invalid, "needs a remote IRC server.*only over TLS"):
+        with self.assertRaisesRegex(Invalid, "need TLS"):
             validate(self.config, secrets)
 
     def test_the_gateway_registration_names_the_bundle_and_no_password(self):

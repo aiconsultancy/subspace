@@ -162,11 +162,21 @@ How the effort reaches the model:
   Claude 3.7 and 4.0 to 4.5, except Opus 4.5, take only `high` and `max`.
   The installer reads dated IDs by their version, so
   `claude-opus-4-20250514` counts as Claude 4.0.
-  The Codex family takes `low`, `medium` and `high`.
+  The Codex family takes `low`, `medium` and `high`. The installer also
+  exposes `xhigh` for GPT-5.4 and GPT-6.2 Sol.
 - **Claude Agent SDK.** An officer with `"type": "claude-sdk"` passes the
   effort to Stargate's Claude backend as `effort`.
 
 The installer refuses an effort that the officer's harness does not offer.
+
+Captains with crew can use `stargate_model({op: "inspect", target: "codex-1"})`
+to read a worker's selected model and variant. To prepare an idle worker for a
+review, use `stargate_model({op: "effort", target: "codex-1", variant: "high"})`
+and inspect it again before dispatching. Pass the same `project` to both calls
+for a non-default repository. Crew can verify their own variant with
+`stargate_model({op: "get"})`. Follow the repository's review gate when it
+requires a particular model or effort. These grants apply to the captain's
+pinned root on new and existing fleets.
 
 Both the dry run and the install stop if the model proxy has signed-in
 accounts but none can serve an officer's model:
@@ -497,6 +507,15 @@ operator notes. If a file is not a regular UTF-8 file the captain can read,
 such as a symbolic link, it leaves both files unchanged and says so.
 
 ### Instructions, permissions and toolchains
+
+When a person attaches a file and addresses an officer in the same IRC
+message, the desktop shows a `UPL-…` reference. With the hosted Subspace
+bridge, Stargate reads supported attachments as that officer. If the
+session cannot take the attachment, the reference stays in the request.
+The officer and its crew can use `subspace_read_chat_upload` when advertised,
+or the authenticated `/api/v1/chat/uploads/<reference>/content` route. Pass
+the reference in crew assignments. Active members of the organisation can
+read the same file for 30 days.
 
 The installer renders role-specific OpenCode `AGENTS.md` and
 `skills/fleet-*/SKILL.md` under the rear admiral's and each captain's
@@ -1028,9 +1047,8 @@ rather than one fleet's Ergo:
 ### IRC sign-in
 
 `irc.auth` sets how the rear admiral and the captains sign in to IRC:
-`certificate` (SASL EXTERNAL), the default with a remote server, or
-`password` (SASL PLAIN), the default and for now the only choice with the
-[Ergo the installer manages](#local-irc-and-tls). Crew have no IRC accounts,
+`certificate` (SASL EXTERNAL) or `password` (SASL PLAIN). Guided setup uses
+certificates for fresh fleets and retains existing sign-in modes. Crew have no IRC accounts,
 and the [medical ship](#medical-ship) keeps its own password either way.
 
 **With certificates, no IRC password exists for an officer.** The installer
@@ -1050,7 +1068,7 @@ certificate matches an unencrypted private key (`PRIVATE KEY`,
 `EC PRIVATE KEY` or `RSA PRIVATE KEY`). `--dry-run` and every render check
 the same, so a bundle Stargate would refuse stops the installer instead.
 
-**Bind the fingerprints on the IRC server.** An officer can sign in only
+**Bind the fingerprints on an unmanaged IRC server.** An officer can sign in only
 once its certificate's fingerprint is bound to its account. `--dry-run` and
 the install summary print one line per officer, with the SHA-256 fingerprint
 in the lower-case hex form Ergo's NickServ takes, and never key material:
@@ -1151,25 +1169,13 @@ the credential only checks it and reports which certificates already sign
 in. The passwords are sent only to the server, over TLS, and never printed or
 saved.
 
-**The Ergo the installer manages keeps passwords for now**, in local mode
-and on the shared server `./install.sh irc-server` runs, for which the host
-installer passes `--irc-auth password`. Three things are missing:
-
-- Fleet members reach local Ergo over plain loopback IRC, and Stargate
-  presents a client certificate only over TLS. The gateways would need the
-  local TLS listener and a CA file for it, but Ergo generates that
-  certificate in its own volume when it starts, so the installer would have
-  to generate or pin it itself.
-- The image seeds every account with a password (`IRC_ACCOUNTS_FILE`).
-  Officers would instead need certificate-only accounts, registered with
-  `NickServ SAREGISTER <account>` and no passphrase, and their fingerprints
-  bound with `NickServ CERT ADD <account> <fingerprint>` as the operator at
-  seed time. `seed-channels.py` already signs in as the operator, so it could
-  do this from a fingerprint file the installer mounts, without changing the
-  entrypoint.
-- For a shared server, each fleet's bundle would carry its officers'
-  fingerprints instead of passwords, and `subspace-setup irc-server add`
-  would seed them the same way.
+**Managed Ergo** creates certificate-only accounts and binds their
+fingerprints during startup. In local mode, guided setup generates a
+persistent server certificate for the loopback TLS listener and makes
+Stargate trust it. For an upgraded shared server, a new fleet's bundle
+carries fingerprints. Existing bundles and older shared servers can use
+passwords. To keep an installed local fleet working, guided setup preserves
+its sign-in mode on reruns. Human and operator passwords are still seeded.
 
 ## Officer names
 
@@ -2494,7 +2500,7 @@ whether at its cap or with the whole VM out of memory.
 | `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`, as for a fleet installed before the setting; `subspace-setup` and `fleet.example.json` give a new fleet `delegate`. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions), and an optional `check` (one command line, at most 300 characters) that `--verify-toolchains` runs ([Toolchains](#toolchains)). The ID, URL and visibility are fixed once installed; the description, tracker and check may change. See [crew and repositories](#crew-and-repositories). |
-| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
+| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local binds loopback and can use TLS with `caFile` and the two Compose TLS files. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` or `password`. See [IRC sign-in](#irc-sign-in). |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<id>` for a captain (`#<slug>-<id>` with fleet-prefixed names). Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
@@ -2627,6 +2633,18 @@ and a distinct key for enabled management access. Incoming connections to
 all three ports from other interfaces are rejected. Keep this table when
 reloading a site-managed firewall. Apply your site's SSH and deliberate IRC
 listener policy separately, including Docker-published ports.
+
+Guided setup also restricts private egress for each officer's Linux user,
+including its crew. The rules cover RFC 1918, carrier-grade NAT and IPv4
+link-local ranges, plus IPv6 unique-local and link-local ranges. The VM's
+configured DNS resolvers remain reachable. Set specific private TCP
+destinations with `subspace-setup --agent-egress HOST:PORT` or repeat the
+flag to replace the saved list. Use `[IPv6]:PORT` for a literal IPv6
+address and `--agent-egress ''` to clear the list. Re-run setup when a DNS
+name's destination addresses change. The shared Stargate gateway keeps its
+IRC and API routes. A native Claude gateway shares its officer's Linux user
+and retains access to its configured IRC endpoint. `./install.sh audit`
+checks that each officer is covered.
 
 The API integration looks up the fleet by slug and creates or patches its
 registration, with its ships and officers (see

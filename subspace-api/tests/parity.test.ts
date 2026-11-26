@@ -1241,6 +1241,21 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     });
     expect(upload.status).toBe(201);
     const { mediaId } = (await upload.json()) as { mediaId: string };
+    const sharedDoc = await tool<{ reference: string }>(
+      "subspace_share_attachment",
+      { mediaId, uploadId: crypto.randomUUID() },
+      "rearAdmiral",
+    );
+    expect(sharedDoc.isError).toBe(false);
+    expect(
+      (
+        await tool(
+          "subspace_view_image",
+          { kind: "chatUpload", reference: sharedDoc.structuredContent.reference },
+          "rearAdmiral",
+        )
+      ).isError,
+    ).toBe(true);
     type TextPage = {
       text: string;
       offset: number;
@@ -1251,6 +1266,7 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       ["document", doc.reference],
       ["attachment", mediaId],
       ["chatUpload", chat.reference],
+      ["chatUpload", sharedDoc.structuredContent.reference],
     ] as const) {
       const name = "subspace_read_text_page";
       expect((await tool(name, { kind, reference }, "other")).isError).toBe(true);
@@ -1298,6 +1314,49 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     });
     expect(uploaded.status).toBe(201);
     const { id, url } = (await uploaded.json()) as { id: string; url: string };
+    const listed = await tool<{ items: { mediaId: string }[] }>(
+      "subspace_list_attachments",
+      { issue: issue.id },
+      "rearAdmiral",
+    );
+    expect(listed.structuredContent.items.map((item) => item.mediaId)).toContain(id);
+    const share = { mediaId: id, uploadId: crypto.randomUUID() };
+    expect((await tool("subspace_share_attachment", share, "other")).isError).toBe(true);
+    const shared = await tool<{ reference: string }>("subspace_share_attachment", share, "captain");
+    expect(shared.isError).toBe(false);
+    const { reference } = shared.structuredContent;
+    expect(
+      (
+        await tool<{ reference: string }>(
+          "subspace_get_chat_upload",
+          { reference: share.uploadId },
+          "rearAdmiral",
+        )
+      ).structuredContent.reference,
+    ).toBe(reference);
+    expect((await tool("subspace_share_attachment", share, "captain")).structuredContent).toEqual(
+      shared.structuredContent,
+    );
+    for (const target of [
+      { kind: "attachment", reference: id },
+      { kind: "chatUpload", reference },
+    ]) {
+      expect((await tool("subspace_view_image", target, "other")).isError).toBe(true);
+      const response = await rpc("rearAdmiral", "tools/call", {
+        name: "subspace_view_image",
+        arguments: target,
+      });
+      expect(response.result).toEqual({
+        content: [{ type: "image", mimeType: "image/gif", data: gif.toString("base64") }],
+        isError: false,
+      });
+    }
+    expect((await tool("subspace_delete_chat_upload", { reference }, "rearAdmiral")).isError).toBe(
+      true,
+    );
+    expect((await tool("subspace_delete_chat_upload", { reference }, "captain")).isError).toBe(
+      false,
+    );
     await call(404, `/issues/media/${id}`, "other");
     const path = `/issues/${issue.id}/comments`;
     const comment = await call<Versioned>(201, path, "admin", "POST", {

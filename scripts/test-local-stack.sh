@@ -244,8 +244,21 @@ if grep -Fq 'IRC config at' "$fixture/opt-out"; then
 fi
 cmp "$fixture/merged.json" "$config"
 test "$(find "$(dirname "$config")" -name '*.bak' | wc -l | tr -d ' ')" = 1
+grep -Fxq api .stack/irc/connection-mode
+for secret in credential.secret auth-hook.token; do
+    grep -Eq '^[0-9a-f]{64}$' ".stack/irc/$secret"
+    cp ".stack/irc/$secret" "$fixture/$secret"
+done
+if cmp -s .stack/irc/credential.secret .stack/irc/auth-hook.token; then
+    echo "the signing secret and the hook token must differ" >&2
+    exit 1
+fi
 make -s stack-up >"$fixture/restart"
 grep -Fxq "IRC config unchanged at $config" "$fixture/restart"
+grep -Fxq manual .stack/irc/connection-mode
+for secret in credential.secret auth-hook.token; do
+    cmp ".stack/irc/$secret" "$fixture/$secret"
+done
 cmp "$fixture/merged.json" "$config"
 if cmp -s "$fixture/old-password" .stack/irc/developer.password; then
     echo "expected stack-up to generate a new password after reset" >&2

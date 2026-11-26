@@ -14,6 +14,7 @@ mod migration;
 mod query;
 mod ranking;
 mod records;
+mod reference_kinds;
 mod revision;
 mod selection;
 mod service;
@@ -23,6 +24,7 @@ mod writes;
 
 pub use api::*;
 pub use links::{link, parse_link};
+pub use reference_kinds::register_reference_kind;
 pub use revision::{CachedRead, ReadPermit};
 pub use selection::{Activation, ActivationTicket};
 pub use service::Service;

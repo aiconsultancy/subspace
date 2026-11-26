@@ -1015,12 +1015,14 @@ class InstalledFleet(unittest.TestCase):
         self.assertIn(f"ReadWritePaths={sockets / 'orion'}", unit)
         # OpenCode engines and the Claude officer's own gateway run Stargate's bridge to their own socket.
         engine = json.loads((self.etc / "opencode-orion.json").read_text())
-        self.assertEqual(engine["mcp"], {"servers": {"subspace": {
-            "type": "local", "command": [*bridge, "--socket", str(sockets / "orion/api.sock")]}}})
+        self.assertEqual(engine["mcp"]["servers"]["subspace_files"]["command"][-3:], ["socket", str(sockets / "orion/api.sock"), "example-orion"])
+        self.assertEqual(engine["mcp"]["servers"]["subspace"], {
+            "type": "local", "command": [*bridge, "--socket", str(sockets / "orion/api.sock")]})
         self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
         vega = json.loads((self.etc / "stargate-gateway-agent-vega.json").read_text())["irc"][0]["backend"]
-        self.assertEqual(vega["mcpServers"], {"subspace": {
-            "type": "stdio", "command": bridge[0], "args": [*bridge[1:], "--socket", str(sockets / "vega/api.sock")]}})
+        self.assertEqual(vega["mcpServers"]["subspace_files"]["args"][-3:], ["socket", str(sockets / "vega/api.sock"), "example-vega"])
+        self.assertEqual(vega["mcpServers"]["subspace"], {
+            "type": "stdio", "command": bridge[0], "args": [*bridge[1:], "--socket", str(sockets / "vega/api.sock")]})
         self.assertNotIn("subspaceAgents", json.loads((self.etc / "stargate-gateway-agent-vega.json").read_text()))
         # No configuration names an agent by a header or reaches an agent listener, and only the gateway's file
         # holds the token. (The skill's text still describes the listener; the instructions say it is replaced.)

@@ -82,6 +82,16 @@ class Irc:
         self.expect(" JOIN " + channel)
         self.expect(" 366 ")
 
+    def login_external(self, name):
+        self.send("CAP REQ :sasl", f"NICK {name}", f"USER {name} 0 * :Certificate seed")
+        self.expect(" ACK ")
+        self.send("AUTHENTICATE EXTERNAL")
+        self.expect("AUTHENTICATE +")
+        self.send("AUTHENTICATE +")
+        self.expect(" 903 ")
+        self.send("CAP END")
+        self.expect(f" 001 {name} ")
+
     def replay(self, text):
         self.send(f"CHATHISTORY LATEST {CHANNEL} * 20")
         start = self.expect(f" chathistory {CHANNEL}")
@@ -243,6 +253,13 @@ def smoke():
     operator_pw = secrets.token_urlsafe(24)
     agent_pw = secrets.token_urlsafe(24)
     captain_pw = secrets.token_urlsafe(24)
+    fixture = TemporaryDirectory(prefix="subspace-irc-certificate-")
+    client_certificate = Path(fixture.name) / "officer.pem"
+    client_key = Path(fixture.name) / "officer.key"
+    subprocess.run(["openssl", "req", "-new", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                    "-subj", "/CN=smoke-officer", "-out", str(client_certificate), "-keyout", str(client_key)],
+                   check=True, capture_output=True)
+    fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(client_certificate.read_text())).hexdigest()
     seed = [
         {"name": "smoke-agent", "password": agent_pw},
         {"name": "smoke-captain", "password": captain_pw},
@@ -256,7 +273,7 @@ def smoke():
     env.update(
         IRC_OPER_NAME="smoke-operator",
         IRC_OPER_PASSWORD=operator_pw,
-        IRC_ACCOUNTS_JSON=json.dumps(seed),
+        IRC_ACCOUNTS_JSON=json.dumps([*seed, {"name": "smoke-officer", "fingerprint": fingerprint}]),
         IRC_CHANNELS_JSON=json.dumps(channels),
         IRC_PLAIN_PORT="0",
         IRC_TLS_PORT="0",
@@ -299,6 +316,10 @@ def smoke():
             "exec", "-T", "irc", "openssl", "x509", "-in", "/ircd/local-tls.pem", capture=True,
         ).stdout
         context = ssl.create_default_context(cadata=cert)
+        external_context = ssl.create_default_context(cadata=cert)
+        external_context.load_cert_chain(client_certificate, client_key)
+        with connect(tls, external_context) as officer:
+            officer.login_external("smoke-officer")
         check_cost(12)
         # Without IRC_AUTH_API_URL the auth hook is absent and no token is written.
         config = compose(
@@ -349,6 +370,8 @@ def smoke():
             IRC_ACCOUNTS_JSON=json.dumps([{**seed[0], "password": "wrong-synthetic-password"}, seed[1]]),
         )
         compose("up", "--force-recreate", "--wait", "--wait-timeout", "40")
+        with connect(port(6697), external_context) as officer:
+            officer.login_external("smoke-officer")
         check_seeded(port(6667), agent_pw, captain_pw, "Fleet coordination", "nst")
         # Verify the same trust anchor and current persisted account credentials.
         with connect(port(6697), context) as agent:
@@ -385,6 +408,7 @@ def smoke():
         raise
     finally:
         compose("down", "--volumes", "--remove-orphans", "--rmi", "local", check=False)
+        fixture.cleanup()
 
 
 if __name__ == "__main__":

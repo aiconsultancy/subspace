@@ -25,3 +25,7 @@ You commit and push as $captain, with $captain's Git identity and GitHub App.
 Push only your own feature branches. $pullRequests You can read whatever $captain's Linux user
 can read: keep credentials and other agents' files out of your work and
 your answers.
+
+If an assignment includes a `UPL-…` reference, use
+`subspace_read_chat_upload` with the Subspace connection available in your
+session. If the file is unavailable, ask your captain to provide it.

@@ -134,6 +134,16 @@ oversized values:
 - `ReferenceIdentity::github(repository, issue_or_pull_request)`
 - `ReferenceIdentity::github_copilot_agents(task_id)`
 
+An app can add its own reference kinds. Call
+`subspace_framework::search::register_reference_kind("example-ref")` once at startup,
+before any indexing or lookup. Names are 1-64 ASCII characters: lower-case
+letters, digits and hyphens, starting with a letter. Registration is
+idempotent and process-wide. Then build identities with
+`ReferenceIdentity::of_kind("example-ref", &["42"])` (same normalisation and
+bounds as the built-in constructors), or `ReferenceIdentity::parse`. The
+`related_items` agent tool accepts registered kinds too. An unregistered kind
+is refused. The Framework names no service kinds.
+
 Use `ReferenceMatch::Exact` only for a service-supplied link. A heuristic uses
 `ReferenceMatch::Heuristic { evidence, confidence }`, with non-empty evidence
 and confidence from 0 to 1. `kind`, `account`, `parent_id` and `refreshed_at`

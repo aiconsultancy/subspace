@@ -22,6 +22,7 @@ const identity = {
 const rootStack = process.env.SEED_ROOT_STACK === "1";
 const workspaceOnly = process.argv.includes("--workspace-only");
 const includeChat = process.argv.includes("--with-irc");
+const managedIrc = rootStack && process.env.SEED_IRC_MODE === "api";
 const ircHost = process.env.SEED_IRC_HOST ?? "127.0.0.1";
 
 function port(name: string, fallback: number) {
@@ -53,8 +54,8 @@ const fleets = [
     slug: "borealis",
     name: "Borealis fleet",
     ircHost,
-    ircPort: port("SEED_IRC_TLS_PORT", 6697),
-    ircTls: true,
+    ircPort: managedIrc ? port("SEED_IRC_PLAIN_PORT", 6667) : port("SEED_IRC_TLS_PORT", 6697),
+    ircTls: !managedIrc,
     commandChannel: "#borealis-command",
     agents: [
       { handle: "borealis-admiral", name: "borealis-admiral", rank: "rearAdmiral", ship: null },

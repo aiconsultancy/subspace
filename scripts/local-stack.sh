@@ -33,7 +33,7 @@ require_python() {
 }
 
 secrets() {
-    command -v openssl >/dev/null || die "openssl is required to generate local passwords"
+    command -v openssl >/dev/null || die "openssl is required to generate local credentials"
     (umask 077; mkdir -p "$irc")
     chmod 700 "$stack" "$irc"
     local name file
@@ -54,11 +54,21 @@ secrets() {
         printf ']\n'
     } >"$irc/accounts.json"
     chmod 644 "$irc/accounts.json" "$irc/operator.seed"
+    # API and Ergo run as different container users. The directory stays owner-only
+    # on the host, and the credential signing secret is mounted only into the API.
+    for name in credential.secret auth-hook.token; do
+        file="$irc/$name"
+        [ -s "$file" ] || (umask 077; openssl rand -hex 32 >"$file")
+        chmod 644 "$file"
+    done
 }
 
 seed_api() {
+    local irc_mode=manual
+    if [ -f "$irc/connection-mode" ]; then irc_mode=$(cat "$irc/connection-mode"); fi
     docker compose exec -T \
         -e SEED_ROOT_STACK=1 \
+        -e SEED_IRC_MODE="$irc_mode" \
         -e SEED_IRC_PLAIN_PORT="${IRC_PLAIN_PORT:-6667}" \
         -e SEED_IRC_TLS_PORT="${IRC_TLS_PORT:-6697}" \
         -e SEED_EMAIL="$email" -e SEED_ORGANISATION="$organisation" \
@@ -88,6 +98,11 @@ case "${1:-}" in
         if [ "${SUBSPACE_STACK_DESKTOP_CONFIG:-1}" != 0 ]; then require_python; fi
         secrets
         docker compose up --build --detach --wait
+        if [ "${SUBSPACE_STACK_DESKTOP_CONFIG:-1}" = 0 ]; then
+            printf 'api\n' >"$irc/connection-mode"
+        else
+            printf 'manual\n' >"$irc/connection-mode"
+        fi
         # Older stacks mounted operator.password directly. Tighten old files
         # once Compose has switched the container to the new seed mount.
         chmod 600 "$irc/"*.password
