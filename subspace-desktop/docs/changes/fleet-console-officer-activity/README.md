@@ -42,11 +42,17 @@ the desktop side are separate work.
   one more copy by default; SUB decisions `6f5e67dd`, `1c19f413` §1). The
   activity view draws one window of a part, so it charges the part plus
   at most 64 KiB of shown bytes, its markers at 12 bytes: a settled
-  256 KiB part holds 320 KiB, not 512. Room for the incoming part and
-  its window is reserved before each read, beside the part on show and
-  its window, which stay charged only until the reply arrives. The pager
-  decides nothing about the limit: the budget does, and a reservation it
-  refuses evicts the pager. Every read is fenced by a revision: a
+  256 KiB part holds 320 KiB, not 512. Before each read the pager
+  reserves the incoming part's raw size (`partBytes`) beside the outgoing
+  part and its window, which stay on show. That outgoing charge is
+  temporary: when the reply arrives it is let go, and the key holds only
+  the new part and its window, charged then (`drawn(part)`), not before
+  the read. A failed read keeps the outgoing part and its window, charged
+  as before, with the error and **Try again**. A pager opened in place of
+  an item read whole (`known.carried`) holds that item's window on show the
+  same way until its first part arrives. The pager decides nothing about
+  the limit: the budget does, and a reservation it refuses evicts the
+  pager. Every read is fenced by a revision: a
   reply that arrives after an eviction, a restart, a drop or another read is
   dropped. An evicted pager reads again from its first part with no cursor,
   so the next read may have different page boundaries. A reply that holds
@@ -60,9 +66,33 @@ the desktop side are separate work.
   the compact JSON of the turns held. It is pinned: never freed, counted
   once per turn object. A reservation fits only beside the pinned entries.
   Room is made before each read by evicting the least recently opened item
-  read; an evicted item offers **Load in full** again. An item read whole
-  is charged twice its length (the item and its drawn copy); one that does
-  not fit so beside the snapshot is read in parts.
+  read; an evicted item offers **Load in full** again. Eviction forgets the
+  client's copy only: the item stays on the gateway, whose retention of the
+  running families is its own (STAR `465b440e`), and is read again on
+  request. An item read whole is charged twice its length (the item and
+  its drawn copy), its base; one that does not fit so beside the snapshot
+  is read in parts. **Show** on it adds what its window costs beyond that
+  base to the same key (`drawWhole`, SUB decision `533c2b29`), and gives it
+  back when another body is asked for.
+- **Refit** (SUB decisions `533c2b29`, `a5275d81`). An item read whole
+  that no longer fits reads in parts instead, of the version it read: when
+  **Show** cannot keep it and its window beside the pinned content, when
+  the inline snapshot grows, and when **Load the latest** or a read larger
+  than its placeholder advertised cannot hold the newest version whole.
+  Before the inline charge grows, the watcher asks the budget what the
+  larger charge would free (`wouldFree`) and refits each item read whole
+  among them whose window is on show, before the reservation can evict it;
+  one not on show is freed as before, so no item read whole is kept for
+  good. Its window stays on show and charged (`carried`) until the first
+  part arrives, and stays with the error and **Try again** if that read
+  fails. The part opened is the one that holds the start of the window on
+  show: the view reports where that window starts in the item's document,
+  the watcher maps it to the item as served (`servedUnit`), pages that the
+  way the gateway does (`servedPart`, 64 KiB pages between code points,
+  four to a part) and opens the part at the window holding it. A reload
+  reads the newest version's first part instead. A window the view
+  unmounts (its turn closed, the items window moved off it) owns no bytes:
+  a later refit carries none for it, though the place it showed is kept.
 - **Floor** (SUB decisions `0c13b784` §4, `8357ec55`, `1c19f413` §1). The
   budget alone owns the floor. `request(key)` names the latest request, the
   one thing last asked for: a **Show**, a **Load** or another part. The
@@ -73,7 +103,9 @@ the desktop side are separate work.
   frees the read and a **Load** after a **Show** sends that body back to
   its caption: at the floor the view holds the inline content, one
   incoming part (at most 256 KiB) and one drawn window (at most 64 KiB
-  shown), never two windows.
+  shown), never two windows. While that part is read, the window it
+  replaces is the drawn one: it stays charged in the same key until the
+  part arrives, and the part's own window is charged only then.
 - **Draw plan** (SUB decisions `ed71a299`, `6f5e67dd`, `0c13b784`). Each
   frame, the panel measures every body of every open turn before building
   any. A body is measured once per version (`sourceVersion`: generation and
@@ -124,7 +156,11 @@ the desktop side are separate work.
   Items read belong to the snapshot generation they were read in (SUB
   decision `1c19f413` §4): a snapshot of a new generation aborts every page
   read, settles its waiters and drops every item read, and a reply from the
-  old generation is never shown. `seq` is compared only within a generation.
+  old generation is never shown. A snapshot read again in the same
+  generation keeps every item read, part and window on show, and a refresh
+  of an item in the same generation (**Load the latest**) keeps what is on
+  show until the newer version arrives. `seq` is compared only within a
+  generation.
   Readiness is per stream attempt: each new attempt, and each close or
   failure of the one that carried the agent, makes the view wait again for
   the next answer, and **Try again** queues until then. The wait is checked
@@ -317,3 +353,33 @@ that a snapshot of the same generation keeps what was read. They:
   and an item's, error's or file part's other fields;
 - open, redraw and close the view through the controller, ignore a closed
   view's callbacks, and keep `src/main.js` under 1,000 lines.
+
+The round 6 tests are in `test/activity-round6.test.js` (SUB decision
+`533c2b29`); each fails at the commit before its fix. They:
+
+- draw **Show** on an item read whole within the floor, freeing another
+  read, or read it in parts when it cannot be kept with its window;
+- read in parts an item read whole that no longer fits beside grown
+  inline content, its window kept until the part arrives, even when it is
+  the latest request;
+- keep the part on show and charged through **Load the latest** on an item
+  read in parts, swapping on arrival and keeping it with **Try again** on
+  failure;
+- show a step's model and token members the short view does not word, and
+  an own `__proto__` field, in the short view and the windows.
+
+The round 7 tests are in `test/activity-round7.test.js` (SUB decision
+`a5275d81`); each fails at `16e6e39b` or at the commit before its fix,
+except the generation control. They:
+
+- refit an item read whole on show before inline growth would free it,
+  with another item the latest request and the part held back;
+- open the part, and the window in it, that hold the content on show, for
+  uneven content and for **Show**'s fallback, and map the document to the
+  item as served and paged;
+- keep the window on show and charged while **Load the latest**, or a read
+  larger than advertised, reads the newest version in parts, keeping it
+  with **Try again** on failure, and still drop it at once on a new
+  generation;
+- charge nothing for a window unmounted by closing its turn or moving the
+  items window, when its item is refitted later.
