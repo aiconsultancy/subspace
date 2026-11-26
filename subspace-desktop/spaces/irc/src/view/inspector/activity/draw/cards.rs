@@ -30,7 +30,11 @@ fn show_piece(board: &mut Irc, key: &Key, piece: usize, cx: &mut Context<Irc>) {
 
 /// A body drawn in parts: why, the controls that move between its parts,
 /// and the part shown.
-pub(super) fn pieced_parts(id: &str, pieced: &Pieced, cx: &Context<Irc>) -> Vec<AnyElement> {
+pub(in super::super) fn pieced_parts(
+    id: &str,
+    pieced: &Pieced,
+    cx: &Context<Irc>,
+) -> Vec<AnyElement> {
     let key = pieced.key.clone();
     let go = move |board: &mut Irc, piece: usize, cx: &mut Context<Irc>| {
         show_piece(board, &key, piece, cx);
@@ -56,7 +60,7 @@ pub(super) fn pieced_parts(id: &str, pieced: &Pieced, cx: &Context<Irc>) -> Vec<
 }
 
 /// An item drawn in parts: its label above its parts.
-pub(super) fn pieced(
+pub(in super::super) fn pieced(
     id: &str,
     (entry, pieced): (&ActivityEntry, &Pieced),
     cx: &Context<Irc>,
@@ -71,7 +75,7 @@ pub(super) fn pieced(
 
 /// An item whose body is not drawn: its label, why, its size, and
 /// **Show**.
-pub(super) fn held_back(
+pub(in super::super) fn held_back(
     id: &str,
     (key, entry, bytes): (&Key, &ActivityEntry, u64),
     cx: &Context<Irc>,
