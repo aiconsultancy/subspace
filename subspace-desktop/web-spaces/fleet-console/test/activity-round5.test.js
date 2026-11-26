@@ -136,3 +136,41 @@ test("1: a part read that is no longer the latest request is refused past the li
   assert.equal(budget.has("p"), false);
   assert.ok(budget.used <= budget.limit);
 });
+
+// ---------- 2. The drawn window is reserved in shown bytes ----------
+
+test("2: a short final part heavy in bidi markers draws right after its read, with no second Show (probe 5)", async () => {
+  const { pages, snapshot } = pagedWith("a".repeat(4 * 65536) + "\u202e".repeat(13_000));
+  assert.equal(pages.length, 5);
+  const { watcher, client, panel, inline } = await prepare(snapshot, 0);
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  await watcher.loadPart("turn-b", "ia", "last");
+  panel.update(watcher.view, officer);
+  const part = watcher.view.full("turn-b", "ia");
+  assert.equal(part.part, 1);
+  assert.equal(part.state, "ready");
+  assert.ok(part.size < WINDOW_BYTES, "a short part, raw");
+  assert.equal(buttons(panel.root, "Show").length, 0, "the part asked for draws");
+  assert.equal(windowsIn(panel.root).length, 1);
+  const budget = watcher.view.budget;
+  assert.equal(budget.bytes(ITEM), part.size + WINDOW_BYTES, "its window is reserved as shown: markers at 12 bytes, at most 64 KiB");
+  assert.equal(budget.bytes(DRAW_KEY), 0);
+  assert.equal(budget.used - inline, part.size + WINDOW_BYTES);
+  watcher.stop();
+});
+
+test("2: a short plain part reserves only the window it shows", async () => {
+  const { pages, snapshot } = pagedWith("a".repeat(PART_MAX_BYTES + 1000));
+  const { watcher, client, panel } = await prepare(snapshot, 0);
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  await watcher.loadPart("turn-b", "ia", "last");
+  panel.update(watcher.view, officer);
+  const part = watcher.view.full("turn-b", "ia");
+  assert.equal(part.part, 1);
+  assert.ok(part.size < WINDOW_BYTES);
+  assert.equal(watcher.view.budget.bytes(ITEM), 2 * part.size, "the part and its whole drawn copy, below one window");
+  assert.equal(windowsIn(panel.root).length, 1);
+  watcher.stop();
+});

@@ -463,13 +463,16 @@ const drawnBytes = (measure, window) => measure.sizes[clampIndex(window, measure
 const measureHeld = (measure) => 8 * (measure.bounds.length + measure.sizes.length);
 
 /**
- * What a read already reserved for its body's drawn copy: an item read
- * whole holds its length twice and a part its length twice, the held copy
- * and the drawn one (SUB decision 6f5e67dd). An inline body reserved none.
+ * What a read already reserved for its body's drawn copy. An item read
+ * whole holds its length twice, the held copy and the drawn one (SUB
+ * decision 6f5e67dd). A part's read reserved its drawn window in shown
+ * bytes, markers at 12 bytes (SUB decisions 8357ec55, 1c19f413 §2): the
+ * window it draws is never larger, however short the part or however many
+ * markers it shows, so it costs nothing more. An inline body reserved none.
  */
 function allowanceOf(source, full) {
   if (source.kind === "whole") return full.bytes ?? 0;
-  if (source.kind === "part") return full.size ?? 0;
+  if (source.kind === "part") return Infinity;
   return 0;
 }
 
