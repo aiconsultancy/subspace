@@ -638,8 +638,12 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     return at?.version === version ? at.index : 0;
   }
 
+  /** An item's body unmounted: an item read whole no longer owns the bytes of a window on show. */
+  const unmounted = (turnId, itemId) => last?.view.unmount?.(turnId, itemId);
+
   /** Unmount a turn's items. */
   function closeTurn(entry) {
+    for (const id of entry.kids.keys()) unmounted(entry.id, id);
     entry.items.replaceChildren();
     entry.kids.clear();
     entry.nav.replaceChildren();
@@ -774,7 +778,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     element.appendChild(notes);
     element.appendChild(nav);
     element.appendChild(items);
-    entry = { element, summary, notes, nav, items, version: "", navKey: "", start: null, defaultOpen, kids: new Map() };
+    entry = { id: turn.id, element, summary, notes, nav, items, version: "", navKey: "", start: null, defaultOpen, kids: new Map() };
     // Opening a turn draws its items; closing it unmounts them. Opening by
     // hand is timed, as its bodies draw before those of turns open by
     // default; the toggle the default opening fires is not opening by hand.
@@ -829,6 +833,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
       if (ids.has(id)) continue;
       kid.element.remove();
       entry.kids.delete(id);
+      unmounted(turn.id, id);
     }
     for (const { item, full, key, index, source, measure, version: bodyVersion, window } of bodies) {
       const held = measure !== null && !drawn.has(key);

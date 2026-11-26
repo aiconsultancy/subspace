@@ -594,7 +594,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    */
   function partsEntry(turnId, itemId, known, anchor) {
     const key = fullKey(turnId, itemId);
-    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null, replacing: known !== null, anchor };
+    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null, replacing: (known?.carried ?? 0) > 0, anchor };
     entry.pager = createPager({
       known,
       budget,
@@ -879,6 +879,15 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       place: (turnId, itemId, unit, bytes) => {
         const key = fullKey(turnId, itemId);
         if (full.get(key)?.mode === "whole") positions.set(key, { unit, bytes });
+      },
+      /**
+       * The view unmounted an item's body (its turn closed, the items window
+       * moved off it): an item read whole keeps where it showed, but owns no
+       * bytes of a window on show, so a later switch to parts carries none.
+       */
+      unmount: (turnId, itemId) => {
+        const shown = positions.get(fullKey(turnId, itemId));
+        if (shown) shown.bytes = 0;
       },
       drawWhole: (turnId, itemId, extra) => drawWhole(fullKey(turnId, itemId), extra),
       /** Bytes held for items read (whole or a part); the panel's share of the budget is not counted here. */
