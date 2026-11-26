@@ -17,7 +17,7 @@ use subspace_framework::dashboard::panel::IconName;
 
 use super::Selection;
 use super::draw::Plan;
-use super::parts::caption;
+use super::parts::{Draw, caption};
 use crate::Irc;
 
 /// The turns, newest first.
@@ -25,12 +25,11 @@ pub(super) fn list(selection: &Selection, cx: &Context<Irc>) -> Vec<AnyElement> 
     let Some(activity) = selection.join.activity() else {
         return Vec::new();
     };
-    let plan = super::draw::plan(selection);
     activity
         .turns
         .iter()
         .rev()
-        .map(|turn| view(selection, &plan, turn, cx))
+        .map(|turn| view(selection, &selection.plan, turn, cx))
         .collect()
 }
 
@@ -109,7 +108,7 @@ pub(super) fn total(tokens: &ActivityTokens) -> u64 {
 }
 
 /// One item: its body, or, when that would pass the room left, its label
-/// and **Show** ([`super::draw`]).
+/// and **Show**, or the body last asked for in parts ([`super::draw`]).
 pub(super) fn entry(
     selection: &Selection,
     plan: &Plan,
@@ -122,9 +121,17 @@ pub(super) fn entry(
     if let Some(bytes) = plan.held_back.get(&key) {
         return super::draw::held_back(&id, (&key, entry, *bytes), cx);
     }
-    match entry {
-        ActivityEntry::Item(item) => super::item::item(&id, item, &selection.parts, cx),
-        ActivityEntry::Paged(paged) => super::paged::paged(selection, turn, paged, cx),
-        ActivityEntry::Unknown(unknown) => super::item::unknown(&id, unknown, &selection.parts, cx),
+    let pieced = plan.pieced.as_ref().filter(|pieced| pieced.key == key);
+    let prepared = super::draw::prepared(selection, &key);
+    let draw = Draw {
+        shown: &selection.parts,
+        prepared: &prepared,
+    };
+    match (entry, pieced) {
+        (ActivityEntry::Paged(paged), _) => {
+            super::paged::paged(selection, (turn, paged, pieced), &draw, cx)
+        }
+        (entry, Some(pieced)) => super::draw::pieced(&id, (entry, pieced), cx),
+        (entry, None) => super::item::whole(&id, entry, &draw, cx),
     }
 }

@@ -21,30 +21,38 @@
 //! `a17870f4`): an item too large to send inline loads on demand, page by
 //! page, then shows whole, a long text in parts of 64 KiB. Everything the
 //! view holds, the inline content and what the open turns draw too,
-//! counts against one budget of 64 MiB (SUB decision `ed71a299`). Room is
-//! made before each read, the least recently opened item going first; an
-//! item larger than the room left shows one page of its JSON at a time,
-//! every page in reach, and is never held whole. A body that would pass
-//! the room left is not drawn until asked for with **Show** ([`draw`]).
-//! Inline content is the snapshot itself and is never let go: when it
-//! alone fills the budget, the view holds no items read, one page per
-//! part read in flight, and the one body last asked for. Items go
-//! with their turn. Closing the view, or leaving Channels, cancels any
+//! counts against one budget of 64 MiB (SUB decision `ed71a299`), in the
+//! bytes it mounts: text as drawn, markers and all, and the formatted text
+//! kept for it (SUB decision `0c13b784`). Room is made before each read,
+//! the least recently opened item going first; an item is read whole only
+//! when it and its drawn copy both fit the room left, and otherwise shows
+//! one page of its JSON at a time, every page in reach, never held whole.
+//! A body that would pass the room left is not drawn until asked for with
+//! **Show**, which makes room first and, if the body still does not fit,
+//! draws it in parts of 64 KiB ([`draw`]). Inline content is the snapshot
+//! itself and is never let go: when it alone fills the budget, the view
+//! holds one part (at most 64 KiB) of the item last asked for and its
+//! drawn copy, and one page per part read in flight. Items go with their
+//! turn. Closing the view, or leaving Channels, cancels any
 //! read: no page is asked for after it, and a late reply is dropped. The
 //! content lives in this selection only: nothing is written to disk,
 //! cached or logged, and none of it can be added to the chat.
 
+mod blocks;
 mod draw;
 mod fetch;
 mod item;
 mod load;
 mod paged;
 mod parts;
+mod pieces;
 mod size;
 mod text;
 mod turn;
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::component::v_flex;
@@ -59,9 +67,11 @@ use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::workspace;
 
 use crate::Irc;
+use draw::{Key, Measure, Plan, Version};
 use fetch::{poll, start_fetch};
 use load::{Held, Loaded, MAX_LOADED, Parts};
 use load::{load, prune, show_page};
+use parts::Prepare;
 
 /// How often the snapshot is read again while no live stream carries the
 /// captain's events.
@@ -89,6 +99,16 @@ pub(crate) struct Selection {
     /// When each turn was last opened by hand ([`Self::opened`]): the most
     /// recently opened draw first.
     turn_opened: HashMap<String, u64>,
+    /// Each body of the open turns as last measured, by version.
+    measures: HashMap<Key, Measure>,
+    /// Which bodies the open turns draw, worked out when that changes
+    /// ([`draw::replan`]), never while drawing.
+    plan: Plan,
+    /// What is prepared of each body drawn whole, by version: kept between
+    /// frames, counted in what the body holds.
+    prepared: RefCell<HashMap<Key, (Version, Rc<Prepare>)>>,
+    /// The part asked for of the body drawn in parts.
+    piece: Option<(Key, usize)>,
     /// Counts each item opened and each read, for evicting the least
     /// recently opened and dropping late replies.
     opened: u64,
@@ -135,6 +155,10 @@ pub(super) fn open(
         parts: HashMap::new(),
         asked: HashMap::new(),
         turn_opened: HashMap::new(),
+        measures: HashMap::new(),
+        plan: Plan::default(),
+        prepared: RefCell::default(),
+        piece: None,
         opened: 0,
         budget: MAX_LOADED,
         inline: 0,
@@ -246,6 +270,7 @@ pub(super) fn toggle(board: &mut Irc, turn: &str, cx: &mut Context<Irc>) {
         selection
             .turn_opened
             .insert(turn.to_owned(), selection.opened);
+        draw::replan(selection);
         cx.notify();
     }
 }
@@ -360,6 +385,7 @@ pub(crate) fn loaded_keys(selection: &Selection) -> Vec<(String, String)> {
 #[cfg(test)]
 pub(crate) fn set_budget(selection: &mut Selection, bytes: u64) {
     selection.budget = bytes;
+    draw::replan(selection);
 }
 
 /// The bytes `selection` holds: the inline content and the items read.
@@ -372,12 +398,20 @@ pub(crate) fn held_bytes(selection: &Selection) -> u64 {
 #[cfg(test)]
 pub(crate) fn set_room(selection: &mut Selection, bytes: u64) {
     selection.budget = selection.inline + bytes;
+    draw::replan(selection);
 }
 
 /// The bytes the bodies the open turns draw hold.
 #[cfg(test)]
 pub(crate) fn drawn_bytes(selection: &Selection) -> u64 {
-    draw::plan(selection).drawn
+    selection.plan.drawn
+}
+
+/// How many bodies were measured and blocks prepared on this thread so
+/// far: drawing a frame again adds none.
+#[cfg(test)]
+pub(crate) fn measured() -> u64 {
+    size::measured()
 }
 
 /// The read under way or last made of item `item` of turn `turn`.

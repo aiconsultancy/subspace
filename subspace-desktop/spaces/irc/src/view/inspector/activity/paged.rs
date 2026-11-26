@@ -7,7 +7,9 @@ use subspace_client_fleet::activity::{ActivityEntry, PagedItem};
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
-use super::parts::{Shown, block, caption, card, part_controls};
+use super::blocks::page_block;
+use super::draw::Pieced;
+use super::parts::{Draw, body_block, caption, card, part_controls};
 use super::text::visible;
 use super::{Held, Loaded, Parts, Selection};
 use crate::Irc;
@@ -16,17 +18,25 @@ use crate::Irc;
 /// the item in full once read.
 pub(super) fn paged(
     selection: &Selection,
-    turn: &str,
-    paged: &PagedItem,
+    (turn, paged, pieced): (&str, &PagedItem, Option<&Pieced>),
+    draw: &Draw<'_>,
     cx: &Context<Irc>,
 ) -> AnyElement {
     let id = format!("irc-activity:{turn}:{}", paged.base.id);
     let key = (turn.to_owned(), paged.base.id.clone());
     let loaded = selection.loaded.get(&key);
-    // An item larger than the room left is read in parts.
-    let whole = paged.paged.bytes <= super::load::room(selection);
-    let parts = load_parts(&id, (&key, paged, whole), loaded, &selection.parts, cx);
+    // Read whole only when the item and its drawn copy both fit the room.
+    let whole = super::load::fits_whole(selection, paged.paged.bytes);
+    let shown = Drawing { draw, pieced };
+    let parts = load_parts(&id, (&key, paged, whole), loaded, &shown, cx);
     card(&id, &label(paged), parts, cx)
+}
+
+/// How an item read is drawn: its blocks, or in parts when it is the body
+/// last asked for and too large for the room ([`super::draw`]).
+pub(super) struct Drawing<'a> {
+    draw: &'a Draw<'a>,
+    pieced: Option<&'a Pieced>,
 }
 
 /// `Tool · read · completed · 140000 bytes in 3 pages`.
@@ -69,13 +79,14 @@ fn load_action(
 }
 
 /// The load action, or the item once read. An item let go to make room
-/// for others shows the load action again: **Load in full** when it fits
-/// the room left (`fits`), **Load in parts** when it does not.
+/// for others shows its load action again: **Load in full** when it and
+/// its drawn copy both fit the room left (`fits`), **Load in parts** when
+/// they do not.
 pub(super) fn load_parts(
     id: &str,
     (key, paged, fits): (&(String, String), &PagedItem, bool),
     loaded: Option<&Loaded>,
-    shown: &Shown,
+    shown: &Drawing<'_>,
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
     let action = |label| load_action(id, (key, paged.paged.bytes), label, cx);
@@ -85,19 +96,20 @@ pub(super) fn load_parts(
     match &loaded.held {
         Held::Loading => vec![caption(&format!("{id}:loading"), "Loading…", cx)],
         Held::Whole(entry) => {
-            let item = whole(id, entry, shown, cx);
-            if entry.base().seq < paged.base.seq {
-                vec![action("Load the latest"), item]
-            } else {
-                vec![item]
+            let latest = (entry.base().seq < paged.base.seq).then(|| action("Load the latest"));
+            let mut drawn: Vec<AnyElement> = latest.into_iter().collect();
+            match shown.pieced {
+                Some(pieced) => drawn.extend(super::draw::pieced_parts(id, pieced, cx)),
+                None => drawn.push(whole(id, entry, shown.draw, cx)),
             }
+            drawn
         }
         Held::Parts(parts) => {
             let mut shown_parts = Vec::new();
             if parts.page.seq < paged.base.seq {
                 shown_parts.push(action("Load the latest"));
             }
-            shown_parts.extend(in_parts(id, key, parts, cx));
+            shown_parts.extend(in_parts(id, key, parts, shown.draw, cx));
             shown_parts
         }
         Held::Failed(error) => vec![
@@ -118,19 +130,24 @@ pub(super) fn load_label(whole: bool) -> &'static str {
 
 /// An item read whole: drawn as its kind, or as its JSON when this version
 /// does not know its kind or shape.
-fn whole(id: &str, entry: &ActivityEntry, shown: &Shown, cx: &Context<Irc>) -> AnyElement {
+fn whole(id: &str, entry: &ActivityEntry, draw: &Draw<'_>, cx: &Context<Irc>) -> AnyElement {
     match entry {
-        ActivityEntry::Item(item) => super::item::item(id, item, shown, cx),
-        ActivityEntry::Unknown(unknown) => super::item::unknown(id, unknown, shown, cx),
         // A page read never decodes as a paged item.
         ActivityEntry::Paged(_) => caption(&format!("{id}:failed"), "Invalid response", cx),
+        entry => super::item::whole(id, entry, draw, cx),
     }
 }
 
 /// An item larger than the view can hold: why it shows in parts, a note
 /// when it changed while read, the controls, and the part shown, as the
 /// JSON it carries. A part is one page: at most 64 KiB.
-fn in_parts(id: &str, key: &(String, String), parts: &Parts, cx: &Context<Irc>) -> Vec<AnyElement> {
+fn in_parts(
+    id: &str,
+    key: &(String, String),
+    parts: &Parts,
+    draw: &Draw<'_>,
+    cx: &Context<Irc>,
+) -> Vec<AnyElement> {
     let page = &parts.page;
     let mut shown = vec![caption(
         &format!("{id}:parts"),
@@ -181,13 +198,9 @@ fn in_parts(id: &str, key: &(String, String), parts: &Parts, cx: &Context<Irc>) 
             .into_any_element(),
         );
     }
-    // One page: at most 64 KiB, so drawn whole.
-    shown.push(block(
-        &format!("{id}:json-part"),
-        &page.data,
-        &Shown::new(),
-        cx,
-    ));
+    // One page: at most 64 KiB, drawn in parts of its own when its
+    // markers draw more.
+    shown.push(body_block(id, &page_block(&page.data), draw, cx));
     shown
 }
 

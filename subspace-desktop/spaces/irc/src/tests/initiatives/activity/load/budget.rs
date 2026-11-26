@@ -10,12 +10,22 @@ use super::{
     Error, Irc, PAGE, answer, changed_under_parts, drawn, held_bytes, label, late_reply, load,
     loaded_keys, on, paged, read_of, refresh, running, served, served_json, set_budget, tool,
 };
+use crate::view::inspector::activity::{drawn_bytes, set_room};
 
 /// The view's budget set to `budget`.
 fn budgeted(board: &Entity<Irc>, budget: u64, cx: &mut VisualTestContext) {
     board.update(cx, |board, _| {
         set_budget(board.inspector_activity.as_mut().unwrap(), budget);
     });
+}
+
+/// `room` bytes left beside the inline content, drawn again.
+fn roomed(board: &Entity<Irc>, room: u64, cx: &mut VisualTestContext) {
+    board.update(cx, |board, cx| {
+        set_room(board.inspector_activity.as_mut().unwrap(), room);
+        cx.notify();
+    });
+    settle(cx);
 }
 
 /// The bytes the view holds of the captain's activity.
@@ -172,4 +182,29 @@ fn an_item_that_grew_past_its_room_is_read_whole_once_room_is_made(cx: &mut Test
     assert!(drawn(&on("out:0"), cx).ends_with("GROWN-END"));
     assert_eq!(held(&board, cx) - inline, json.len() as u64);
     assert!(held(&board, cx) <= budget);
+}
+
+/// SUB decision `6f5e67dd`, item 2: **Load in full** only when the item
+/// and its drawn copy both fit the room left; with room for the item
+/// alone it reads in parts, and once read whole both stay within it.
+#[gpui_kit::test]
+fn load_in_full_needs_room_for_the_item_and_its_drawn_copy(cx: &mut TestAppContext) {
+    let (board, served, cx) = served(cx, 6, &"x".repeat(100_000));
+    let bytes = served.item.lock().unwrap().1.len() as u64;
+    roomed(&board, bytes * 3 / 2, cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load in parts"));
+
+    roomed(&board, 2 * bytes + PAGE as u64, cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load in full"));
+    load(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with('x'));
+    let (held, drawn) = board.read_with(cx, |board, _| {
+        let selection = board.inspector_activity.as_ref().unwrap();
+        (held_bytes(selection), drawn_bytes(selection))
+    });
+    let inline = held - bytes;
+    assert!(
+        held + drawn <= inline + 2 * bytes + PAGE as u64,
+        "{held} + {drawn}"
+    );
 }

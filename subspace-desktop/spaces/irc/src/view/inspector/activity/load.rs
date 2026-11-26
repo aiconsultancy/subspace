@@ -3,8 +3,9 @@
 //! and `ed71a299`): every byte the view holds of the captain's activity
 //! counts against it, the snapshot's inline content and what the open
 //! turns draw ([`super::draw`]) too. No item is too large to read: one
-//! that fits the room left is read whole, page by page; a larger one is
-//! read and shown one page of its JSON at a time, never whole. Room is
+//! that fits the room left together with its drawn copy is read whole,
+//! page by page; a larger one is read and shown one page of its JSON at a
+//! time, never whole. Room is
 //! made before each read, the least recently opened item going first, and
 //! an item goes with its turn. A read is cancelled when its item goes, so
 //! no page is asked for after the view closes, and a reply that arrives
@@ -19,10 +20,9 @@ use subspace_client_fleet::{Error, FleetApi, FleetClient};
 
 use super::Selection;
 use crate::Irc;
+pub(super) use part::show_page;
 
 mod part;
-
-pub(super) use part::show_page;
 
 /// The most bytes of the captain's activity one view holds: the
 /// snapshot's inline content, the items read for it and what is drawn.
@@ -38,6 +38,9 @@ pub(super) struct Loaded {
     bytes: u64,
     /// When it was last opened, by [`Selection::opened`].
     pub(super) opened: u64,
+    /// Changes whenever what is held does, so its body is measured again
+    /// ([`super::draw`]).
+    pub(super) version: u64,
     /// The read under way or last made: a reply for any other is dropped.
     read: u64,
     /// An item found larger than its room is read again, once, with room
@@ -85,8 +88,15 @@ pub(super) fn room(selection: &Selection) -> u64 {
     selection.budget.saturating_sub(selection.inline)
 }
 
+/// Whether an item of `bytes` is read whole: when it and its drawn copy
+/// both fit the room (SUB decision `6f5e67dd`, item 2).
+pub(super) fn fits_whole(selection: &Selection, bytes: u64) -> bool {
+    bytes.saturating_mul(2) <= room(selection)
+}
+
 /// Reads an item that was too large to send inline: whole when its
-/// declared size, `bytes`, fits the room left, part by part otherwise.
+/// declared size, `bytes`, and its drawn copy fit the room left, part by
+/// part otherwise.
 pub(super) fn load(board: &mut Irc, turn: &str, item: &str, bytes: u64, cx: &mut Context<Irc>) {
     read_item(board, (turn.to_owned(), item.to_owned()), (bytes, true), cx);
 }
@@ -112,13 +122,14 @@ fn read_item(
     // Any read of the item already in flight goes first.
     selection.loaded.remove(&key);
     let room = room(selection);
-    // Room for the whole item, and at least for its page 0.
-    let reserve = if bytes <= room {
-        bytes.max(PAGE.min(room))
+    // Room for the whole item and its drawn copy, and at least for its
+    // page 0.
+    let (reserve, drawn) = if fits_whole(selection, bytes) {
+        (bytes.max(PAGE.min(room)), bytes)
     } else {
-        PAGE
+        (PAGE, 0)
     };
-    make_room(selection, reserve, None);
+    make_room(selection, reserve.saturating_add(drawn), None);
     selection.opened += 1;
     let read = selection.opened;
     let cancel = Arc::new(AtomicBool::new(false));
@@ -143,12 +154,14 @@ fn read_item(
             held: Held::Loading,
             bytes: reserve,
             opened: read,
+            version: read,
             read,
             regrow,
             cancel,
             _read: Some(task),
         },
     );
+    super::draw::replan(selection);
     cx.notify();
 }
 
@@ -209,6 +222,7 @@ fn publish(
         Err(error) => (Held::Failed(error), 0),
     };
     if let Some(selection) = board.inspector_activity.as_mut() {
+        restamp(selection, key);
         make_room(selection, 0, Some(key));
         // Read to be seen: its body is asked for, and room made for it.
         super::draw::ask(selection, key);
@@ -216,16 +230,24 @@ fn publish(
     cx.notify();
 }
 
+/// Marks what is held of `key` as changed, so its body is measured again.
+fn restamp(selection: &mut Selection, key: &(String, String)) {
+    selection.opened += 1;
+    if let Some(loaded) = selection.loaded.get_mut(key) {
+        loaded.version = selection.opened;
+    }
+}
+
 /// The item read `read` of `key`, still wanted, came back larger than
-/// the room made for it, may be read again, and fits the budget at the
-/// size its page 0 claimed.
+/// the room made for it, may be read again, and fits the budget, with
+/// its drawn copy, at the size its page 0 claimed.
 fn grew(board: &mut Irc, (key, read): (&(String, String), u64), bytes: u64) -> bool {
     let regrow = current(board, (key, read)).is_some_and(|loaded| loaded.regrow);
     regrow
         && board
             .inspector_activity
             .as_ref()
-            .is_some_and(|selection| bytes <= room(selection))
+            .is_some_and(|selection| fits_whole(selection, bytes))
 }
 
 /// The read under way or last made of the item `key`.
@@ -254,7 +276,7 @@ pub(super) fn held(selection: &Selection) -> u64 {
 /// Lets go of the least recently opened items, other than `keep`, until
 /// `bytes` more fit in the budget beside the inline content. An item let
 /// go shows its load action again; a read under way is cancelled and its
-/// reply dropped.
+/// reply dropped. What is drawn is fitted afterwards ([`super::draw`]).
 fn make_room(selection: &mut Selection, bytes: u64, keep: Option<&(String, String)>) {
     loop {
         if held(selection).saturating_add(bytes) <= room(selection) {
@@ -306,4 +328,5 @@ pub(super) fn prune(selection: &mut Selection) {
     });
     selection.inline = inline;
     make_room(selection, 0, None);
+    super::draw::replan(selection);
 }

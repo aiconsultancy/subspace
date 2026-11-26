@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gpui_kit::{AppContext as _, Context};
 use subspace_client_fleet::activity::{ItemPart, PartFailed};
 
-use super::{Held, PAGE, client, current, make_room};
+use super::{Held, PAGE, client, current, make_room, restamp};
 use crate::Irc;
 
 /// Shows part `page` of an item read part by part, pinned to the version
@@ -48,7 +48,8 @@ pub(in super::super) fn show_page(
     parts.loading = Some(page);
     parts.failed = None;
     loaded.bytes = (parts.page.data.len() as u64).saturating_add(PAGE);
-    let pinned = parts.page.clone();
+    // Only the version is pinned: no copy of the page outside its room.
+    let pinned = parts.page.version();
     // The part read before, if any, asks for nothing more.
     loaded.cancel.store(true, Ordering::Release);
     let cancel = Arc::new(AtomicBool::new(false));
@@ -60,7 +61,7 @@ pub(in super::super) fn show_page(
         let (turn, item) = read_key.clone();
         let result = cx
             .background_spawn(async move {
-                client.activity_item_part(&agent, &turn, &item, (page, Some(&pinned)), &flag)
+                client.activity_item_part(&agent, &turn, &item, (page, Some(pinned)), &flag)
             })
             .await;
         let Some(result) = result else {
@@ -70,6 +71,7 @@ pub(in super::super) fn show_page(
             publish_part(board, (&read_key, read), result, cx);
         });
     }));
+    super::super::draw::replan(selection);
     cx.notify();
 }
 
@@ -99,6 +101,7 @@ fn publish_part(
     }
     loaded.bytes = parts.page.data.len() as u64;
     if let Some(selection) = board.inspector_activity.as_mut() {
+        restamp(selection, key);
         make_room(selection, 0, Some(key));
         super::super::draw::ask(selection, key);
     }
