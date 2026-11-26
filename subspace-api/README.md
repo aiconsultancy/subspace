@@ -490,6 +490,17 @@ with `PATCH /api/v1/ships/{shipId}`. The fleet reports its agents in rank and
 name order, and its ships in name order. The deprecated leadership fields
 `rearAdmiralName` and `captainNames` come from linked agents.
 
+The active rear admiral can read its fleet's pending decision outcomes with
+`GET /api/v1/fleets/{fleetId}/decision-outcomes`. It supports the usual `limit`
+and `cursor` and returns `id`, `identifier`, `recordedByUserId`, `status` and
+`createdAt` per item. Subspace queues an outcome when a proposal recorded by
+an active captain becomes `accepted` or `rejected`. The record and its outcome
+are saved in the same transaction. Rear-admiral outcomes are saved for future
+delivery. After the IRC server echoes the captain's DM, the
+dispatcher acknowledges it with
+`POST /api/v1/fleets/{fleetId}/decision-outcomes/{id}/delivered`. Repeating
+the receipt returns 204 and leaves the first delivery time in place.
+
 A fleet records its standard IRC channels: `starbaseChannel` (people, the
 rear admiral and the captains) and `commandChannel` (the rear admiral and its
 captains), each optional and set on create or with `PATCH`. A ship records its
