@@ -151,6 +151,11 @@ impl ReferenceIdentity {
     /// An identity of an app-registered kind; see `register_reference_kind`.
     // qual:api - Apps build identities for their own registered kinds.
     pub fn of_kind(kind: &str, parts: &[&str]) -> Result<Self, String> {
+        // The exact kind: `canonical` joins with `:`, so a kind that held one
+        // would otherwise pass as its prefix.
+        if !crate::reference_kinds::is_known(kind) {
+            return Err("Invalid reference identity".into());
+        }
         canonical(kind, parts)
     }
 

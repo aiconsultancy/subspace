@@ -17,6 +17,9 @@ fn registered_kind_is_stored_and_matched_while_others_stay_refused() {
         identity
     );
     assert!(ReferenceIdentity::parse("example-other:42").is_err());
+    assert!(ReferenceIdentity::of_kind("example-other", &["42"]).is_err());
+    assert!(ReferenceIdentity::of_kind("example-ref:parent", &["42"]).is_err());
+    assert!(ReferenceIdentity::of_kind("github:Owner/Repo", &["1"]).is_err());
 
     let (_root, service, scope) = setup();
     enable(&service, &scope);

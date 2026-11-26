@@ -86,5 +86,10 @@ async fn related_items_accept_a_registered_reference_kind() {
         json!({"reference": "example-unknown:1"}),
     )
     .await;
-    assert!(refused.is_err());
+    assert!(
+        refused
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid reference identity")
+    );
 }
