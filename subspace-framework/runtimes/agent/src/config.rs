@@ -52,7 +52,7 @@ impl Default for CopilotConfig {
 pub(super) fn path() -> Result<PathBuf, String> {
     subspace_core::config::path()
         .map(|path| path.with_file_name("copilot.json"))
-        .ok_or_else(|| "Cannot find the private Subspace config directory.".into())
+        .ok_or_else(|| "Cannot find the app's private config directory.".into())
 }
 
 impl CopilotConfig {

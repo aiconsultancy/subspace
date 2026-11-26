@@ -272,7 +272,7 @@ impl AgentHandle {
             ChatEngine::Acp => "acp-workspace",
         };
         let workspace = state::sibling(workspace_name)
-            .ok_or_else(|| "Cannot find the Subspace state directory.".to_string())?;
+            .ok_or_else(|| "Cannot find the app's data directory.".to_string())?;
         let (commands, receiver) = mpsc::channel(COMMAND_LIMIT);
         let events = Arc::new(EventQueue::default());
         remember_secrets(&events, &config, engine);

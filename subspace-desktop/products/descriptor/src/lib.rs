@@ -75,6 +75,7 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
         // default so that installs from before Twilight Two keep their look;
         // new installs get NEW_INSTALL_THEME recorded instead.
         default_theme: Some(DEFAULT_THEME.into()),
+        command_mount: Default::default(),
         boards: vec![
             board("github", true),
             board("github-copilot-agents", false),

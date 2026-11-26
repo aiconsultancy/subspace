@@ -72,3 +72,10 @@ pub use ::subspace_client_test_support as client_test_support;
 // Exists only for rustdoc to test the README; nothing names it.
 #[allow(dead_code)]
 pub struct ReadmeDoctests;
+
+/// The command-line guide's examples, compiled as doctests like the README's.
+#[cfg(all(doctest, feature = "report-issue"))]
+#[doc = include_str!("../docs/cli.md")]
+// Exists only for rustdoc to test the guide; nothing names it.
+#[allow(dead_code)]
+pub struct CliDoctests;

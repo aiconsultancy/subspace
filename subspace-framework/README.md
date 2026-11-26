@@ -133,6 +133,7 @@ fn main() -> ExitCode {
         credits: Vec::new(),
         themes: Vec::new(),
         default_theme: None,
+        command_mount: Default::default(),
         boards: vec![BoardDescriptor {
             id: "hello".into(),
             aliases: Vec::new(),
@@ -143,7 +144,9 @@ fn main() -> ExitCode {
     let build = ProductBuild {
         // A native account from an identity provider; see Accounts below.
         account: None,
+        pre_startup: None,
         descriptor,
+        product_themes: &[],
         // Prefixes window titles and About, such as an organisation's name.
         display_name_prefix: None,
         version: env!("CARGO_PKG_VERSION"),

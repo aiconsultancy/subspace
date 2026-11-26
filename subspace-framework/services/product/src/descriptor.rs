@@ -10,6 +10,16 @@ use crate::update::{
     UpdateSource, require_release_repository, validate_release_repository, validate_update_source,
 };
 
+/// Where a Space's command tree mounts on the product binary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CommandMount {
+    /// `<binary> <space> <command>`, the default for every product.
+    #[default]
+    Prefixed,
+    /// `<binary> <command>`, valid only for a product with exactly one Space.
+    Root,
+}
+
 /// Unvalidated board input supplied by a product package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardDescriptor {
@@ -36,6 +46,7 @@ pub struct ProductDescriptor {
     /// `None` selects the framework default and adds its document.
     pub default_theme: Option<String>,
     pub boards: Vec<BoardDescriptor>,
+    pub command_mount: CommandMount,
     /// Release stream for `upgrade` and update checks. `None` disables them.
     pub update: Option<UpdateSource>,
 }
@@ -78,6 +89,7 @@ pub struct ValidatedProduct {
     pub themes: Vec<Identity>,
     pub default_theme: String,
     pub boards: Vec<ValidatedBoard>,
+    pub command_mount: CommandMount,
     pub commands: BTreeMap<String, Identity>,
     pub update: Option<UpdateSource>,
 }
@@ -102,6 +114,7 @@ pub fn validate_product(descriptor: &ProductDescriptor) -> Result<ValidatedProdu
     let mut themes = parse_identities(&descriptor.themes)?;
     let default_theme = resolve_default_theme(&mut themes, descriptor.default_theme.as_deref())?;
     let boards = parse_boards(&descriptor.boards)?;
+    require_single_space_for_root(descriptor.command_mount, &boards)?;
     let commands = command_map(&boards)?;
     let release_repository = validate_release_repository(&descriptor.release_repository)?;
     let update = validate_product_update(descriptor.update.as_ref(), &release_repository)?;
@@ -116,6 +129,7 @@ pub fn validate_product(descriptor: &ProductDescriptor) -> Result<ValidatedProdu
         themes,
         default_theme,
         boards,
+        command_mount: descriptor.command_mount,
         commands,
         update,
     })
@@ -132,6 +146,17 @@ fn validate_product_update(
             Ok(source)
         })
         .transpose()
+}
+
+fn require_single_space_for_root(
+    mount: CommandMount,
+    boards: &[ValidatedBoard],
+) -> Result<(), ProductError> {
+    if mount == CommandMount::Root && boards.len() != 1 {
+        Err(ProductError::RootMountConflict)
+    } else {
+        Ok(())
+    }
 }
 
 /// Validates a declared known-product list. Duplicate product, binary or
@@ -236,7 +261,9 @@ fn insert_command(
     name: &str,
     board_id: Identity,
 ) -> Result<(), ProductError> {
-    if name == crate::MCP_COMMAND || name == crate::UPGRADE_COMMAND {
+    // A Space id is a command group. Whether a product has an update source
+    // can change between builds, so `upgrade` is always reserved.
+    if crate::reserved_group_words(true).contains(&name) {
         Err(ProductError::ReservedCommand {
             name: name.to_string(),
         })
@@ -292,7 +319,9 @@ fn first_duplicate(
 
 #[cfg(test)]
 mod tests {
-    use super::{BoardDescriptor, ProductDescriptor, validate_known_products, validate_product};
+    use super::{
+        BoardDescriptor, CommandMount, ProductDescriptor, validate_known_products, validate_product,
+    };
     use crate::error::ProductError;
 
     fn board(id: &str) -> BoardDescriptor {
@@ -322,6 +351,7 @@ mod tests {
                 board("space-lab"),
             ],
             update: None,
+            command_mount: CommandMount::default(),
         }
     }
 
@@ -335,6 +365,25 @@ mod tests {
             channel: crate::Channel::Stable,
             exclusive: false,
         }
+    }
+
+    #[test]
+    fn root_mount_requires_exactly_one_space_and_prefixed_is_the_default() {
+        let mut descriptor = subspace_like();
+        descriptor.id = "example-app".into();
+        descriptor.command_mount = CommandMount::Root;
+        for boards in [vec![], vec![board("notes"), board("tasks")]] {
+            descriptor.boards = boards;
+            assert_eq!(
+                validate_product(&descriptor),
+                Err(ProductError::RootMountConflict)
+            );
+        }
+        descriptor.boards = vec![board("notes")];
+        let product = validate_product(&descriptor).unwrap();
+        assert_eq!(product.command_mount, CommandMount::Root);
+        assert_eq!(product.boards[0].id.as_str(), "notes");
+        assert_eq!(CommandMount::default(), CommandMount::Prefixed);
     }
 
     #[test]

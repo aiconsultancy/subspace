@@ -17,11 +17,17 @@ pub(crate) fn arguments(route: &Route, output: &ParseOutput) -> Result<Value, St
         let ParseValue::String(raw) = value else {
             continue;
         };
-        if flag.name == "operations-file" {
+        // Only a batched route declares `--operations-file`; on another it is
+        // a product flag of the same name.
+        if route.batched && flag.name == "operations-file" {
             operations_file = Some(raw);
             continue;
         }
-        let schema = &route.schema["properties"][&flag.name];
+        // Only the fields the route declares as flags: a product's root
+        // flags parse on the same line but are not the tool's input.
+        let Some(schema) = route.field(&flag.name) else {
+            continue;
+        };
         fields.insert(flag.name.clone(), field_value(raw, schema)?);
     }
     if let Some(path) = operations_file {

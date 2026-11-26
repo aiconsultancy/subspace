@@ -23,8 +23,9 @@ fn theme_for(build_default: Option<&str>) -> Option<&'static str> {
 }
 
 fn record(descriptor: &ProductDescriptor, version: &str, theme: &str) -> Result<bool, String> {
-    subspace_framework::shell::prepare_context(descriptor.clone(), version)
-        .and_then(|context| subspace_framework::shell::record_new_install_theme(&context, theme))
+    subspace_framework::shell::prepare_context(descriptor.clone(), version).and_then(|context| {
+        subspace_framework::shell::record_new_install_theme(&context, theme, &[])
+    })
 }
 
 fn report(recorded: Result<bool, String>) {
@@ -58,11 +59,8 @@ mod tests {
     }
 
     fn state_file(root: &Path) -> std::path::PathBuf {
-        let context = context(root);
         root.join("state")
-            .join(subspace_framework::product::product_data_name(
-                context.product.binary_name.as_str(),
-            ))
+            .join(subspace_framework::product::product_data_name())
             .join("state.json")
     }
 
@@ -70,7 +68,7 @@ mod tests {
     fn a_new_subspace_install_records_twilight_two() {
         let root = tempfile::tempdir().unwrap();
         assert_eq!(
-            record_new_install_theme(&context(root.path()), NEW_INSTALL_THEME),
+            record_new_install_theme(&context(root.path()), NEW_INSTALL_THEME, &[]),
             Ok(true)
         );
         let state = State::load(&state_file(root.path()));
@@ -84,7 +82,7 @@ mod tests {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "{}").unwrap();
         assert_eq!(
-            record_new_install_theme(&context(root.path()), NEW_INSTALL_THEME),
+            record_new_install_theme(&context(root.path()), NEW_INSTALL_THEME, &[]),
             Ok(false)
         );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "{}");
