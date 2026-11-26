@@ -1378,6 +1378,13 @@ firewall and SSH hardening entirely, for example when a confirmed `--ssh-from`
 no longer matches your address; run the installer again afterwards to restore
 them. Agent isolation stays, because it never blocks your login.
 
+Setup limits officers and their crew to public network destinations and local
+fleet services. Private IPv4 and IPv6 destinations are blocked, with access to
+the VM's configured DNS resolvers. If officers need a private TCP service,
+set it explicitly with `--agent-egress HOST:PORT`, for example
+`--agent-egress git.example.com:443`. Repeat the option to set several
+destinations. The list is saved, and `--agent-egress ''` clears it.
+
 - Local Lima VM: `limactl shell <target>` uses SSH too; if that fails, wait
   for the rollback, or stop and start the VM (`./install.sh stop`, then
   `start`), which undoes an unconfirmed change.

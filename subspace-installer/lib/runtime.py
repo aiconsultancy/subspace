@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
 import memory
-from network import rules
+import network
 from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions, provision_role
 from roles import role_documents
 from roles import provision_workspace, workspace_documents
@@ -1175,7 +1175,7 @@ def usage_guard_settings(cfg, home):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains systemPackages screenshots maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch agentEgress operatorUsers toolchains systemPackages screenshots maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
     naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
@@ -1402,6 +1402,7 @@ def validate(config, credentials, check_files=True):
     return {
         "slug": slug, "name": string(cfg["name"], "fleet name"), "officerNames": naming, "members": agents, "irc": irc,
         "medical": medical,
+        "agentEgress": agent_egress(cfg.get("agentEgress", [])),
         "repositories": repositories,
         "repositoryNotes": repository_notes(cfg.get("repositories", [])),
         "repositoryChecks": repository_checks(cfg.get("repositories", [])),
@@ -2608,6 +2609,15 @@ def render_view(cfg, session_roots, home):
     )
 
 
+def agent_egress(values):
+    require(isinstance(values, list) and all(isinstance(value, str) for value in values),
+            "agentEgress must be an array of HOST:PORT entries.")
+    try:
+        return list(dict.fromkeys((host(name), port) for name, port in map(network.endpoint, values)))
+    except (Invalid, ValueError):
+        raise Invalid("Invalid agent egress destination. Use HOST:PORT or [IPv6]:PORT.") from None
+
+
 def render_firewall(cfg):
     try:
         admins = {pwd.getpwnam(user).pw_uid for user in cfg["operators"]}
@@ -2615,13 +2625,27 @@ def render_firewall(cfg):
         raise Invalid("Every operatorUsers entry must name an existing Linux account.") from None
     service_ids = {int(path.read_text()) for path in (STATE / "identity").iterdir()}
     require(not admins & service_ids, "Fleet service UIDs cannot be operators.")
-    clients = {pwd.getpwnam(f"ss-{person['id']}").pw_uid for person in cfg["members"]}
-    clients.add(pwd.getpwnam(GATEWAY).pw_uid)
+    officers = {person["id"]: pwd.getpwnam(f"ss-{person['id']}").pw_uid for person in cfg["members"]}
+    clients = {*officers.values(), pwd.getpwnam(GATEWAY).pw_uid}
+    native = [person for person in cfg["members"] if person["harness"]["type"] == "claude-sdk"]
+    irc = cfg["irc"]
+    try:
+        allowed = {address for name, port in cfg["agentEgress"] for address in network.destinations(name, port)}
+        if native and irc["mode"] == "remote":
+            for person in native:
+                allowed.update(network.destinations(irc["host"], irc["port"], officers[person["id"]]))
+        rear = cfg["members"][0]
+        if rear in native and cfg["integrations"]["teams"]:
+            allowed.update(network.destinations("169.254.169.254", 80, officers[rear["id"]]))
+        dns = network.resolvers()
+    except OSError as error:
+        raise Invalid(f"Could not resolve the officer network policy: {error}") from None
     ports = {service: cfg[service]["port"] for service in ("dashboard", "agentsview", "proxy")}
     if cfg["stargate"]["api"]:
         ports["stargate-api"] = cfg["stargate"]["api"]["port"]
     config = ETC / "firewall.nft"
-    write(config, rules(ports, admins, clients, pwd.getpwnam(VIEW).pw_uid), 0o600)
+    write(config, network.rules(ports, admins, clients, pwd.getpwnam(VIEW).pw_uid,
+                                officers=officers.values(), dns=dns, allowed=allowed), 0o600)
     write(SYSTEMD / FIREWALL, "\n".join([
         "[Unit]", "Description=Subspace fleet local service firewall",
         "After=nftables.service",

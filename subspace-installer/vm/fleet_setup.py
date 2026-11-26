@@ -315,6 +315,9 @@ def parse_args(argv):
     parser.add_argument("--ssh-from", help="comma-separated source addresses or CIDRs allowed to SSH in")
     parser.add_argument("--allow-port", help="comma-separated TCP ports to accept from private networks only, "
                         "for example 443 for an nginx listener on the tailnet")
+    parser.add_argument("--agent-egress", action="append", metavar="HOST:PORT",
+                        help="allow a private TCP destination for officers. Repeat to set several; "
+                        "use --agent-egress '' to clear the saved list")
     parser.add_argument("--key-vault", help="Azure Key Vault name for the generated secrets (managed identity)")
     parser.add_argument("--metadata-user", help="comma-separated Linux users, besides root and the operator, that "
                         "may reach the cloud metadata service (the agents never can)")
@@ -622,6 +625,8 @@ def gather(args, saved):
     if args.allow_port is not None:
         answers["allowPorts"] = [value.strip() for value in args.allow_port.split(",") if value.strip()]
     answers.setdefault("allowPorts", [])
+    if args.agent_egress is not None:
+        answers["agentEgress"] = list(dict.fromkeys(value for value in args.agent_egress if value))
     if args.key_vault is not None:
         answers["keyVault"] = args.key_vault
     if args.metadata_user is not None:
@@ -816,6 +821,10 @@ def check_answers(answers):
     for value in answers["allowPorts"]:
         require(str(value).isdigit() and 1 <= int(value) <= 65535 and int(value) != 22,
                 f"Invalid --allow-port {value}.")
+    try:
+        runtime.agent_egress(answers.get("agentEgress", []))
+    except runtime.Invalid as error:
+        raise SetupError(f"--agent-egress: {error}") from None
     if answers.get("keyVault"):
         require(VAULT.fullmatch(answers["keyVault"]), "Invalid Key Vault name.")
     for user in answers.get("metadataUsers", []):
@@ -1154,6 +1163,8 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
     previous = read_json(INPUTS / "fleet.json", {})
+    if endpoints := answers.get("agentEgress", previous.get("agentEgress", [])):
+        config["agentEgress"] = endpoints
     if answers.get("captainPeerMessages", previous.get("captainPeerMessages", False)):
         config["captainPeerMessages"] = True
     if policy := answers.get("captainTools", previous.get("captainTools")):

@@ -2647,6 +2647,18 @@ all three ports from other interfaces are rejected. Keep this table when
 reloading a site-managed firewall. Apply your site's SSH and deliberate IRC
 listener policy separately, including Docker-published ports.
 
+Guided setup also restricts private egress for each officer's Linux user,
+including its crew. The rules cover RFC 1918, carrier-grade NAT and IPv4
+link-local ranges, plus IPv6 unique-local and link-local ranges. The VM's
+configured DNS resolvers remain reachable. Set specific private TCP
+destinations with `subspace-setup --agent-egress HOST:PORT` or repeat the
+flag to replace the saved list. Use `[IPv6]:PORT` for a literal IPv6
+address and `--agent-egress ''` to clear the list. Re-run setup when a DNS
+name's destination addresses change. The shared Stargate gateway keeps its
+IRC and API routes. A native Claude gateway shares its officer's Linux user
+and retains access to its configured IRC endpoint. `./install.sh audit`
+checks that each officer is covered.
+
 The API integration looks up the fleet by slug and creates or patches its
 registration, with its ships and officers (see
 [Subspace API registration](#subspace-api-registration)). After startup it

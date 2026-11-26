@@ -23,7 +23,7 @@ import fixture  # noqa: E402
 import fleet_records  # noqa: E402
 import github_app
 from github_policy import PolicyError, check_push, cli_permissions, merge_repository
-from network import rules
+from network import ip_address, rules
 import roles
 from roles import default_permissions
 import runtime
@@ -85,6 +85,23 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertIn('oifname "lo" tcp dport 8080 meta skuid != { 0, 703, 1700 } reject', result)
         self.assertIn('oifname "lo" tcp dport 8317 meta skuid != { 0, 701, 702, 1700 } reject', result)
         self.assertIn('iifname != "lo" tcp dport { 8070, 8080, 8317 } reject', result)
+
+    def test_firewall_applies_private_egress_only_to_officers_before_dnat(self):
+        result = rules({"dashboard": 8070}, [1700], [701, 702, 900], 703,
+                       officers=[701, 702], dns={ip_address("10.0.0.53")},
+                       allowed={(ip_address("fd00::44"), 443, None), (ip_address("10.0.0.42"), 6697, 702)})
+        self.assertIn("type filter hook output priority -110; policy accept;", result)
+        self.assertIn("meta skuid { 701, 702 } jump officer_destinations", result)
+        reject = result.index("ip daddr { 10.0.0.0/8")
+        for allowance in ("ip daddr 10.0.0.53 tcp dport 53 return", "ip daddr 10.0.0.53 udp dport 53 return",
+                          "ip6 daddr fd00::44 tcp dport 443 return", "meta skuid 702 ip daddr 10.0.0.42 tcp dport 6697 return"):
+            self.assertLess(result.index(allowance), reject)
+        self.assertIn("ip6 daddr { fc00::/7, fe80::/10 } reject", result)
+        self.assertEqual(runtime.agent_egress(["git.example.com:443", "[fd00::44]:8443"]),
+                         [("git.example.com", 443), ("fd00::44", 8443)])
+        for destination in ("git.example.com", "git.example.com:0", "git.example.com:80/path", "fd00::44:8443"):
+            with self.subTest(destination), self.assertRaisesRegex(Invalid, "Invalid agent egress destination"):
+                runtime.agent_egress([destination])
 
     def test_github_high_level_and_api_policy(self):
         self.assertEqual(cli_permissions(["issue", "close", "12", "-R", "example/project"]), {"issues": "write"})
