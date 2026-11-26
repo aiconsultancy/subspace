@@ -86,6 +86,7 @@ fn main() -> ExitCode {
             dock_panel: None,
             github_oauth: github_oauth(),
             fonts: fonts::bundled(),
+            product_themes: &[],
             #[cfg(feature = "report-issue")]
             report_issue_repository: Some(env!("SUBSPACE_BUILD_REPORT_ISSUE_REPOSITORY")),
         },
