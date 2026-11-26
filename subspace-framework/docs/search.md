@@ -135,7 +135,7 @@ oversized values:
 - `ReferenceIdentity::github_copilot_agents(task_id)`
 
 An app can add its own reference kinds. Call
-`subspace_search::register_reference_kind("example-ref")` once at startup,
+`subspace_framework::search::register_reference_kind("example-ref")` once at startup,
 before any indexing or lookup. Names are 1-64 ASCII characters: lower-case
 letters, digits and hyphens, starting with a letter. Registration is
 idempotent and process-wide. Then build identities with
