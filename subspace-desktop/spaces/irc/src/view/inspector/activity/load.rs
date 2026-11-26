@@ -33,11 +33,13 @@ use subspace_client_fleet::{Error, FleetApi, FleetClient};
 
 use super::Selection;
 use super::draw::{Key, Pieced};
+use super::ledger::{left, make_room, room, stamp, window_allowance};
 use super::parts::PART;
 use crate::Irc;
 pub(super) use part::show_page;
 pub(super) use prune::prune;
-use window::{page_window, settle};
+pub(super) use window::refit;
+use window::settle;
 
 mod part;
 mod prune;
@@ -47,27 +49,25 @@ mod window;
 /// snapshot's inline content, the items read for it and what is drawn.
 pub(super) const MAX_LOADED: u64 = 64 * 1024 * 1024;
 /// The most bytes of item JSON one page carries, and so one part.
-const PAGE: u64 = 64 * 1024;
-/// What a read in parts reserves: a page, and the window it draws.
-const PAGE_READ: u64 = PAGE + PART as u64;
-/// The most the read the floor keeps holds: a part and its window, and
-/// while the next part is read, the page coming in.
-const FLOOR_READ: u64 = PAGE_READ + PAGE;
+pub(super) const PAGE: u64 = 64 * 1024;
+/// The floor's steady allowance for a read (SUB decision `4311830a` item
+/// 1): a part and its drawn window, beside at most a page coming in.
+pub(super) const PAGE_READ: u64 = PAGE + PART as u64;
 
 /// An item read, or being read.
 pub(super) struct Loaded {
     pub(super) held: Held,
-    /// Its reservation, what it counts against the budget: while it is
-    /// read, the room made for it and its window; once read, what it holds
-    /// and the window it draws; while another part is read, those and the
-    /// page coming in.
-    bytes: u64,
+    /// Its steady allowance ([`super::ledger`]): what it may hold and draw
+    /// once read, granted at admission or sized again when the room
+    /// shrinks.
+    allowance: u64,
+    /// The temporary allowance for what is coming in: while a part is read,
+    /// the page coming in.
+    incoming: u64,
     /// The bytes of item JSON held.
     raw: u64,
-    /// What it draws within its reservation.
+    /// What it draws within its allowance.
     pub(super) window: Window,
-    /// When it was last opened, by [`Selection::opened`].
-    pub(super) opened: u64,
     /// Changes whenever what is held does, so its body is measured again
     /// ([`super::draw`]).
     pub(super) version: u64,
@@ -80,6 +80,45 @@ pub(super) struct Loaded {
     /// for no further page.
     cancel: Arc<AtomicBool>,
     _read: Option<Task<()>>,
+}
+
+impl Loaded {
+    /// A first read under way, granted `allowance`.
+    fn reading(
+        allowance: u64,
+        (read, regrow): (u64, bool),
+        (cancel, task): (Arc<AtomicBool>, Task<()>),
+    ) -> Self {
+        Self {
+            held: Held::Loading,
+            allowance,
+            incoming: 0,
+            raw: 0,
+            window: Window::None,
+            version: read,
+            read,
+            regrow,
+            cancel,
+            _read: Some(task),
+        }
+    }
+
+    /// What it counts against the budget: its steady charge, its allowance
+    /// while its first read is under way, and what comes in for it.
+    pub(super) fn charge(&self) -> u64 {
+        let steady = match self.held {
+            Held::Loading => self.allowance,
+            _ => self.raw.saturating_add(self.window.charge()),
+        };
+        steady.saturating_add(self.incoming)
+    }
+
+    /// What the ledger fits it by: what it holds, what comes in for it,
+    /// and, while its first read is under way, its allowance.
+    pub(super) fn charges(&self) -> (u64, u64, Option<u64>) {
+        let reading = matches!(self.held, Held::Loading).then_some(self.allowance);
+        (self.raw, self.incoming, reading)
+    }
 }
 
 impl Drop for Loaded {
@@ -133,12 +172,6 @@ pub(super) struct Parts {
     pub(super) failed: Option<(u32, Error)>,
 }
 
-/// The bytes the budget leaves for items once the inline content is
-/// counted.
-pub(super) fn room(selection: &Selection) -> u64 {
-    selection.budget.saturating_sub(selection.inline)
-}
-
 /// Whether an item of `bytes` is read whole: when it and its drawn copy
 /// both fit the room (SUB decision `6f5e67dd`, item 2).
 pub(super) fn fits_whole(selection: &Selection, bytes: u64) -> bool {
@@ -172,20 +205,8 @@ fn read_item(
     };
     // Any read of the item already in flight goes first.
     selection.loaded.remove(&key);
-    let room = room(selection);
-    // Room for the whole item and its drawn copy, and at least for its
-    // page 0; or for one page and its drawn window.
-    let (reserve, drawn) = if fits_whole(selection, bytes) {
-        (bytes.max(PAGE.min(room)), bytes)
-    } else {
-        (PAGE, PART as u64)
-    };
-    let reservation = reserve.saturating_add(drawn);
-    make_room(selection, reservation, None);
-    selection.opened += 1;
-    let read = selection.opened;
-    // The latest request from its admission: the one the floor keeps.
-    selection.asked.insert(key.clone(), read);
+    let read = stamp(selection, &key);
+    let (reserve, allowance) = admit(selection, &key, bytes);
     let cancel = Arc::new(AtomicBool::new(false));
     let (agent, read_key, flag) = (selection.agent.clone(), key.clone(), cancel.clone());
     let task = cx.spawn(async move |board, cx| {
@@ -202,23 +223,33 @@ fn read_item(
             publish(board, (&read_key, read), result, cx)
         });
     });
-    selection.loaded.insert(
-        key,
-        Loaded {
-            held: Held::Loading,
-            bytes: reservation,
-            raw: 0,
-            window: Window::None,
-            opened: read,
-            version: read,
-            read,
-            regrow,
-            cancel,
-            _read: Some(task),
-        },
-    );
+    let loaded = Loaded::reading(allowance, (read, regrow), (cancel, task));
+    selection.loaded.insert(key, loaded);
     super::draw::replan(selection);
     cx.notify();
+}
+
+/// Makes room for a read of `key` of declared size `bytes`, and what it
+/// reserves for the read and is granted in all: room for the whole item
+/// and its drawn copy, and at least for its page 0, when both fit;
+/// otherwise a page, and a window sized to the room left beside it, or
+/// the floor's when none is.
+fn admit(selection: &mut Selection, key: &Key, bytes: u64) -> (u64, u64) {
+    if fits_whole(selection, bytes) {
+        let reserve = whole_reserve(room(selection), bytes);
+        let allowance = reserve.saturating_add(bytes);
+        make_room(selection, allowance, Some(key));
+        return (reserve, allowance);
+    }
+    make_room(selection, PAGE_READ, Some(key));
+    let window = window_allowance(left(selection, key).saturating_sub(PAGE));
+    (PAGE, PAGE.saturating_add(window))
+}
+
+/// What a whole read of `bytes` reserves for the item within `room`: the
+/// item, and at least its page 0, beside its drawn copy.
+fn whole_reserve(room: u64, bytes: u64) -> u64 {
+    bytes.max(PAGE.min(room.saturating_sub(bytes)))
 }
 
 /// The client to read the captain's fleet with.
@@ -277,6 +308,7 @@ fn publish(
         Ok(_) => (Held::Failed(Error::InvalidResponse), 0),
         Err(error) => (Held::Failed(error), 0),
     };
+    loaded.incoming = 0;
     if let Some(selection) = board.inspector_activity.as_mut() {
         restamp(selection, key);
         settle(selection, key);
@@ -323,31 +355,4 @@ pub(super) fn reply(
     cx: &mut Context<Irc>,
 ) {
     publish(board, (key, read), result, cx);
-}
-
-/// The bytes the items read hold, or were made room for while read.
-pub(super) fn held(selection: &Selection) -> u64 {
-    selection.loaded.values().map(|loaded| loaded.bytes).sum()
-}
-
-/// Lets go of the least recently opened items, other than `keep`, until
-/// `bytes` more fit in the budget beside the inline content. An item let
-/// go shows its load action again; a read under way is cancelled and its
-/// reply dropped. What is drawn is fitted afterwards ([`super::draw`]).
-fn make_room(selection: &mut Selection, bytes: u64, keep: Option<&Key>) {
-    loop {
-        if held(selection).saturating_add(bytes) <= room(selection) {
-            return;
-        }
-        let Some(oldest) = selection
-            .loaded
-            .iter()
-            .filter(|(key, _)| Some(*key) != keep)
-            .min_by_key(|(_, loaded)| loaded.opened)
-            .map(|(key, _)| key.clone())
-        else {
-            return;
-        };
-        selection.loaded.remove(&oldest);
-    }
 }

@@ -125,7 +125,7 @@ pub(super) fn load_parts(
             if parts.page.seq < paged.base.seq {
                 shown_parts.push(action("Load the latest"));
             }
-            shown_parts.extend(in_parts(id, key, parts, draw, cx));
+            shown_parts.extend(in_parts(id, (key, parts, &loaded.window), draw, cx));
             shown_parts
         }
         Held::Failed(error) => vec![
@@ -156,11 +156,11 @@ fn whole(id: &str, entry: &ActivityEntry, draw: &Draw<'_>, cx: &Context<Irc>) ->
 
 /// An item larger than the view can hold: why it shows in parts, a note
 /// when it changed while read, the controls, and the part shown, as the
-/// JSON it carries. A part is one page: at most 64 KiB.
+/// JSON it carries. A part is one page: at most 64 KiB, drawn within its
+/// read's window (`window`), in parts of its own when that is smaller.
 fn in_parts(
     id: &str,
-    key: &(String, String),
-    parts: &Parts,
+    (key, parts, window): (&(String, String), &Parts, &Window),
     draw: &Draw<'_>,
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
@@ -215,8 +215,11 @@ fn in_parts(
         );
     }
     // One page: at most 64 KiB, drawn in parts of its own when its
-    // markers draw more.
-    shown.push(body_block(id, &page_block(&page.data), draw, cx));
+    // markers draw more, or when its window is smaller.
+    match window {
+        Window::Pieced(pieced) => shown.extend(super::draw::pieced_parts(id, pieced, cx)),
+        _ => shown.push(body_block(id, &page_block(&page.data), draw, cx)),
+    }
     shown
 }
 

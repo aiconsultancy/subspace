@@ -1,24 +1,16 @@
 //! Keeping what is held within the snapshot it belongs to: a snapshot of
 //! a new generation forgets every body of the old one (SUB decision
 //! `33ccecf6` item 3); otherwise the items whose turn went go, and the
-//! rest stays within the budget, never letting go of the read the floor
-//! keeps (SUB decision `8357ec55` §2).
+//! rest stays within the budget, the latest request kept at the floor
+//! (SUB decisions `8357ec55` §2 and `4311830a` item 1).
 
 use std::collections::HashSet;
 
 use super::super::Selection;
-use super::super::draw::{Key, Plan, replan};
+use super::super::draw::{Plan, replan};
+use super::super::ledger::latest;
 use super::super::size::inline_bytes;
-use super::{FLOOR_READ, make_room};
-
-/// The read the floor keeps through a new snapshot (SUB decision
-/// `8357ec55` §2): the item last asked for, while it holds no more than a
-/// part, its window and the page coming in.
-fn floor_read(selection: &Selection) -> Option<Key> {
-    let (key, _) = selection.asked.iter().max_by_key(|(_, asked)| **asked)?;
-    let loaded = selection.loaded.get(key)?;
-    (loaded.bytes <= FLOOR_READ).then(|| key.clone())
-}
+use super::make_room;
 
 /// Forgets every body of a snapshot of an earlier generation (SUB
 /// decision `33ccecf6` item 3): what was measured, prepared and drawn in
@@ -37,7 +29,7 @@ fn forget_generation(selection: &mut Selection, generation: String) {
 /// Counts the snapshot's inline content, forgets the bodies of an earlier
 /// generation, lets go of the items whose turn is no longer in it, and of
 /// the parts shown of their texts, and keeps the rest within the budget,
-/// never letting go of the read the floor keeps.
+/// the latest request kept at the floor.
 pub(in super::super) fn prune(selection: &mut Selection) {
     let Some(generation) = selection
         .join
@@ -77,7 +69,7 @@ pub(in super::super) fn prune(selection: &mut Selection) {
             || prefixes.iter().any(|prefix| block.starts_with(prefix))
     });
     selection.inline = inline;
-    let floor = floor_read(selection);
+    let floor = latest(selection).cloned();
     make_room(selection, 0, floor.as_ref());
     replan(selection);
 }

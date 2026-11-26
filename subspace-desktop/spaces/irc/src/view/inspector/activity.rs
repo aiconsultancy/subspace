@@ -24,7 +24,8 @@
 //! counts against one budget of 64 MiB (SUB decision `ed71a299`), in the
 //! bytes it mounts: text as drawn, markers and all, and the formatted text
 //! kept for it (SUB decision `0c13b784`). Room is made before each read,
-//! the least recently opened item going first; an item is read whole only
+//! the least recently asked for going first, in one ledger of the items
+//! read and the bodies asked for ([`ledger`]); an item is read whole only
 //! when it and its drawn copy both fit the room left, and otherwise shows
 //! one page of its JSON at a time, every page in reach, never held whole.
 //! A body that would pass the room left is not drawn until asked for with
@@ -42,6 +43,7 @@ mod blocks;
 mod draw;
 mod fetch;
 mod item;
+mod ledger;
 mod load;
 mod paged;
 mod parts;
@@ -93,8 +95,9 @@ pub(crate) struct Selection {
     /// The part shown of each text long enough to show in parts, by the
     /// ID of its block.
     parts: HashMap<String, usize>,
-    /// The bodies the person asked for, by turn and item ID, with when
-    /// ([`Self::opened`]): drawn first ([`draw`]).
+    /// The bodies and items the person asked for, by turn and item ID,
+    /// with when ([`Self::opened`]): their priority, the latest first
+    /// ([`ledger`]), and the bodies drawn first ([`draw`]).
     asked: HashMap<(String, String), u64>,
     /// When each turn was last opened by hand ([`Self::opened`]): the most
     /// recently opened draw first.
@@ -112,8 +115,9 @@ pub(crate) struct Selection {
     /// Counts the generations seen, so a body's version names its own
     /// ([`draw::Version`]): its `seq` is compared only within one.
     epoch: u64,
-    /// Counts each item opened and each read, for evicting the least
-    /// recently opened and dropping late replies.
+    /// Counts each request, each turn opened and each change to what an
+    /// item read holds: orders the requests ([`ledger::stamp`]) and the
+    /// turns, and names each read so a late reply is dropped.
     opened: u64,
     /// The most bytes the view holds ([`MAX_LOADED`]).
     budget: u64,
@@ -396,7 +400,7 @@ pub(crate) fn set_budget(selection: &mut Selection, bytes: u64) {
 /// The bytes `selection` holds: the inline content and the items read.
 #[cfg(test)]
 pub(crate) fn held_bytes(selection: &Selection) -> u64 {
-    selection.inline + load::held(selection)
+    selection.inline + ledger::held(selection)
 }
 
 /// Leaves `bytes` of room beside the inline content of `selection`.

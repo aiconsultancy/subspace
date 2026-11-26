@@ -1,12 +1,13 @@
 //! Reading one part of an item too large to hold whole, pinned to the
 //! version of the part shown, within the room made for it (SUB decisions
-//! `8357ec55` §2 and `33ccecf6` item 1). While the read is under way the
-//! item counts the part shown and its drawn window, which still draw,
-//! plus a whole page for the part coming in, so two reads never count on
-//! the same room; once the part arrives it counts that part and its
-//! window alone. The read goes ahead even when less than a page of room
-//! is left: refusing would hide the item, and the budget's floor keeps
-//! the part shown, its window and the page coming in.
+//! `8357ec55` §2, `33ccecf6` item 1 and `4311830a` item 1). While the read
+//! is under way the item counts the part shown and its drawn window, which
+//! still draw, within its steady allowance, plus a whole page for the part
+//! coming in, so two reads never count on the same room; once the part
+//! arrives it counts that part and its window alone. The read goes ahead
+//! even when less than a page of room is left: refusing would hide the
+//! item, and the floor keeps a part and its window beside the page coming
+//! in ([`super::super::ledger`]).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gpui_kit::{AppContext as _, Context};
 use subspace_client_fleet::activity::{ItemPart, PartFailed};
 
-use super::{Held, PAGE, Window, client, current, make_room, page_window, restamp};
+use super::{Held, PAGE, client, current, make_room, restamp, settle, stamp};
 use crate::Irc;
 
 /// Shows part `page` of an item read part by part, pinned to the version
@@ -32,27 +33,27 @@ pub(in super::super) fn show_page(
     let Some((selection, client)) = board.inspector_activity.as_mut().zip(client) else {
         return;
     };
-    if !selection.loaded.contains_key(key) {
+    let Some(loaded) = selection.loaded.get_mut(key) else {
+        return;
+    };
+    if !matches!(loaded.held, Held::Parts(_)) {
         return;
     }
     // Room for a whole page beside the one shown and its window, which it
     // replaces, held until the part arrives.
-    make_room(selection, PAGE, Some(key));
-    selection.opened += 1;
-    let read = selection.opened;
+    loaded.incoming = PAGE;
     // The latest request from its admission: the one the floor keeps.
-    selection.asked.insert(key.clone(), read);
+    let read = stamp(selection, key);
+    make_room(selection, 0, Some(key));
     let agent = selection.agent.clone();
     let Some(loaded) = selection.loaded.get_mut(key) else {
         return;
     };
-    let shown = loaded.raw.saturating_add(loaded.window.charge());
     let Held::Parts(parts) = &mut loaded.held else {
         return;
     };
     parts.loading = Some(page);
     parts.failed = None;
-    loaded.bytes = shown.saturating_add(PAGE);
     // Only the version is pinned: no copy of the page outside its room.
     let pinned = parts.page.version();
     // The part read before, if any, asks for nothing more.
@@ -60,7 +61,6 @@ pub(in super::super) fn show_page(
     let cancel = Arc::new(AtomicBool::new(false));
     let (read_key, flag) = (key.clone(), cancel.clone());
     loaded.cancel = cancel;
-    loaded.opened = read;
     loaded.read = read;
     loaded._read = Some(cx.spawn(async move |board, cx| {
         let (turn, item) = read_key.clone();
@@ -105,11 +105,11 @@ fn publish_part(
         }
         Err(failed) => parts.failed = Some((failed.page, failed.error)),
     }
-    let data = &parts.page.data;
-    (loaded.raw, loaded.window) = (data.len() as u64, Window::Whole(page_window(data)));
-    loaded.bytes = loaded.raw.saturating_add(loaded.window.charge());
+    loaded.raw = parts.page.data.len() as u64;
+    loaded.incoming = 0;
     if let Some(selection) = board.inspector_activity.as_mut() {
         restamp(selection, key);
+        settle(selection, key);
         make_room(selection, 0, Some(key));
         super::super::draw::ask(selection, key);
     }
