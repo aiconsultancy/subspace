@@ -1,13 +1,13 @@
 //! Retry-After belongs to a pinned file side, not to its disposable reader.
 
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui_kit::{App, Context};
 use subspace_client_fleet::diff::{DiffMode, DiffRead, DiffSide};
 
 use super::{DiffView, Retry};
-use crate::diff::view::pages::{BusyUntil, PageBusy};
+use crate::diff::view::pages::{BusyUntil, countdown};
 
 #[derive(Default)]
 struct Deadlines(Mutex<Vec<(String, DiffSide, BusyUntil)>>);
@@ -43,7 +43,6 @@ impl Deadlines {
 pub(crate) struct BinaryHolds {
     pin: Option<(DiffMode, String)>,
     deadlines: Arc<Deadlines>,
-    clocks: Vec<(String, DiffSide, PageBusy)>,
 }
 
 impl BinaryHolds {
@@ -51,7 +50,6 @@ impl BinaryHolds {
         if !self.is_pinned_to(mode, at) {
             self.pin = Some((mode, at.to_owned()));
             self.deadlines = Arc::default();
-            self.clocks.clear();
         }
     }
 
@@ -97,21 +95,18 @@ impl DiffView {
     }
 
     pub(super) fn start_binary_clock(&mut self, cx: &mut Context<Self>) {
-        let (Some(binary), Some(until)) = (&self.binary, self.binary_deadline()) else {
+        let Some(binary) = &mut self.binary else {
             return;
         };
-        if until.remaining(cx.background_executor().now()) == 0 {
-            return;
-        }
-        let path = &self.files[binary.file].file.path;
+        let path = self.files[binary.file].file.path.clone();
         let side = binary.side;
-        self.binary_holds
-            .clocks
-            .retain(|(held_path, held_side, busy)| {
-                !(held_path == path && *held_side == side) && busy.remaining(cx) > 0
-            });
-        self.binary_holds
-            .clocks
-            .push((path.clone(), side, PageBusy::at(until, cx)));
+        let deadlines = self.binary_holds.deadlines.clone();
+        // Only the visible reader owns a timer. Its passive hold survives
+        // close, and a late response can extend the currently visible hold.
+        binary.clock = countdown(cx, move |now| {
+            deadlines
+                .get(&path, side)
+                .map_or(Duration::ZERO, |until| until.delay(now))
+        });
     }
 }

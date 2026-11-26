@@ -52,6 +52,7 @@ pub(super) struct BinaryView {
     scroll: UniformListScrollHandle,
     read: Option<Task<()>>,
     retry: Option<Retry>,
+    clock: Option<Task<()>>,
     preview: Option<Preview>,
     closed: DiffRead,
 }
@@ -74,6 +75,7 @@ impl BinaryView {
             scroll: UniformListScrollHandle::new(),
             read: None,
             retry: None,
+            clock: None,
             preview: None,
             closed,
         }
@@ -142,6 +144,7 @@ impl DiffView {
             binary.closed.cancel_and_reset();
             binary.read = None;
             binary.retry = None;
+            binary.clock = None;
         }
     }
 

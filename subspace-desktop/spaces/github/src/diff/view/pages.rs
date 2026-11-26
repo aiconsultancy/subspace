@@ -153,34 +153,37 @@ pub(super) struct PageBusy {
 impl PageBusy {
     pub(super) fn new(wait: Option<u64>, cx: &mut Context<DiffView>) -> Self {
         let until = BusyUntil::new(cx.background_executor().now(), wait.unwrap_or_default());
-        Self::at(until, cx)
-    }
-
-    pub(super) fn at(until: BusyUntil, cx: &mut Context<DiffView>) -> Self {
-        let clock = (until.remaining(cx.background_executor().now()) > 0).then(|| {
-            cx.spawn(async move |view, cx| {
-                let executor = cx.background_executor().clone();
-                loop {
-                    let delay = until.delay(executor.now());
-                    if delay.is_zero() {
-                        break;
-                    }
-                    executor.timer(delay.min(Duration::from_secs(1))).await;
-                    if view.update(cx, |_, cx| cx.notify()).is_err() {
-                        break;
-                    }
-                }
-            })
-        });
         Self {
             until,
-            _clock: clock,
+            _clock: countdown(cx, move |now| until.delay(now)),
         }
     }
 
     pub(super) fn remaining(&self, cx: &App) -> u64 {
         self.until.remaining(cx.background_executor().now())
     }
+}
+
+pub(super) fn countdown(
+    cx: &mut Context<DiffView>,
+    delay: impl Fn(Instant) -> Duration + 'static,
+) -> Option<Task<()>> {
+    (!delay(cx.background_executor().now()).is_zero()).then(|| {
+        cx.spawn(async move |view, cx| {
+            let executor = cx.background_executor().clone();
+            let mut left = delay(executor.now());
+            loop {
+                executor.timer(left.min(Duration::from_secs(1))).await;
+                if view.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+                left = delay(executor.now());
+                if left.is_zero() {
+                    break;
+                }
+            }
+        })
+    })
 }
 
 pub(super) fn busy_message(remaining: u64) -> String {

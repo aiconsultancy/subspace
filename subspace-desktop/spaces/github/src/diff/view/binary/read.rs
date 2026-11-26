@@ -47,6 +47,7 @@ impl DiffView {
         let closed = binary.closed.clone();
         let guard = closed.clone();
         binary.retry = None;
+        binary.clock = None;
         binary.read = Some(cx.spawn(async move |view, cx| {
             let result = cx
                 .background_spawn(async move {

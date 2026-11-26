@@ -1,3 +1,5 @@
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -225,6 +227,53 @@ fn closing_during_automatic_backoff_keeps_the_pinned_side_held(cx: &mut TestAppC
     click(window, "crew-binary-retry-page");
     assert_page(&view, window, DiffSide::New, 0);
     assert_eq!(mock.requests().len() - first, 2);
+}
+
+#[gpui_kit::test]
+fn only_the_visible_held_side_ticks(cx: &mut TestAppContext) {
+    let mock = Mock::with_headers(|request| {
+        if request.path.contains("/diff/file?") {
+            return (
+                503,
+                vec![("Retry-After".into(), "11".into())],
+                String::new(),
+            );
+        }
+        let (status, body) = binary_response(request);
+        (status, vec![], body)
+    });
+    let (view, window) = mount(cx, &mock);
+    click(window, ("crew-diff-bytes", 0usize));
+    click(window, ("crew-binary-side", 0usize));
+    click(window, ("crew-binary-side", 1usize));
+    window.update(|window, _| {
+        assert_eq!(window.find("crew-binary-retry-page").disabled(), Some(true));
+    });
+    assert_eq!(
+        mock.requests()
+            .iter()
+            .filter(|req| req.path.contains("/diff/file?"))
+            .count(),
+        2
+    );
+
+    let ticks = Rc::new(Cell::new(0));
+    let count = ticks.clone();
+    let _subscription =
+        window.update(|_, cx| cx.observe(&view, move |_, _| count.set(count.get() + 1)));
+    window.executor().advance_clock(Duration::from_secs(1));
+    window.run_until_parked();
+    assert_eq!(ticks.get(), 1, "the hidden held side must not tick");
+
+    click(window, "crew-binary-close");
+    ticks.set(0);
+    window.executor().advance_clock(Duration::from_secs(1));
+    window.run_until_parked();
+    assert_eq!(
+        ticks.get(),
+        0,
+        "no countdown remains after the reader closes"
+    );
 }
 
 fn busy_tail(last_wait: &'static str) -> Mock {

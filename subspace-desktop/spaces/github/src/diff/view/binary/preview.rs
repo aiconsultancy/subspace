@@ -115,6 +115,7 @@ impl DiffView {
         });
         if let Some(binary) = self.binary.as_mut() {
             binary.retry = None;
+            binary.clock = None;
             binary.read = Some(task);
         }
         cx.notify();
