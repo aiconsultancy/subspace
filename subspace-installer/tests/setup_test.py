@@ -180,7 +180,7 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual(config["officerNames"], "plain")
         self.assertEqual([m["account"] for m in members], ["atlas", "orion", "vega"])
         # Crew have no IRC accounts; without repositories they have no worktrees either.
-        self.assertEqual(set(secrets["ircPasswords"]), {"atlas", "orion", "vega", "admiral"})
+        self.assertEqual(set(secrets["ircPasswords"]), {"admiral"})
         self.assertEqual(config["crew"], {"claude": {"count": 2}, "codex": {"count": 2}})
         self.assertEqual(config["repositories"], [])
         # Setup names no channels: the installer makes the standard set, with a separate command channel.
@@ -309,7 +309,7 @@ class SetupInputsTests(unittest.TestCase):
         history = {"database": "postgresql", "host": "postgres", "port": 5432, "user": "ergo", "name": "ergo_history",
                    "network": "subspace-api_default"}
         config = fleet_setup.fleet_config(answers, members, "a" * 40, None, False, "b" * 40, history)
-        secrets = fleet_setup.fleet_secrets(store, members, answers["admin"])
+        secrets = fleet_setup.fleet_secrets(store, members, answers["admin"], certificates=True)
         with self.assertRaises(Exception):
             validate(config, secrets, check_files=False)
         secrets["ircHistoryPassword"] = store.password("ergo-history")
@@ -570,7 +570,7 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual([(worker["id"], worker["name"], worker["slot"]) for worker in cfg["members"][1]["crew"]],
                          [("rigel", "Rigel", "claude-1"), ("deneb", "Deneb", "claude-2"), ("mira", "Mira", "codex-1"),
                           ("sirius", "Sirius", "codex-2")])
-        self.assertEqual(set(secrets["ircPasswords"]), {"atlas", "orion", "admiral"})
+        self.assertEqual(set(secrets["ircPasswords"]), {"admiral"})
         # The list lives in fleet.json: a later run without the flag keeps it, including hand edits.
         config["repositories"][1]["private"] = True
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
@@ -614,7 +614,7 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual([person.get("githubApp") for person in [rerun["rearAdmiral"], *rerun["captains"]]],
                          [apps["atlas"], apps["orion"], apps["vega"]])
         secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, again["slug"], None), members,
-                                            again["admin"])
+                                            again["admin"], certificates=True)
         cfg = validate(rerun, secrets, check_files=False)
         self.assertEqual([name for name, repo in cfg["repositories"].items() if repo["private"]], ["service", "library"])
 
@@ -1078,7 +1078,8 @@ class SetupInputsTests(unittest.TestCase):
 
     def test_only_initiative_on_the_run_adopts_and_only_one_that_exists(self):
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
-                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40]
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40,
+                "--irc-auth", "password"]
         api = fixture.Subspace()
         api.call("POST", "/fleets", {"slug": "local", "name": "Local fleet"})
         local, workspace = api.fleet_by("local")["id"], "00000000-0000-4000-8000-0000000000a1"
@@ -1373,7 +1374,7 @@ class AgentDispatchSetupTests(unittest.TestCase):
         config = fleet_setup.fleet_config(answers, members, "a" * 40, api_block, False, "b" * 40)
         secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
                                             answers["admin"], "header.payload.admin", True,
-                                            "header.payload.rear" if api_block else "")
+                                            "header.payload.rear" if api_block else "", certificates=True)
         return answers, config, secrets
 
     def test_unattended_setup_leaves_dispatch_off(self):
@@ -1798,7 +1799,7 @@ class ExternalDatabaseTests(unittest.TestCase):
         (fleet_setup.INPUTS / "fleet.secrets").mkdir(mode=0o700)
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
                 "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40,
-                "--database-url-file", self.url_file, "--migrate"]
+                "--database-url-file", self.url_file, "--migrate", "--irc-auth", "password"]
         checks = []
 
         def refuse(config_path, dry_run=False, secrets_dir=None, quiet=False):
@@ -1911,14 +1912,14 @@ class ExternalDatabaseTests(unittest.TestCase):
                "agentUrl": f"http://{fleet_setup.LOOPBACK}:{fleet_setup.AGENT_API_PORT}"}
         config = fleet_setup.fleet_config(answers, members, "a" * 40, api)
         secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
-                                            answers["admin"], "header.payload.signature")
+                                            answers["admin"], "header.payload.signature", certificates=True)
         cfg = validate(config, secrets, check_files=False)
         rear, orion = cfg["members"]
         self.assertEqual((rear["slack"]["appId"], orion["slack"]["appId"], orion["sessionRoot"]),
                          ("AFIXTURE1", "AFIXTURE2", "workspace"))
         self.assertEqual(cfg["repositoryNotes"]["project"], {"description": "The example service.",
                                                              "tracker": "Example issues"})
-        self.assertEqual(cfg["irc"]["auth"], "password")
+        self.assertEqual(cfg["irc"]["auth"], "certificate")
         self.assertTrue(runtime.rear_root(cfg))
         self.assertNotIn(self.PASSWORD, str(config) + str(secrets))
 
@@ -2129,6 +2130,18 @@ class IrcCertificateSetupTests(unittest.TestCase):
             fleet_setup.check_answers(answers)
         return answers, args
 
+    def test_managed_shared_irc_bundle_carries_fingerprints(self):
+        answers, _ = self.answers("--managed-shared-irc")
+        self.assertTrue(answers["managedSharedIrc"])
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        fingerprints = {person["account"]: (None, str(index) * 64) for index, person in enumerate(members)}
+        with patch.object(fleet_setup.Secrets, "password", side_effect=AssertionError("unexpected password")):
+            bundle = fleet_setup.irc_bundle(
+                answers, members, fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), fingerprints)
+        self.assertEqual(bundle["accounts"],
+                         [{"name": name, "fingerprint": fingerprint} for name, (_, fingerprint) in fingerprints.items()])
+        self.assertEqual(fleet_setup.read_json(fleet_setup.INPUTS / "irc-bundle.json"), bundle)
+
     def test_a_remote_server_signs_officers_in_by_certificate_unless_told_otherwise(self):
         answers, _ = self.answers()
         self.assertEqual(answers["ircAuth"], "certificate")
@@ -2144,11 +2157,12 @@ class IrcCertificateSetupTests(unittest.TestCase):
         self.assertEqual(self.answers("--irc-auth", "password")[0]["ircAuth"], "password")
         self.assertEqual(self.answers(saved={"irc": "remote", "slug": "example-fleet"})[0]["ircAuth"], "password")
         self.assertEqual(self.answers(saved={**answers})[0]["ircAuth"], "certificate")
-        with self.assertRaisesRegex(fleet_setup.SetupError, "needs a remote IRC server"):
-            args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
-                                           "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "local",
-                                           "--irc-auth", "certificate"])
-            fleet_setup.gather(args, {})
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "local",
+                                       "--irc-auth", "certificate"])
+        self.assertEqual(fleet_setup.gather(args, {})["ircAuth"], "certificate")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "retain its IRC sign-in mode"):
+            fleet_setup.gather(args, {"irc": "local"})
         for extra, message in ((["--irc-operator", "ircop"], "together"),
                                (["--irc-auth", "password", "--irc-operator", "ircop",
                                  "--irc-operator-password-file", "/x"], "for certificate sign-in")):
@@ -2742,7 +2756,8 @@ class HostedApiSetupTests(unittest.TestCase):
     def test_a_hosted_fleet_is_renamed_with_an_administrators_access_token(self):
         # A fleet installed with fleet-prefixed names against a hosted API, its IRC on this VM. Enrolment made its
         # records: the rear admiral by its name, the captain by its account, the ship with no channel.
-        answers, _ = self.answers("--api-url", "https://subspace.example.com", saved={"slug": "example-fleet"})
+        answers, _ = self.answers("--api-url", "https://subspace.example.com", "--irc-auth", "password",
+                                  saved={"slug": "example-fleet"})
         self.assertEqual(answers["officerNames"], "prefixed")
         members = fleet_setup.roster(answers, "atlas", ["orion"])
         config = fleet_setup.fleet_config(answers, members, "a" * 40, stargate_ref=runtime.SUBSPACE_AGENTS_COMMIT)
@@ -2836,7 +2851,8 @@ class HostedApiSetupTests(unittest.TestCase):
         repositories = [{"id": "project", "url": "https://github.com/example/project.git"}]
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
             "captains": [{"id": captain} for captain in self.CAPTAINS], "repositories": repositories})
-        answers, _ = self.answers("--api-url", "https://subspace.example.com", "--captains", "Draco,Cygnus,Pavo",
+        answers, _ = self.answers("--api-url", "https://subspace.example.com", "--irc-auth", "password",
+                                  "--captains", "Draco,Cygnus,Pavo",
                                   "--stargate-ref", runtime.SUBSPACE_AGENTS_COMMIT, saved={"slug": "example-fleet"})
         self.assertEqual(answers["officerNames"], "prefixed")
         members = fleet_setup.roster(answers, "atlas", self.CAPTAINS)
@@ -3255,7 +3271,7 @@ class FirstFleetTests(unittest.TestCase):
         api_block = {"url": "http://127.0.0.1:3000", "initiatives": [], "vmHost": answers["vmHost"]}
         config = fleet_setup.fleet_config(answers, members, "a" * 40, api_block, stargate_api=True)
         secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
-                                            answers["admin"], "header.payload.signature")
+                                            answers["admin"], "header.payload.signature", certificates=True)
         fields = runtime.fleet_records.fleet_fields(validate(config, secrets, check_files=False))
         self.assertEqual((fields["vmHost"], fields["fleetApiUrl"]), ("10.0.0.5", "http://127.0.0.1:8484"))
         # The host installers pass the --remote host to setup.

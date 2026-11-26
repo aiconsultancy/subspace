@@ -465,7 +465,7 @@ def irc_config(value, slug, check_files, plain=False):
     server_host = host(value.get("host", LOOPBACK if mode == "local" else None))
     server_port = port(value.get("port", 6697 if tls else 6667))
     if mode == "local":
-        require(not tls and server_host == LOOPBACK, "Local fleet members use loopback IRC. Configure advertise for desktop TLS.")
+        require(server_host == LOOPBACK, "Local fleet members use loopback IRC.")
     allowed = value["allowedAccounts"]
     require(isinstance(allowed, list) and 1 <= len(allowed) <= 50, "Specify 1 to 50 allowed IRC accounts.")
     for account in allowed:
@@ -493,6 +493,10 @@ def irc_config(value, slug, check_files, plain=False):
         bind = ip(compose.get("tlsBind", LOOPBACK))
         require(bind == LOOPBACK or {"tlsCert", "tlsKey", "serverName"} <= compose.keys(), "An exposed IRC TLS listener requires tlsCert, tlsKey and serverName.")
         require(("tlsCert" in compose) == ("tlsKey" in compose), "Specify both IRC TLS files.")
+        if tls:
+            require("caFile" in irc and {"tlsCert", "tlsKey"} <= compose.keys()
+                    and server_port == compose.get("tlsPort", 6697),
+                    "Local TLS needs irc.caFile, irc.compose.tlsCert and irc.compose.tlsKey at irc.compose.tlsPort.")
         server_name = pattern(
             compose.get("serverName", "irc.example.com"),
             r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*",
@@ -520,9 +524,6 @@ def irc_auth(value, mode, tls):
                    "irc.auth (certificate or password)")
     if auth == "certificate":
         # Stargate takes exactly one of passwordEnv and clientPemFile per account, and clientPemFile needs TLS.
-        require(mode == "remote", "irc.auth certificate needs a remote IRC server for now. The fleet reaches the "
-                "Ergo this installer manages over plain loopback IRC, and Stargate presents a client certificate "
-                "only over TLS. Leave irc.auth out, or set it to password (README, 'IRC sign-in').")
         require(tls, "IRC certificates (SASL EXTERNAL) need TLS: set irc.tls to true, or irc.auth to password.")
     return auth
 
@@ -1279,7 +1280,7 @@ def validate(config, credentials, check_files=True):
     if stargate_api:
         listeners.append(stargate_api["port"])
     if irc["mode"] == "local":
-        listeners += [irc["port"], irc["compose"]["tlsPort"], 8097]
+        listeners += [6667 if irc["tls"] else irc["port"], irc["compose"]["tlsPort"], 8097]
     require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
     api = api_config(cfg["api"]) if "api" in cfg else None
     require(not (api or {}).get("fleetApiUrl") or stargate_api,
@@ -3014,11 +3015,15 @@ def render_irc(cfg, extra):
         passwords[medical["account"]] = extra[MEDICAL_IRC_PASSWORD[-1]]
         channels.add(medical["channel"])
     entries = [{"name": name, "password": password} for name, password in sorted(passwords.items())]
+    if cfg["irc"]["auth"] == "certificate":
+        for person in cfg["members"]:
+            path = irc_client_pem(person["id"])
+            entries.append({"name": person["account"], "fingerprint": irc_fingerprint(path.read_text(), str(path))})
     write(account_path, json_text(entries), 0o440, ERGO_GID)
     write(operator_path, cfg["operatorPassword"] + "\n", 0o440, ERGO_GID)
     write(channel_path, json_text([{"name": name} for name in sorted(channels)]), 0o440, ERGO_GID)
     environment = {
-        "IRC_PLAIN_BIND": LOOPBACK, "IRC_PLAIN_PORT": cfg["irc"]["port"],
+        "IRC_PLAIN_BIND": LOOPBACK, "IRC_PLAIN_PORT": 6667 if cfg["irc"]["tls"] else cfg["irc"]["port"],
         "IRC_TLS_BIND": f"[{local['tlsBind']}]" if ":" in local["tlsBind"] else local["tlsBind"],
         "IRC_TLS_PORT": local["tlsPort"],
         "IRC_WS_BIND": LOOPBACK, "IRC_WS_PORT": 8097,
@@ -3339,14 +3344,14 @@ def render(cfg, extra, prune=False):
         environments[agent_id] = {**headers, **password}
     after = [f"{PREFIX}proxy.service", *engines]
     medical_after = []
+    if cfg["irc"]["auth"] == "certificate":
+        irc_certificates(cfg)
     if cfg["irc"]["mode"] == "local":
         local_unit = render_irc(cfg, extra.get("medical", {}))
         units.append(local_unit)
         after.append(local_unit)
         medical_after.append(local_unit)
     units.extend(medical_units(cfg, extra.get("medical", {}), medical_after))
-    if cfg["irc"]["auth"] == "certificate":
-        irc_certificates(cfg)
     groups = {}
     rear = cfg["members"][0]
     default_group = "gateway" if rear["harness"]["type"] == "opencode" else "gateway-opencode"

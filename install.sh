@@ -776,8 +776,12 @@ do_install() {
         irc_host=$(sed -n 's/^SUBSPACE_IRC_HOST=//p' "$home/targets/$irc_target/summary.env")
         irc_port=$(sed -n 's/^SUBSPACE_IRC_PORT=//p' "$home/targets/$irc_target/summary.env")
         self_signed=$(sed -n 's/^SUBSPACE_IRC_SELF_SIGNED=//p' "$home/targets/$irc_target/summary.env")
-        # The shared server this installer runs seeds each officer's account with a password.
-        passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port" --irc-auth password)
+        passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port")
+        if grep -qs '^SUBSPACE_IRC_CERTIFICATE_SEEDS=1$' "$home/targets/$irc_target/summary.env"; then
+            passthrough+=(--managed-shared-irc)
+        else
+            passthrough+=(--irc-auth password)
+        fi
         if [ "$self_signed" = 1 ]; then
             ca_source=$home/targets/$irc_target/ca.pem
             if [ "$os" = Darwin ]; then ca_digest=$(shasum -a 256 < "$ca_source"); else ca_digest=$(sha256sum < "$ca_source"); fi

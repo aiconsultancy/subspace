@@ -2439,7 +2439,7 @@ class IrcCertificateTests(unittest.TestCase):
         secrets = {**officer_secrets(), "ircOperatorPassword": "fixture-operator-password"}
         self.assertEqual(validate(self.config, secrets)["irc"]["auth"], "password")
         self.config["irc"]["auth"] = "certificate"
-        with self.assertRaisesRegex(Invalid, "needs a remote IRC server.*only over TLS"):
+        with self.assertRaisesRegex(Invalid, "need TLS"):
             validate(self.config, secrets)
 
     def test_the_gateway_registration_names_the_bundle_and_no_password(self):

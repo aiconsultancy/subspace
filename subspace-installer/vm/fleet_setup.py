@@ -258,10 +258,10 @@ def parse_args(argv):
     parser.add_argument("--irc-host", help="shared IRC server's DNS name (remote mode; must match its TLS certificate)")
     parser.add_argument("--irc-port", type=int, help="shared IRC server's TLS port (default 6697)")
     parser.add_argument("--irc-ca", help="absolute path on this VM to the shared server's CA certificate (PEM)")
+    parser.add_argument("--managed-shared-irc", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--irc-auth", choices=["certificate", "password"],
-                        help="how officers sign in to a remote IRC server: certificate (SASL EXTERNAL, the default; "
-                        "setup prints the NickServ lines that bind each one) or password (SASL PLAIN, for the shared "
-                        "server ./install.sh irc-server runs). Kept on later runs")
+                        help="how officers sign in to IRC: certificate (SASL EXTERNAL, the default for new fleets) "
+                        "or password (SASL PLAIN). A rerun keeps the installed mode.")
     parser.add_argument("--irc-operator", help="an IRC operator's name (OPER) with NickServ's accreg capability: setup "
                         "then registers each officer's account and binds its certificate itself (certificate sign-in)")
     parser.add_argument("--irc-operator-account", help="an IRC account the operator's connection signs in to first "
@@ -527,6 +527,10 @@ def gather(args, saved):
         chosen[key] = value
     answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
+        if args.managed_shared_irc:
+            answers["managedSharedIrc"] = True
+        elif args.irc_host and args.irc_host != saved.get("ircHost"):
+            answers.pop("managedSharedIrc", None)
         pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
         if args.irc_port is not None:
             answers["ircPort"] = args.irc_port
@@ -542,10 +546,13 @@ def gather(args, saved):
             # A remote fleet set up before certificates were the default signs in with passwords; keep it so.
             answers["ircAuth"] = "password" if saved.get("irc") == "remote" else "certificate"
     else:
-        require(args.irc_auth in (None, "password"), "--irc-auth certificate needs a remote IRC server (--irc remote): "
-                "officers reach the Ergo on this VM without TLS, which certificates need.")
-        answers.pop("ircAuth", None)
-    require(not (args.irc_operator or args.irc_operator_password_file) or answers.get("ircAuth") == "certificate",
+        answers.pop("managedSharedIrc", None)
+        answers["ircAuth"] = args.irc_auth or (
+            saved.get("ircAuth", "password") if saved.get("irc") == "local" else "certificate")
+        require(not (saved.get("irc") == "local" and saved.get("ircAuth", "password") != answers["ircAuth"]),
+                "An installed local fleet must retain its IRC sign-in mode during setup.")
+    require(not (args.irc_operator or args.irc_operator_password_file)
+            or (answers["irc"] == "remote" and answers.get("ircAuth") == "certificate"),
             "--irc-operator is for certificate sign-in on a remote IRC server (--irc remote --irc-auth certificate).")
     require(bool(args.irc_operator) == bool(args.irc_operator_password_file),
             "Pass --irc-operator and --irc-operator-password-file together.")
@@ -1152,6 +1159,10 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     }
     if history:
         config["irc"]["compose"]["history"] = history
+    if answers["irc"] == "local" and answers.get("ircAuth") == "certificate":
+        tls = INPUTS / "irc-tls"
+        config["irc"].update(auth="certificate", tls=True, port=IRC_TLS, caFile=str(tls / "cert.pem"))
+        config["irc"]["compose"].update(tlsCert=str(tls / "cert.pem"), tlsKey=str(tls / "key.pem"))
     if answers["irc"] == "remote":
         config["irc"] = {
             "mode": "remote", "host": answers["ircHost"], "port": answers["ircPort"], "tls": True,
@@ -1752,6 +1763,23 @@ def irc_source():
     finally:
         if work:
             shutil.rmtree(work, ignore_errors=True)
+
+
+def local_irc_tls():
+    """Keep a server certificate for the TLS loopback listener and trust it in Stargate."""
+    target = INPUTS / "irc-tls"
+    if target.exists():
+        require((target / "cert.pem").is_file() and (target / "key.pem").is_file(),
+                "Local IRC TLS needs both its saved certificate and key.")
+        return
+    with tempfile.TemporaryDirectory(prefix="irc-tls-", dir=INPUTS) as scratch:
+        source = Path(scratch) / "tls"
+        source.mkdir(mode=0o700)
+        run("openssl", "req", "-x509", "-newkey", "rsa:3072", "-nodes", "-sha256", "-days", "3650",
+            "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+            "-out", source / "cert.pem", "-keyout", source / "key.pem", capture=True)
+        (source / "key.pem").chmod(0o600)
+        source.rename(target)
 
 
 def installer(config_path, dry_run=False, secrets_dir=None, quiet=False):
@@ -3203,7 +3231,7 @@ def check_certificates(answers, members, certificates, operator, register):
             "NickServ's accreg capability, or bind the fingerprints by hand, then run setup again.")
 
 
-def irc_bundle(answers, members, secret_store):
+def irc_bundle(answers, members, secret_store, certificates=None):
     """What a shared IRC server needs for this fleet: its SASL accounts and channels."""
     channels = fleet_channels(answers, members)
     topics = [f"{answers['name']} Starbase: admirals and the rear admiral",
@@ -3211,8 +3239,10 @@ def irc_bundle(answers, members, secret_store):
         f"{answers['name']}: {person['name']}'s ship" for person in members[1:]]
     bundle = {
         "fleet": answers["slug"],
-        "accounts": [{"name": account, "password": secret_store.password(f"irc-{account}")}
-                     for account in [person["account"] for person in members]],
+        "accounts": ([{"name": account, "fingerprint": fingerprint} for account, (_, fingerprint) in certificates.items()]
+                     if certificates is not None else [
+                         {"name": person["account"], "password": secret_store.password(f"irc-{person['account']}")}
+                         for person in members]),
         "channels": [{"name": name, "topic": topic} for name, topic in zip(channels, topics, strict=True)],
         "humans": [answers["admin"]],
     }
@@ -3338,11 +3368,16 @@ def configure(args):
                              answers["officerNames"] == "plain" else "fleet-prefixed, as installed; 'subspace-setup "
                              "rename-officers' gives them plain names") + "): "
         + ", ".join(person["account"] for person in members))
-    if answers.get("ircAuth") == "certificate":
+    if local_irc and answers.get("ircAuth") == "certificate":
+        local_irc_tls()
+    elif answers.get("ircAuth") == "certificate":
         operator = irc_operator(args)
         certificates = officer_certificates(members, generate=not args.dry_run)
-        for line in certificate_lines(answers, certificates):
-            say(line)
+        if answers.get("managedSharedIrc") and not args.dry_run:
+            irc_bundle(answers, members, secret_store, certificates)
+        else:
+            for line in certificate_lines(answers, certificates):
+                say(line)
         if operator and args.dry_run:
             check_certificates(answers, members, certificates, operator, register=False)
     elif not local_irc:
@@ -3515,7 +3550,7 @@ def configure(args):
 
 def remote_irc_next_step(answers, operator):
     """What is left to do on a remote IRC server once setup is done."""
-    if answers.get("ircAuth") == "certificate":
+    if answers.get("ircAuth") == "certificate" and not answers.get("managedSharedIrc"):
         # No password bundle exists in this mode: the officers' accounts are bound to their certificates.
         if operator:
             return (f"officers sign in to {answers['ircHost']} with certificates, which setup registered and checked "

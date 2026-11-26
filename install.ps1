@@ -678,8 +678,12 @@ function Invoke-Install {
             $ircState = Join-Path (Join-Path $SubspaceHome 'targets') $IrcTarget
             $irc = Read-Env (Join-Path $ircState 'summary.env')
             if (-not $irc.SUBSPACE_IRC_HOST) { Die "No shared IRC server '$IrcTarget'. Run .\install.ps1 irc-server first." }
-            # The shared server this installer runs seeds each officer's account with a password.
-            $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT, '--irc-auth', 'password'))
+            $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT))
+            if ($irc.SUBSPACE_IRC_CERTIFICATE_SEEDS -eq '1') {
+                $Passthrough.Add('--managed-shared-irc')
+            } else {
+                $Passthrough.AddRange([string[]]@('--irc-auth', 'password'))
+            }
             if ($irc.SUBSPACE_IRC_SELF_SIGNED -eq '1') {
                 $caSource = Join-Path $ircState 'ca.pem'
                 $caDigest = (Get-FileHash -LiteralPath $caSource -Algorithm SHA256).Hash.ToLowerInvariant()
