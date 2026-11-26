@@ -1,6 +1,7 @@
 //! The session's lifecycle, driven through the state machine's
 //! transitions: sign-in, a new view, account changes and failures here;
-//! renewal, expiry and the signal in `renewal`; the grant in `grant`.
+//! renewal and expiry in `renewal`; the site's signal in `signal`; the
+//! product's start route in `start` and `moved`; the grant in `grant`.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -14,7 +15,10 @@ use crate::page::SiteCookie;
 
 mod board;
 mod grant;
+mod moved;
 mod renewal;
+mod signal;
+mod start;
 
 const HOME: &str = "https://app.example.com/desktop/";
 const WEBSITE: &str = "https://app.example.com/";
@@ -148,13 +152,17 @@ fn only_the_attempt_that_opens_a_view_may_keep_it() {
 }
 
 #[test]
-fn a_new_view_the_store_refuses_or_ignores_ends_the_attempt_and_revokes() {
+fn a_new_view_the_store_refuses_or_ignores_is_dropped_and_its_grant_revoked() {
     for stored in [Stored::Refused, Stored::TimedOut] {
         let now = Now::current();
         let (sender, received) = mpsc::channel();
         let mut session = acquiring(now);
         session.acquired(1, Ok(revocable(now, &sender, "unconfirmed")), now);
-        assert_eq!(session.installed(1, stored, now, None), [], "{stored:?}");
+        assert_eq!(
+            session.installed(1, stored, now, None),
+            [Effect::Discard(1)],
+            "{stored:?}: no hidden view keeps the revoked grant's cookie"
+        );
         assert_eq!(
             session.waiting(),
             Some(Waiting::Ended(NOT_INSTALLED.into()))

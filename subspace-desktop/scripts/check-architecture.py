@@ -25,8 +25,9 @@ ALLOWED = {
 }
 FRAMEWORK = "subspace-framework"
 FRAMEWORK_ROOT = ROOT.parent / FRAMEWORK
-# Facade features for app builders only.
-HOST_FEATURES = {"host", "capture", "gpui-kit-text-patch"}
+# Facade features for app builders only. `copilot` chooses whether the app
+# builds and bundles the Copilot SDK, which is the product's build option.
+HOST_FEATURES = {"host", "capture", "copilot", "gpui-kit-text-patch"}
 # The Framework's patches, or this folder's own copies once
 # the two folders are separate repositories (docs/publishing.md in the
 # Framework).

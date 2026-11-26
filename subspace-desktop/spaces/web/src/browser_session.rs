@@ -41,6 +41,8 @@ use machine::{Here, Session, Waiting};
 use revocation::{QUIT_BOUND, REVOCATIONS, Revocations};
 
 type Acquire = Box<dyn FnOnce() -> Result<SessionGrant, SessionFailure> + Send>;
+/// The product's start route, read on the UI thread at each poll.
+type Route = Box<dyn Fn(&App) -> Option<String>>;
 
 /// The account a session belongs to. The product implements it for the
 /// shell's `AccountSession`, which a Space cannot name, with a newtype that
@@ -53,11 +55,12 @@ pub trait SessionAccount: Send + 'static {
 }
 
 /// What a product composes: the scope, how to read the account signed in
-/// now, and its trusted adapter, which turns the account into a grant off
-/// the UI thread.
+/// now, its trusted adapter, which turns the account into a grant off the
+/// UI thread, and optionally where the view starts.
 pub struct NativeSession {
     scope: SessionScope,
     source: Box<dyn Source>,
+    route: Route,
 }
 
 impl NativeSession {
@@ -72,7 +75,23 @@ impl NativeSession {
                 account,
                 acquire: Arc::new(acquire),
             }),
+            route: Box::new(|_| None),
         }
+    }
+
+    /// Starts the view where the app's own state says, rather than at the
+    /// scope's home. `route` reads the app on the UI thread each time the
+    /// Space polls, and gives a reference relative to the home, such as
+    /// `?team=blue` or `teams/blue`, or `None` for the home itself. When
+    /// its answer changes, a view showing a page goes to the new start at
+    /// once, and a session showing none starts there; Go to the start page
+    /// goes there too. A route that leaves the scope, or names the signal
+    /// or a reserved route, is logged and counts as the home.
+    // qual:api — a product follows its own state; the Space's tests cover it.
+    #[must_use]
+    pub fn with_start(mut self, route: impl Fn(&App) -> Option<String> + 'static) -> Self {
+        self.route = Box::new(route);
+        self
     }
 }
 
@@ -144,11 +163,14 @@ fn revoke_on_quit(cx: &mut App, revocations: &'static Revocations) {
 }
 
 /// The board's side of a session: the state machine, the product's
-/// account and adapter, the window that new views open in, and the view
-/// opened for an attempt until the session shows it.
+/// account, adapter and start route, the window that new views open in,
+/// and the view opened for an attempt until the session shows it.
 pub(crate) struct SessionPage {
     machine: Session,
     source: Box<dyn Source>,
+    route: Route,
+    /// The route's answer at the last poll.
+    routed: Option<String>,
     window: AnyWindowHandle,
     /// The view opened for an attempt, until the session shows it, closes
     /// or opens a newer one.
@@ -160,18 +182,29 @@ impl SessionPage {
         Self {
             machine: Session::new(session.scope, title),
             source: session.source,
+            route: session.route,
+            routed: None,
             window,
             staged: None,
         }
     }
 
-    /// Where the view starts: the scope's home, not the board's address,
-    /// with no app.
+    /// Where the view starts: the scope's home or the product's start
+    /// under it, not the board's address, with no app.
     pub(crate) fn start(&self) -> Start {
         Start {
-            url: self.machine.scope().home().to_owned(),
+            url: self.machine.start().to_owned(),
             app: None,
         }
+    }
+
+    /// The product's route, when its answer changed since the last poll.
+    fn moved_route(&mut self, cx: &App) -> Option<Option<String>> {
+        let route = (self.route)(cx);
+        (route != self.routed).then(|| {
+            self.routed.clone_from(&route);
+            route
+        })
     }
 
     /// Whether Reload means Retry.

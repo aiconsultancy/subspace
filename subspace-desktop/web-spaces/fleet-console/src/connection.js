@@ -159,6 +159,22 @@ const SAMPLE_REASONS = {
   },
 };
 
+/** What to check when the browser has no HTTP response from the Fleet API. */
+export function connectionHelp(endpoint) {
+  let host;
+  try {
+    host = new URL(endpoint).hostname.replace(/\.$/, "");
+  } catch {
+    host = "";
+  }
+  if (host === "localhost" || host === "[::1]" || /^127(?:\.\d+){3}$/.test(host) || /^\[::ffff:7f[\da-f]{2}:[\da-f]{1,4}\]$/.test(host)) {
+    return "Check that Stargate and any local VM or tunnel it uses are running.";
+  }
+  return "Check your network connection and connect to your organisation's private network if required. If you use Cloudflare One (WARP), refresh your Access session and complete any private-app sign-in.";
+}
+
+export const CORS_HELP = " If the address opens in your browser but this Space still cannot connect, check Stargate's api.corsOrigins.";
+
 /**
  * What the window says about a connection: a short pill label, its tone, and
  * a banner title and body with what to do. `banner` is null when all is well.
@@ -182,7 +198,7 @@ export function describeConnection(state, { endpoint = "", now = 0 } = {}) {
         tone: "yellow",
         banner: {
           title: "Lost the event stream",
-          body: `The connection to ${where} dropped. The map shows the last data received.${retryText}`,
+          body: `The connection to ${where} dropped. The map shows the last data received. ${state.httpStatus ? `Stargate answered ${state.httpStatus}. Check the fleet VM and Stargate's logs.` : connectionHelp(endpoint)}${retryText}`,
           retry: true,
         },
       };
@@ -217,7 +233,7 @@ export function describeConnection(state, { endpoint = "", now = 0 } = {}) {
               ? "Check the address, and that Stargate's api block is enabled and Stargate was restarted."
               : state.httpStatus
                 ? `Stargate answered ${state.httpStatus}. Check the fleet VM and Stargate's logs.`
-                : "Check that the fleet VM is running, your private network (Tailscale, tunnel or SSH tunnel) is up, and Stargate's api.corsOrigins allows this Space.") +
+                : connectionHelp(endpoint) + CORS_HELP) +
             retryText,
           retry: true,
         },

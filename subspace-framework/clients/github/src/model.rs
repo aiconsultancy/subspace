@@ -163,6 +163,26 @@ pub struct GhItemDetail {
     pub viewer_can_comment: bool,
     /// PRs.
     pub changed_files: Option<u32>,
+    /// Write eligibility comes from a live, account-specific GitHub read.
+    #[serde(skip)]
+    pub merge_target: Option<MergeTarget>,
+    #[serde(skip)]
+    pub viewer_approved: bool,
+}
+
+/// The head commit and merge method shown to the viewer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeTarget {
+    pub head_sha: String,
+    pub base_ref: String,
+    pub method: MergeMethod,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
 }
 
 /// `GET /api/gh/section`: up to 50 items, most recently updated first.

@@ -21,8 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 import fleet_records  # noqa: E402
-from github_policy import PolicyError, check_push, cli_permissions
-from network import rules
+import github_app
+from github_policy import PolicyError, check_push, cli_permissions, merge_repository
+from network import ip_address, rules
 import roles
 from roles import default_permissions
 import runtime
@@ -35,6 +36,24 @@ import workspaces
 # checks the real one.
 readable_without_credentials = runtime.readable_without_credentials
 runtime.readable_without_credentials = lambda url: True
+
+
+def stargate_team_problems(team):
+    """Stargate's own check of a crew team (src/coordination/crew/team.ts, from its release that lets a crew name
+    differ from its ID): crew IDs unique and none the captain's, captain or all; compared without case, a name is
+    no other member's name or ID, nor captain or all. The members it would refuse."""
+    problems, ids = [], {team["captain"]["id"], "captain", "all"}
+    for member in team["crew"]:
+        if member["id"] in ids:
+            problems.append(member["id"])
+        ids.add(member["id"])
+    members = [team["captain"], *team["crew"]]
+    owners = {"captain": -1, "all": -1, **{member["id"]: index for index, member in enumerate(members)}}
+    for index, member in enumerate(members):
+        name = member.get("name", "").strip().lower()
+        if name and owners.setdefault(name, index) != index:
+            problems.append(member.get("name"))
+    return problems
 
 
 def example_config():
@@ -67,6 +86,23 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertIn('oifname "lo" tcp dport 8317 meta skuid != { 0, 701, 702, 1700 } reject', result)
         self.assertIn('iifname != "lo" tcp dport { 8070, 8080, 8317 } reject', result)
 
+    def test_firewall_applies_private_egress_only_to_officers_before_dnat(self):
+        result = rules({"dashboard": 8070}, [1700], [701, 702, 900], 703,
+                       officers=[701, 702], dns={ip_address("10.0.0.53")},
+                       allowed={(ip_address("fd00::44"), 443, None), (ip_address("10.0.0.42"), 6697, 702)})
+        self.assertIn("type filter hook output priority -110; policy accept;", result)
+        self.assertIn("meta skuid { 701, 702 } jump officer_destinations", result)
+        reject = result.index("ip daddr { 10.0.0.0/8")
+        for allowance in ("ip daddr 10.0.0.53 tcp dport 53 return", "ip daddr 10.0.0.53 udp dport 53 return",
+                          "ip6 daddr fd00::44 tcp dport 443 return", "meta skuid 702 ip daddr 10.0.0.42 tcp dport 6697 return"):
+            self.assertLess(result.index(allowance), reject)
+        self.assertIn("ip6 daddr { fc00::/7, fe80::/10 } reject", result)
+        self.assertEqual(runtime.agent_egress(["git.example.com:443", "[fd00::44]:8443"]),
+                         [("git.example.com", 443), ("fd00::44", 8443)])
+        for destination in ("git.example.com", "git.example.com:0", "git.example.com:80/path", "fd00::44:8443"):
+            with self.subTest(destination), self.assertRaisesRegex(Invalid, "Invalid agent egress destination"):
+                runtime.agent_egress([destination])
+
     def test_github_high_level_and_api_policy(self):
         self.assertEqual(cli_permissions(["issue", "close", "12", "-R", "example/project"]), {"issues": "write"})
         self.assertEqual(cli_permissions(["api", "repos/example/project/pulls/12/files", "--paginate"]), {"pull_requests": "read"})
@@ -78,6 +114,48 @@ class FleetPolicyTests(unittest.TestCase):
         ):
             with self.subTest(args=args), self.assertRaises(PolicyError):
                 cli_permissions(args)
+
+    def test_captain_merge_is_bound_to_the_checkout_and_full_reviewed_head(self):
+        checkout = Path("/fleet/agents/orion/workspace/project")
+        policy = {"enabled": True, "contents": "write", "captainMergeCheckouts": {str(checkout): "example/project"}}
+        args = ["pr", "merge", "4", "--squash", "--match-head-commit", "a" * 40]
+        self.assertEqual(merge_repository(args, policy, checkout), "example/project")
+        for directory in (checkout.parent / "other", checkout.parent.parent / "worktrees/crew/project"):
+            with self.subTest(directory=directory), self.assertRaises(PolicyError):
+                merge_repository(args, policy, directory)
+        for override in ({"contents": "read"}, {"captainMergeCheckouts": {}}):
+            with self.subTest(override=override), self.assertRaises(PolicyError):
+                merge_repository(args, {**policy, **override}, checkout)
+        for invalid in (args[:-2], args[:-1] + ["abc"], args + ["--repo", "other/project"],
+                        args + ["--admin"], args + ["--auto"], args + ["--delete-branch"]):
+            with self.subTest(args=invalid), self.assertRaises(PolicyError):
+                merge_repository(invalid, policy, checkout)
+        with patch.object(Path, "cwd", return_value=checkout), patch.object(github_app, "active_policy", return_value=policy), \
+                patch.object(github_app, "installation_token", return_value="fixture-token") as mint, \
+                patch.object(github_app.os, "execve") as gh:
+            github_app.main(["gh", *args])
+        self.assertEqual(mint.call_args.args[1:], ({"contents": "write"}, ["project"]))
+        self.assertEqual(gh.call_args.args[1], ["gh", "api", "--method", "PUT", "repos/example/project/pulls/4/merge",
+                                                "-f", "sha=" + "a" * 40, "-f", "merge_method=squash"])
+
+    def test_merge_repository_selection_only_grants_write_capable_captains(self):
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["githubPolicy"] = {"captainMergeRepositories": ["EXAMPLE/PROJECT"]}
+        app = {"appId": 1, "installationId": 2, "clientId": "fixture-client", "botLogin": "fixture[bot]", "botId": 3}
+        config["captains"][0]["githubApp"] = app
+        cfg = validate(config, officer_secrets(), check_files=False)
+        rear, captain = cfg["members"]
+        self.assertNotIn("mergeCheckouts", rear)
+        self.assertEqual(captain["mergeCheckouts"], {"project": "example/project"})
+        command = "subspace-github gh pr merge 4 --squash --match-head-commit " + "a" * 40
+        self.assertEqual(fixture.opencode_decision(runtime.harness_permissions(cfg, captain), "shell", [command]), "allow")
+        self.assertEqual(fixture.opencode_decision(runtime.harness_permissions(cfg, rear), "shell", [command]), "deny")
+        app["contents"] = "read"
+        self.assertNotIn("mergeCheckouts", validate(config, officer_secrets(), check_files=False)["members"][1])
+        config["githubPolicy"]["captainMergeRepositories"] = ["example/library"]
+        with self.assertRaisesRegex(Invalid, "must name configured GitHub repositories"):
+            validate(config, officer_secrets(), check_files=False)
 
     def test_only_fast_forward_updates_pass_for_protected_branches(self):
         url = "https://github.com/example/project.git"
@@ -275,11 +353,30 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(backend["sessionID"], "ses_fixture")
         self.assertEqual((backend["agent"], backend["enforcePermissions"]), ("build", True))
         self.assertEqual(backend["permissions"][-len(runtime.CREW_GRANTS):], runtime.CREW_GRANTS)
+        self.assertEqual([rule["resource"] for rule in backend["permissions"]
+                          if rule["action"] == "stargate_model"],
+                         ["inspect", "effort", "get"])
+        self.assertEqual([variant["id"] for variant in
+                          engine["providers"]["openai-proxy"]["models"]["gpt-5.4"]["variants"]],
+                         ["low", "medium", "high", "xhigh"])
         self.assertEqual(engine["permissions"], captain["harness"]["permissions"])
         environment = saved["engine-orion"]["environment"]
         self.assertEqual(environment["OPENCODE_AUTHORIZATION"], next(iter(headers.values())))
         self.assertIn("fleet-crew", documents["skills"])
         self.assertIn("stargate_crew", documents["instructions"])
+
+    def test_operator_rules_can_restrict_the_captain_effort_grant(self):
+        config, secrets = example_config(), officer_secrets()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["harness"] = {"captain": {"extraPermissions": [
+            {"action": "stargate_model", "resource": "effort", "effect": "deny"},
+        ]}}
+        cfg = validate(config, secrets)
+        captain = cfg["members"][1]
+        rules = runtime.captain_permissions(cfg, captain)
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["inspect"]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["effort"]), "deny")
+        self.assertEqual(fixture.opencode_decision(rules, "stargate_model", ["switch"]), "deny")
 
     def test_officers_reach_the_api_agent_listener_as_themselves(self):
         config = example_config()
@@ -305,10 +402,10 @@ class FleetPolicyTests(unittest.TestCase):
                     cfg, person, home, home / "workspace/project", 4097, b"seed", documents, "ses_fixture")
             engine = saved[f"opencode-{person['id']}"]
             # The officer, and crew sessions on its server, act as the officer's agent record, with no token.
-            self.assertEqual(engine["mcp"], {"servers": {"subspace": {
+            self.assertEqual(engine["mcp"]["servers"]["subspace"], {
                 "type": "remote", "url": "http://127.0.0.1:3001/mcp",
                 "headers": {"X-Subspace-Agent": person["account"]},
-            }}})
+            })
             self.assertNotIn("Authorization", json.dumps(engine["mcp"]))
             self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
             self.assertIn(runtime.SUBSPACE_MCP_GRANT, backend["permissions"])
@@ -341,7 +438,8 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertNotIn("effort", backend)
         self.assertEqual(runtime.claude_backend(cfg, {**person, "harness": {**person["harness"], "effort": "xhigh"}},
                                                 Path("/workspace"), documents)["effort"], "xhigh")
-        self.assertEqual(backend["mcpServers"], {"subspace": {
+        self.assertIn("subspace_files", backend["mcpServers"])
+        self.assertEqual({"subspace": backend["mcpServers"]["subspace"]}, {"subspace": {
             "type": "http", "url": "http://127.0.0.1:3001/mcp",
             "headersHelper": f"/opt/subspace-fleet/lib/runtime.py agent-header {person['account']}",
         }})
@@ -577,7 +675,9 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(cfg["stargate"]["ref"], runtime.STARGATE_REF)
 
     def test_toolchain_versions_are_data(self):
-        self.assertEqual(toolchain_config({"node": False, "go": "1.26.1"}), {"go": "1.26.1"})
+        # More in toolchains_test.py.
+        self.assertEqual(toolchain_config({"node": False, "go": "1.26.1"}),
+                         {"go": {"versions": ["1.26.1"], "install": "shared", "options": {}}})
         with self.assertRaises(Invalid):
             toolchain_config({"rust": "latest\n[env]"})
 
@@ -752,6 +852,16 @@ class CaptainPolicyTests(unittest.TestCase):
         self.assertEqual(fixture.opencode_decision(rules, "read", ["deploy/.env"]), "deny")
         self.assertEqual(fixture.opencode_decision(rules, "external_directory", ["/tmp/*"]), "allow")
 
+    def test_the_rear_admiral_can_render_a_diagram_from_standard_input(self):
+        config = captain_fleet()
+        rear = config["members"][0]
+        rules = rear["harness"]["permissions"]
+        command = 'mermaid-render - "${TMPDIR:-/tmp}/diagram.png"'
+        instructions = roles.role_documents(config, rear, Path("/references/example"), Path("/example"))["instructions"]
+        self.assertIn(command, instructions)
+        self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "edit", ["diagram.mmd"]), "deny")
+
     def test_a_standard_captain_keeps_its_policy_and_reads_its_crews_worktrees(self):
         cfg = captain_fleet()
         self.assertEqual(cfg["captainTools"], "standard")
@@ -761,6 +871,9 @@ class CaptainPolicyTests(unittest.TestCase):
         self.assertEqual(fixture.opencode_decision(rules, "edit", ["src/main.ts"]), "allow")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git add -A", "git commit -m wip"]), "allow")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git push origin HEAD"]), "deny")
+        for command in ("mermaid-render diagram.mmd diagram.png", "playwright screenshot URL page.png"):
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow")
+        self.assertEqual(fixture.opencode_decision(rules, "shell", ["playwright test"]), "deny")
         self.assertEqual(fixture.opencode_decision(rules, "shell", ["git status", "head -20"]), "deny")
         # Its crew's worktrees, and nothing else outside its workspace (the read tool and a shell's directory).
         for directory in (f"{self.worktrees}/claude-1/project/*", f"{self.worktrees}/codex-2/project/src/*"):
@@ -1234,7 +1347,7 @@ class AgentDispatchTests(unittest.TestCase):
         with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
                 patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine-orion.service"):
             _, backend, _, _ = runtime.render_engine(cfg, captain, home, home / "workspace/project", 4097, b"seed",
-                                                     documents, "ses_captain", answers_offers=True)
+                                                     documents, "ses_captain", fleet_tools=True)
             crew_plugin, fleet_plugin = saved["opencode-orion"]["plugins"]
             self.assertEqual(fleet_plugin, {
                 "package": f"/opt/subspace-fleet/src/stargate-{runtime.STARGATE_REF}/src/fleet",
@@ -1248,6 +1361,11 @@ class AgentDispatchTests(unittest.TestCase):
                                                      "ses_rear")
             self.assertEqual(backend["sessionID"], "ses_rear")
             self.assertNotIn("plugins", saved["opencode-atlas"])
+            self.assertNotIn("repo_refresh", saved["opencode-orion"].get("mcp", {}).get("servers", {}))
+            tool = saved["opencode-atlas"]["mcp"]["servers"]["repo_refresh"]
+            self.assertEqual(tool["command"], runtime.repository_refresh_command())
+            self.assertIn({"action": "repo_refresh_refresh_origin", "resource": "*", "effect": "allow"},
+                          backend["permissions"])
         runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
 
     def test_the_delegate_policy_and_extra_permissions_meet_stargates_fleet_tool_check(self):
@@ -1495,6 +1613,19 @@ class OfficerSlackTests(unittest.TestCase):
         self.assertIn("goal of that Slack thread", captain)
         self.assertNotIn("s=slack", rear)
         self.assertNotIn("$", captain)
+
+    def test_shared_chat_upload_guidance_reaches_officers_and_crew(self):
+        cfg = validate(self.config, self.secrets)
+        home = Path("/var/lib/subspace-fleet/agents/example-captain")
+        rear, captain = (roles.role_documents(cfg, person, Path("/references/example"), home)
+                         for person in cfg["members"])
+        for documents, role in ((rear, "rear-admiral"), (captain, "captain")):
+            for content in (documents["instructions"], documents["skills"][f"fleet-{role}"]):
+                self.assertIn("UPL-…", content)
+                self.assertIn("subspace_read_chat_upload", content)
+        self.assertTrue(captain["crew"])
+        for prompt in (*captain["crew"].values(), captain["skills"]["fleet-crew"]):
+            self.assertIn("subspace_read_chat_upload", prompt)
 
     def test_a_workspace_rooted_captain_keeps_its_slack_guidance_beside_the_workspace_instructions(self):
         # The workspace AGENTS.md is the project file OpenCode loads in the workspace; the role instructions with
@@ -1871,6 +2002,7 @@ class PlainNamesTests(unittest.TestCase):
         runtime.check_new_crew_named(validate(*fixture_legacy()), {})
 
     def test_an_installed_crew_member_keeps_its_id_under_a_new_name_only_where_stargate_allows(self):
+        self.config["usageGuard"] = {"enabled": False}
         self.config["captains"][0]["crewNames"] = {"claude-1": "Rigel"}
         self.config["captains"][0]["crewIds"] = {"claude-1": "claude-1"}
         cfg = validate(self.config, self.secrets)
@@ -1881,9 +2013,86 @@ class PlainNamesTests(unittest.TestCase):
             runtime.check_crew_ids(cfg)
         with patch.object(runtime, "stargate_crew_names_free", return_value=True):
             runtime.check_crew_ids(cfg)
+        # The dry run cannot read a Stargate that is not checked out yet (a release newer than the installed one):
+        # it says the install checks it, and refuses only a checkout that is there and has the rule.
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            paths = [work / "fleet.json", work / "fleet.secrets.json"]
+            for path, value in zip(paths, (self.config, self.secrets), strict=True):
+                path.write_text(json.dumps(value))
+                path.chmod(0o600)
+            ref = validate(self.config, self.secrets)["stargate"]["ref"]
+
+            def plan():
+                output = io.StringIO()
+                with patch.object(runtime, "ETC", work / "etc"), patch.object(runtime, "STATE", work / "state"), \
+                        patch.object(runtime, "SESSIONS", work / "none"), patch.object(runtime, "APP", work / "app"), \
+                        patch.object(runtime, "check_new_crew_named"), contextlib.redirect_stdout(output):
+                    runtime.main(["plan", *map(str, paths), "", "false"])
+                return output.getvalue()
+
+            self.assertIn("is not checked out here yet: the install checks", plan())
+            team = work / "app/src" / f"stargate-{ref}" / "src/coordination/crew/team.ts"
+            team.parent.mkdir(parents=True)
+            team.write_text("throw new Error('Agent IDs must match assigned names')\n")
+            with self.assertRaisesRegex(Invalid, "requires a crew member's name to match its ID"):
+                plan()
+            team.write_text("export {}\n")
+            self.assertNotIn("is not checked out here yet", plan())
         self.config["captains"][0]["crewIds"] = {"claude-9": "x"}
         with self.assertRaisesRegex(Invalid, "crewIds may give only enabled crew slots"):
             validate(self.config, self.secrets)
+
+    def test_installed_crew_keep_their_ids_under_names_unique_in_the_fleet(self):
+        # Three ships whose crew were installed under their slot names, so that every ship has a claude-1, then
+        # named by rename-officers --crew-names: each member keeps its installed ID (crewIds) under its new name.
+        # It is the names that are unique in the fleet; an ID is unique only in its captain's crew.
+        slots = ["claude-1", "claude-2", "codex-1", "codex-2"]
+        crews = {"draco": ["Kestrel", "Heron", "Wren", "Finch"], "cygnus": ["Osprey", "Plover", "Linnet", "Swift"],
+                 "pavo": ["Merlin", "Egret", "Robin", "Siskin"]}
+        self.config["captains"] = [{"id": captain, "name": captain.title(),
+                                    "crewNames": dict(zip(slots, names, strict=True)),
+                                    "crewIds": {slot: slot for slot in slots}} for captain, names in crews.items()]
+        secrets = {**self.secrets, "ircPasswords": {name: "fixture-password" for name in ("atlas", *crews)}}
+        cfg = validate(self.config, secrets)
+        for person, names in zip(cfg["members"][1:], crews.values(), strict=True):
+            self.assertEqual([(worker["id"], worker["name"]) for worker in person["crew"]],
+                             list(zip(slots, names, strict=True)))
+            # What the fleet renders keys every crew member by its ID and shows its name: Stargate's team, the
+            # worktrees, the native agents, the captain's roster and the crew member's own instructions.
+            home = Path("/var/lib/subspace-fleet/agents") / person["id"]
+            options = runtime.crew_options(cfg, person, home, 4097, "ses_fixture")
+            team = options["team"]
+            self.assertEqual([(member["id"], member["name"], member["agent"]) for member in team["crew"]],
+                             [(slot, name, f"{person['id']}-crew-{slot}") for slot, name in zip(slots, names)])
+            self.assertEqual(stargate_team_problems(team), [])
+            clash = [dict(team["crew"][0], name="codex-1"), *team["crew"][1:]]
+            self.assertEqual(stargate_team_problems({**team, "crew": clash}), ["codex-1"])
+            self.assertEqual(options["worktrees"], {slot: f"{home}/worktrees/{slot}/project" for slot in slots})
+            documents = roles.role_documents(cfg, person, None, home)
+            self.assertIn(f"- {names[0]} (`claude-1`, Claude family, slot claude-1", documents["instructions"])
+            self.assertEqual(sorted(documents["crew"]), slots)
+            self.assertIn(names[0], documents["crew"]["claude-1"])
+        self.assertIn("Captain Pavo: pavo, channel #pavo\n    crew: Merlin (Claude 1, claude-sonnet-5-5, ID claude-1); ",
+                      "\n".join(runtime.names_plan(cfg)))
+        # A name on two ships is refused, naming both, as is an officer's name.
+        for captain, slot, name, message in (
+                (2, "codex-2", "heron", "Crew member heron of captain pavo has the same name as captain draco's "
+                                        "Heron, ignoring case"),
+                (1, "claude-1", "Pavo", "Crew member Pavo of captain cygnus has an officer's name \\(pavo\\)")):
+            config = json.loads(json.dumps(self.config))
+            config["captains"][captain]["crewNames"][slot] = name
+            with self.subTest(name), self.assertRaisesRegex(Invalid, message):
+                validate(config, secrets)
+        # In one captain's crew a name is no other member's name or ID, as Stargate's team requires.
+        for name, message in (("Codex 1", "Codex 1 \\(claude-1\\) has the same name as the ID of Wren \\(codex-1\\)"),
+                              ("heron", "Heron \\(claude-2\\) has the same name as heron \\(claude-1\\)"),
+                              ("Draco", "Draco \\(claude-1\\) has the same name as captain draco's ID"),
+                              ("All", "All \\(claude-1\\) has the same name as the alias all")):
+            config = json.loads(json.dumps(self.config))
+            config["captains"][0]["crewNames"]["claude-1"] = name
+            with self.subTest(name), self.assertRaisesRegex(Invalid, f"Captain draco's crew member {message}"):
+                validate(config, secrets)
 
     def test_records_accept_either_standard_ship_channel(self):
         cfg = validate(self.config, self.secrets)
@@ -2062,8 +2271,8 @@ class OfficerModelTests(unittest.TestCase):
 
     def test_an_effort_the_harness_cannot_give_is_refused(self):
         cases = [
-            ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "xhigh"}},
-             "'xhigh' is not available for gpt-5.4 with the opencode harness, which offers low, medium, high"),
+            ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "max"}},
+             "'max' is not available for gpt-5.4 with the opencode harness, which offers low, medium, high, xhigh"),
             ({"captain": {"model": "claude-sonnet-4-6", "effort": "xhigh"}},
              "offers low, medium, high, max"),
             ({"captain": {"model": "claude-sonnet-4-5", "effort": "low"}}, "offers high, max"),
@@ -2084,6 +2293,18 @@ class OfficerModelTests(unittest.TestCase):
             with self.subTest(model):
                 self.assertEqual(self.harnesses(self.config({"captain": {"model": model, "effort": effort}}))["orion"],
                                  ("claude", model, effort))
+
+    def test_codex_extra_high_is_explicit_for_supported_models(self):
+        for model in ("gpt-5.4", "gpt-6.2-sol"):
+            with self.subTest(model):
+                cfg = validate(self.config({"captain": {"model": model, "effort": "xhigh"}}),
+                               officer_secrets("example-vega"))
+                self.assertEqual(cfg["members"][1]["harness"]["effort"], "xhigh")
+                catalogue = runtime.model_provider(cfg, "codex", [model, "custom-review-model"])["models"]
+                self.assertEqual(catalogue[model]["variants"],
+                                 [{"id": effort, "settings": {"reasoningEffort": effort}}
+                                  for effort in ("low", "medium", "high", "xhigh")])
+                self.assertNotIn("variants", catalogue["custom-review-model"])
 
     def test_officers_whose_model_no_signed_in_account_serves_stop_both_runs(self):
         temporary = tempfile.TemporaryDirectory()
@@ -2218,7 +2439,7 @@ class IrcCertificateTests(unittest.TestCase):
         secrets = {**officer_secrets(), "ircOperatorPassword": "fixture-operator-password"}
         self.assertEqual(validate(self.config, secrets)["irc"]["auth"], "password")
         self.config["irc"]["auth"] = "certificate"
-        with self.assertRaisesRegex(Invalid, "needs a remote IRC server.*only over TLS"):
+        with self.assertRaisesRegex(Invalid, "need TLS"):
             validate(self.config, secrets)
 
     def test_the_gateway_registration_names_the_bundle_and_no_password(self):

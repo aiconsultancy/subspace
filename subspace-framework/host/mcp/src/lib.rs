@@ -17,11 +17,11 @@ use options::{Parsed, TOKEN_VARIABLE};
 use rmcp::ServiceExt;
 use rmcp::service::ServerInitializeError;
 use std::process::ExitCode;
-use subspace_agent_tools::{BoardDoc, Catalog, ToolEnvironment, ToolProvider};
+use subspace_agent_tools::{BoardDoc, ToolEnvironment, ToolProvider};
 use subspace_product::ProductContext;
 
 pub use chat::ChatTools;
-pub use grouped::{GroupTool, GroupedCatalog, ServedCatalog, ToolGroup};
+pub use grouped::{GroupKind, GroupTool, GroupedCatalog, ServedCatalog, ToolGroup};
 pub use host::{Host, HostConfig};
 pub use http::{BindError, ENDPOINT, Endpoint};
 pub use options::{Attach, HttpOptions, Options, bind_address};
@@ -159,24 +159,25 @@ fn runtime() -> Result<tokio::runtime::Runtime, String> {
         .map_err(|error| format!("Cannot start the MCP runtime: {error}"))
 }
 
-/// The unfiltered board-command catalog. MCP hosts use `GroupedCatalog` instead,
-/// so MCP switches do not remove the product's generated CLI commands.
+/// The unfiltered board-command catalog, grouped by the board or Application
+/// group that provides each tool. MCP hosts build `GroupedCatalog` with their
+/// settings instead, so MCP switches do not remove the product's generated CLI
+/// commands.
 pub fn served_catalog(
     boards: &[Board],
     requested: &[String],
     environment: &ToolEnvironment,
-) -> Result<Catalog, String> {
+) -> Result<GroupedCatalog, String> {
     let grouped = GroupedCatalog::build(
         boards,
         requested,
         environment,
         &subspace_core::config::McpSettings::default(),
     )?;
-    let catalog = grouped.served_catalog().tools().clone();
-    if catalog.is_empty() {
+    if grouped.served_catalog().tools().is_empty() {
         Err("The selected boards advertise no agent tools.".into())
     } else {
-        Ok(catalog)
+        Ok(grouped)
     }
 }
 
@@ -302,8 +303,10 @@ mod tests {
     fn names(boards: &[Board], requested: &[&str]) -> Result<Vec<&'static str>, String> {
         let environment = subspace_agent_tools::test_support::environment(Default::default());
         let requested: Vec<String> = requested.iter().map(|id| (*id).to_owned()).collect();
-        served_catalog(boards, &requested, &environment).map(|catalog| {
-            catalog
+        served_catalog(boards, &requested, &environment).map(|grouped| {
+            grouped
+                .served_catalog()
+                .tools()
                 .tools()
                 .iter()
                 .map(|tool| tool.spec().name)
@@ -382,6 +385,8 @@ mod tests {
         assert!(
             served_catalog(&boards, &[], &environment)
                 .unwrap()
+                .served_catalog()
+                .tools()
                 .get("github_read")
                 .is_some()
         );

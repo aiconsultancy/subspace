@@ -18,6 +18,7 @@ impl Command {
             Command::Input { buffer, .. }
             | Command::Say { buffer, .. }
             | Command::SendAll { buffer, .. }
+            | Command::SendAllTogether { buffer, .. }
             | Command::Part { buffer, .. }
             | Command::Forget { buffer }
             | Command::LoadHistory { buffer, .. }

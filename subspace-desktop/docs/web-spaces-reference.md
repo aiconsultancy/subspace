@@ -488,9 +488,10 @@ This section is for product builders. On macOS, a product can compose a
 web Space whose site is signed in with the account under
 **Settings › Account**, so the person signs in once. It is off unless a
 product composes it: no setting, manifest field or page script turns it
-on, and a build that does not compose it shows no trace of it. The in-app
-guide describes what the person sees in
-[Spaces signed in by the app](../spaces/web/help.md#spaces-signed-in-by-the-app).
+on, and a build that does not compose it has no setting, control or state
+for it. Only the in-app guide, which every build ships, mentions it, in
+[Spaces signed in by the app](../spaces/web/help.md#spaces-signed-in-by-the-app),
+which describes what the person sees in an app that includes one.
 
 The product supplies a trusted native adapter that exchanges the account
 for a session cookie the site issues, on the adapter's own HTTPS path. The
@@ -576,9 +577,10 @@ mod desk {
 | --- | --- |
 | `SessionScope::new(home)` | The address the view starts at: `https://`, a host, no credentials, query or fragment, and a path ending in `/`. The path is the prefix every page must sit under. |
 | `with_signal(route)` | A route under the home that the site sends the view to when it no longer accepts the session, such as `session/required`. |
-| `with_reserved(route)` | A route under the home, and everything under it, that the view never navigates to, such as the site's session endpoints. |
+| `with_reserved(route)` | A route under the home that the view never navigates to, such as the site's session endpoints, with the same route under a format suffix such as `.json`, and everything under either. |
 | `SessionAccount` | The account a session belongs to: its generation, which changes with another account, and whether it is still current. Implement it on a newtype around the shell's `AccountSession`. |
 | `NativeSession::new(scope, account, acquire)` | `account` reads the account signed in now, on the UI thread; `acquire` turns it into a grant, off the UI thread. |
+| `with_start(route)` | Optional. Where the view starts, from the app's own state: `route` reads the app on the UI thread and gives a reference relative to the home, such as `?team=blue` or `teams/blue`, or `None` for the home itself. See [A start that follows the app](#what-the-space-does). |
 | `SessionGrant::new(cookie, lifetime)` | The cookie and how long it lasts: at least `MIN_SESSION_LIFETIME` (4 minutes), or the Space refuses it, and at most `MAX_SESSION_LIFETIME` (24 hours). `with_revoke` ends it at the site; calling it again replaces the earlier revocation, which then never runs. |
 | `SessionCookie::new(name, value)` | The cookie's name and opaque value. `with_path` narrows its path within the scope: the scope's path, with its final `/`, or a route under it. |
 | `SessionFailure::action` or `temporary` | Why an attempt failed, in words for the person. A temporary failure of a renewal is retried. Never put a credential in it. |
@@ -608,12 +610,31 @@ mod desk {
   with credentials, empty or dot segments, a backslash or `;`, and a
   percent-escape of an unreserved character, a separator, `%`, a control
   character or anything outside ASCII. Reserved routes and the signal
-  match ignoring ASCII case. Reserved routes limit navigations only: a page
-  in the scope can still `fetch` them, and the request carries the cookie.
+  match ignoring ASCII case, and a reserved route such as `session` also
+  covers `session.json` or `session.html`, which many web frameworks send
+  to the same handler. Reserved routes limit navigations only: a page in
+  the scope can still `fetch` them, and the request carries the cookie.
   A pop-up never opens a window; a web page it asks for opens in the
   default browser, without the session.
 - **Sign-in required.** While `account` returns no current account, the
   Space shows `Sign-in required` and starts no attempt.
+- **A start that follows the app.** With `with_start`, the Space reads the
+  route at every poll, ten times a second, so keep it to a lookup. When its
+  answer changes, a view showing a page loads the new start at once, even
+  while the session renews, and a session that shows no page yet, or that
+  ended, starts there: **Retry** opens the start rather than the page the
+  view showed. While the site refuses the session, after its signal, the
+  view goes to the new start once a renewal succeeds. Until the session
+  next renews or ends, the signal's return and **Retry** never go back to
+  the page the move left, where a load the site sent to its signal leaves
+  the view. **Go to the start page** goes there too. The Space joins the
+  route to the home as a browser would. A route's path must be a plain
+  path, as every page in the scope must: ASCII only, with no `;`, `..`,
+  `//` or backslash, and no percent-escape the scope refuses. Carry other
+  names, such as one with accents, in the query, percent-encoded. Never put
+  a credential in a route: the address reaches the site and its logs. A
+  route that leaves the scope, or names the signal or a reserved route, is
+  the product's mistake: the Space logs it and starts at the home.
 - **Renewal.** The Space acquires a new grant two minutes before the current
   one ends, or at half its life if that is shorter, and installs it in the
   same view; the old grant is then revoked, so each grant must be a session
@@ -632,6 +653,9 @@ mod desk {
   renewing has failed for good, the Space closes the view and says the
   session ended, with **Retry**. While a failed renewal waits 30 seconds to
   try again, a signal waits with it rather than call the adapter at once.
+  A signal that waited, or whose own renewal failed and is tried again,
+  still loads the page again, and starts the 30 seconds, once a renewal
+  succeeds.
 - **Time limits.** An attempt that takes more than 60 seconds counts as a
   temporary failure, so **Retry** always works, and a grant it returns
   later is revoked. The Space cannot stop the adapter, so a hung adapter

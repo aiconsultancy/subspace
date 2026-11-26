@@ -11,6 +11,14 @@ ACP also need their experiment enabled in **Settings > Experiments**.
 Copilot uses the official Rust Copilot SDK. The engines keep separate
 histories. See [Pi chat](pi-chat.md) for its setup and tool permissions.
 
+Copilot is only in an app built with the Framework's `copilot` feature. In
+a build without it, **Settings > Chat** offers no Copilot engine and no
+approve-all default, and nothing offers a Copilot sign-in. A config file that
+still selects Copilot (`"chat": {"engine": "copilot"}`) is kept as it is:
+Chat stays off and says that this build does not include Copilot, Save in
+Settings writes the Copilot choice back unless you pick another engine, and
+a build with Copilot starts it again.
+
 The toolbar's **Chat** button, the chat header and the status bar show the
 selected engine's mark: the Copilot mark, the Lucide Bot for Pi, or the ACP
 agent's own mark (OpenAI for Codex, Claude, OpenCode, Gemini, or the Lucide
@@ -80,6 +88,11 @@ one.
 The tab is not saved in `copilot-tabs-<login>.json`, and closing it stops the
 transient session. A connect failure is shown in the tab and names the task's
 session page and the Copilot Agents log.
+
+Only Copilot replays a cloud session. With Pi or an ACP agent, **Open in chat**
+leaves the chat pane as it is and a toast says to choose Copilot in
+**Settings > Chat**. In a build without Copilot the toast says that the build
+does not include it, with Chat off too.
 
 Subspace saves the open tabs of each account in `copilot-tabs-<login>.json` beside
 `state.json`, and reopens them at the next start with their history. A tab that has

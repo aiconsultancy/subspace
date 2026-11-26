@@ -112,6 +112,10 @@ control characters, a leading colon and the single value `*`. Names start
 with a lower-case ASCII letter and can contain lower-case letters, digits,
 underscores and hyphens, up to 32 characters. Ergo reserves its service names
 and the `guest-*` pattern. Keep the operator name separate from the seed list.
+For a certificate-only account, replace `password` with `fingerprint`, a
+distinct 64-character lower-case SHA-256 certificate fingerprint. Configure
+the operator credentials so startup can bind it through NickServ. The IRC
+client uses TLS and SASL EXTERNAL with the corresponding certificate.
 Startup verifies existing seed credentials before adding
 missing accounts. To rotate a password, first change it in Ergo via
 `NickServ PASSWD`, then update the seed and affected clients before recreating

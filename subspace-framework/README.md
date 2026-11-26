@@ -21,8 +21,9 @@ Status: early (0.1). The API will change between minor versions.
 | Feature | Modules | For |
 | --- | --- | --- |
 | `space` (default) | `core`, `agent_model`, `agent_tools`, `charts`, `contracts`, `search`, `web`, `github_auth`, `account`, `dashboard`, `lucide`, `client_github` | Spaces and clients |
-| `agent` | `agent` | Spaces that run the chat runtime directly |
+| `agent` | `agent`, with the Pi and ACP chat engines | Spaces that run the chat runtime directly |
 | `host` | `shell`, `board_command`, `chat`, `mcp`, `search_ui`, `update`, `entra_auth`, `workos_auth` (implies `space` and `agent`) | App binaries only |
+| `copilot` | the Copilot chat engine in `agent`, through the Copilot SDK (implies `agent`) | App binaries that offer Copilot chat |
 | `report-issue` | `report_issue`, and **Report issue** in the shell (implies `host`) | Apps that take issue reports into their GitHub repository |
 | `search-onnx` | `search_onnx` | Local ONNX reranking for full-text search |
 | `component-gallery` | `component_gallery` | Apps that include the component catalogue Space |
@@ -42,6 +43,15 @@ gpui-base = { path = "vendor/gpui-base" }
 
 Leave the feature off in docs.rs builds. Reserve `--all-features` for
 workspaces with the override.
+
+`copilot` is off unless the app turns it on. The Copilot SDK's build script
+downloads the Copilot CLI and its runtime, and the binary embeds both: about
+240 MB on macOS ARM64. Without it, Settings > Chat offers Off, Pi and ACP
+agent; the shell shows no Copilot sign-in, approve-all default or Copilot
+notification heading; and a config file that selects Copilot keeps that
+choice while the chat pane stays off and says why
+(`subspace_agent::COPILOT_UNAVAILABLE`). `subspace_chat::COPILOT_BUILT_IN`
+tells the shell which build it is.
 
 `product` (the GPUI-free product descriptor types) is always present, so
 `default-features = false` gives a fast build for packaging helpers.
@@ -123,6 +133,7 @@ fn main() -> ExitCode {
         credits: Vec::new(),
         themes: Vec::new(),
         default_theme: None,
+        command_mount: Default::default(),
         boards: vec![BoardDescriptor {
             id: "hello".into(),
             aliases: Vec::new(),
@@ -133,7 +144,9 @@ fn main() -> ExitCode {
     let build = ProductBuild {
         // A native account from an identity provider; see Accounts below.
         account: None,
+        pre_startup: None,
         descriptor,
+        product_themes: &[],
         // Prefixes window titles and About, such as an organisation's name.
         display_name_prefix: None,
         version: env!("CARGO_PKG_VERSION"),
@@ -219,7 +232,7 @@ gpui-pre-platform = { opt-level = 3 }
   secondary clicks. The patch also fixes stale selection after a missed
   mouse release.
 - **Rust** 1.99 or newer (edition 2024).
-- **Build-time downloads.** With `host` or `agent`, `github-copilot-sdk`
+- **Build-time downloads.** With `copilot`, `github-copilot-sdk`
   downloads the Copilot CLI it bundles; set `COPILOT_SKIP_CLI_DOWNLOAD=1` to
   build without it (chat then needs a `copilot` on `PATH`). With
   `search-onnx`, `ort` downloads the ONNX Runtime; set `ORT_LIB_LOCATION` to
@@ -319,7 +332,7 @@ services/search-onnx         subspace-search-onnx     optional local ONNX rerank
 services/web                 subspace-web             bounded web research
 board-kit/dashboard          subspace-dashboard       the Dashboard trait, shared widgets and design tokens
 board-kit/lucide             subspace-lucide          shared interface icons
-runtimes/agent               subspace-agent           Copilot, Pi and ACP chat runtimes
+runtimes/agent               subspace-agent           Pi and ACP chat runtimes, and Copilot with `copilot`
 host/app                     subspace-shell           the shared window, toolbar, switcher, palette, help, Settings and themes
 host/board-command           subspace-board-command   headless board commands
 host/chat                    subspace-chat            the app-wide chat panel

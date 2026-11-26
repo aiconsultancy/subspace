@@ -230,7 +230,19 @@ impl Github {
             .children(
                 peek::footer_actions(allowed)
                     .into_iter()
-                    .map(|action| self.item_action_button(action, "top", &on)),
+                    .map(|action| self.item_action_button(action, "top", allowed.approved, &on)),
+            )
+            .children(
+                (self.list.open_row().is_none())
+                    .then(|| {
+                        crate::merge_pull_request::button(
+                            self,
+                            item,
+                            allowed.merge_is_primary(),
+                            cx,
+                        )
+                    })
+                    .flatten(),
             )
             .into_any_element()
     }
@@ -241,9 +253,10 @@ impl Github {
         &self,
         action: ItemAction,
         place: &'static str,
+        approved: bool,
         on: &OnAction,
     ) -> AnyElement {
-        let look = peek::look(action);
+        let look = peek::look(action, approved);
         let on = on.clone();
         let panel_action = look.action;
         let button = action_button(

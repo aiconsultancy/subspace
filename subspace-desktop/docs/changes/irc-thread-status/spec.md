@@ -110,11 +110,11 @@ when the server vouches for its sender. Every condition must hold:
 1. **A request Channels knows.** The buffer holds the line whose `msgid` the
    notice's `+draft/reply` names, and it is a `PRIVMSG` or action (not a
    notice). In a private conversation it is our own message.
-2. **The ship that request asks.** In a channel, the request's first word
-   addresses one nick: `nick:`, `nick,` or `@nick`, the forms the composer
-   completes. In a private conversation it is the conversation's partner.
-   A request that addresses no one, or only further on in its text, has no
-   expected ship. Nor does a self-addressed request: one whose sender's nick
+2. **The ship that request asks.** A leading `@nick`, `nick:` or `nick,`
+   addresses a channel request directly. A distinct `@nick` immediately after an
+   introductory comma also addresses the request, as in "Thanks, @pilot".
+   Other channel requests can use one distinct `@nick` outside a URL.
+   In a private conversation it is the conversation's partner. A self-addressed request has no expected ship: its sender's nick
    is the addressed nick, or whose sender's `account` tag, when it has one,
    is the addressed nick (compared case-insensitively in ASCII). It is not a
    request, so a member cannot fold their own tagged notices, from this nick
@@ -233,8 +233,8 @@ characters with an ellipsis (`thread_status::model::agent_name`).
   and stored (see **Endings are stored** under Trust), so it holds after the
   notice is dropped by the line cap, after a restart, and when a partial
   or Search reload brings back earlier progress without it. A final
-  reply without a reply tag in the main room, or any untagged or `PRIVMSG`
-  reply, clears nothing.
+  answer links to its thread when Stargate supplies the reply tag, and the
+  completion notice settles its status.
 - **Stale.** The line shows the last known stage with `Last update HH:MM`
   and a **Stale** pill when the notice carried `,disconnected`, while the
   network is not connected, or when the notice was already held when the
@@ -290,9 +290,8 @@ earlier behaviour in which the line disappeared when the request ended.
 
 ## Limits
 
-- Requests that do not address the ship in their first word, such as
-  messages in a channel where Stargate wakes on every human message, fold
-  nothing: Channels has no expected account for them.
+- Requests without an identifiable addressee, such as unaddressed messages
+  in a channel where Stargate wakes on every human message, fold no notices.
 - An agent whose account is not named after its nick gets no status lines
   on servers other than the fleet's: its progress stays as ordinary
   notices. The owner accepts this.

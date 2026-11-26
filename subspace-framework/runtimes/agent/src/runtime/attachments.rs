@@ -1,6 +1,7 @@
 use super::chat::{Chat, Env};
+use super::prompts::prepare_prompt;
 use super::session::{AccessError, check_access_mode};
-use super::startup::{delivery_mode, prepare_prompt};
+use super::startup::delivery_mode;
 use super::{ChatEvent, ContextRef, Event};
 use crate::ImageAttachment;
 use base64::Engine as _;

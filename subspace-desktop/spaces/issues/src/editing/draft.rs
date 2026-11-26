@@ -1,11 +1,11 @@
 //! Retained issue draft construction and projections.
 use super::target::{chosen_project, editable_detail};
 use super::{
-    DESCRIPTION_MAX_ROWS, DESCRIPTION_MIN_ROWS, IssueDetail, IssueEditor, IssueWriteScope, Issues,
-    Phase, Properties, TextValues, input, input_changed,
+    DESCRIPTION_MARKDOWN, IssueDetail, IssueEditor, IssueWriteScope, Issues, Phase, Properties,
+    TextValues, input, input_changed,
 };
-use gpui_kit::component::input::{InputEvent, TextareaState};
-use gpui_kit::{App, AppContext as _, Context, Window};
+use gpui_kit::component::input::{EditorState, InputEvent};
+use gpui_kit::{App, AppContext as _, Context, Entity, ScrollHandle, Window};
 use std::collections::HashMap;
 use subspace_api_client::{
     hub::HubSnapshot,
@@ -55,13 +55,7 @@ impl IssueEditor {
         );
         let due = input(&initial.due, "YYYY-MM-DD", window, cx);
         let parent = input(&initial.parent, "Issue identifier, e.g. SUB-42", window, cx);
-        let description = cx.new(|cx| {
-            let mut state =
-                TextareaState::new(window, cx).placeholder("Write a Markdown description");
-            state.set_auto_grow(DESCRIPTION_MIN_ROWS, DESCRIPTION_MAX_ROWS, cx);
-            state.set_value(initial.description, window, cx);
-            state
-        });
+        let description = description_input(initial.description, window, cx);
         let mut subscriptions: Vec<_> = [&title, &summary, &due, &parent]
             .into_iter()
             .map(|state| cx.subscribe_in(state, window, input_changed))
@@ -84,6 +78,7 @@ impl IssueEditor {
             summary,
             summary_validation: false,
             description,
+            scroll: ScrollHandle::new(),
             due,
             parent,
             phase: Phase::default(),
@@ -147,6 +142,10 @@ impl IssueEditor {
             )
     }
 
+    pub(super) fn controls_locked(&self) -> bool {
+        self.frozen() || self.discard
+    }
+
     pub(super) fn changes(&self, cx: &App) -> IssueChanges {
         let mut changes = IssueChanges::default();
         TextValues::read(self, cx).collect(
@@ -163,4 +162,22 @@ impl IssueEditor {
         let before = TextValues::from_detail(self.basis.as_deref());
         text != before || self.properties.has_edits()
     }
+}
+
+fn description_input(
+    value: String,
+    window: &mut Window,
+    cx: &mut Context<Issues>,
+) -> Entity<EditorState> {
+    cx.new(|cx| {
+        EditorState::new(window, cx)
+            .language(DESCRIPTION_MARKDOWN)
+            .line_number(false)
+            .folding(false)
+            .indent_guides(false)
+            .auto_close(false)
+            .smart_indent(false)
+            .placeholder("Write an issue description")
+            .default_value(value)
+    })
 }

@@ -763,7 +763,7 @@ impl PiChat {
         if self.model.is_none() {
             return Err("Pi has no selected model. Choose one of Pi's configured models before sending work data.".into());
         }
-        let message = super::startup::prepare_prompt(&text, &context, events)?;
+        let message = super::prompts::prepare_prompt(&text, &context, events)?;
         let id = format!("prompt-{}", next_id());
         let mut request = json!({"type":"prompt","id":id,"message":message});
         if self.turn.is_running() {

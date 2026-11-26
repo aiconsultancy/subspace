@@ -545,26 +545,39 @@ def check_pinned_session():
     assert plugin["options"]["projectDirectory"] == record["project"] == f"{workspace}/sample"
 
 
-def check_shape():
+def check_shape(phase):
     etc = Path("/etc/subspace-fleet")
-    roster = json.loads((etc / "stargate.json").read_text())["irc"]
-    rear, captain = roster
+    settings = json.loads((etc / "stargate.json").read_text())
+    rear, *captains = settings["irc"]
+    assert phase in ("uncommissioned", "commissioned")
+    pinned = phase == "commissioned"
+    assert (etc / "sessions/orion.json").is_file() == pinned
+    # A newly installed captain joins the gateway once its engine has commissioned its root session.
+    assert [person["id"] for person in captains] == (["orion"] if pinned else [])
+    guard = settings["usageGuard"]
+    assert guard["sender"] == rear["id"] == "atlas"
+    assert guard["captains"] == [{"account": "example-orion", "channel": "#example-fleet-orion"}]
+    for provider in ("claude", "codex"):
+        assert guard["providers"][provider]["limits"] == [
+            {"remainingPercent": 20, "action": "warn"}, {"remainingPercent": 10, "action": "pause"},
+        ]
     # The standard set: the rear admiral joins all of it, a captain its ship, command and the other ships.
     assert rear["channels"] == ["#example-fleet-starbase", COMMAND, "#example-fleet-orion"]
-    assert captain["channels"] == ["#example-fleet-orion", COMMAND]
     assert rear["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-starbase", "replies": "all"}]
-    assert captain["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
-    assert captain["access"]["channelRequests"] == "nick-mention"
-    # A direct message starts no turn: Stargate points the sender at the agent's first channel.
-    assert rear["dmPolicy"] == captain["dmPolicy"] == "redirect"
-    # Crew have no IRC registration of their own: they are reached through the captain.
-    assert not rear.get("crew") and not captain.get("crew")
-    assert captain["access"]["peerCaptains"] == ["example-atlas"]
-    assert captain["backend"]["agent"] == "build" and "sessionID" not in rear["backend"]
+    assert rear["dmPolicy"] == "redirect" and not rear.get("crew") and "sessionID" not in rear["backend"]
+    if pinned:
+        [captain] = captains
+        assert captain["channels"] == ["#example-fleet-orion", COMMAND]
+        assert captain["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
+        assert captain["access"]["channelRequests"] == "nick-mention"
+        assert captain["dmPolicy"] == "redirect" and not captain.get("crew")
+        assert captain["access"]["peerCaptains"] == ["example-atlas"]
+        assert captain["backend"]["agent"] == "build"
     firewall = (etc / "firewall.nft").read_text()
     operator = pwd.getpwnam("fixture-operator").pw_uid
     assert f'tcp dport 8070 meta skuid != {{ 0, {operator} }}' in firewall
-    assert f'tcp dport 8080 meta skuid != {{ 0, {operator} }}' in firewall
+    view_users = {0, operator, pwd.getpwnam("ss-fleet-view").pw_uid}
+    assert f'tcp dport 8080 meta skuid != {{ {", ".join(map(str, sorted(view_users)))} }}' in firewall
     model_uids = {0, operator, pwd.getpwnam("ss-fleet-gateway").pw_uid, *(pwd.getpwnam(f"ss-{agent}").pw_uid for agent in MEMBERS)}
     for worker in CREW:
         try:
@@ -575,7 +588,9 @@ def check_shape():
     units = (etc / "units").read_text().splitlines()
     assert sorted(unit for unit in units if "-engine-" in unit) == [f"subspace-fleet-engine-{agent}.service" for agent in MEMBERS]
     gateway_unit = Path("/etc/systemd/system/subspace-fleet-gateway.service").read_text()
-    assert f"ConditionPathExists={etc}/sessions/orion.json" in gateway_unit
+    ready_marker = etc / "sessions/orion.ready"
+    assert ready_marker.is_file() == pinned
+    assert (f"ConditionPathExists={ready_marker}" in gateway_unit.splitlines()) == pinned
     assert f'tcp dport 8317 meta skuid != {{ {", ".join(map(str, sorted(model_uids)))} }}' in firewall
     for service in ("proxy", "view", "dashboard", "engine-atlas", "gateway"):
         unit = Path(f"/etc/systemd/system/subspace-fleet-{service}.service").read_text()
@@ -610,10 +625,19 @@ def check_shape():
         assert subprocess.run(["runuser", "-u", user, "--", "test", "-w", ref]).returncode == 1
         assert subprocess.run(["runuser", "-u", user, "--", "test", "-w", ref / "README.md"]).returncode == 1
     assert subprocess.run(["runuser", "-u", "ss-orion", "--", "test", "-r", ref / "README.md"]).returncode == 1
-    command = ["runuser", "-u", "ss-orion", "--", "env", "MISE_DATA_DIR=/opt/subspace-fleet/toolchains",
-               "MISE_GLOBAL_CONFIG_FILE=/etc/subspace-fleet/toolchains.toml",
-               "/opt/subspace-fleet/toolchains/shims/node", "--version"]
-    assert subprocess.check_output(command, text=True).startswith("v24.")
+    # The captain's tools, with its engine's environment: the shared Node through mise's system data directory,
+    # from its workspace, and its own mise data directory under its home.
+    environment = json.loads((etc / "engine-orion.json").read_text())["environment"]
+    tools = {key: value for key, value in environment.items() if key.startswith("MISE_") or key == "PATH"}
+    assert tools["MISE_DATA_DIR"] == str(CAPTAIN_HOME / ".local/share/mise")
+    assert environment["TMPDIR"] == "/tmp/ss-orion"
+    command = ["runuser", "-u", "ss-orion", "--", "env", *(f"{key}={value}" for key, value in tools.items()),
+               f"HOME={CAPTAIN_HOME}", "sh", "-c", f"cd {CAPTAIN_HOME / 'workspace'} && node --version && mise which node"]
+    output = subprocess.check_output(command, text=True).splitlines()
+    assert output[0].startswith("v24."), output
+    # mise may return the major-version alias or the full installed version.
+    shared_node = Path("/opt/subspace-fleet/toolchains/installs/node")
+    assert Path(output[1]) in {shared_node / version / "bin/node" for version in ("24", output[0].removeprefix("v"))}, output
     captain = pwd.getpwnam("ss-orion")
     # The captain's workspace instructions sit beside its checkouts, written as the captain.
     workspace = CAPTAIN_HOME / "workspace"
@@ -764,7 +788,7 @@ def check_addons():
     [captain] = other["irc"]
     assert captain["id"] == "orion" and not captain.get("crew") and captain["backend"]["sessionID"]
     assert {"bots", "teams", "quotaWatch"}.isdisjoint(other)
-    assert "ConditionPathExists=/etc/subspace-fleet/sessions/orion.json" in \
+    assert "ConditionPathExists=/etc/subspace-fleet/sessions/orion.ready" in \
         Path("/etc/systemd/system/subspace-fleet-gateway-opencode.service").read_text()
     assert not list(Path("/etc/systemd/system").glob("subspace-fleet-gateway-agent-orion-*"))
     check_cloud()

@@ -21,6 +21,21 @@ See [Ways of working](https://github.com/aiconsultancy/subspace/blob/main/subspa
 - [ ] **Before merging: GPT-6.2 Sol (high) review clear** for the final head, recorded under **Reviews**
 - [ ] If this adds or changes a board: [board checklist](https://github.com/aiconsultancy/subspace/blob/main/subspace-framework/docs/board-checklist.md) is completed in the change record, with each item implemented or "not applicable because …"
 
+## Thermo-nuclear review
+
+- [ ] Thermo-nuclear code quality review completed for the current PR head.
+
+**Reviewed head SHA (full commit SHA)**
+
+**Reviewer (include model for agent reviews)**
+
+**Outcome or evidence link**
+
+Leave the checkbox unticked and enter `N/A (documentation only)` in the
+outcome field if the full diff changes only documentation. Leave the reviewed
+head and reviewer blank for that outcome. If the head or diff changes, clear
+the checkbox and update the evidence after reviewing the new diff.
+
 ## Reviews
 
 Both independent reviews must clear the final head before merging. Read-only

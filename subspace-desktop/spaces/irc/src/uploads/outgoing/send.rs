@@ -60,12 +60,11 @@ pub(super) fn queue(this: &mut Conversation, window: &mut Window, cx: &mut Conte
         .iter()
         .map(|upload| chat_uploads::reference_text(upload, budget))
         .collect();
-    // One `SendAll`: the runtime checks registration and every line against
-    // the negotiated limits before writing any, and answers once the write
-    // ended. A written line is not proof the server accepted it.
+    // Keep the draft and references in one IRC message so a recipient can
+    // handle them together. The runtime refuses before writing if they split.
     let id = this.hub.update(cx, |hub, _| hub.state.next_send());
     this.send(
-        Command::SendAll {
+        Command::SendAllTogether {
             buffer: this.buffer.clone(),
             id,
             lines: chat_uploads::lines(&text, &references, budget),

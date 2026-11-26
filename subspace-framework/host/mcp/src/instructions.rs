@@ -3,7 +3,7 @@
 //! the groups the server serves, so it always matches the tool list.
 use subspace_agent_tools::Access;
 
-use crate::{GroupTool, ToolGroup};
+use crate::{GroupKind, GroupTool, ToolGroup};
 
 /// The group of the tools every board shares, such as help and search.
 pub(crate) const APPLICATION: &str = "application";
@@ -29,7 +29,7 @@ fn intro(product: &str) -> String {
 fn board_lines(groups: &[ToolGroup]) -> Vec<String> {
     let boards: Vec<String> = groups
         .iter()
-        .filter(|group| group.id != APPLICATION)
+        .filter(|group| group.kind == GroupKind::Board)
         .map(board_line)
         .collect();
     if boards.is_empty() {
@@ -58,7 +58,9 @@ fn board_line(group: &ToolGroup) -> String {
 fn application_line(groups: &[ToolGroup]) -> Option<String> {
     groups
         .iter()
-        .find(|group| group.id == APPLICATION && group.served && !group.tools.is_empty())
+        .find(|group| {
+            group.kind == GroupKind::Application && group.served && !group.tools.is_empty()
+        })
         .map(|group| format!("Shared tools: {}.", tool_list(&group.tools)))
 }
 
@@ -83,7 +85,7 @@ fn tool_list(tools: &[GroupTool]) -> String {
 #[cfg(test)]
 mod tests {
     use super::instructions;
-    use crate::{GroupTool, ToolGroup};
+    use crate::{GroupKind, GroupTool, ToolGroup};
     use subspace_agent_tools::Access;
 
     fn tool(name: &'static str, access: Access, actions: &[&'static str]) -> GroupTool {
@@ -96,8 +98,14 @@ mod tests {
     }
 
     fn group(id: &'static str, description: &'static str, tools: Vec<GroupTool>) -> ToolGroup {
+        let kind = if id == "application" {
+            GroupKind::Application
+        } else {
+            GroupKind::Board
+        };
         ToolGroup {
             id,
+            kind,
             title: id,
             description,
             tools,

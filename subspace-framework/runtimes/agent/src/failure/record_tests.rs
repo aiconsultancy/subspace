@@ -2,11 +2,15 @@
 
 use serde_json::json;
 
+#[cfg(feature = "copilot")]
 use super::log::outcome;
 use super::tests::turn;
-use super::{FailureCategory, TurnFailure, log_failure, log_turn_done};
+use super::{FailureCategory, TurnFailure};
+#[cfg(feature = "copilot")]
+use super::{log_failure, log_turn_done};
 
 /// The last `agent` record for chat `chat`.
+#[cfg(feature = "copilot")]
 fn record_of(chat: &str) -> subspace_core::log::Record {
     subspace_core::log::recent()
         .into_iter()
@@ -22,9 +26,12 @@ fn record_of(chat: &str) -> subspace_core::log::Record {
 }
 
 // Fake credentials, split so secret scanners do not flag the source.
+#[cfg(feature = "copilot")]
 const TOKEN: &str = concat!("ghp_", "abcdefghijklmnopqrstuvwxyz0123456789");
+#[cfg(feature = "copilot")]
 const BEARER_VALUE: &str = concat!("abc.def.", "ghijklmnop");
 
+#[cfg(feature = "copilot")]
 #[test]
 fn credentials_and_the_turns_own_text_are_removed_from_the_details_and_the_record() {
     let prompt = "Fix my config with the release plan";
@@ -69,6 +76,7 @@ fn a_submitted_text_shorter_than_four_characters_is_kept() {
     );
 }
 
+#[cfg(feature = "copilot")]
 #[test]
 fn a_turn_done_record_says_how_the_turn_ended() {
     assert_eq!(outcome(None), "done");

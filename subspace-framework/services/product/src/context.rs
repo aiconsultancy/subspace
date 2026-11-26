@@ -26,11 +26,10 @@ impl ProductContext {
         }
     }
 
+    /// The config roots of the data directory, [`product_data_name`], not
+    /// of the binary name.
     pub fn product_roots(&self) -> ConfigRoots {
-        product_config_roots(
-            &self.env,
-            &product_data_name(self.product.binary_name.as_str()),
-        )
+        product_config_roots(&self.env, &product_data_name())
     }
 }
 
@@ -42,7 +41,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn the_product_roots_follow_the_binary_name() {
+    fn the_product_roots_follow_the_data_name() {
         let known = fixture::products().unwrap();
         let env = PlatformEnv {
             os: OsKind::Macos,
@@ -55,8 +54,7 @@ mod tests {
         let context = ProductContext::new(known[0].clone(), env);
         assert_eq!(
             context.product_roots().cross_platform,
-            PathBuf::from("/no-such-home/fixture/.config")
-                .join(crate::product_data_name("subspace"))
+            PathBuf::from("/no-such-home/fixture/.config").join(crate::product_data_name())
         );
         assert_eq!(context.version, crate::SUBSPACE_VERSION);
     }

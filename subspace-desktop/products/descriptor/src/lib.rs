@@ -75,11 +75,13 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
         // default so that installs from before Twilight Two keep their look;
         // new installs get NEW_INSTALL_THEME recorded instead.
         default_theme: Some(DEFAULT_THEME.into()),
+        command_mount: Default::default(),
         boards: vec![
             board("github", true),
             board("github-copilot-agents", false),
             board("irc", true),
             board("issues", true),
+            board("projects", true),
             board("decisions", true),
             #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
             board("space-lab", false),
@@ -340,6 +342,7 @@ mod tests {
                 "github-copilot-agents",
                 "irc",
                 "issues",
+                "projects",
                 "decisions",
                 #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
                 "space-lab",
@@ -356,6 +359,7 @@ mod tests {
         for (id, enabled) in [
             ("irc", true),
             ("issues", true),
+            ("projects", true),
             ("decisions", true),
             ("github", true),
             ("github-copilot-agents", false),

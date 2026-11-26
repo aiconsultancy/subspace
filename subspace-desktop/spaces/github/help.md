@@ -184,6 +184,9 @@ In a narrow pane, the leading controls wrap onto another line.
 - Opening the board loads the saved lists, then loads all three sections.
 - When you open the board again after more than 5 minutes, it loads all
   sections again.
+- While a pull request's page or inspector is visible, Subspace refreshes its
+  details from GitHub every 25 seconds. Checks, review state and available
+  actions update in place.
 - With **Background updates** and **Load and refresh boards automatically**
   on, Subspace loads PRs at startup and refreshes them in the background about
   every 10 minutes, on the same default cadence as Actions. You can set a
@@ -345,6 +348,22 @@ the same pull request switches its mode and keeps your text. On another pull
 request they leave the draft open, and a toast reads `Send or cancel the draft
 on <owner/name>#<n> first`. Switching account discards the draft, so it is
 never sent as another account.
+
+### Merge a pull request
+
+Choose **Merge…** in the pull request toolbar or inspector. The button is
+available when GitHub reports that the open pull request can be merged by the
+selected account. After that account approves, Approve loses its emphasis
+and Merge is highlighted as soon as it is available.
+The dialog shows the merge method and target branch. Choose
+**Merge pull request** to submit, or **Cancel** to leave it open.
+
+Subspace chooses squash, rebase or a merge commit in that order from the
+repository's allowed methods. Before sending the merge, it checks the signed-in
+identity, the head commit and the target branch again. GitHub also checks the
+head commit and applies the repository's branch rules. If the pull request changed,
+review the latest commits before trying again. Use GitHub for pull requests
+whose base branch uses a merge queue.
 
 ### Close a pull request
 

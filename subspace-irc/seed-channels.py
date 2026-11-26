@@ -60,6 +60,8 @@ class Client:
     def __init__(self, connection, reader):
         self.connection = connection
         self.reader = reader
+        self.account = ""
+        self.joined = set()
 
     def send(self, *commands):
         self.connection.sendall(("\r\n".join(commands) + "\r\n").encode())
@@ -78,6 +80,10 @@ class Client:
                 params.append(trailing)
             if command == "PING":
                 self.send(f"PONG :{params[-1]}")
+            if command == "JOIN" and prefix.partition("!")[0].lower() == ":" + self.account.lower():
+                self.joined.add(params[0].lower())
+            if command == "PART" and prefix.partition("!")[0].lower() == ":" + self.account.lower():
+                self.joined.discard(params[0].lower())
             if command in expected and (service is None or prefix.startswith(f":{service}!")):
                 return command, params
             if command in ("ERROR", "FAIL") or (
@@ -87,6 +93,7 @@ class Client:
         raise SeedError(f"Ergo did not confirm {action}")
 
     def login(self, founder, password, operator, oper_password):
+        self.account = founder
         self.send("CAP REQ :sasl", f"NICK {founder}", f"USER {founder} 0 * :Channel seed")
         _, params = self.expect("CAP", "SASL capability")
         if params != ["*", "ACK", "sasl"]:
@@ -122,8 +129,10 @@ class Client:
         if registered and "topic" not in channel and "modes" not in channel:
             return
 
-        self.send(f"JOIN {name}")
-        self.expect("366", "channel join")
+        already_joined = name.lower() in self.joined
+        if not already_joined:
+            self.send(f"JOIN {name}")
+            self.expect("366", "channel join")
         expected = f"channel {name.lower()} successfully registered"
         if not registered and self.chanserv(f"REGISTER {name}").lower() != expected:
             raise SeedError("ChanServ did not register the channel")
@@ -131,8 +140,9 @@ class Client:
             self.set_topic(name, channel["topic"])
         if "modes" in channel:
             self.set_modes(name, channel["modes"])
-        self.send(f"PART {name}")
-        self.expect("PART", "channel part")
+        if not already_joined:
+            self.send(f"PART {name}")
+            self.expect("PART", "channel part")
 
     def set_topic(self, name, topic):
         self.send(f"TOPIC {name}")
@@ -167,11 +177,17 @@ class Client:
 
 
 def main():
+    if sys.argv[1] == "certificate":
+        _, account_path, operator, name, fingerprint = sys.argv[1:]
+        accounts = read_passwords(account_path)
+        with socket.create_connection(("127.0.0.1", 16670), timeout=15) as connection, connection.makefile("rb") as reader:
+            client = Client(connection, reader)
+            client.login(operator, accounts[operator], operator, accounts[operator])
+            client.send(f"PRIVMSG NickServ :CERT ADD {name} {fingerprint}")
+            client.expect("NOTICE", "certificate registration from NickServ", "NickServ")
+        return
     action, path, account_path, operator, default_founder = sys.argv[1:]
-    accounts = {
-        account["name"]: account["password"]
-        for account in json.loads(Path(account_path).read_text(encoding="utf-8"))
-    }
+    accounts = read_passwords(account_path)
     by_founder = definitions(path, accounts, operator, default_founder)
     if action == "apply":
         for founder, channels in by_founder.items():
@@ -185,6 +201,11 @@ def main():
                         client.provision(channel, founder)
                     except SeedError as error:
                         raise SeedError(f"{channel['name']}: {error}") from None
+
+
+def read_passwords(path):
+    return {account["name"]: account["password"] for account in json.loads(Path(path).read_text(encoding="utf-8"))
+            if "password" in account}
 
 
 if __name__ == "__main__":

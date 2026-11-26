@@ -22,8 +22,8 @@ pub struct SessionScope {
     home: Url,
     /// The signal's absolute path, in lower case.
     signal: Option<String>,
-    /// Absolute paths, in lower case, the view never loads, nor anything
-    /// under them.
+    /// Absolute paths, in lower case, the view never loads, nor the same
+    /// path with a format suffix, nor anything under them.
     reserved: Vec<String>,
 }
 
@@ -79,9 +79,11 @@ impl SessionScope {
     }
 
     /// A route under the home, such as the site's own session endpoints,
-    /// that the view never navigates to, nor anything under it, ignoring
-    /// ASCII case. It limits navigations only: a page in the scope can
-    /// still `fetch` it, with the session cookie.
+    /// that the view never navigates to, ignoring ASCII case. Nor does it
+    /// go to anything under it, or to the route with a format suffix, such
+    /// as `session.json`, which many web frameworks send to the same
+    /// handler. It limits navigations only: a page in the scope can still
+    /// `fetch` it, with the session cookie.
     // qual:api — a product declares its site's own routes; the tests cover them.
     pub fn with_reserved(mut self, route: &str) -> Result<Self, InvalidScope> {
         let path = self.absolute(route)?;
@@ -89,9 +91,21 @@ impl SessionScope {
         Ok(self)
     }
 
-    /// The address the view starts at, and Go to the start page returns to.
+    /// The address the view starts at, and Go to the start page returns to,
+    /// unless the product gives the session a start of its own
+    /// ([`crate::NativeSession::with_start`]).
     pub fn home(&self) -> &str {
         self.home.as_str()
+    }
+
+    /// `route`, a reference relative to the home such as `?team=blue` or
+    /// `teams/blue`, as a page the view may load, or `None` when it is a
+    /// blank page, leaves the scope or names the signal or a reserved
+    /// route.
+    pub(crate) fn resolve(&self, route: &str) -> Option<String> {
+        let url = self.home.join(route).ok()?;
+        let page = url.as_str() != "about:blank" && self.admit(url.as_str()) == Admission::Load;
+        page.then(|| url.into())
     }
 
     pub(crate) fn host(&self) -> &str {
@@ -137,11 +151,13 @@ impl SessionScope {
         path_is_plain(path) && path.starts_with(self.path())
     }
 
+    /// Whether `lower` is a reserved route, the route with a format suffix
+    /// (`.json`, `.html`, …), or anything under either.
     fn is_reserved(&self, lower: &str) -> bool {
         self.reserved.iter().any(|reserved| {
             lower
                 .strip_prefix(reserved.as_str())
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '.']))
         })
     }
 
@@ -336,6 +352,27 @@ mod tests {
     }
 
     #[test]
+    fn a_reserved_route_with_a_format_suffix_never_loads() {
+        let scope = scope();
+        for reserved in [
+            "https://app.example.com/desktop/session.json",
+            "https://app.example.com/desktop/Session.HTML",
+            "https://app.example.com/desktop/session.",
+            "https://app.example.com/desktop/session.json/redeem",
+        ] {
+            assert_eq!(scope.admit(reserved), Admission::Refuse, "{reserved}");
+        }
+        for loaded in [
+            "https://app.example.com/desktop/sessions",
+            "https://app.example.com/desktop/session-notes",
+            "https://app.example.com/desktop/sessionjson",
+            "https://app.example.com/desktop/reports/session.json",
+        ] {
+            assert_eq!(scope.admit(loaded), Admission::Load, "{loaded}");
+        }
+    }
+
+    #[test]
     fn reserved_routes_and_the_signal_survive_rewriting() {
         let scope = scope();
         for reserved in [
@@ -423,6 +460,50 @@ mod tests {
             scope.admit("https://app.example.com/desktop/session/required"),
             Admission::Load
         );
+    }
+
+    #[test]
+    fn a_start_resolves_under_the_home_and_stays_in_the_scope() {
+        let scope = scope();
+        for (route, start) in [
+            ("", HOME),
+            (
+                "?team=Blue%20Sky",
+                "https://app.example.com/desktop/?team=Blue%20Sky",
+            ),
+            (
+                "?team=Blue Sky&x=1",
+                "https://app.example.com/desktop/?team=Blue%20Sky&x=1",
+            ),
+            ("teams/blue", "https://app.example.com/desktop/teams/blue"),
+            (
+                "teams/blue#week",
+                "https://app.example.com/desktop/teams/blue#week",
+            ),
+            ("/desktop/teams", "https://app.example.com/desktop/teams"),
+            (HOME, HOME),
+        ] {
+            assert_eq!(scope.resolve(route).as_deref(), Some(start), "{route:?}");
+        }
+        for refused in [
+            "..",
+            "../other/",
+            "/other/",
+            "//elsewhere.example.com/desktop/",
+            "https://elsewhere.example.com/desktop/",
+            "http://app.example.com/desktop/",
+            "https://user@app.example.com/desktop/",
+            "about:blank",
+            "javascript:alert(1)",
+            "session",
+            "session.json",
+            "Session/status",
+            "session/required",
+            "%2e%2e/other/",
+            "teams//blue",
+        ] {
+            assert_eq!(scope.resolve(refused), None, "{refused:?}");
+        }
     }
 
     #[test]

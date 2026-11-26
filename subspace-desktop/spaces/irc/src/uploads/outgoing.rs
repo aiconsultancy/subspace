@@ -46,7 +46,7 @@ pub(crate) struct Tray {
 pub(crate) struct Item {
     pub(crate) id: usize,
     pub(crate) state: ItemState,
-    /// Composer text moved into this attachment by "Send as attachment…".
+    /// Composer text moved into this attachment by "Attach draft as Markdown".
     pub(crate) origin: Option<String>,
 }
 
@@ -77,7 +77,7 @@ pub(crate) enum Phase {
     Idle,
     /// Uploading in tray order; `text` goes with the references.
     Uploading { text: String },
-    /// The lines went to the runtime as one `SendAll`, `id`.
+    /// The lines went to the runtime as one `SendAllTogether`, `id`.
     /// Once the runtime accepts them, the tray clears when every key
     /// echoes, or on Dismiss; a refusal returns the tray to `Idle` with the
     /// draft. Nothing is ever sent again from here.
@@ -203,7 +203,7 @@ fn pending(draft: UploadDraft, preview: Preview) -> Box<Pending> {
     })
 }
 
-/// "Send as attachment…": the composer's text becomes a Markdown attachment
+/// "Attach draft as Markdown": the composer's text becomes a Markdown attachment
 /// in the tray, and the composer clears.
 pub(crate) fn text(this: &mut Conversation, window: &mut Window, cx: &mut Context<Conversation>) {
     let text = this.draft.entity.read(cx).text(cx);

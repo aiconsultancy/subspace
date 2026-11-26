@@ -59,11 +59,13 @@ fn describe(command: &Command, name: &str) -> Option<Reply> {
             buffer: buffer.clone(),
             text: format!("Not connected to {name}"),
         },
-        Command::SendAll { buffer, id, .. } => Reply::Event(Event::Sent {
-            buffer: buffer.clone(),
-            id: *id,
-            result: SendResult::Refused(format!("Not connected to {name}")),
-        }),
+        Command::SendAll { buffer, id, .. } | Command::SendAllTogether { buffer, id, .. } => {
+            Reply::Event(Event::Sent {
+                buffer: buffer.clone(),
+                id: *id,
+                result: SendResult::Refused(format!("Not connected to {name}")),
+            })
+        }
         Command::Join {
             network, channel, ..
         } => Reply::Error {

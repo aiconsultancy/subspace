@@ -34,7 +34,7 @@ pub struct SignedInAccount {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "Subspace cannot read or save its GitHub sign-in. Unlock your system keychain and try again."
+    "The app cannot read or save its GitHub sign-in. Unlock your system keychain and try again."
 )]
 pub struct StoreError;
 
@@ -81,12 +81,18 @@ impl Default for SignedInAccounts {
     }
 }
 
+/// The Keychain service of the signed-in GitHub tokens:
+/// `<directory name>.github`.
+pub fn keychain_service() -> String {
+    format!("{}.github", state::directory_name())
+}
+
 impl SignedInAccounts {
     /// The list beside the state file, and the build's vault.
     pub fn system() -> Self {
         Self {
             list: List::File(state::sibling(LIST_FILE)),
-            vault: vault::system(format!("{}.github", state::directory_name()), TOKEN_FILE),
+            vault: vault::system(keychain_service(), TOKEN_FILE),
         }
     }
 

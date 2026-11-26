@@ -158,7 +158,8 @@ impl Logger {
     }
 }
 
-/// `<state dir>/subspace/logs`, the default log directory.
+/// `logs` in the app's data directory, beside the state file: the default
+/// log directory.
 pub fn default_directory() -> Option<PathBuf> {
     crate::state::sibling("logs")
 }

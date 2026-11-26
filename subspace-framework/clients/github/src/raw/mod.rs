@@ -4,7 +4,7 @@ mod activity;
 mod projection;
 mod types;
 
-pub use activity::to_detail;
+pub use activity::{to_detail, viewer_approved};
 pub use projection::{assignable_users, extras, section_items, to_diff_file};
 pub use types::{Nodes, RawActor, RawDetail, RawPrFile};
 

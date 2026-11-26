@@ -110,7 +110,9 @@ impl Conversation {
             cx.on_focus_in(&focus, window, |_, _, cx| {
                 cx.emit(ConversationEvent::Focused)
             }),
-            cx.observe(&hub, |this: &mut Self, _, cx| this.sync(cx)),
+            cx.observe_in(&hub, window, |this: &mut Self, _, window, cx| {
+                this.sync(window, cx);
+            }),
             cx.subscribe_in(&draft.entity, window, |this, _, event, window, cx| {
                 compose::handle(this, event, window, cx);
             }),
@@ -230,7 +232,7 @@ impl Conversation {
     }
 
     /// Re-reads the buffer after the hub changed, keeping the reader's place.
-    fn sync(&mut self, cx: &mut Context<Self>) {
+    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let previous = (self.replies.clone(), self.statuses.shown.clone());
         let ranks_changed = self.refresh_roster(cx);
         self.refresh_replies(cx);
@@ -263,6 +265,11 @@ impl Conversation {
         crate::uploads::outgoing::follow(self, cx);
         crate::uploads::viewer::follow(self, cx);
         cx.notify();
+        if previous.0 != self.replies || previous.1 != self.statuses.shown {
+            // The thread inspector sits outside the dock's cached
+            // transcript. Paint both from the updated buffer in one frame.
+            window.refresh();
+        }
     }
 
     /// Root rows whose reply count or request status changed, to remeasure.

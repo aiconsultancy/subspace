@@ -1,4 +1,4 @@
-//! The tray against a local API: limits, `SendAll` sends, line packing
+//! The tray against a local API: limits, `SendAllTogether` sends, line packing
 //! and clearing once every reference echoes.
 use super::super::completion::{composer, text};
 use super::connect;
@@ -185,7 +185,7 @@ pub(super) fn sent(view: &Entity<Conversation>, cx: &mut VisualTestContext) -> V
             .iter()
             .flat_map(|command| match command {
                 Command::Input { text, .. } => vec![text.clone()],
-                Command::SendAll { lines, .. } => lines.clone(),
+                Command::SendAllTogether { lines, .. } => lines.clone(),
                 _ => Vec::new(),
             })
             .collect()

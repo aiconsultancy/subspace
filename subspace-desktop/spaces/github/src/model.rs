@@ -10,8 +10,8 @@ use subspace_framework::client_github::model::{
 };
 use subspace_framework::dashboard::SearchDoc;
 
-mod closed;
-pub(super) use closed::preserve_closed;
+mod written_state;
+pub(super) use written_state::preserve_written_state;
 mod people;
 mod time;
 

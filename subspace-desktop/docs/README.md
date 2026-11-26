@@ -95,10 +95,11 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
 
 | Board | In-app guide | Developer page |
 | --- | --- | --- |
-| PRs | [GitHub pull requests](../spaces/github/help.md) | |
+| PRs | [GitHub pull requests](../spaces/github/help.md) | [Merge and refresh](changes/github-pr-merge/README.md) |
 | Copilot Agents | [Copilot agent tasks](../spaces/github-copilot-agents/help.md) | [Copilot Agents dashboard](github-copilot-agents.md) |
 | Channels | [IRC networks, channels and private messages](../spaces/irc/help.md) | [Channels](irc.md): configuration, protocol support, initiatives and fleets, agent tools |
 | Issues | [Subspace API issues and comments](../spaces/issues/help.md) | [Issues and Subspace API](issues.md): connection, shared hub and offline fixtures |
+| Projects | [Projects and milestones](../spaces/projects/help.md) | |
 | Decisions | [Subspace API decisions](../spaces/decisions/help.md) | [Decisions](decisions.md): reads, stored choices and opening linked issues |
 | Space Lab | [Native dashboards and managed environments](../spaces/space-lab/help.md) | [Space Lab](space-lab.md): enablement and safety; [design evidence](agents/space-lab/README.md): retired harness history |
 | Actions | [GitHub Actions](../spaces/actions/help.md) | [Actions board](actions.md) |
@@ -201,6 +202,7 @@ record. [Change records](changes/README.md) explains the convention.
 
 - [Public repository examples](changes/public-repository-examples/README.md):
   fictional deployment settings, tracker references and fixture identifiers.
+- [Wider issue editor](changes/wider-issue-editor/README.md): a larger issue form with Markdown and Plain text editing.
 - [Issue Activity data](changes/issue-activity-data/README.md) and
   [Issue Activity pane](changes/issue-activity-pane/README.md): data retrieval,
   refresh and the Issues Space view.
@@ -228,6 +230,7 @@ record. [Change records](changes/README.md) explains the convention.
   ranks from the API's agent nicks and the fleet's recorded channels, agent
   avatars and coloured marks, no private conversation with an agent, and
   the base pull request's review fixes.
+- [Connection guidance](changes/connection-guidance/README.md) explains what to check when a service is unreachable.
 - [Channels navigator, request lines and composer hints](changes/channels-navigator-and-requests/README.md):
   the navigator grouped by fleet with a People section, request status lines
   that settle into `Done in …`, and the composer's hint row with `/ask`.
@@ -240,6 +243,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels reactions](changes/channels-reactions/README.md): message
   reactions as pills in Channels, toggling yours, the stop reactions on a
   running request, and the client layer's review findings closed.
+- [Channels preview status colour](changes/irc-preview-status-colour/README.md)
+  keeps issue and pull request status in their badges.
+- [Channels draft keys and reference cards](changes/channels-composer-and-reference-library/README.md): keyboard navigation and gallery examples.
 - [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
   pull request tile only under the first message that names it, and fuller
   two-line tiles of a fixed size for both.

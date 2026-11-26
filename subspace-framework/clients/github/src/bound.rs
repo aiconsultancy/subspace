@@ -2,8 +2,9 @@
 
 use crate::{Client, detail_from_data, model::GhItemDetail, queries, transport, validate};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use subspace_core::{
-    credentials::Credential,
+    credentials::{Credential, Credentials},
     http::{Error, status},
 };
 
@@ -18,7 +19,8 @@ pub use packages::{
 
 /// A verified principal and one in-memory credential. Never serialized or Debug.
 pub struct BoundRead {
-    credential: Credential,
+    pub(super) credential: Credential,
+    credentials: Arc<Credentials>,
     endpoint: String,
     account: String,
     account_id: String,
@@ -30,6 +32,7 @@ impl BoundRead {
         validate::check_login(login)?;
         let mut bound = BoundRead {
             credential: client.credential(Some(login))?,
+            credentials: client.credentials.clone(),
             endpoint: client.api_url.clone(),
             account: login.to_owned(),
             account_id: String::new(),
@@ -75,18 +78,27 @@ impl BoundRead {
         let variables = json!({"owner":item.owner,"name":item.name,"number":item.number});
         let data = self.graphql(&queries::detail_query(), variables)?;
         let data = serde_json::from_value(data).map_err(|_| transport::unexpected("response"))?;
-        detail_from_data(data)
+        detail_from_data(data, &self.account)
     }
 
-    fn graphql(&self, query: &str, variables: Value) -> Result<Value, Error> {
+    pub(super) fn graphql(&self, query: &str, variables: Value) -> Result<Value, Error> {
         let body = json!({"query":query,"variables":variables}).to_string();
         let response = transport::post_bound_graphql(
             &format!("{}/graphql", self.endpoint),
             &self.credential,
             &self.account,
             &body,
-        )?;
-        transport::graphql_data(&self.account, response, false).map_err(safe_error)
+        );
+        if matches!(
+            &response,
+            Err(Error::Status {
+                status: status::UNAUTHORIZED,
+                ..
+            })
+        ) {
+            self.credentials.invalidate(&self.credential);
+        }
+        transport::graphql_data(&self.account, response?, false).map_err(safe_error)
     }
 }
 

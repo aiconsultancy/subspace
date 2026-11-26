@@ -215,3 +215,48 @@ fn bound_identity_never_follows_redirect_to_another_host() {
     assert!(client(url, &token("captured")).bind_read("ann").is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn a_new_binding_can_use_the_cli_token_after_github_rejects_the_cached_one() {
+    use std::{sync::Mutex, time::Duration};
+    use subspace_core::{
+        config::Config,
+        credentials::{Credentials, Environment, Runner},
+    };
+
+    struct Gh(Arc<Mutex<String>>);
+
+    impl Environment for Gh {
+        fn var(&self, _: &str) -> Option<String> {
+            None
+        }
+    }
+
+    impl Runner for Gh {
+        fn run(&self, _: &str, _: &[&str], _: &[&str], _: Duration) -> Result<String, String> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+    }
+
+    let cli_token = token("old");
+    let url = serve(Arc::new(move |request| {
+        if request.authorization == "Bearer new" {
+            return (
+                200,
+                json!({"data":{"viewer":{"id":"U_ann","login":"ann"}}}).to_string(),
+            );
+        }
+        (401, r#"{"message":"Bad credentials"}"#.into())
+    }));
+    let credentials = Credentials::new(
+        &Config::default(),
+        Gh(cli_token.clone()),
+        Gh(cli_token.clone()),
+    );
+    let client = crate::Client::new(Arc::new(credentials)).with_api_url(url);
+    let error = client.bind_read("ann").err().unwrap();
+    assert!(matches!(error, Error::Status { status: 401, .. }));
+
+    *cli_token.lock().unwrap() = "new".into();
+    assert_eq!(client.bind_read("ann").unwrap().account(), "ann");
+}

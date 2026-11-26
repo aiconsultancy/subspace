@@ -60,6 +60,31 @@ fn backoff_doubles_up_to_a_minute() {
     assert_eq!(delays, [1, 2, 4, 8, 16, 32, 60, 60]);
 }
 
+#[test]
+fn connection_errors_give_host_appropriate_help() {
+    use crate::connection::ConnectError;
+
+    for (host, expected) in [
+        ("127.0.0.1", "local VM or tunnel"),
+        ("LOCALHOST.", "local VM or tunnel"),
+        ("::1", "local VM or tunnel"),
+        ("irc.example.com", "refresh your Access session"),
+    ] {
+        let error = ConnectError::Timeout {
+            step: "Connecting",
+            secs: 15,
+        };
+        let end = super::connection_failed(error, host);
+        assert!(matches!(end, super::End::Lost { error, .. } if error.contains(expected)));
+    }
+
+    let error = ConnectError::Handshake(std::io::Error::other("certificate is invalid"));
+    let end = super::connection_failed(error, "irc.example.com");
+    assert!(
+        matches!(end, super::End::Lost { error, .. } if error == "TLS: certificate is invalid")
+    );
+}
+
 /// A TLS network on a local listener that accepts and never answers, so
 /// the handshake hangs.
 pub(super) async fn silent_server() -> (TcpListener, NetworkConfig) {

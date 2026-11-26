@@ -36,12 +36,13 @@ run = "bash scripts/capture.sh"
 
 [tasks.test]
 description = "Run the tests"
-# The workspace with the unreleased Spaces built in, so their registration,
-# descriptor and audit tests run; then the release configuration of the app
-# and its descriptor alone. The second run rebuilds what the feature change
-# touches: the Framework facade and the Spaces, clients and app above it.
+# The workspace with the unreleased Spaces and Copilot chat built in, so
+# their registration, descriptor and audit tests run and the optional Copilot
+# engine keeps compiling; then the release configuration of the app and its
+# descriptor alone, without either. The second run rebuilds what the feature
+# change touches: the Framework facade and the Spaces, clients and app above it.
 run = [
-    "cargo test --workspace --locked --features subspace/unreleased-spaces",
+    "cargo test --workspace --locked --features subspace/unreleased-spaces,subspace/copilot",
     "cargo test --locked -p subspace -p subspace-descriptor",
 ]
 
@@ -94,11 +95,12 @@ run = "python3 scripts/format-workspace.py -- --check"
 
 [tasks.lint]
 # --keep-going reports every failing crate in one run, not only the first.
-# Clippy runs on the workspace with the unreleased Spaces built in, then on
-# the release configuration of the app and its descriptor (see `test`).
+# Clippy runs on the workspace with the unreleased Spaces and Copilot built
+# in, then on the release configuration of the app and its descriptor (see
+# `test`).
 run = [
     "cargo shear",
-    "cargo clippy --workspace --all-targets --keep-going --features subspace/unreleased-spaces -- -D warnings",
+    "cargo clippy --workspace --all-targets --keep-going --features subspace/unreleased-spaces,subspace/copilot -- -D warnings",
     "cargo clippy -p subspace -p subspace-descriptor --all-targets --keep-going -- -D warnings",
 ]
 
