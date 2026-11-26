@@ -8,7 +8,8 @@
 //! temporary allowance for what is coming in: the page of a part being
 //! read. Each body asked for counts what it draws. Room is made by letting
 //! go of the lowest priority first, items read and bodies asked for alike,
-//! never the request being made.
+//! never the request being made, and never for a read continuing on its
+//! own a request newer than its own (SUB decision `084f5236` item 4).
 //!
 //! The floor (SUB decision `8357ec55` §2) belongs to the latest request,
 //! whatever it is. When what is left beside everything else does not hold
@@ -185,6 +186,30 @@ pub(super) fn spare(selection: &Selection, keep: &Key) -> u64 {
 pub(super) fn fits_beside(selection: &Selection, keep: &Key, wanted: u64) -> bool {
     let kept = kept(selection, Some(keep)).saturating_add(body(selection, Some(keep)));
     kept.saturating_add(wanted) <= room(selection)
+}
+
+/// Whether `wanted` more for `key`, and its own body, fits the room beside
+/// every request newer than `key`'s, the items read and bodies asked for
+/// since: room it could take letting go of nothing newer. A read that
+/// continues on its own is no request, so it never displaces a newer one
+/// (SUB decision `084f5236` item 4).
+pub(super) fn fits_before_newer(selection: &Selection, key: &Key, wanted: u64) -> bool {
+    let priority = |other: &Key| selection.asked.get(other).copied().unwrap_or(0);
+    let own = priority(key);
+    let newer = |other: &&Key| *other != key && priority(other) > own;
+    let reads: u64 = selection
+        .loaded
+        .iter()
+        .filter(|(other, _)| newer(other))
+        .map(|(_, loaded)| loaded.charge())
+        .sum();
+    let bodies: u64 = asked_bodies(selection, Some(key))
+        .iter()
+        .filter(|(other, _)| newer(other) && !selection.loaded.contains_key(*other))
+        .map(|(_, bytes)| bytes)
+        .sum();
+    let wanted = wanted.saturating_add(body(selection, Some(key)));
+    reads.saturating_add(bodies).saturating_add(wanted) <= room(selection)
 }
 
 /// What a page's window may draw beside it, given the `left` bytes the

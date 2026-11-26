@@ -41,7 +41,9 @@ use subspace_client_fleet::{Error, FleetApi, FleetClient};
 
 use super::Selection;
 use super::draw::{Key, Pieced};
-use super::ledger::{fits_beside, make_room, room, spare, stamp, window_allowance};
+use super::ledger::{
+    fits_before_newer, fits_beside, make_room, room, spare, stamp, window_allowance,
+};
 use super::parts::PART;
 use crate::Irc;
 pub(super) use part::show_page;
@@ -467,14 +469,17 @@ fn restamp(selection: &mut Selection, key: &(String, String)) {
 
 /// The item read `read` of `key`, still wanted, came back larger than
 /// the room made for it, may be read again, and fits the budget, with
-/// its drawn copy, at the size its page 0 claimed.
+/// its drawn copy, at the size its page 0 claimed, beside every request
+/// made since: the read again is no request, so it never lets go of a
+/// newer one, and otherwise its page 0 is shown in parts (SUB decision
+/// `084f5236` item 4).
 fn grew(board: &mut Irc, (key, read): (&(String, String), u64), bytes: u64) -> bool {
     let regrow = current(board, (key, read)).is_some_and(|loaded| loaded.regrow);
     regrow
-        && board
-            .inspector_activity
-            .as_ref()
-            .is_some_and(|selection| fits_whole(selection, bytes))
+        && board.inspector_activity.as_ref().is_some_and(|selection| {
+            let whole = whole_reserve(room(selection), bytes).saturating_add(bytes);
+            fits_whole(selection, bytes) && fits_before_newer(selection, key, whole)
+        })
 }
 
 /// The read under way or last made of the item `key`.

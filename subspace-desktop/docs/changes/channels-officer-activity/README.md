@@ -55,8 +55,10 @@ item too large to send inline is paged and loads on demand, never hidden.
   each read for the item's declared size and its drawn copy, and the
   budget holds during the read as after it: a read never holds more than
   its room. An item whose page 0 claims more is read again once with room
-  made for that claimed size and its drawn copy when they fit the budget,
-  and in parts otherwise. Room is made from the lowest priority up, items
+  made for that claimed size and its drawn copy when they fit the budget
+  beside every request made since, and in parts otherwise: reading it
+  again is no request, so it never lets go of a newer one (SUB decision
+  `084f5236` item 4). Room is made from the lowest priority up, items
   read and bodies asked for alike, the least recently asked for first (an
   item let go shows its load action again); only a person's request
   changes priority, never a read completing. Items go when

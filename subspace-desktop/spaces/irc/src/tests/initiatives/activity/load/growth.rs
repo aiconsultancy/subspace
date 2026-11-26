@@ -11,9 +11,11 @@ use serde_json::{Value, json};
 use super::super::super::super::remove::settle;
 use super::super::mounted;
 use super::{
-    Irc, answer, drawn, held_bytes, load, loaded_keys, on, paged, refresh, running, served,
+    Irc, answer, drawn, held_bytes, load, loaded_keys, on, paged, refresh, running, served, tool,
 };
-use crate::view::inspector::activity::{ask_for, drawn_bytes, inline_bytes, set_room};
+use crate::view::inspector::activity::{
+    ask_for, drawn_bytes, inline_bytes, latest_request, set_room,
+};
 
 /// The room the view leaves beside its inline content in Phobos's case.
 const ROOM: u64 = 255_000;
@@ -165,4 +167,46 @@ fn growth_is_given_back_to_a_newer_read_before_anything_is_let_go(cx: &mut TestA
         "its growth given back"
     );
     assert!(used <= room, "{used} past the room");
+}
+
+/// Round 7 delta (P2), SUB decision `084f5236` item 4 (Deimos's case): with
+/// 255,000 bytes of room, a read of an item the snapshot names short, then
+/// a newer body of 100,000 bytes asked for while it is read, then page 0
+/// claiming 90,000 bytes. Reading it whole again would let go of the newer
+/// body, and a read continuing on its own never displaces a newer request:
+/// its first page is shown in parts instead, and the newer body and its
+/// request stay.
+#[gpui_kit::test]
+fn a_read_continuing_on_its_own_never_lets_go_of_a_newer_request(cx: &mut TestAppContext) {
+    let (board, served, cx) = served(cx, 6, "short");
+    let short = served.item.lock().unwrap().1.len();
+    let mut items = paged(6, short);
+    items
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": "i1", "seq": 4, "startedAt": 1,
+        "updatedAt": 2, "kind": "text", "status": "completed", "text": "a".repeat(100_000)}));
+    refresh(&board, cx);
+    answer(&board, Ok(running(items)), cx);
+    roomed(&board, ROOM, cx);
+    served.serve(7, tool(7, &"g".repeat(90_000)));
+
+    // The newer body is asked for before the read's page 0 arrives.
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("load")), cx);
+        board.update(cx, |board, _| {
+            ask_for(board.inspector_activity.as_mut().unwrap(), "t-now", "i1");
+        });
+    });
+    settle(cx);
+
+    let (keys, used) = ledger(&board, cx);
+    assert_eq!(keys, vec![key("i3")]);
+    let latest = board.read_with(cx, |board, _| {
+        latest_request(board.inspector_activity.as_ref().unwrap())
+    });
+    assert_eq!(latest, Some(key("i1")), "the newer request kept");
+    assert!(drawn_body(&board, cx) >= 100_000, "and its body");
+    assert!(drawn(&on("parts"), cx).starts_with("Too large to hold whole"));
+    assert!(used <= ROOM, "{used} past the room");
 }
