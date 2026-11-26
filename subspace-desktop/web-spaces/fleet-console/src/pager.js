@@ -88,11 +88,15 @@ export class PagerError extends Error {
  * @param {string} options.key            this pager's key in the budget
  * @param {(request: PartRequest) => Promise<PartReply>} options.read
  * @param {number} options.partBytes      the most one part holds; reserved before each read
+ * @param {(bytes: number) => number} [options.drawn]  the bytes a part of `bytes` takes once drawn: its
+ *   drawn copy, charged beside the part (SUB decision 6f5e67dd). One more copy by default.
  * @param {((part: number, version: unknown) => unknown)|null} [options.cursorAt]  a cursor for any part, for sources paged by number
  * @param {() => void} [options.onChange] the pager's view changed
  * @param {() => void} [options.onEvict]  the budget freed it; it reads from the start when opened again
  */
-export function createPager({ budget, key, read, partBytes, cursorAt = null, onChange = () => {}, onEvict = () => {} }) {
+export function createPager({ budget, key, read, partBytes, drawn = (bytes) => bytes, cursorAt = null, onChange = () => {}, onEvict = () => {} }) {
+  /** A part's charge: the part held and its drawn copy. */
+  const charge = (bytes) => bytes + drawn(bytes);
   /** Bumped by every read started, eviction, restart and drop: a reply from before is discarded. */
   let revision = 0;
   let controller = null;
@@ -139,8 +143,8 @@ export function createPager({ budget, key, read, partBytes, cursorAt = null, onC
   function fail(failure) {
     state = "failed";
     error = failure;
-    // The part already shown stays, charged as it is.
-    if (data !== null) budget.reserve(key, utf8Length(data), evicted, { force: true });
+    // The part already shown stays, charged as it is, with its drawn copy.
+    if (data !== null) budget.reserve(key, charge(utf8Length(data)), evicted, { force: true });
     else budget.release(key);
   }
 
@@ -170,7 +174,7 @@ export function createPager({ budget, key, read, partBytes, cursorAt = null, onC
     data = reply.data;
     state = "ready";
     error = null;
-    budget.reserve(key, size, evicted, { force: true });
+    budget.reserve(key, charge(size), evicted, { force: true });
   }
 
   /**
@@ -192,9 +196,12 @@ export function createPager({ budget, key, read, partBytes, cursorAt = null, onC
     controller?.abort();
     const own = new AbortController();
     controller = own;
-    // Room for the part about to be read, beside the one on show, before the read starts.
+    // Room for the part about to be read and its drawn copy, beside the one
+    // on show and its drawn copy, before the read starts. Forced: the part
+    // last asked for is the floor (with the inline snapshot), the one thing
+    // that may take the view past its budget.
     const held = data === null ? 0 : utf8Length(data);
-    budget.reserve(key, held + partBytes, evicted, { force: true });
+    budget.reserve(key, (held ? charge(held) : 0) + charge(partBytes), evicted, { force: true });
     want = index;
     state = "loading";
     error = null;
@@ -246,6 +253,8 @@ export function createPager({ budget, key, read, partBytes, cursorAt = null, onC
         count,
         known: reachable,
         data,
+        /** The part's UTF-8 length, or 0 when none is on show. */
+        size: data === null ? 0 : utf8Length(data),
         version,
         newer,
         error,

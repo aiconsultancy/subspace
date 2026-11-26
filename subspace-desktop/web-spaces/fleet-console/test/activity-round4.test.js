@@ -174,3 +174,26 @@ test("P2: an evicted read's measure and window are forgotten, and a read again s
   assert.equal(buttons(ofItem("ia"), "Load in full").length, 1);
   watcher.stop();
 });
+
+// ---------- P3: a part read reserves the part and its drawn copy ----------
+
+test("P3: a part read reserves the part held and its drawn copy before it reads, and keeps both", async () => {
+  const a = toolItem("ia", 9, { name: "read", content: [{ type: "text", text: "a".repeat(600 * 1024) }] });
+  const served = { ia: pagesOf(a) };
+  const client = fakeActivityClient([snapshotOf([a], { ia: placeholder(served.ia) })]);
+  let reserved = null;
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: 1024 * 1024 });
+  client.activityItemPage = bounded(20, async (agent, turnId, item, page) => {
+    reserved ??= watcher.view.budget.bytes("turn-b\u0000ia");
+    return served[item][page];
+  }).read;
+  watcher.start();
+  await settle();
+  await watcher.loadItem("turn-b", "ia");
+  const full = watcher.view.full("turn-b", "ia");
+  assert.equal(full.mode, "parts", "1.2 MiB whole does not fit 1 MiB");
+  assert.equal(reserved, 2 * activity.PART_MAX_BYTES, "the part and its drawn copy, before the first page is read");
+  assert.equal(watcher.view.budget.bytes("turn-b\u0000ia"), 2 * full.size, "both kept once read");
+  assert.equal(full.size, utf8Length(full.data));
+  watcher.stop();
+});

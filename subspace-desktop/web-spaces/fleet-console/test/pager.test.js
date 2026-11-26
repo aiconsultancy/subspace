@@ -71,7 +71,7 @@ test("pager: a source paged by cursor reaches every part in order, holding one p
   const joined = await readAll(pager);
   assert.equal(joined, text, "every byte, nothing repeated");
   assert.equal(pager.view.count, pager.view.part + 1, "the end is known once reached");
-  assert.ok(budget.used <= 100, "only the part on show is held");
+  assert.ok(budget.used <= 200, "only the part on show and its drawn copy are held");
   // Back to the start and to the end, all known now.
   await pager.open("first");
   assert.equal(pager.view.part, 0);
@@ -213,7 +213,7 @@ test("pager: a reply that does not advance, is empty before the end or is too la
     assert.ok(pager.view.error instanceof PagerError);
     assert.match(pager.view.error.message, why);
     assert.equal(pager.view.data, "first", "the part on show stays");
-    assert.equal(budget.bytes("k"), 5, "charged for what it shows");
+    assert.equal(budget.bytes("k"), 10, "charged for what it shows: the part and its drawn copy");
     assert.equal(reads, 2);
   }
 });
@@ -226,7 +226,7 @@ test("pager: room is made before the read starts, and drop discards a reply in f
   const pager = createPager({ budget, key: "p", partBytes: 100, read: () => new Promise((resolve) => release.push(() => resolve({ data: "late", next: null }))) });
   const done = pager.open("first");
   assert.equal(evicted, 1, "the other entry went before the read was sent");
-  assert.equal(budget.bytes("p"), 100);
+  assert.equal(budget.bytes("p"), 200, "the part and its drawn copy");
   pager.drop();
   assert.equal(budget.bytes("p"), 0);
   release[0]();
