@@ -4,7 +4,7 @@
 //! content and the items read, in the UTF-8 bytes it mounts: each block as
 //! it draws, markers and all, or one part when it is long, plus the
 //! formatted text kept for it (an unknown item's indented JSON, an error).
-//! An item read on demand draws within its own reservation
+//! An item read on demand draws within its own allowance
 //! ([`super::load`]) and is never planned here: only what its placeholder
 //! names is. Collapsed turns build no bodies, so they draw nothing.
 //!
@@ -345,7 +345,7 @@ fn cut_piece(
 }
 
 /// Shows part `wanted` of the body of `key` drawn in parts, in the plan
-/// or within its read's reservation: that part alone is written out.
+/// or within its read's allowance: that part alone is written out.
 pub(super) fn show_piece(selection: &mut Selection, key: &Key, wanted: usize) {
     let Selection {
         join, loaded, plan, ..
@@ -398,7 +398,7 @@ fn body_version(selection: &Selection, key: &Key) -> Version {
 }
 
 /// Whether the body of `key` is drawn block by block, so what is prepared
-/// for it is kept: by the plan, or within its read's reservation.
+/// for it is kept: by the plan, or within its read's allowance.
 fn drawn_in_blocks(selection: &Selection, key: &Key) -> bool {
     match selection
         .loaded

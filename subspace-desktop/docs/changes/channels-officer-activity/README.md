@@ -39,7 +39,10 @@ item too large to send inline is paged and loads on demand, never hidden.
   as its kind, or, for a kind or shape this version does not know, as its
   JSON, as an inline item shows. The joined item's ID and `seq` must be
   the ones its pages carry. A newer `seq` in the snapshot offers **Load
-  the latest**. Page counts and sizes are checked before anything is
+  the latest**: what was read stays shown and charged, with its window,
+  until the newer version arrives, and then gives way to it; if that read
+  fails, what was read stays beside the error and **Try again**. A
+  snapshot of a new generation still lets go of it at once. Page counts and sizes are checked before anything is
   allocated: a size the pages could not carry, or a joined length other
   than the declared one, is an invalid answer.
 - **One budget.** Everything the view holds counts against 64 MiB: the
@@ -49,8 +52,10 @@ item too large to send inline is paged and loads on demand, never hidden.
   budget holds during the read as after it: a read never holds more than
   its room. An item whose page 0 claims more is read again once with room
   made for that claimed size and its drawn copy when they fit the budget,
-  and in parts otherwise. The least recently opened item goes first (it
-  shows its load action again); items go when
+  and in parts otherwise. Room is made from the lowest priority up, items
+  read and bodies asked for alike, the least recently asked for first (an
+  item let go shows its load action again); only a person's request
+  changes priority, never a read completing. Items go when
   their turn leaves the snapshot. A reply that arrives after its item was
   let go, or after it was read again, is dropped.
 - **What is drawn counts too** (SUB decisions `ed71a299` and `0c13b784`).
@@ -72,14 +77,17 @@ item too large to send inline is paged and loads on demand, never hidden.
   that would pass it shows only its fixed heading (its kind and a short
   status), its size and that it is not drawn to stay within the view's
   memory budget, with **Show**. Tool names, argument keys and values are
-  its body, never its heading. **Show** first makes room, letting go of the
-  least recently opened items read, then of bodies asked for earlier, the
-  least recent first, until what is held and drawn fits beside the body
-  asked for. If the body still does not fit, it is drawn in parts within
+  its body, never its heading. **Show** first makes room, giving back any
+  read's optional growth, then letting go of the lowest priority, items
+  read and bodies asked for alike, the least recently asked for first,
+  until what is held and drawn fits beside the body asked for. If the body still does not fit, it is drawn in parts within
   the room left, each of at most 64 KiB, with **First part**, **Previous
   part**, **Next part**, **Last part** and `Part k of N`: never hidden and
-  never cut. Only the part shown is written out, from one index of where
-  each part starts, made once per version of the body.
+  never cut. Only the part shown is written out, from an index of where
+  some parts start, made once per version of the body and charged with the
+  part it draws: it keeps at most 4 KiB, its starts sparser as the body
+  grows, and moving to a part walks at most the parts from the nearest
+  start before it.
 - **The floor** (SUB decisions `8357ec55` §2 and `33ccecf6` item 1).
   Inline content is the snapshot itself and is never let go. Only the item
   last asked for may pass the room, and only when no room is left: the view
@@ -88,20 +96,26 @@ item too large to send inline is paged and loads on demand, never hidden.
   request stays within it. While the reader moves between parts, the
   outgoing part and its drawn window stay charged beside the page in flight
   until the new part arrives. A snapshot refresh never lets go of the part
-  last asked for. The planner enforces both: each read holds one
-  reservation from admission until it is let go or replaced, covering what
-  it holds and what it draws, and draws within it, never in the plan of the
+  last asked for. One ledger enforces both, for admission, a reply
+  arriving, a refresh and the plan of what is drawn alike: each read counts
+  from admission until it is let go or replaced, within a steady
+  allowance for what it holds and draws, beside a temporary allowance for
+  what is coming in, and draws within it, never in the plan of the
   snapshot's bodies. When formatting makes an item read whole draw more
-  than its copy, it grows into room no read holds, letting nothing go, or
-  else draws in parts within its reservation. A snapshot of a new generation discards every measure,
-  formatted text, part index and item read of the old one.
+  than its copy, it may grow past its allowance only into room nothing
+  else holds, no other read and no body asked for, letting nothing go, and
+  else draws in parts within its allowance. That growth gives way to any
+  newer request: it is given back before anything is let go. A snapshot
+  of a new generation discards every measure, formatted text, part index
+  and item read of the old one.
 - **Larger than the budget.** An item that, with its drawn copy, does not
   fit the room left is read one page at a time: its JSON, one 64 KiB page
   per part, with **First part**, **Previous part**, **Next part**, **Last
   part** and `Part k of N`; a page whose markers draw more than 64 KiB
   shows in parts of its own. Only the page shown is held; while the next
-  part is read, room for one more page is held beside it, and once it
-  arrives only its length. When the room made is under one page, the part
+  part is read, the page shown and its drawn window stay charged, with
+  room for the incoming page beside them, and once it arrives that page
+  and its drawn window are charged in their place. When the room made is under one page, the part
   is read anyway. Each part is pinned to the `seq`, page count and size of
   the part before, never a copy of it; when the item changed, the view
   starts again once from the newest version's first part and says a newer

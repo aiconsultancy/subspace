@@ -1,13 +1,15 @@
 //! A whole read's optional growth (SUB decisions `feb0d839` and `4311830a`
-//! item 6): its window grows past its allowance only into room nothing
-//! else holds, no other read and no body asked for, so publishing it never
-//! lets anything go.
+//! items 6 and 7): its window grows past its allowance only into room
+//! nothing else holds, no other read and no body asked for, so publishing
+//! it never lets anything go, and it is the first thing given back when a
+//! newer request wants room.
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, SharedString, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
 
 use super::super::super::super::remove::settle;
+use super::super::mounted;
 use super::{
     Irc, answer, drawn, held_bytes, load, loaded_keys, on, paged, refresh, running, served,
 };
@@ -138,4 +140,29 @@ fn publishing_a_whole_read_never_lets_go_of_another_to_grow(cx: &mut TestAppCont
         "drawn in parts within its allowance, not grown"
     );
     assert!(used <= ROOM, "{used} past the room");
+}
+
+/// Round 6 thermo (P3), SUB decisions `feb0d839` and `4311830a` item 7: a
+/// whole read that grew into room nothing held gives that growth back
+/// when a newer read is admitted, and is not let go: both fit within
+/// their allowances, which the room holds.
+#[gpui_kit::test]
+fn growth_is_given_back_to_a_newer_read_before_anything_is_let_go(cx: &mut TestAppContext) {
+    let room = 210_000;
+    let (board, cx) = markers(cx, (room, true));
+    load(cx);
+    assert!(mounted(&on("pieced"), cx).is_empty(), "grown: drawn whole");
+    // Its allowance is its JSON and a page beside it, about 102,000.
+    let (_, grown) = ledger(&board, cx);
+    assert!(grown > room / 2, "{grown}: past its allowance");
+
+    load_second(cx);
+    let (keys, used) = ledger(&board, cx);
+    assert_eq!(keys, vec![key("i3"), key("i4")], "the grown read kept");
+    // Below `i4` drawn whole: mounted, out of sight.
+    assert!(
+        mounted(&on("pieced"), cx).starts_with("Too large to draw whole"),
+        "its growth given back"
+    );
+    assert!(used <= room, "{used} past the room");
 }

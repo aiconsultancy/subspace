@@ -61,7 +61,7 @@ impl<'a> Block<'a> {
 /// The blocks of an entry's body; for an item read on demand, of what is
 /// held of it (`held`): the item once read whole, otherwise what its
 /// placeholder names. A page read in parts draws beside them, within its
-/// read's reservation ([`super::load`]).
+/// read's allowance ([`super::load`]).
 pub(super) fn entry_blocks<'a>(entry: &'a ActivityEntry, held: Option<&'a Held>) -> Vec<Block<'a>> {
     match (entry, held) {
         (ActivityEntry::Paged(_), Some(Held::Whole(read))) => whole_blocks(read),

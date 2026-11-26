@@ -1,28 +1,34 @@
 //! Items too large to send inline, read in the background and kept in the
 //! selection within one budget ([`MAX_LOADED`], SUB decisions `a17870f4`
 //! and `ed71a299`): every byte the view holds of the captain's activity
-//! counts against it, the snapshot's inline content and what the open
-//! turns draw ([`super::draw`]) too. No item is too large to read: one
-//! that fits the room left together with its drawn copy is read whole,
-//! page by page; a larger one is read and shown one page of its JSON at a
-//! time, never whole. Room is made before each read, the least recently
-//! opened item going first, and an item goes with its turn. A read is
+//! counts against it, the snapshot's inline content and what the open turns
+//! draw ([`super::draw`]) too. No item is too large to read: one that fits
+//! the room left together with its drawn copy is read whole, page by page;
+//! a larger one is read and shown one page of its JSON at a time, never
+//! whole. Room is made before each read ([`super::ledger`]): growth past an
+//! allowance is given back first, then the lowest priority goes, items read
+//! and bodies asked for alike; an item goes with its turn. A read is
 //! cancelled when its item goes, so no page is asked for after the view
 //! closes, and a reply that arrives after its read was let go or replaced
 //! is dropped.
 //!
-//! Each read holds one reservation from the moment it is made until it is
-//! let go or replaced (SUB decisions `8357ec55` §3 and `33ccecf6` item 1):
-//! what it holds and the window it draws, together. A whole read reserves
-//! the item and its drawn copy; once read, it draws whole within that,
-//! or, when its markers and formatting draw more, whole within that and
-//! the room no read holds, letting nothing go, else in parts within it. A
-//! read in parts reserves a page and its drawn window; while the next part
-//! is read, the part shown and its window stay counted beside the page
-//! coming in. What a read draws is never planned beside the snapshot's
-//! bodies: it always draws, within its own reservation. A new snapshot
-//! never lets go of the read the floor keeps: the part of the item last
-//! asked for.
+//! Each read counts in the one ledger from the moment it is made until it
+//! is let go or replaced (SUB decisions `8357ec55` §3, `33ccecf6` item 1
+//! and `4311830a`): what it holds and the window it draws, within its
+//! steady allowance, and beside it what is coming in. A whole read is
+//! granted the item and its drawn copy; once read, it draws whole within
+//! that, or, when its markers and formatting draw more, whole within that
+//! and room nothing else holds, no other read and no body asked for,
+//! letting nothing go, else in parts within it. That growth gives way to
+//! any newer request, given back before anything is let go (SUB decision
+//! `feb0d839`). A read in parts is granted a page and its drawn window;
+//! while the next part is read, the part shown and its window stay counted
+//! beside the page coming in, and once it arrives that page and its window
+//! are counted in their place. **Load the latest** keeps what was read
+//! shown and counted until the newer version arrives, or beside its error.
+//! What a read draws is never planned beside the snapshot's bodies: it
+//! always draws, within its own allowance. A new snapshot never lets go of
+//! the read the floor keeps: the part of the item last asked for.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -176,13 +182,13 @@ pub(super) enum Reload {
     Failed(Error),
 }
 
-/// What a read draws within its reservation.
+/// What a read draws within its allowance.
 pub(super) enum Window {
     /// Nothing yet: it is read, or failed.
     None,
     /// Drawn block by block, holding these bytes drawn.
     Whole(u64),
-    /// Too large to draw whole within its reservation: one part at a time.
+    /// Too large to draw whole within its allowance: one part at a time.
     Pieced(Pieced),
 }
 

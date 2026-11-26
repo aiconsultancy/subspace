@@ -20,7 +20,7 @@ use crate::Irc;
 /// placeholder names is drawn within the plan like any inline body: held
 /// back (`held_back`, the bytes it would draw) or in parts (`pieced`), its
 /// load action stays. What is read of it draws within its read's own
-/// reservation, whatever the plan ([`super::load`]).
+/// allowance, whatever the plan ([`super::load`]).
 pub(super) fn paged(
     selection: &Selection,
     (turn, paged, pieced, held_back): (&str, &PagedItem, Option<&Pieced>, Option<u64>),
@@ -109,8 +109,8 @@ pub(super) fn load_parts(
         Held::Whole(entry) => {
             let newer = entry.base().seq < paged.base.seq;
             let mut drawn = latest(id, (&loaded.reload, newer), &action, cx);
-            // Drawn within its reservation: in parts when its body is
-            // larger than what the reservation leaves beside it.
+            // Drawn within its allowance: in parts when its body is
+            // larger than what the allowance leaves beside it.
             match &loaded.window {
                 Window::Pieced(pieced) => {
                     drawn.extend(super::item::note(id, entry, cx));
