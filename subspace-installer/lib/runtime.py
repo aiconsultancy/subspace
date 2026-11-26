@@ -488,9 +488,9 @@ def irc_config(value, slug, check_files, plain=False):
     if "compose" in value:
         require(mode == "local", "IRC compose settings require local mode.")
     if mode == "local":
-        compose = fields(value.get("compose", {}), "irc.compose", "repo ref tlsBind tlsPort tlsCert tlsKey serverName operator channels history", ["operator"])
+        compose = fields(value.get("compose", {}), "irc.compose", "repo ref tlsBind tlsPort tlsCert tlsKey serverName operator channels history localApiIrcHook", ["operator"])
         irc["compose"] = source({key: compose[key] for key in ("repo", "ref") if key in compose}, "IRC source", SUBSPACE_REPO)
-        for key in ("tlsCert", "tlsKey"):
+        for key in ("tlsCert", "tlsKey", "localApiIrcHook"):
             if key in compose:
                 irc["compose"][key] = absolute_file(compose[key], check_files)
         bind = ip(compose.get("tlsBind", LOOPBACK))
@@ -3207,6 +3207,20 @@ def render_irc(cfg, extra):
             override["networks"] = {history["network"]: {"external": True}}
     else:
         history_path.unlink(missing_ok=True)
+    hook_path = config_dir / "api-hook-token"
+    if "localApiIrcHook" in local:
+        token = Path(local["localApiIrcHook"]).read_text().strip()
+        require(re.fullmatch(r"[0-9a-f]{48}", token), "The local API IRC hook token is invalid.")
+        write(hook_path, token + "\n", 0o440, ERGO_GID)
+        volumes.append(f"{hook_path}:/run/subspace/api-hook-token:ro")
+        service_env.update(IRC_AUTH_API_URL="http://api:3000",
+                           IRC_AUTH_API_TOKEN_FILE="/run/subspace/api-hook-token", IRC_AUTH_API_ALLOW_HTTP="true")
+        api_network = "subspace-api_default"
+        if api_network not in service.setdefault("networks", ["default"]):
+            service["networks"].append(api_network)
+        override.setdefault("networks", {})[api_network] = {"external": True}
+    else:
+        hook_path.unlink(missing_ok=True)
     write(config_dir / "override.json", json_text(override))
     write(config_dir / "source", str(APP / "src" / f"irc-{local['ref']}" / "subspace-irc") + "\n")
     unit = f"{PREFIX}irc.service"

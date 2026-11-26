@@ -1070,6 +1070,27 @@ rather than one fleet's Ergo:
 
 ### IRC sign-in
 
+When guided setup runs both Ergo and a development-sign-in API on one VM,
+they share an authentication hook over the private API Compose network.
+The API's signing secret is mounted only into the API. Ergo receives the
+separate hook token. The advertised IRC addresses are the loopback listener
+ports. An existing operator-configured IRC issuer is retained.
+
+If a managed shared Ergo server uses the API selected by `--api-target` or
+`--api-url`, first configure that API to issue credentials for the shared
+IRC server. Set its `IRC_AUTH_SERVERS`, `IRC_AUTH_ORGANISATION`,
+`IRC_CREDENTIAL_SECRET_FILE` and `IRC_AUTH_HOOK_TOKEN_FILE`. On the shared
+IRC VM, install the matching hook token in a root-only file and run:
+
+```sh
+sudo subspace-setup irc-server --auth-api-url https://subspace.example.com \
+  --auth-api-token-file /root/irc/hook-token
+```
+
+The API address must be reachable from that VM over HTTPS. Use
+`--auth-api-ca-file` to trust a private CA for the API. The server retains
+those settings across reruns. Clear the hook with `--auth-api-url ''`.
+
 `irc.auth` sets how the rear admiral and the captains sign in to IRC:
 `certificate` (SASL EXTERNAL) or `password` (SASL PLAIN). Guided setup uses
 certificates for fresh fleets and retains existing sign-in modes. Crew have no IRC accounts,

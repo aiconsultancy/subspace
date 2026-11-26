@@ -190,6 +190,53 @@ class SetupInputsTests(unittest.TestCase):
                                             certificates=answers.get("ircAuth") == "certificate")
         return answers, members, config, secrets, store
 
+    def test_local_api_irc_hook_has_separate_persistent_files_and_keeps_operator_settings(self):
+        args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion"]
+        answers, _, _ = answers_for(args)
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        environment, _ = fleet_setup.api_environment(answers, {})
+        volumes = fleet_setup.api_irc_hook(answers, environment, store)
+        self.assertEqual(environment["IRC_AUTH_SERVERS"], "127.0.0.1:6667,127.0.0.1:6697")
+        self.assertEqual(environment["IRC_AUTH_ORGANISATION"], f"dev:{answers['organisation']}")
+        self.assertEqual(len(volumes), 2)
+        directory = fleet_setup.INPUTS / "api-irc-auth"
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        token = (directory / "hook-token").read_text()
+        self.assertNotEqual(token, (directory / "credential-secret").read_text())
+        api_env = fleet_setup.INPUTS / "api.env"
+        api_env.write_text("".join(f"{k}={v}\n" for k, v in environment.items()))
+        _, _, config, _, _ = self.generate(args)
+        self.assertEqual(config["irc"]["compose"]["localApiIrcHook"], str(directory / "hook-token"))
+        self.assertEqual(fleet_setup.api_irc_hook(answers, environment, store), volumes)
+        self.assertEqual((directory / "hook-token").read_text(), token)
+        api_env.write_text(api_env.read_text().replace(
+            "IRC_AUTH_SERVERS=127.0.0.1:6667,127.0.0.1:6697",
+            "IRC_AUTH_SERVERS=irc.example.com:6697"))
+        configured, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(fleet_setup.api_irc_hook(answers, configured, store), volumes)
+        self.assertEqual(configured["IRC_AUTH_SERVERS"], "irc.example.com:6697")
+        remote = {**answers, "irc": "remote"}
+        self.assertEqual(fleet_setup.api_irc_hook(remote, configured, store), volumes)
+        self.assertEqual(configured["IRC_AUTH_SERVERS"], "irc.example.com:6697")
+        unchanged = environment.copy()
+        self.assertEqual(fleet_setup.api_irc_hook(remote, unchanged, store), [])
+        self.assertNotIn("IRC_AUTH_SERVERS", unchanged)
+        inline = configured.copy()
+        inline.pop("IRC_CREDENTIAL_SECRET_FILE")
+        inline["IRC_CREDENTIAL_SECRET"] = "a" * 48
+        self.assertEqual(fleet_setup.api_irc_hook(answers, inline, store), volumes[1:])
+        self.assertNotIn("IRC_CREDENTIAL_SECRET_FILE", inline)
+        api_env.write_text(api_env.read_text().replace(
+            f"IRC_AUTH_HOOK_TOKEN_FILE={fleet_setup.API_IRC_MOUNT}/hook-token",
+            "IRC_AUTH_HOOK_TOKEN_FILE=/example/operator-hook"))
+        partial_override, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(fleet_setup.api_irc_hook(answers, partial_override, store), volumes[:1])
+        self.assertEqual(partial_override["IRC_AUTH_HOOK_TOKEN_FILE"], "/example/operator-hook")
+        api_env.write_text("IRC_AUTH_HOOK_TOKEN_FILE=/example/operator-hook\n")
+        operator_env, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(fleet_setup.api_irc_hook(answers, operator_env, store), [])
+        self.assertEqual(operator_env["IRC_AUTH_HOOK_TOKEN_FILE"], "/example/operator-hook")
+
     def test_local_fleet_validates_with_api_and_demo_channels(self):
         api = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"]}
         answers, members, config, secrets, _ = self.generate(
@@ -3505,6 +3552,41 @@ class HostInstallerTests(unittest.TestCase):
 
 
 class IrcServerTests(unittest.TestCase):
+    def test_auth_hook_requires_https_and_a_private_token_file(self):
+        import irc_server
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "hook-token"
+            path.write_text("a" * 48 + "\n")
+            path.chmod(0o600)
+            answers = {"authApiUrl": "https://subspace.example.com/", "authApiTokenFile": str(path)}
+            with patch.object(fleet_setup, "SECRET_OWNER", os.getuid()):
+                self.assertEqual(irc_server.auth_api(answers), ("https://subspace.example.com", "a" * 48, None))
+                for origin in ("http://subspace.example.com", "https://subspace.example.com/api",
+                               "https://user@subspace.example.com", "https://[2001:db8::1]:443"):
+                    with self.subTest(origin), self.assertRaisesRegex(fleet_setup.SetupError, "HTTPS origin"):
+                        irc_server.auth_api({**answers, "authApiUrl": origin})
+                path.chmod(0o644)
+                with self.assertRaisesRegex(fleet_setup.SetupError, "chmod 600"):
+                    irc_server.auth_api(answers)
+
+    def test_changing_the_auth_api_origin_requires_a_token_file(self):
+        import irc_server
+
+        saved = {"serverName": "irc.example.com", "bind": "10.0.0.4", "humans": ["admiral"],
+                 "authApiUrl": "https://subspace.example.com", "authApiTokenFile": "/example/old-token"}
+        args = argparse.Namespace(non_interactive=True, server_name=None, bind=None, port=None, history=None,
+                                  admin=None, tls_cert=None, tls_key=None, auth_api_ca_file=None,
+                                  operator="operator", access=None, ssh_from=None, lockdown=None,
+                                  auth_api_url="https://new.example.com", auth_api_token_file=None)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "requires --auth-api-token-file"):
+            irc_server.gather(args, saved)
+        args.auth_api_token_file = "/example/new-token"
+        self.assertEqual(irc_server.gather(args, saved)["authApiTokenFile"], "/example/new-token")
+        args.auth_api_url = "https://subspace.example.com:443/"
+        args.auth_api_token_file = None
+        self.assertEqual(irc_server.gather(args, saved)["authApiTokenFile"], "/example/old-token")
+
     def test_private_addresses_only(self):
         import irc_server
         for address in ("10.0.0.4", "192.168.64.2", "100.101.102.103", "fd7a:115c:a1e0::1"):

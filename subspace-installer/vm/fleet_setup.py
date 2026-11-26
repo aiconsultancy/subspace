@@ -67,6 +67,9 @@ FLEET_APP = Path("/opt/subspace-fleet")
 FLEET_ETC = Path("/etc/subspace-fleet")
 API_PROJECT = "subspace-api"
 API_PORT = 3000
+API_IRC_MOUNT = "/run/subspace-managed-irc"
+API_IRC_HOOK_SETTINGS = {"IRC_AUTH_ORGANISATION", "IRC_AUTH_SERVERS", "IRC_AUTH_HOOK_TOKEN",
+                         "IRC_AUTH_HOOK_TOKEN_FILE", "IRC_CREDENTIAL_SECRET", "IRC_CREDENTIAL_SECRET_FILE"}
 # The API's agent-only listener: a fleet agent names itself in a header there and needs no token. It serves no
 # sign-in or administrator route, so unlike API_PORT the agents' Linux users may reach it.
 AGENT_API_PORT = 3001
@@ -1164,6 +1167,8 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     }
     if history:
         config["irc"]["compose"]["history"] = history
+    if answers["irc"] == "local" and answers.get("api") and automatic_irc_hook(INPUTS / "api.env"):
+        config["irc"]["compose"]["localApiIrcHook"] = str(INPUTS / "api-irc-auth" / "hook-token")
     if answers["irc"] == "local" and answers.get("ircAuth") == "certificate":
         tls = INPUTS / "irc-tls"
         config["irc"].update(auth="certificate", tls=True, port=IRC_TLS, caFile=str(tls / "cert.pem"))
@@ -2516,6 +2521,7 @@ def api_up(answers, secret_store, migrate=False):
         "DEV_IRC_PORT": irc_endpoint(answers)[1],
     }
     merged, listener = api_environment(answers, environment, external=bool(external))
+    irc_volumes = api_irc_hook(answers, merged, secret_store)
     signing_marker = SIGNED_LOCAL_API + "\n" if signed_local_access(answers, merged, listener) else ""
     write_private(INPUTS / "api.env", signing_marker + "".join(
         f"{key}={value}\n" for key, value in merged.items()))
@@ -2527,7 +2533,7 @@ def api_up(answers, secret_store, migrate=False):
             ca = hashlib.sha256(Path(answers["databaseCaFile"]).read_bytes()).hexdigest()
             shutil.copyfile(answers["databaseCaFile"], database_ca_copy())
             os.chmod(database_ca_copy(), 0o644)
-        write_private(INPUTS / "api.override.yaml", external_override(listener, ca))
+        write_private(INPUTS / "api.override.yaml", external_override(listener, ca, irc_volumes))
         external_schema(answers, migrate)
         say("building and starting the Subspace API (loopback only) against the existing PostgreSQL")
         compose("up", "--detach", "--wait", "--wait-timeout", "300", "--build")
@@ -2543,6 +2549,7 @@ def api_up(answers, secret_store, migrate=False):
         "    ports: !override",
         f'      - "{LOOPBACK}:{API_PORT}:3000"',
         *([f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"'] if listener else []),
+        *(["    volumes:", *irc_volumes] if irc_volumes else []),
         "",
     ]))
     say("building and starting the Subspace API and PostgreSQL (loopback only)")
@@ -2554,7 +2561,43 @@ def database_ca_copy():
     return API_DIR.with_name("database-ca.pem")
 
 
-def external_override(listener, ca):
+def automatic_irc_hook(path):
+    return path.is_file() and f"IRC_AUTH_HOOK_TOKEN_FILE={API_IRC_MOUNT}/hook-token" in path.read_text().splitlines()
+
+
+def api_irc_hook(answers, environment, secret_store):
+    """Wire the private link from local Ergo to a development API that setup manages."""
+    file_settings = {"IRC_CREDENTIAL_SECRET_FILE": "credential-secret", "IRC_AUTH_HOOK_TOKEN_FILE": "hook-token"}
+    managed = {
+        **{setting: f"{API_IRC_MOUNT}/{name}" for setting, name in file_settings.items()},
+        "IRC_AUTH_ORGANISATION": f"dev:{answers['organisation']}",
+        "IRC_AUTH_SERVERS": f"{LOOPBACK}:{IRC_PLAIN},{LOOPBACK}:{IRC_TLS}",
+    }
+    configured = {key: environment[key] for key in API_IRC_HOOK_SETTINGS if environment.get(key)}
+    if answers.get("irc") == "local" and dev_sign_in(environment):
+        if not configured:
+            environment.update(managed)
+    elif configured == managed:
+        for key in managed:
+            del environment[key]
+
+    directory = INPUTS / "api-irc-auth"
+    files = {name: directory / name for setting, name in file_settings.items()
+             if environment.get(setting) == f"{API_IRC_MOUNT}/{name}"}
+    if not files:
+        return []
+
+    directory.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(directory, 0o700)
+    for name, path in files.items():
+        if not path.is_file():
+            write_private(path, secret_store.password(f"irc-{name}") + "\n")
+        # Containers run under distinct UIDs. The owner-only host directory protects both files.
+        os.chmod(path, 0o444)
+    return [f"      - {json.dumps(f'{path}:{API_IRC_MOUNT}/{name}:ro')}" for name, path in files.items()]
+
+
+def external_override(listener, ca, irc_volumes=()):
     """The Compose override for an API that uses an existing PostgreSQL (--database-url-file).
 
     The postgres service moves to a profile nothing activates, so no container or volume is created for it, and
@@ -2575,8 +2618,10 @@ def external_override(listener, ca):
         "    ports: !override",
         f'      - "{LOOPBACK}:{API_PORT}:3000"',
         *([f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"'] if listener else []),
-        *(["    environment:", f"      NODE_EXTRA_CA_CERTS: {DATABASE_CA}", f"      SUBSPACE_DATABASE_CA_SHA256: {ca}",
-           "    volumes:", f'      - "{database_ca_copy()}:{DATABASE_CA}:ro"'] if ca else []),
+        *(["    environment:", f"      NODE_EXTRA_CA_CERTS: {DATABASE_CA}", f"      SUBSPACE_DATABASE_CA_SHA256: {ca}"]
+          if ca else []),
+        *(["    volumes:", *([f'      - "{database_ca_copy()}:{DATABASE_CA}:ro"'] if ca else []), *irc_volumes]
+          if ca or irc_volumes else []),
         "",
     ])
 
