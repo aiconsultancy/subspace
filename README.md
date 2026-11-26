@@ -442,7 +442,11 @@ Existing connections keep their IDs, names and other settings such as
 auto-connect, channels and highlights. TLS on the loopback listener accepts
 Ergo's self-signed certificate.
 
-Use `SUBSPACE_STACK_DESKTOP_CONFIG=0 make stack-up` to skip the config write.
+For a desktop with no local IRC settings, run
+`SUBSPACE_STACK_DESKTOP_CONFIG=0 make stack-up` and sign in as
+`developer@example.com` in the `local` organisation. Channels obtains a
+short-lived IRC credential from the API, and Ergo checks it through the
+private Compose network. Existing desktop configuration files stay in place.
 Run `make stack-desktop-config` to apply it using the existing credentials.
 `SUBSPACE_STACK_DESKTOP_CONFIG_FILE` selects a different output file.
 `make stack-reset` keeps the desktop settings and removes the password files.
