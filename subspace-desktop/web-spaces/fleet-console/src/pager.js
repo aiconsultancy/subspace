@@ -114,6 +114,8 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
   let state = "idle";
   let error = null;
   let newer = false;
+  /** Whether the read in flight is of the newest version's first part (`restart`). */
+  let latest = false;
 
   function forget() {
     revision += 1;
@@ -160,7 +162,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     else budget.release(key);
   }
 
-  function accept(reply, index, cursor) {
+  function accept(reply, index, cursor, fromLatest) {
     if (!reply || typeof reply.data !== "string") throw new PagerError("The part read has no content.");
     const size = utf8Length(reply.data);
     if (size > partBytes) throw new PagerError(`The part read holds ${size} bytes, more than ${partBytes}.`);
@@ -170,7 +172,13 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     if (reply.next !== null && reply.next !== undefined && (size === 0 || (!fresh && reply.next === cursor))) {
       throw new PagerError("The part read does not advance.");
     }
-    if (fresh) {
+    if (fromLatest) {
+      // The newest version, read unpinned: nothing known of the one shown before applies.
+      starts = [null];
+      count = null;
+      version = null;
+      newer = false;
+    } else if (fresh) {
       starts = [null];
       count = null;
       newer = true;
@@ -194,15 +202,16 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
    * Show part `to` (first, previous, next, last or an index). The current
    * part stays on show until the new one arrives. Resolves once the read
    * settles, or at once when there is nothing to read. An evicted pager
-   * starts again from its first part.
+   * starts again from its first part. `fromLatest` reads the first part of
+   * the newest version, unpinned, even when part 0 is on show (`restart`).
    */
-  async function open(to = "first") {
+  async function open(to = "first", { fromLatest = false } = {}) {
     if (state === "dropped") return;
     if (state === "evicted") to = 0;
-    const index = stepPart(to, state === "idle" ? 0 : part, reach());
+    const index = fromLatest ? 0 : stepPart(to, state === "idle" ? 0 : part, reach());
     budget.touch(key);
-    if (state === "ready" && index === part && data !== null) return;
-    const cursor = cursorFor(index);
+    if (!fromLatest && state === "ready" && index === part && data !== null) return;
+    const cursor = fromLatest ? null : cursorFor(index);
     if (cursor === undefined) return;
     revision += 1;
     const rev = revision;
@@ -220,12 +229,13 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     }
     want = index;
     state = "loading";
+    latest = fromLatest;
     error = null;
     onChange();
     let reply = null;
     let failure = null;
     try {
-      reply = await read({ part: index, cursor, version, signal: own.signal });
+      reply = await read({ part: index, cursor, version: fromLatest ? null : version, signal: own.signal });
     } catch (caught) {
       failure = caught;
     }
@@ -234,7 +244,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     controller = null;
     if (failure === null) {
       try {
-        accept(reply, index, cursor);
+        accept(reply, index, cursor, fromLatest);
       } catch (caught) {
         failure = caught;
       }
@@ -245,14 +255,16 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
 
   return {
     open,
-    /** Read again from the first part, as a fresh version: after a newer version is known, or to try again. */
+    /**
+     * Read the first part of the newest version (Load the latest), beside
+     * the part on show: it stays on show and charged, with its drawn window,
+     * until the new part arrives, and stays with the error when the read
+     * fails, so it can be tried again (SUB decision 533c2b29). A pager of a
+     * source that is gone (another stream generation) is dropped instead.
+     */
     restart() {
       if (state === "dropped") return Promise.resolve();
-      forget();
-      newer = false;
-      state = "idle";
-      budget.release(key);
-      return open("first");
+      return open("first", { fromLatest: true });
     },
     /** Stop: abort any read, discard its reply and release what is held. */
     drop() {
@@ -273,6 +285,8 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
         size: data === null ? 0 : utf8Length(data),
         version,
         newer,
+        /** Reading the newest version's first part, the part on show kept meanwhile. */
+        reloading: state === "loading" && latest,
         error,
         hasPrevious: data !== null && part > 0,
         hasNext: data !== null && part + 1 < reachable,

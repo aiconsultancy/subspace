@@ -335,7 +335,9 @@ function pagedSegments(turnId, item, full, body) {
       full.state === "loading"
         ? full.data === null
           ? `Large item (${pages}), more than this view holds at once. Reading its first part…`
-          : `Reading part ${full.want + 1}…`
+          : full.reloading
+            ? "Reading the latest version. This part stays on show until it arrives…"
+            : `Reading part ${full.want + 1}…`
         : full.newer
           ? "The item changed while it was read: this is the newer version, from its first part."
           : `Large item (${pages}), more than this view holds at once, so it shows a part at a time.`;
@@ -391,7 +393,7 @@ export function itemSegments(turnId, item, full, body) {
  * whether it is held back and the part's place among the parts.
  */
 export function segmentKeys(item, full, bodyVersion, window, held) {
-  const read = full ? [full.mode, full.state, full.seq, full.error ?? "", full.want ?? "", full.newer ?? "", full.data === null, full.item ? 1 : 0] : [];
+  const read = full ? [full.mode, full.state, full.seq, full.error ?? "", full.want ?? "", full.newer ?? "", full.reloading ?? "", full.data === null, full.item ? 1 : 0] : [];
   const chrome = JSON.stringify([item.seq, item.status, item.kind, item.name ?? "", item.callId ?? "", item.paged?.pages ?? "", item.paged?.bytes ?? "", ...read]);
   const parts = full?.mode === "parts" ? [full.part, full.count, full.known, full.hasPrevious, full.hasNext, full.hasLast] : [];
   return { head: chrome, foot: chrome, body: JSON.stringify([bodyVersion, window, held, ...parts]) };

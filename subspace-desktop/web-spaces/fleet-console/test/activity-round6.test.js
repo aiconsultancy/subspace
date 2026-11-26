@@ -3,10 +3,103 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { PART_MAX_BYTES } from "../src/activity.js";
 import { formatItem, itemDocument, itemTree, json, mount } from "../src/activity-view.js";
+import { createBudget } from "../src/budget.js";
 import { partBlocks, restOf, shownJsonPieces } from "../src/document.js";
+import { createPager } from "../src/pager.js";
 import { activityEvent, stepItem, tokens, toolItem } from "./activity-fixtures.js";
-import { buttons, fakeDoc, officer, pagedWith, prepare, windowsIn } from "./activity-helpers.js";
+import { buttons, fakeDoc, officer, pagedWith, pagesOf, prepare, settle, windowsIn } from "./activity-helpers.js";
+
+// ---------- 3. Load the latest keeps the part on show until its replacement arrives ----------
+
+test("3: a pager's restart keeps the part on show and charged beside the read, swaps on arrival and keeps it on failure", async () => {
+  const budget = createBudget(10_000);
+  const replies = [];
+  const asked = [];
+  const pager = createPager({
+    budget,
+    key: "p",
+    partBytes: 100,
+    drawn: () => 30,
+    cursorAt: (part) => part,
+    read: (request) => {
+      asked.push({ part: request.part, version: request.version });
+      return new Promise((resolve, reject) => replies.push({ resolve, reject }));
+    },
+  });
+  budget.request("p");
+  const first = pager.open("first");
+  replies.shift().resolve({ data: "old-0", next: 1, version: 1, count: 2 });
+  await first;
+  const shown = budget.bytes("p");
+  let reload = pager.restart();
+  assert.deepEqual(asked.at(-1), { part: 0, version: null }, "the newest version, unpinned, even with part 0 on show");
+  assert.equal(pager.view.data, "old-0", "the outgoing part stays on show");
+  assert.equal(pager.view.reloading, true);
+  assert.equal(budget.bytes("p"), shown + 100, "the outgoing part and its window stay charged beside the incoming part");
+  replies.shift().reject(new Error("gateway away"));
+  await reload;
+  assert.equal(pager.view.state, "failed");
+  assert.equal(pager.view.data, "old-0", "a failed read keeps the outgoing part");
+  assert.equal(pager.view.version, 1);
+  assert.equal(budget.bytes("p"), shown, "charged as it was");
+  reload = pager.restart();
+  replies.shift().resolve({ data: "new-0", next: null, version: 2, count: 1 });
+  await reload;
+  assert.equal(pager.view.data, "new-0", "swapped once the new part arrived");
+  assert.equal(pager.view.version, 2);
+  assert.equal(pager.view.count, 1);
+  assert.equal(pager.view.newer, false);
+  assert.equal(budget.bytes("p"), 5 + 30, "only the new part and its window");
+});
+
+test("3: Load the latest on an item read in parts keeps the part and its window on show until the first new page arrives; a failure keeps them with Try again", async () => {
+  const { item, pages, snapshot } = pagedWith("a".repeat(600 * 1024));
+  const { watcher, client, panel } = await prepare(snapshot, 0);
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  panel.update(watcher.view, officer);
+  const before = watcher.view.full("turn-b", "ia");
+  const window = windowsIn(panel.root)[0];
+  assert.ok(window, "the first part's window is drawn");
+  const charged = watcher.view.budget.bytes("turn-b\u0000ia");
+  // The item changes on the gateway; its first new page is held.
+  const newer = { ...item, seq: 10, content: [{ type: "text", text: "b".repeat(600 * 1024) }] };
+  const newPages = pagesOf(newer);
+  watcher.event(activityEvent(10, { type: "item", item: { ...placeholderOf(watcher), seq: 10, paged: { pages: newPages.length, bytes: newPages[0].bytes } } }));
+  panel.update(watcher.view, officer);
+  const held = [];
+  client.activityItemPage = (agent, turn, id, page) => new Promise((resolve, reject) => held.push({ page, resolve, reject }));
+  assert.equal(buttons(panel.root, "Load the latest").length, 1);
+  let reload = watcher.loadItem("turn-b", "ia");
+  await settle();
+  panel.update(watcher.view, officer);
+  const waiting = watcher.view.full("turn-b", "ia");
+  assert.equal(waiting.state, "loading");
+  assert.equal(waiting.data, before.data, "the outgoing part stays");
+  assert.equal(windowsIn(panel.root)[0], window, "and its window stays mounted");
+  assert.ok(watcher.view.budget.bytes("turn-b\u0000ia") >= charged + PART_MAX_BYTES, "both stay charged while the read waits");
+  assert.match(panel.root.textContent, /Reading the latest version/);
+  held.shift().reject(new Error("gateway away"));
+  await reload;
+  panel.update(watcher.view, officer);
+  const failed = watcher.view.full("turn-b", "ia");
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.data, before.data, "a failed read keeps the outgoing part");
+  assert.equal(windowsIn(panel.root)[0], window);
+  assert.match(panel.root.textContent, /gateway away/);
+  assert.equal(watcher.view.budget.bytes("turn-b\u0000ia"), charged, "charged as before");
+  client.activityItemPage = async (agent, turn, id, page) => newPages[page];
+  assert.equal(buttons(panel.root, "Try again").length, 1);
+  await watcher.loadItem("turn-b", "ia");
+  panel.update(watcher.view, officer);
+  const after = watcher.view.full("turn-b", "ia");
+  assert.equal(after.state, "ready");
+  assert.equal(after.seq, 10, "Try again reads the latest version");
+  assert.ok(after.data.includes("bbbb"), "swapped to the new part");
+  watcher.stop();
+});
 
 // ---------- 4. A retained whole body keeps the live status and size ----------
 
