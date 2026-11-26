@@ -174,12 +174,14 @@ pub(super) fn rows(
                 v_flex()
                     .w_full()
                     .min_w_0()
-                    .children(pager)
+                    .items_start()
+                    .gap_1()
                     .child(workspace::fact(
                         label,
                         field_value(field, page.visible(), partial, project, cx),
                         cx,
                     ))
+                    .children(pager)
                     .into_any_element(),
             )
         })

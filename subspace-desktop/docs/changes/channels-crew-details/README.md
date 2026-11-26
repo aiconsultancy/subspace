@@ -38,8 +38,8 @@ not start reads; showing a retained view rearms the read and ignores any
 older response. A 404 falls back to the roster without polling. Showing the
 detail again, Reload, a reconnect or a returning member each probes the route.
 Each project's current task text displays in 512-code-point pages with no
-truncation. Previous, Next and the page-count jump menu fit the minimum
-260 px inspector. The member header shows the primary task's ID and status
+truncation. Each field's Previous, Next and page-count jump menu sit below its
+value and fit the minimum 260 px inspector. The member header shows the primary task's ID and status
 without repeating its text. Control and bidirectional formatting codes are
 shown as code-point markers, including tabs and line breaks in task fields.
 
@@ -88,5 +88,5 @@ route.
 This extends the existing Channels inspector, without adding a board,
 changing its zones or adding a command, setting or board-to-board role.
 The inspector uses shared sections and action components, including the
-crew row and page menu trigger. The existing [Channels guide](../../irc.md) describes
-how to open and leave the view.
+crew row and page menu trigger. The existing [Channels guide](../../irc.md)
+describes how to open and leave the view.

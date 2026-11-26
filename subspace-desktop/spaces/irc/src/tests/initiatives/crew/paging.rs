@@ -147,10 +147,15 @@ fn assert_pager_fits(window: &mut Window, controls: &[&'static str]) {
         px(260.)
     );
     let pager = window.within(PROGRESS_PAGER);
+    let progress = window.find("inspector-fact:Progress").bounds();
     for control in controls {
         let node = pager.find(*control);
         let bounds = node.bounds();
         assert!(node.visible(), "{control} must be visible");
+        assert!(
+            bounds.top() >= progress.bottom(),
+            "{control} must follow its field"
+        );
         assert!(
             bounds.left() >= body.left()
                 && bounds.right() <= body.right()
