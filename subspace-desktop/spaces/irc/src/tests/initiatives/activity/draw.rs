@@ -163,6 +163,23 @@ fn drawing_again_measures_and_formats_nothing(cx: &mut TestAppContext) {
     assert!(measured() > before, "a turn opened is measured");
 }
 
+/// Round 5 thermo mutation probe `remeasure`, SUB decision `0c13b784`
+/// §2: a plan made again, when the room changes, measures no body whose
+/// version is unchanged.
+#[gpui_kit::test]
+fn a_plan_made_again_measures_no_body_unchanged(cx: &mut TestAppContext) {
+    let (board, cx) = opened(cx);
+    let unknown = json!({"id": "u1", "seq": 4, "startedAt": 1, "updatedAt": 2,
+                         "kind": "patch", "body": {"k": "v".repeat(TEXT)}});
+    answer(&board, Ok(activity(json!([reply("i1", "a"), unknown]))), cx);
+    let before = measured();
+    assert!(before > 0);
+    roomed(&board, 4 * PART as u64, cx);
+    roomed(&board, 2 * PART as u64, cx);
+    assert!(drawn("irc-activity:t-now:u1:json", cx).contains(&"v".repeat(TEXT)));
+    assert_eq!(measured(), before, "nothing measured again");
+}
+
 /// Round 4 reviews (P3), SUB decision `0c13b784` §3: a body larger than
 /// the room even once room was made is drawn one part of at most 64 KiB
 /// at a time, every part in reach: never hidden and never cut.
