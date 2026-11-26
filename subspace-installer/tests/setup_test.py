@@ -134,6 +134,32 @@ class UsageGuardAnswersTests(unittest.TestCase):
             register.assert_not_called()
             self.assertEqual(list(Path(root).iterdir()), [])
 
+    def test_stale_teams_file_pin_is_refused_before_guided_install(self):
+        with tempfile.TemporaryDirectory() as root:
+            config = Path(root) / "fleet.json"
+            config.write_text(json.dumps({"stakeholders": {"teams": {
+                "botClientId": "11111111-2222-4333-8444-555555555555",
+                "tenantId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+                "users": ["99999999-8888-4777-8666-555555555555"],
+                "attachmentFileHosts": ["contoso-my.sharepoint.com"],
+            }}}))
+            args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
+                                           "--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                                           *CREW, "--no-api", "--stargate-ref", "a" * 40])
+            before = config.read_bytes()
+            listing = f"100644 blob {'b' * 40}\tscripts/officer-tools-contract.json"
+            replies = [subprocess.CompletedProcess([], 0, stdout=output)
+                       for output in ("", "", listing, json.dumps({"files": 1, "sandboxFiles": 1}))]
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "check_officer_tool_source", check_officer_tool_source), \
+                    patch.object(runtime.subprocess, "run", side_effect=replies), \
+                    patch.object(fleet_setup, "installer") as install, \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "incompatible officer tool interfaces"):
+                fleet_setup.setup(args)
+            install.assert_not_called()
+            self.assertEqual(config.read_bytes(), before)
+            self.assertEqual(list(Path(root).iterdir()), [config])
+
     def test_default_custom_and_off_options(self):
         with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
             defaults = fleet_setup.usage_guard_answers(fleet_setup.parse_args([]), {})

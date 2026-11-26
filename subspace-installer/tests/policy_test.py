@@ -79,6 +79,33 @@ def officer_secrets(*extra):
 
 
 class FleetPolicyTests(unittest.TestCase):
+    def test_teams_attachment_file_hosts_render_only_on_a_configured_registration(self):
+        config = example_config()
+        teams = {
+            "botClientId": "11111111-2222-4333-8444-555555555555",
+            "tenantId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            "users": ["99999999-8888-4777-8666-555555555555"],
+        }
+        config["stakeholders"] = {"teams": teams}
+        for hosts in (None, [], ["contoso-my.sharepoint.com", "a.sharepoint.com"]):
+            with self.subTest(hosts=hosts):
+                if hosts is not None:
+                    teams["attachmentFileHosts"] = hosts
+                cfg = validate(config, officer_secrets())
+                with patch.object(runtime, "directory"):
+                    settings, _ = runtime.stakeholder_settings(cfg, {}, {}, "ss-fleet-gateway",
+                                                               Path("/fixture/gateway/data"), {})
+                [registration] = settings["teams"]
+                self.assertEqual(registration.get("attachmentFileHosts"), hosts or None)
+                self.assertEqual(registration["access"]["users"], teams["users"])
+        for hosts in ("contoso-my.sharepoint.com", ["https://contoso-my.sharepoint.com"],
+                      ["*.sharepoint.com"], ["contoso.sharepoint.com.evil.test"], ["Contoso.sharepoint.com"],
+                      ["contoso.sharepoint.com:443"], ["contoso.sharepoint.com"] * 2,
+                      [f"tenant{index}.sharepoint.com" for index in range(5)]):
+            with self.subTest(invalid=hosts), self.assertRaisesRegex(Invalid, "Teams attachment"):
+                teams["attachmentFileHosts"] = hosts
+                validate(config, officer_secrets())
+
     def test_firewall_scopes_operator_ports_and_proxy(self):
         result = rules({"dashboard": 8070, "agentsview": 8080, "proxy": 8317}, [1700], [701, 702], 703)
         self.assertEqual(result.splitlines()[:2], ["add table inet subspace_fleet", "delete table inet subspace_fleet"])
@@ -2315,6 +2342,22 @@ class RepositoryAccessTests(unittest.TestCase):
             runtime.require_officer_tool_sources({})
             runtime.require_officer_tool_sources({"members": [{"githubApp": {"botLogin": "fixture[bot]"}}]})
         git.assert_not_called()
+
+    def test_enabled_teams_file_hosts_require_the_selected_gateway_capability(self):
+        teams = {"attachmentFileHosts": ["contoso-my.sharepoint.com"]}
+        cfg = {"integrations": {"teams": teams},
+               "stargate": {"repo": "https://example.test/stargate.git", "ref": "a" * 40}}
+        with patch.object(runtime, "APP", self.work / "app"):
+            contract = runtime.stargate_entry(cfg).parents[1] / "scripts/officer-tools-contract.json"
+            contract.parent.mkdir(parents=True)
+            contract.write_text(json.dumps({"files": 1, "sandboxFiles": 1}))
+            with self.assertRaisesRegex(Invalid, "incompatible officer tool interfaces"):
+                runtime.require_officer_tool_sources(cfg, installed_only=True)
+            contract.write_text(json.dumps({"teamsAttachmentFiles": 1}))
+            runtime.require_officer_tool_sources(cfg, installed_only=True)
+            teams["attachmentFileHosts"] = []
+            cfg.pop("stargate")
+            runtime.require_officer_tool_sources(cfg, installed_only=True)
 
     def test_officer_tools_accept_a_compatible_fetched_stargate_ref(self):
         cfg = {"repositories": {"project": {"url": "https://git.example.test/team/project.git"}},

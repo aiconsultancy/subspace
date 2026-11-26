@@ -106,6 +106,27 @@ and confirms the lockdown (use the same `--target` as the install, if any):
 ./install.sh --yes
 ```
 
+For personal-chat documents, add `"attachmentFileHosts": ["contoso-my.sharepoint.com"]`
+to `stakeholders.teams`, using your tenant's exact download hostname. This requires
+Stargate v0.50.0 or a compatible release declaring `teamsAttachmentFiles: 1`. The VM needs HTTPS access
+to each host. The existing bot managed identity requests a token for that exact
+host. You can configure up to four lowercase SharePoint hosts.
+
+Apply the change from your computer with `./install.sh --yes`, using the same
+`--target` as the install, if any. To replace an older Stargate pin saved by
+guided setup, run `./install.sh --yes --stargate-ref latest` to track the
+newest release, or pass the full commit SHA of a compatible release to
+`--stargate-ref` to keep a pin.
+
+To turn off personal-chat document intake, remove `attachmentFileHosts` from
+`stakeholders.teams` or set it to `[]`, then reapply with `./install.sh --yes`.
+
+Set `supportsFiles: true` on the bot in the Teams app package, keep the personal
+scope, increment the app version, and submit the package for your tenant's
+approval. From 15 January 2027, add the read-only `File.ReadSelected.User`
+resource-specific consent permission and publish the updated package by
+1 March 2027. [Microsoft Teams file authentication](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/bots-filesv4#authenticate-bot-file-requests)
+
 The lockdown keeps the agents away from Azure's metadata service. With Teams
 configured, setup lets Stargate's gateway user reach it, because the bot signs
 in with the managed identity. Watch the gateway on the VM (`./install.sh ssh`):

@@ -2153,6 +2153,9 @@ Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
   `/api/messages` callback to `/var/lib/subspace-fleet/teams/bot.sock`.
   Set `socketGroup` to an existing Linux group for the trusted reverse
   proxy. Follow [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/teams.md).
+  To receive personal-chat documents, add the tenant's exact SharePoint
+  hostname to `attachmentFileHosts` and enable file support on the Teams app
+  package. See the [Teams setup guide](../docs/teams.md#5-configure-the-fleet).
 
 ## Slack for officers
 

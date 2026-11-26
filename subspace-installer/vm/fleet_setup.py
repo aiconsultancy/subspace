@@ -1873,6 +1873,7 @@ def check_officer_tool_source(answers, members, ref):
         runtime.require_officer_tool_sources({
             **planned, "stargate": {**planned["stargate"], "repo": STARGATE_REPO},
             "repositories": runtime.repository_config(planned["repositories"]),
+            "integrations": runtime.integrations_config(planned),
             "api": api, "members": [planned["rearAdmiral"], *planned["captains"]],
         })
     except runtime.Invalid as error:

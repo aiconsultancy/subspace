@@ -84,8 +84,8 @@ STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 # Stargate's latest release and the commit its tag names; every install gets exactly that commit. Agent
 # dispatch on the rear admiral's gateway needs v0.43.0 or later. scripts/stargate-pin.py checks the two
 # against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
-STARGATE_RELEASE = "v0.49.0"
-STARGATE_REF = "03a63e94a38d8a5b3717fe67f04b6cf9540283dd"
+STARGATE_RELEASE = "v0.50.0"
+STARGATE_REF = "f6eaf8b112f00c5908f9e1a6896c693adbd32b88"
 # A hosted Subspace API (api.enrolment): Stargate's subspaceAgents section, its signing proxy and its MCP bridge,
 # first in this commit; a checkout has them when it has SUBSPACE_AGENTS_FILE. Releases up to v0.43 lack them.
 SUBSPACE_AGENTS_COMMIT = "5630a5ce9ca1e7cd533bc7a5ab951bb4681757be"
@@ -967,7 +967,8 @@ def integrations_config(cfg):
                 pattern(val, expression, f"Slack {key} entry")
     teams = None
     if "teams" in stakeholder:
-        teams = fields(stakeholder["teams"], "stakeholders.teams", "botClientId tenantId users channels socketGroup", ["botClientId", "tenantId", "users"])
+        teams = fields(stakeholder["teams"], "stakeholders.teams", "botClientId tenantId users channels socketGroup attachmentFileHosts",
+                       ["botClientId", "tenantId", "users"])
         for key in ("botClientId", "tenantId"):
             pattern(teams[key], UUID, f"Teams {key}")
         require(isinstance(teams["users"], list) and teams["users"], "Teams users requires an explicit allowlist.")
@@ -978,6 +979,11 @@ def integrations_config(cfg):
             string(name, "Teams channel ID", 1024)
         if "socketGroup" in teams:
             pattern(teams["socketGroup"], r"[a-z_][a-z0-9_-]{0,31}", "Teams socket group")
+        hosts = teams.get("attachmentFileHosts", [])
+        require(isinstance(hosts, list) and len(hosts) <= 4, "Teams attachmentFileHosts accepts up to four hosts.")
+        for host in hosts:
+            pattern(host, r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.sharepoint\.com", "Teams attachment file host")
+        require(len(set(hosts)) == len(hosts), "Teams attachmentFileHosts must be unique.")
     usage = fields(cfg.get("usage", {}), "usage", "reportChannel families")
     families = fields(usage.get("families", {}), "usage.families", "claude codex")
     for family, settings in families.items():
@@ -1098,7 +1104,10 @@ def require_officer_tool_sources(cfg, installed_only=False):
         paths.extend("scripts/github-" + script + ".ts" for script in
                      ("officer", "operations", "review", "wire", "local-app", "officer-mcp"))
         paths.append("scripts/officer-stdio.ts")
-    if not paths:
+    teams = cfg.get("integrations", {}).get("teams") or {}
+    if teams.get("attachmentFileHosts"):
+        capabilities["teamsAttachmentFiles"] = 1
+    if not capabilities:
         return
     ref, repo = cfg["stargate"]["ref"], cfg["stargate"]["repo"]
     source = stargate_entry(cfg).parents[1]
@@ -3308,6 +3317,8 @@ def stakeholder_settings(cfg, tokens, backend, user, data, environment):
             "tenantId": teams["tenantId"], "botClientId": teams["botClientId"], "socketPath": str(socket_dir / "bot.sock"),
             "access": {"users": teams["users"], "channels": teams.get("channels", [])},
         }]
+        if hosts := teams.get("attachmentFileHosts"):
+            settings["teams"][0]["attachmentFileHosts"] = hosts
     usage = integrations["usage"]
     if "reportChannel" in usage:
         settings["quotaWatch"] = {

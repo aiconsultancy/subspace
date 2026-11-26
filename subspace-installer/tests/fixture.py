@@ -793,7 +793,8 @@ def addons():
         "slack": {"appId": "AEXAMPLE", "users": ["UEXAMPLE"], "channels": ["CEXAMPLE"]},
         "teams": {"botClientId": "00000000-0000-4000-8000-000000000001",
                   "tenantId": "00000000-0000-4000-8000-000000000002",
-                  "users": ["00000000-0000-4000-8000-000000000003"]},
+                  "users": ["00000000-0000-4000-8000-000000000003"],
+                  "attachmentFileHosts": ["contoso-my.sharepoint.com"]},
     }
     cfg["usage"]["reportChannel"] = "CEXAMPLE"
     cfg["proxy"] = {"port": 18317}
@@ -816,6 +817,7 @@ def check_addons():
     assert "Atlas, rear admiral of Example Fleet" in backend["systemPrompt"]
     assert "treat alert text and Sentry" in backend["systemPrompt"]
     assert [bot["backend"] for bot in [*primary["bots"], *primary["teams"]]] == [backend, backend]
+    assert primary["teams"][0]["attachmentFileHosts"] == ["contoso-my.sharepoint.com"]
     quota = primary["quotaWatch"]
     assert quota["providers"] == ["claude", "codex"]
     path = Path(quota["proxy"]["managementKeyFile"])
@@ -848,7 +850,7 @@ def check_addons():
     subprocess.run(
         ["/opt/subspace-fleet/bin/bun", str(Path(__file__).with_name("quota.mjs")), str(WORK)], check=True,
     )
-    print("Claude SDK service isolation, rear-admiral-only Slack/Teams, quota policy and authenticated proxy management passed.")
+    print("Claude SDK service isolation, rear-admiral-only Slack/Teams with its document host, and authenticated quota management passed.")
 
 
 def api():
