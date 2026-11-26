@@ -24017,9 +24017,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           }
@@ -24132,9 +24140,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           }
@@ -24399,9 +24415,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           }
@@ -24551,9 +24575,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           },
@@ -24769,9 +24801,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           },
@@ -37704,6 +37744,10 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
             "format": "uuid"
           },
+          "identifier": {
+            "type": "string",
+            "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+          },
           "title": {
             "type": "string",
             "maxLength": 200,
@@ -37790,6 +37834,10 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
                     "format": "uuid"
                   },
+                  "identifier": {
+                    "type": "string",
+                    "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                  },
                   "title": {
                     "type": "string",
                     "maxLength": 200,
@@ -37807,6 +37855,7 @@
                 },
                 "required": [
                   "id",
+                  "identifier",
                   "title",
                   "status"
                 ],
@@ -37827,6 +37876,10 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
                     "format": "uuid"
                   },
+                  "identifier": {
+                    "type": "string",
+                    "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                  },
                   "title": {
                     "type": "string",
                     "maxLength": 200,
@@ -37844,6 +37897,7 @@
                 },
                 "required": [
                   "id",
+                  "identifier",
                   "title",
                   "status"
                 ],
@@ -38101,6 +38155,7 @@
           "rejectedByUserId",
           "provenance",
           "id",
+          "identifier",
           "title",
           "status",
           "decidedOn",
@@ -38285,6 +38340,10 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
             "format": "uuid"
           },
+          "identifier": {
+            "type": "string",
+            "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+          },
           "title": {
             "type": "string",
             "maxLength": 200,
@@ -38371,6 +38430,10 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
                     "format": "uuid"
                   },
+                  "identifier": {
+                    "type": "string",
+                    "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                  },
                   "title": {
                     "type": "string",
                     "maxLength": 200,
@@ -38388,6 +38451,7 @@
                 },
                 "required": [
                   "id",
+                  "identifier",
                   "title",
                   "status"
                 ],
@@ -38408,6 +38472,10 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
                     "format": "uuid"
                   },
+                  "identifier": {
+                    "type": "string",
+                    "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                  },
                   "title": {
                     "type": "string",
                     "maxLength": 200,
@@ -38425,6 +38493,7 @@
                 },
                 "required": [
                   "id",
+                  "identifier",
                   "title",
                   "status"
                 ],
@@ -38672,6 +38741,7 @@
         },
         "required": [
           "id",
+          "identifier",
           "title",
           "status",
           "decidedOn",

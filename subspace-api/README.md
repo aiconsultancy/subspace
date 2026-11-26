@@ -986,7 +986,19 @@ Decision and document revisions are available through the versioned REST routes.
 `GET /api/v1/decisions` sorts by creation time and ID, newest first. It
 filters by `issue`, `project`, `status`, `madeByType`, and the exact
 lower-case `tag`. Use `q` to search the title, decision, context, why,
-implications and alternatives without matching case.
+implications and alternatives without matching case, or to match a full
+decision identifier.
+
+Every decision has a server-assigned `identifier` such as `D-00042-EXA`.
+The number increments within its project, padded to at least five digits.
+The suffix is the project key at assignment. List, detail, write responses,
+supersession summaries and revision snapshots carry this field alongside the
+decision UUID `id`. The migration assigns references to existing decisions by
+creation time, then UUID, within each project.
+
+Decision path parameters (detail, edit, status and revisions) and the MCP
+`decisionId` argument accept either the UUID or the identifier, regardless of
+case. Fields that store relationships, such as `supersedesId`, take UUIDs.
 
 List items and detail responses return `recordedBy` and `madeBy` with
 `userId`, `displayName`, `available` and `kind`. The recorder is the
@@ -1004,6 +1016,8 @@ the list's filters except `status`, with the same validation, access rules and
 errors, and ignores `status` and paging parameters as the list ignores an
 unknown parameter. The MCP tools `subspace_list_decisions` and
 `subspace_count_decisions` return the same items and counts.
+
+See the [decision identifiers change record](docs/changes/decision-identifiers/README.md).
 
 ## Reading long text through MCP
 
