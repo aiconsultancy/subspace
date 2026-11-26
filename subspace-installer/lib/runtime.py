@@ -14,6 +14,7 @@ from pathlib import Path
 import pwd
 import re
 import secrets
+import shlex
 import socket
 import ssl
 import stat
@@ -25,10 +26,11 @@ from urllib.parse import urlsplit
 
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
+from github_policy import github_repository, officer_github_repositories
 import memory
 import network
-from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions, provision_role
-from roles import role_documents
+from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions
+from roles import github_officer_operations, provision_role, role_documents
 from roles import provision_workspace, workspace_documents
 import screenshots
 import sessions
@@ -82,8 +84,8 @@ STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 # Stargate's latest release and the commit its tag names; every install gets exactly that commit. Agent
 # dispatch on the rear admiral's gateway needs v0.43.0 or later. scripts/stargate-pin.py checks the two
 # against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
-STARGATE_RELEASE = "v0.47.0"
-STARGATE_REF = "f25631eb3a7e880fb819df2c4521c7d400e3067c"
+STARGATE_RELEASE = "v0.49.0"
+STARGATE_REF = "03a63e94a38d8a5b3717fe67f04b6cf9540283dd"
 # A hosted Subspace API (api.enrolment): Stargate's subspaceAgents section, its signing proxy and its MCP bridge,
 # first in this commit; a checkout has them when it has SUBSPACE_AGENTS_FILE. Releases up to v0.43 lack them.
 SUBSPACE_AGENTS_COMMIT = "5630a5ce9ca1e7cd533bc7a5ab951bb4681757be"
@@ -93,6 +95,7 @@ SUBSPACE_AGENTS_RELEASE = (0, 44, 0)
 # engine group only. /run is emptied at boot, so a tmpfiles.d entry makes the directories again.
 AGENT_SOCKETS = Path("/run/subspace-fleet/agents")
 AGENT_TMPFILES = Path("/etc/tmpfiles.d/subspace-fleet-agents.conf")
+OFFICER_EXPORT_TMPFILES = Path("/etc/tmpfiles.d/subspace-fleet-file-exports.conf")
 ENROLMENT_TOKEN = "subspace-enrolment-token"
 ENROLMENT_TOKEN_TEXT = r"senr1\.[A-Za-z0-9_-]{64}"
 # Fleet API browser origins: macOS Spaces, and the built-in Fleet Console's WebView2 origin on
@@ -903,17 +906,6 @@ def repository_config(value):
     return repos
 
 
-def github_repository(address):
-    """A GitHub HTTPS repository URL's owner/repository, as Stargate reads a remote
-    (src/api/v1/github-repository.ts), or None for any other URL."""
-    parts = urlsplit(address)
-    if parts.scheme != "https" or (parts.hostname or "").lower() != "github.com" or parts.query or parts.fragment:
-        return None
-    name = parts.path[1:].removesuffix("/").removesuffix(".git")
-    valid = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", name) and not re.search(r"/\.{1,2}$", name)
-    return name if valid else None
-
-
 def pull_request_repositories(cfg, homes):
     """Stargate's api.pullRequestRepositories: each crew worktree of a GitHub repository, keyed by its path as the
     crew plugin names it, and that repository's owner/repository, so the Fleet API can look up the pull request
@@ -1086,6 +1078,75 @@ def require_peer_message_source(cfg, installed_only=False):
                               "Captain peer messages require a Stargate revision with peerMessages support. "
                               "Select a compatible --stargate-ref or use --no-captain-peer-messages.",
                               installed_only, marker="options.peerMessages")
+
+
+def require_officer_tool_sources(cfg, installed_only=False):
+    paths = []
+    capabilities = {}
+    manifest = "scripts/officer-tools-contract.json"
+    if cfg.get("repositories"):
+        capabilities["refresh"] = 2
+        paths.extend(("scripts/repo-refresh.ts", "scripts/repo-refresh-host.ts"))
+    if enrolled(cfg) or subspace_mcp_url(cfg):
+        capabilities["files"] = 1
+        capabilities["preview"] = 1
+        capabilities["sandboxFiles"] = 1
+        paths.extend(("scripts/officer-files.ts", "scripts/officer-rest-files.ts", "scripts/markdown-preview.ts",
+                      "scripts/officer-stdio.ts"))
+    if any(person.get("githubApp") for person in cfg.get("members", [])) and officer_github_repositories(cfg):
+        capabilities["github"] = 1
+        paths.extend("scripts/github-" + script + ".ts" for script in
+                     ("officer", "operations", "review", "wire", "local-app", "officer-mcp"))
+        paths.append("scripts/officer-stdio.ts")
+    if not paths:
+        return
+    ref, repo = cfg["stargate"]["ref"], cfg["stargate"]["repo"]
+    source = stargate_entry(cfg).parents[1]
+    paths = list(dict.fromkeys([*paths, manifest]))
+
+    def compatible(raw):
+        try:
+            version = json.loads(raw)
+        except (TypeError, ValueError):
+            return False
+        return isinstance(version, dict) and all(version.get(key) == value for key, value in capabilities.items())
+
+    def contracts(raw):
+        require(compatible(raw), f"Stargate {ref[:12]} has incompatible officer tool interfaces. "
+                                 "Select a compatible --stargate-ref.")
+
+    present = {path for path in paths if (source / path).is_file()}
+    raw = (source / manifest).read_text() if manifest in present else None
+    if len(present) == len(paths) and compatible(raw):
+        return
+
+    def missing(available):
+        first = next((path for path in paths if path not in available), None)
+        require(first is None, f"Stargate {ref[:12]} lacks {first}. Select a newer compatible --stargate-ref.")
+
+    if installed_only:
+        missing(present)
+        contracts(raw)
+        return
+
+    # Fetch the selected revision once even when several interfaces are needed.
+    with tempfile.TemporaryDirectory(prefix="subspace-officer-tools-") as work:
+        try:
+            subprocess.run(["git", "init", "--quiet", "--bare", work], check=True, capture_output=True, timeout=20)
+            subprocess.run(["git", "-C", work, "fetch", "--quiet", "--no-tags", "--depth", "1", repo, ref],
+                           check=True, capture_output=True, timeout=60)
+            listing = subprocess.run(["git", "-C", work, "ls-tree", "-r", "FETCH_HEAD", "--", "scripts"],
+                                     check=True, capture_output=True, text=True, timeout=20)
+            missing({line.split("\t", 1)[1] for line in listing.stdout.splitlines()
+                     if line.startswith(("100644 blob ", "100755 blob ")) and "\t" in line})
+            result = subprocess.run(["git", "-C", work, "show", f"FETCH_HEAD:{manifest}"],
+                                    check=True, capture_output=True, text=True, timeout=20)
+        except FileNotFoundError:
+            raise Invalid("Install git before checking officer tools for a custom Stargate revision.") from None
+        except (OSError, subprocess.SubprocessError):
+            raise Invalid(f"Could not verify officer tools in Stargate {ref[:12]}. Check GitHub access "
+                          "or choose a compatible Stargate release.") from None
+    contracts(result.stdout)
 
 
 def check_stargate_source(source, repo, ref, path, message, installed_only, marker=None):
@@ -1716,6 +1777,47 @@ def configure_git(person, user, home, prune, protected):
             run("git", "config", "--global", "--replace-all", "--", key, value, user=user)
 
 
+def configure_github_officer_tools(cfg, homes):
+    registry_path = ETC / "officer-github.json"
+    wrapper_path = APP / "bin/subspace-github-officer"
+    registry = {}
+    repositories = officer_github_repositories(cfg)
+    for person in cfg["members"]:
+        app = person.get("githubApp")
+        if not app or not repositories:
+            continue
+        home = homes[person["id"]]
+        repos = {}
+        for key, repository in repositories.items():
+            owner, name = repository.split("/")
+            row = {"owner": owner, "name": name}
+            if person.get("mergeCheckouts", {}).get(key) == f"{owner}/{name}":
+                row["mergeCheckout"] = str(home / "workspace" / key)
+            repos[key] = row
+        registry["ss-" + person["id"]] = {
+            "home": str(home), "role": person["role"], "login": app["botLogin"],
+            "contents": app.get("contents", "write") if person["role"] == "captain" else "read",
+            "directPublication": not person.get("delegatesCoding"),
+            "protectedBranches": cfg.get("protectedBranches", []),
+            "repos": repos,
+        }
+    if not registry:
+        registry_path.unlink(missing_ok=True)
+        wrapper_path.unlink(missing_ok=True)
+        return
+    write(registry_path, json_text(registry), 0o644)
+    command = [*stargate_tool(cfg, "github-officer.ts"),
+               str(stargate_entry(cfg).parents[1] / "scripts/github-local-app.ts")]
+    write(wrapper_path, "#!/bin/sh\nSTARGATE_GITHUB_APP_CONFIG=" + shlex.quote(str(registry_path)) +
+          ' exec ' + shlex.join(command) + ' "$@"\n', 0o755)
+
+
+def github_officer_mcp_command(cfg):
+    return ["/usr/bin/env", f"STARGATE_GITHUB_APP_CONFIG={ETC / 'officer-github.json'}",
+            *stargate_tool(cfg, "github-officer-mcp.ts"),
+            str(stargate_entry(cfg).parents[1] / "scripts/github-local-app.ts")]
+
+
 def model_ref(family, model, effort=None):
     """OpenCode's provider/model reference, with #effort for a reasoning-effort variant."""
     return f"{PROVIDERS[family]}/{model}" + (f"#{effort}" if effort else "")
@@ -1775,11 +1877,34 @@ def stargate_entry(cfg):
     return APP / "src" / f"stargate-{cfg['stargate']['ref']}" / "src/main.ts"
 
 
+def stargate_tool(cfg, script):
+    return [str(APP / "bin/bun"), "--config=/dev/null", "--no-env-file", "--no-install",
+            str(stargate_entry(cfg).parents[1] / "scripts" / script)]
+
+
+def officer_media_target(cfg, person):
+    # The signing proxy selects the caller from its socket. Only the agent listener takes an actor header.
+    return (["--socket", str(agent_socket(person["id"]))] if enrolled(cfg)
+            else ["--endpoint", subspace_mcp_url(cfg), "--actor", person["account"]])
+
+
 def officer_upload_command(cfg, person):
-    # The issuer and transport come from the installed profile, never from a tool argument.
-    target = (["socket", str(agent_socket(person["id"]))] if enrolled(cfg)
-              else ["http", subspace_mcp_url(cfg)])
-    return ["/usr/bin/python3", "-I", str(APP / "lib/officer_upload.py"), *target, person["account"]]
+    return [*stargate_tool(cfg, "officer-files.ts"), "--legacy-upload", "--rest", "--staging", "/tmp",
+            *officer_media_target(cfg, person)]
+
+
+def officer_file_exports(person):
+    return STATE / "file-exports" / person["id"]
+
+
+def officer_publish_command(cfg, person):
+    stage = STATE / "agents" / person["id"] / "outbox"
+    command = [*stargate_tool(cfg, "officer-files.ts"), "--rest", "--staging", str(stage),
+               "--exports", str(officer_file_exports(person)), *officer_media_target(cfg, person)]
+    if cfg["screenshots"]:
+        command.extend(["--playwright", str(APP / "playwright/node_modules/playwright/index.mjs"),
+                        "--browser-cache", str(APP / "browsers")])
+    return command
 
 
 def subspace_bridge(cfg, agent_id):
@@ -1898,7 +2023,15 @@ def harness_permissions(cfg, person, starter_grants=()):
                         for tool in ("refresh_origin", "read_origin_file"))
     if enrolled(cfg):
         commands.append(SUBSPACE_REQUEST_GRANT)
+    if operations := github_officer_operations(cfg, person):
+        commands.append({"action": "shell", "resource": "subspace-github-officer --help", "effect": "allow"})
+        commands.extend({"action": "shell", "resource": f"subspace-github-officer {operation} *", "effect": "allow"}
+                        for operation in operations)
+        if person.get("delegatesCoding"):
+            commands.extend({"action": "shell", "resource": f"subspace-github-officer {operation} *", "effect": "deny"}
+                            for operation in ("push", "publish", "branch-create"))
     if person.get("mergeCheckouts"):
+        # Commissioned captains may still use the original wrapper. It also requires the exact reviewed head.
         commands.append({"action": "shell", "resource": "subspace-github gh pr merge *", "effect": "allow"})
     granted = permissions
     if commands:
@@ -2240,10 +2373,11 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
             "type": "remote", "url": mcp_url, "headers": {AGENT_HEADER: person["account"]},
         }}}
     if "mcp" in engine:
-        engine["mcp"]["servers"]["subspace_files"] = {"type": "local", "command": officer_upload_command(cfg, person)}
+        engine["mcp"]["servers"]["subspace_files"] = {"type": "local", "command": officer_upload_command(cfg, person), "timeout": 95_000}
+        engine["mcp"]["servers"]["subspace_publish"] = {"type": "local", "command": officer_publish_command(cfg, person), "timeout": 95_000}
     if has_repository_refresh(cfg, person):
         servers = engine.setdefault("mcp", {"servers": {}})["servers"]
-        servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(), "timeout": 110000}
+        servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(cfg), "timeout": 110000}
     password = hmac.new(seed, agent_id.encode(), hashlib.sha256).hexdigest()
     header = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
     environment = {
@@ -2296,7 +2430,9 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
     unit = serve_unit(
         f"engine-{agent_id}", f"OpenCode engine {agent_id}",
         f"{APP}/lib/runtime.py engine {settings}", user, [f"{PREFIX}proxy.service"],
-        user_paths=[home, database_dir], post_start=f"{APP}/lib/runtime.py share-database {settings}",
+        user_paths=[home, database_dir] + ([officer_file_exports(person)]
+                   if "subspace_publish" in engine.get("mcp", {}).get("servers", {}) else []),
+        post_start=f"{APP}/lib/runtime.py share-database {settings}",
         toolchain=False,
         # The officer's memory and task limits (lib/memory.py); its crew run in this engine, within them.
         service_options=memory.unit_options(limits) if limits else (),
@@ -2366,8 +2502,13 @@ def claude_backend(cfg, person, workspace, documents):
     if "mcpServers" in backend:
         command, *args = officer_upload_command(cfg, person)
         backend["mcpServers"]["subspace_files"] = {"type": "stdio", "command": command, "args": args}
+        command, *args = officer_publish_command(cfg, person)
+        backend["mcpServers"]["subspace_publish"] = {"type": "stdio", "command": command, "args": args}
+    if person["role"] == "captain" and github_officer_operations(cfg, person):
+        command, *args = github_officer_mcp_command(cfg)
+        backend.setdefault("mcpServers", {})["github_officer"] = {"type": "stdio", "command": command, "args": args}
     if has_repository_refresh(cfg, person):
-        command, *args = repository_refresh_command()
+        command, *args = repository_refresh_command(cfg)
         backend.setdefault("mcpServers", {})["repo_refresh"] = {"type": "stdio", "command": command, "args": args}
     return backend
 
@@ -3193,8 +3334,37 @@ def has_repository_refresh(cfg, person):
     return person["role"] == "rear_admiral" and bool(cfg.get("repositories"))
 
 
-def repository_refresh_command():
-    return ["/usr/bin/python3", str(APP / "lib/repo_refresh.py"), "mcp"]
+def repository_refresh_command(cfg):
+    return [*stargate_tool(cfg, "repo-refresh.ts"), "mcp", "--socket", "/run/subspace-fleet-repo-refresh.sock"]
+
+
+def repository_refresh_policy(tool, repository, peer):
+    from workspaces import private_credentials
+    policy = read_json(ETC / "repo-refresh.json")
+    require(tool in {"refresh_origin", "read_origin_file"} and repository in policy["repositories"],
+            "Unknown configured repository operation.")
+    repo = policy["repositories"][repository]
+    rear = policy["rearAdmiral"]
+    reader = f"ss-{rear}"
+    owner = "ss-fleet-repos"
+    caller_uid = pwd.getpwnam(reader).pw_uid
+    require(str(peer) == str(caller_uid), "Repository refresh socket caller differs from the authorised officer.")
+    checkout = STATE / "references" / rear / repository
+    origin = repo["url"]
+    mirror = STATE / "repositories" / f"{repository}.git"
+    credentials = (private_credentials(APP / "lib/github_app.py", origin, reader, timeout=18)
+                   if repo["private"] and tool == "refresh_origin" else
+                   {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": ""})
+    return {
+        "checkout": str(checkout), "checkoutUid": pwd.getpwnam(owner).pw_uid,
+        "callerUid": caller_uid, "origin": origin,
+        "expectedOrigin": origin if repo["private"] else str(mirror),
+        "gitRunner": ["/usr/sbin/runuser", "-u", owner, "--"],
+        "gitOptions": ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                       "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.http.allow=always"],
+        "gitEnvironment": {"PATH": "/usr/bin:/bin", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+                           "GIT_CONFIG_GLOBAL": "/dev/null", **credentials},
+    }
 
 
 def repository_refresh_units(cfg):
@@ -3222,10 +3392,12 @@ RemoveOnStop=yes
 [Install]
 WantedBy=sockets.target
 """, 0o644)
+    broker = " ".join([*stargate_tool(cfg, "repo-refresh.ts"), "serve", "--", "/usr/bin/python3",
+                       str(APP / "lib/runtime.py"), "repo-refresh-policy"])
     write(SYSTEMD / service_unit, f"""[Unit]
 Description=Fetch rear admiral repository origin refs
 [Service]
-ExecStart=/usr/bin/python3 {APP}/lib/repo_refresh.py serve
+ExecStart={broker}
 StandardInput=socket
 StandardOutput=null
 RuntimeMaxSec=100
@@ -3284,6 +3456,9 @@ def render(cfg, extra, prune=False):
         SUBSPACE_REQUEST.unlink(missing_ok=True)
     if "caFile" in cfg["irc"]:
         write(ETC / "irc-ca.pem", Path(cfg["irc"]["caFile"]).read_text(), 0o644)
+    # The root-owned parent makes the wildcard safe for active and retired
+    # officer exports. systemd-tmpfiles ages contents without following links.
+    write(OFFICER_EXPORT_TMPFILES, f"e {STATE}/file-exports/* - - - 30d -\n", 0o644)
     homes = {}
     documents = {}
     for person in cfg["members"]:
@@ -3292,6 +3467,10 @@ def render(cfg, extra, prune=False):
         home = homes[agent_id] = account(user, STATE / "agents" / agent_id)
         run("mkdir", "-p", "--", home / "workspace", user=user)
         configure_git(person, user, home, prune, cfg["protectedBranches"])
+        if subspace_mcp_url(cfg) or enrolled(cfg):
+            run("mkdir", "-p", "-m", "700", "--", home / "outbox", user=user)
+            directory(STATE / "file-exports", 0o711)
+            directory(officer_file_exports(person), 0o2750, user, GATEWAY)
         references = STATE / "references" / agent_id if cfg["repositories"] else None
         documents[agent_id] = role_documents(cfg, person, references, home)
         if enrolled(cfg):
@@ -3313,6 +3492,7 @@ def render(cfg, extra, prune=False):
                 ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "cloud", str(prune).lower()],
                 input=json_text(files), text=True, check=True,
             )
+    configure_github_officer_tools(cfg, homes)
     reconcile_workspaces(cfg, homes)
     databases, engines = [], []
     registrations, environments = {}, {}
@@ -3370,6 +3550,8 @@ def render(cfg, extra, prune=False):
         if native:
             # A Claude Agent SDK officer's gateway runs its tools, as its own user, as an engine does.
             opts["environment"].update(officer_tool_environment(cfg, person, home))
+            if enrolled(cfg) or subspace_mcp_url(cfg):
+                opts["writable"].append(officer_file_exports(person))
         # A Claude Agent SDK officer's own gateway runs its tools, so it takes the officer's limits, as an engine
         # does; the shared gateway has no cap (memory.SHARED_OPTIONS).
         opts["service"] = memory.unit_options(limits[agent_id]) if native else memory.SHARED_OPTIONS
@@ -3662,6 +3844,7 @@ def main(args):
         prune = tail[-1] == "true"
         require_usage_guard_source(cfg, installed_only=verb == "render")
         require_peer_message_source(cfg, installed_only=verb == "render")
+        require_officer_tool_sources(cfg, installed_only=verb == "render")
         if verb == "render":
             # Say once per install which captains keep a root other than the workspace, and why.
             for root in captain_roots(cfg).values():
@@ -3826,6 +4009,9 @@ def main(args):
     elif verb == "workspace-instructions":
         # Run as the captain: its workspace AGENTS.md and CLAUDE.md, keeping the operator notes.
         provision_workspace(json.load(sys.stdin))
+    elif verb == "repo-refresh-policy":
+        require(len(tail) == 3, "Name an operation, configured repository, and peer UID.")
+        print(json.dumps(repository_refresh_policy(*tail)))
     elif verb == "agent-header":
         # Stargate's Claude backend runs this as the officer for its Subspace MCP server's headers.
         require(len(tail) == 1 and re.fullmatch(r"[a-z][a-z0-9-]{0,23}", tail[0]), "Name one agent account.")

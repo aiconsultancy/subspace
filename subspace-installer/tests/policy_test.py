@@ -15,6 +15,7 @@ import tempfile
 import sys
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
@@ -439,6 +440,7 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(runtime.claude_backend(cfg, {**person, "harness": {**person["harness"], "effort": "xhigh"}},
                                                 Path("/workspace"), documents)["effort"], "xhigh")
         self.assertIn("subspace_files", backend["mcpServers"])
+        self.assertIn("subspace_publish", backend["mcpServers"])
         self.assertEqual({"subspace": backend["mcpServers"]["subspace"]}, {"subspace": {
             "type": "http", "url": "http://127.0.0.1:3001/mcp",
             "headersHelper": f"/opt/subspace-fleet/lib/runtime.py agent-header {person['account']}",
@@ -448,6 +450,30 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertNotIn("mcpServers", runtime.claude_backend(
             validate(dict(config, api={"url": "http://127.0.0.1:3000"}), api_secrets()), person,
             Path("/workspace"), documents))
+
+    def test_configured_claude_captain_discovers_scoped_github_without_bash(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        cfg = validate(config, api_secrets())
+        captain = {**cfg["members"][1], "githubApp": {"contents": "write"}, "delegatesCoding": True, "harness": {
+            "type": "claude-sdk", "family": "claude", "model": "fixture", "effort": None, "allowedTools": ["Read"]}}
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        documents = roles.role_documents(cfg, captain, None, home)
+        backend = runtime.claude_backend(cfg, captain, home / "workspace", documents)
+        command = backend["mcpServers"]["github_officer"]
+        self.assertEqual(command["type"], "stdio")
+        self.assertEqual([command["command"], *command["args"]], runtime.github_officer_mcp_command(cfg))
+        self.assertIn("scripts/github-officer-mcp.ts", command["args"][-2])
+        self.assertEqual(backend["allowedTools"], ["Read"])
+        self.assertIn("github_officer.operate", backend["systemPrompt"])
+        self.assertIn("`pr-create`", backend["systemPrompt"])
+        self.assertNotIn("`publish`", backend["systemPrompt"])
+        self.assertIn(str(home / "outbox"), backend["systemPrompt"])
+        captain["githubApp"]["contents"] = "read"
+        read_only = roles.role_documents(cfg, captain, None, home)
+        self.assertIn("`pr-status`", read_only["instructions"])
+        self.assertNotIn("`pr-create`", read_only["instructions"])
 
     def test_an_operator_rule_for_the_api_tools_stands(self):
         config = example_config()
@@ -913,7 +939,7 @@ class CaptainPolicyTests(unittest.TestCase):
                 self.assertTrue(orion["delegatesCoding"])
                 documents = roles.role_documents(cfg, orion, None, Path("/var/lib/subspace-fleet/agents/orion"))
                 self.assertIn("## Your tools", documents["instructions"])
-                self.assertIn("open the pull request with `subspace-github gh pr create`",
+                self.assertIn("Ask an authorised officer to open the pull request.",
                               documents["skills"]["fleet-captain"])
                 if harness:
                     self.assertEqual(orion["harness"]["permissions"], own)
@@ -1363,7 +1389,7 @@ class AgentDispatchTests(unittest.TestCase):
             self.assertNotIn("plugins", saved["opencode-atlas"])
             self.assertNotIn("repo_refresh", saved["opencode-orion"].get("mcp", {}).get("servers", {}))
             tool = saved["opencode-atlas"]["mcp"]["servers"]["repo_refresh"]
-            self.assertEqual(tool["command"], runtime.repository_refresh_command())
+            self.assertEqual(tool["command"], runtime.repository_refresh_command(cfg))
             self.assertIn({"action": "repo_refresh_refresh_origin", "resource": "*", "effect": "allow"},
                           backend["permissions"])
         runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
@@ -1665,7 +1691,7 @@ class OfficerSlackTests(unittest.TestCase):
             with patch.object(runtime, "ETC", Path(self.root.name) / "etc"), \
                     patch.object(runtime, "STATE", Path(self.root.name) / "state"), \
                     patch.object(runtime, "SESSIONS", Path(self.root.name) / "etc/sessions"), \
-                    patch.object(sys, "stdout", output), patch.object(sys, "stderr", io.StringIO()):
+                    patch.object(runtime, "require_officer_tool_sources"), patch.object(sys, "stdout", output), patch.object(sys, "stderr", io.StringIO()):
                 runtime.main(["plan", str(config_path), str(secrets_path), str(self.directory), "false"])
             return output.getvalue()
 
@@ -2027,7 +2053,8 @@ class PlainNamesTests(unittest.TestCase):
                 output = io.StringIO()
                 with patch.object(runtime, "ETC", work / "etc"), patch.object(runtime, "STATE", work / "state"), \
                         patch.object(runtime, "SESSIONS", work / "none"), patch.object(runtime, "APP", work / "app"), \
-                        patch.object(runtime, "check_new_crew_named"), contextlib.redirect_stdout(output):
+                        patch.object(runtime, "check_new_crew_named"), patch.object(runtime, "require_officer_tool_sources"), \
+                        contextlib.redirect_stdout(output):
                     runtime.main(["plan", *map(str, paths), "", "false"])
                 return output.getvalue()
 
@@ -2153,7 +2180,7 @@ class RepositoryAccessTests(unittest.TestCase):
         tail = [str(self.work / "stage")] if verb == "prepare" else []
         with patch.object(runtime, "ETC", self.work / "etc"), patch.object(runtime, "STATE", self.work / "state"), \
                 patch.object(runtime, "readable_without_credentials", side_effect=readable) as check, \
-                contextlib.redirect_stdout(output):
+                patch.object(runtime, "require_officer_tool_sources"), contextlib.redirect_stdout(output):
             runtime.main([verb, str(self.work / "fleet.json"), str(self.work / "fleet.secrets.json"), *tail, "", "false"])
         return output.getvalue(), [call.args[0] for call in check.call_args_list]
 
@@ -2181,6 +2208,126 @@ class RepositoryAccessTests(unittest.TestCase):
         (self.work / "etc/repository-sources.json").chmod(0o600)
         _, checked = self.main("plan", private)
         self.assertEqual(checked, ["https://github.com/example/project.git"])
+
+    def test_github_app_officer_wrapper_selects_shared_cli_and_keeps_checkout_policy(self):
+        cfg = {
+            "members": [{"id": "orion", "role": "captain", "delegatesCoding": True,
+                         "githubApp": {"botLogin": "fixture[bot]"},
+                         "mergeCheckouts": {"project": "example/actual-repo"}}],
+            "repositories": {"project": {"url": "https://github.com/example/actual-repo.git"}},
+            "stargate": {"repo": "https://example.test/stargate.git", "ref": "a" * 40},
+        }
+        home = self.work / "orion"
+        with patch.object(runtime, "APP", self.work / "app"), patch.object(runtime, "ETC", self.work / "etc"), \
+                patch.object(runtime, "write") as write:
+            runtime.configure_github_officer_tools(cfg, {"orion": home})
+        registry, command = [call.args for call in write.call_args_list]
+        policy = json.loads(registry[1])["ss-orion"]
+        self.assertFalse(policy["directPublication"])
+        self.assertEqual(policy["repos"], {"project": {"owner": "example", "name": "actual-repo",
+                                                     "mergeCheckout": str(home / "workspace/project")}})
+        self.assertIn("scripts/github-officer.ts", command[1])
+        self.assertIn("scripts/github-local-app.ts", command[1])
+        self.assertEqual(command[2], 0o755)
+
+    def test_github_app_without_a_github_repository_has_no_officer_tool(self):
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://git.example.test/team/project.git"}]
+        cfg = validate(config, officer_secrets())
+        captain = {
+            **cfg["members"][1], "githubApp": {"botLogin": "fixture[bot]"},
+            "harness": {"type": "claude-sdk", "family": "claude", "model": "fixture",
+                        "effort": None, "permissions": None, "allowedTools": ["Read"]},
+        }
+        cfg["members"][1] = captain
+        home = self.work / "orion"
+        documents = roles.role_documents(cfg, captain, None, home)
+        backend = runtime.claude_backend(cfg, captain, home / "workspace", documents)
+        self.assertNotIn("github_officer", backend.get("mcpServers", {}))
+        self.assertNotIn("GitHub repository operations", documents["instructions"])
+        self.assertNotIn("subspace-github-officer", json.dumps(runtime.harness_permissions(cfg, captain)))
+        with patch.object(runtime, "APP", self.work / "app"), patch.object(runtime, "ETC", self.work / "etc"), \
+                patch.object(runtime, "write") as write:
+            runtime.configure_github_officer_tools(cfg, {"orion": home})
+        write.assert_not_called()
+
+    def test_repository_refresh_policy_authorises_peer_before_minting_its_read_credential(self):
+        policy = {"rearAdmiral": "atlas", "repositories": {
+            "private": {"private": True, "url": "https://github.com/example/project.git"},
+            "public": {"private": False, "url": "https://github.com/example/public.git"},
+        }}
+        with patch.object(runtime, "read_json", return_value=policy), \
+                patch.object(runtime.pwd, "getpwnam", side_effect=lambda user: SimpleNamespace(
+                    pw_uid=2001 if user == "ss-atlas" else 2006)), \
+                patch("workspaces.private_credentials", return_value={"fixture": "bounded"}) as credentials:
+            for tool, repo, uid in (("refresh_origin", "private", "2009"), ("shell", "private", "2001"),
+                                    ("refresh_origin", "unconfigured", "2001")):
+                with self.assertRaises(Invalid):
+                    runtime.repository_refresh_policy(tool, repo, uid)
+            read = runtime.repository_refresh_policy("read_origin_file", "private", "2001")
+            public = runtime.repository_refresh_policy("refresh_origin", "public", "2001")
+            credentials.assert_not_called()
+            self.assertEqual(read["callerUid"], 2001)
+            self.assertEqual(read["checkoutUid"], 2006)
+            self.assertEqual(read["checkout"], "/var/lib/subspace-fleet/references/atlas/private")
+            self.assertEqual(read["gitRunner"], ["/usr/sbin/runuser", "-u", "ss-fleet-repos", "--"])
+            self.assertEqual(public["expectedOrigin"], "/var/lib/subspace-fleet/repositories/public.git")
+            write = runtime.repository_refresh_policy("refresh_origin", "private", "2001")
+            self.assertEqual(write["gitEnvironment"]["fixture"], "bounded")
+            credentials.assert_called_once_with(runtime.APP / "lib/github_app.py",
+                                               "https://github.com/example/project.git", "ss-atlas", timeout=18)
+
+    def test_selected_officer_tools_are_checked_before_rendering(self):
+        cfg = {
+            "repositories": {"project": {"url": "https://git.example.test/team/project.git"}},
+            "members": [{"githubApp": {"botLogin": "fixture[bot]"}}],
+            "api": {"agentMcpUrl": "http://127.0.0.1:3001/mcp"},
+            "stargate": {"repo": "https://example.test/stargate.git", "ref": "a" * 40},
+        }
+        with patch.object(runtime, "APP", self.work / "app"):
+            source = runtime.stargate_entry(cfg).parents[1]
+            scripts = source / "scripts"
+            scripts.mkdir(parents=True)
+            with self.assertRaisesRegex(Invalid, "lacks scripts/repo-refresh.ts"):
+                runtime.require_officer_tool_sources(cfg, installed_only=True)
+            (scripts / "repo-refresh.ts").touch()
+            (scripts / "repo-refresh-host.ts").touch()
+            with self.assertRaisesRegex(Invalid, "lacks scripts/officer-files.ts"):
+                runtime.require_officer_tool_sources(cfg, installed_only=True)
+            (scripts / "officer-files.ts").touch()
+            (scripts / "officer-rest-files.ts").touch()
+            (scripts / "markdown-preview.ts").touch()
+            (scripts / "officer-stdio.ts").touch()
+            contract = scripts / "officer-tools-contract.json"
+            for capabilities in ({"files": 1, "refresh": 1, "preview": 1, "sandboxFiles": 1},
+                                 {"files": 1, "refresh": 2, "preview": 1}):
+                contract.write_text(json.dumps(capabilities))
+                with self.assertRaisesRegex(Invalid, "incompatible officer tool interfaces"):
+                    runtime.require_officer_tool_sources(cfg, installed_only=True)
+            contract.write_text(json.dumps({"files": 1, "refresh": 2, "preview": 1, "sandboxFiles": 1}))
+            runtime.require_officer_tool_sources(cfg, installed_only=True)
+            cfg["repositories"]["project"]["url"] = "https://github.com/example/project.git"
+            with self.assertRaisesRegex(Invalid, "lacks scripts/github-officer.ts"):
+                runtime.require_officer_tool_sources(cfg, installed_only=True)
+
+    def test_no_officer_tools_needs_no_stargate_source(self):
+        with patch.object(runtime.subprocess, "run") as git:
+            runtime.require_officer_tool_sources({})
+            runtime.require_officer_tool_sources({"members": [{"githubApp": {"botLogin": "fixture[bot]"}}]})
+        git.assert_not_called()
+
+    def test_officer_tools_accept_a_compatible_fetched_stargate_ref(self):
+        cfg = {"repositories": {"project": {"url": "https://git.example.test/team/project.git"}},
+               "stargate": {"repo": "https://example.test/stargate.git", "ref": "a" * 40}}
+        paths = ("scripts/repo-refresh.ts", "scripts/repo-refresh-host.ts", "scripts/officer-tools-contract.json")
+        listing = "\n".join(f"100644 blob {'b' * 40}\t{path}" for path in paths)
+        responses = ["", "", listing, json.dumps({"refresh": 2})]
+        with patch.object(runtime, "APP", self.work / "app"), \
+                patch.object(runtime.subprocess, "run", side_effect=[
+                    subprocess.CompletedProcess([], 0, stdout=output) for output in responses]) as git:
+            runtime.require_officer_tool_sources(cfg)
+        self.assertEqual(git.call_args_list[1].args[0][-2:], [cfg["stargate"]["repo"], cfg["stargate"]["ref"]])
+        self.assertEqual(git.call_args.args[0][-1], "FETCH_HEAD:scripts/officer-tools-contract.json")
 
     def test_the_check_asks_git_with_no_credentials_or_prompt(self):
         with patch.object(runtime.subprocess, "run", return_value=subprocess.CompletedProcess([], 128)) as run:

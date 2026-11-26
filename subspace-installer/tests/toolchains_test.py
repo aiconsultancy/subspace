@@ -1422,7 +1422,8 @@ class SetupRecordTests(unittest.TestCase):
         with patch.object(fleet_setup.os, "geteuid", return_value=1000), self.assertRaises(fleet_setup.SetupError):
             fleet_setup.toolchains_command(["detect"])
 
-    def test_setups_dry_run_shows_the_proposal_and_records_nothing(self):
+    @patch.object(fleet_setup, "check_officer_tool_source")
+    def test_setups_dry_run_shows_the_proposal_and_records_nothing(self, _source_check):
         self.clone("harbour-api")
         (self.inputs / "fleet.json").unlink()
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
@@ -1451,12 +1452,13 @@ class SetupRecordTests(unittest.TestCase):
         # Nothing the dry run did is kept.
         self.assertEqual(sorted(path.name for path in self.inputs.iterdir()), [])
 
-    def test_a_detection_failure_never_stops_setup_before_its_lockdown(self):
+    @patch.object(fleet_setup, "check_officer_tool_source")
+    def test_a_detection_failure_never_stops_setup_before_its_lockdown(self, _source_check):
         self.clone("harbour-api")
         (self.inputs / "fleet.json").unlink()
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
                 "--captains", "Orion", "--crew-claude", "0", "--crew-codex", "0", "--inputs", str(self.inputs),
-                "--stargate-ref", runtime.STARGATE_REF, "--no-demo", "--no-api", "--repositories",
+                "--stargate-ref", runtime.STARGATE_REF, "--no-demo", "--no-api", "--irc-auth", "password", "--repositories",
                 "harbour-api=https://github.com/example/harbour-api.git", "--toolchains", "derive"]
         order, said = [], []
 

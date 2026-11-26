@@ -394,6 +394,8 @@ class InstalledFleet(unittest.TestCase):
         for name, value in (("ETC", self.etc), ("STATE", self.state), ("SYSTEMD", self.systemd),
                             ("SESSIONS", self.etc / "sessions")):
             self.start(patch.object(runtime, name, value))
+        self.start(patch.object(runtime, "OFFICER_EXPORT_TMPFILES",
+                                root / "tmpfiles.d" / runtime.OFFICER_EXPORT_TMPFILES.name))
         self.start(patch.object(runtime, "write", side_effect=write))
         self.start(patch.object(runtime.sessions, "write_durable", side_effect=durable))
         for name in ("directory", "run", "configure_git", "install_toolchains", "install_screenshots"):
@@ -691,7 +693,7 @@ class InstalledFleet(unittest.TestCase):
             paths.append(Path(self.root.name) / name)
             paths[-1].write_text(json.dumps(value))
             paths[-1].chmod(0o600)
-        with patch.object(sys, "stdout", io.StringIO()) as output:
+        with patch.object(runtime, "require_officer_tool_sources"), patch.object(sys, "stdout", io.StringIO()) as output:
             runtime.main(["plan", *map(str, paths), "", "false"])
         text = output.getvalue()
         self.assertIn(f"Captain orion's root session is pinned in {self.workspace}, its checkout of the first "
@@ -1015,12 +1017,20 @@ class InstalledFleet(unittest.TestCase):
         self.assertIn(f"ReadWritePaths={sockets / 'orion'}", unit)
         # OpenCode engines and the Claude officer's own gateway run Stargate's bridge to their own socket.
         engine = json.loads((self.etc / "opencode-orion.json").read_text())
-        self.assertEqual(engine["mcp"]["servers"]["subspace_files"]["command"][-3:], ["socket", str(sockets / "orion/api.sock"), "example-orion"])
+        publish = engine["mcp"]["servers"]["subspace_publish"]["command"]
+        self.assertIn("--exports", publish)
+        self.assertNotIn("--legacy-upload", publish)
+        self.assertIn(str(sockets / "orion/api.sock"), publish)
+        self.assertEqual(engine["mcp"]["servers"]["subspace_files"]["command"][-3:], ["/tmp", "--socket", str(sockets / "orion/api.sock")])
         self.assertEqual(engine["mcp"]["servers"]["subspace"], {
             "type": "local", "command": [*bridge, "--socket", str(sockets / "orion/api.sock")]})
         self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
         vega = json.loads((self.etc / "stargate-gateway-agent-vega.json").read_text())["irc"][0]["backend"]
-        self.assertEqual(vega["mcpServers"]["subspace_files"]["args"][-3:], ["socket", str(sockets / "vega/api.sock"), "example-vega"])
+        publish = vega["mcpServers"]["subspace_publish"]["args"]
+        self.assertIn("--exports", publish)
+        self.assertNotIn("--legacy-upload", publish)
+        self.assertIn(str(sockets / "vega/api.sock"), publish)
+        self.assertEqual(vega["mcpServers"]["subspace_files"]["args"][-3:], ["/tmp", "--socket", str(sockets / "vega/api.sock")])
         self.assertEqual(vega["mcpServers"]["subspace"], {
             "type": "stdio", "command": bridge[0], "args": [*bridge[1:], "--socket", str(sockets / "vega/api.sock")]})
         self.assertNotIn("subspaceAgents", json.loads((self.etc / "stargate-gateway-agent-vega.json").read_text()))
@@ -1234,7 +1244,8 @@ class InstalledFleet(unittest.TestCase):
         self.assertFalse([line for line in gateway if line.startswith(("Memory", "TasksMax", "OOMPolicy"))])
         # The hand-made limits are neither removed nor loosened nor repeated: the installer writes no drop-in.
         self.assertEqual({path: path.read_text() for path in hand}, hand)
-        self.assertEqual(sorted(path for path in root.rglob("*.conf") if path.is_file()), sorted(hand))
+        self.assertEqual(sorted(path for parent in (control, system) for path in parent.rglob("*.conf")
+                                if path.is_file()), sorted(hand))
         # The dry run and the summary say which win, against the installer's values, and how to hand them over.
         with patch.object(runtime.memory, "swap_state", return_value={
                 "active": [{"name": "/swapfile", "size": 8192, "used": 0}], "configured": [], "agent": None,

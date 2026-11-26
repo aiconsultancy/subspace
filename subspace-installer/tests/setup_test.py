@@ -52,6 +52,8 @@ fleet_setup.latest_stargate = lambda: ("v0.0.0", "d" * 40)
 # Guided setup preflights the explicit source before saving answers. Use the real check in its dedicated test.
 check_usage_guard_source = fleet_setup.check_usage_guard_source
 fleet_setup.check_usage_guard_source = lambda *_args: None
+check_officer_tool_source = fleet_setup.check_officer_tool_source
+fleet_setup.check_officer_tool_source = lambda *_args: None
 
 
 def fleet_installer(root, output=None):
@@ -68,6 +70,7 @@ def fleet_installer(root, output=None):
                 patch.object(runtime, "SESSIONS", root / "sessions"), patch.object(runtime, "IRC_CERTS", root / "certs"), \
                 patch.object(runtime, "readable_without_credentials", return_value=True), \
                 patch.object(runtime, "require_usage_guard_source"), \
+                patch.object(runtime, "require_officer_tool_sources"), \
                 patch.object(runtime, "stargate_crew_names_free", return_value=True), contextlib.redirect_stdout(text):
             try:
                 runtime.main(["plan", str(config_path), str(Path(config_path).with_name("fleet.secrets.json")),
@@ -111,6 +114,24 @@ class UsageGuardAnswersTests(unittest.TestCase):
                 fleet_setup.setup(args)
             self.assertEqual(check.call_args.args[0]["stargate"]["ref"], "a" * 40)
             run.assert_not_called()
+            self.assertEqual(list(Path(root).iterdir()), [])
+
+    def test_stale_officer_pin_is_refused_before_local_registration(self):
+        with tempfile.TemporaryDirectory() as root:
+            args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
+                                           "--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                                           *CREW, "--stargate-ref", "a" * 40])
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "check_officer_tool_source", check_officer_tool_source), \
+                    patch.object(runtime.subprocess, "run", return_value=subprocess.CompletedProcess(
+                        [], 0, stdout="", stderr="")) as git, \
+                    patch.object(fleet_setup, "api_up") as api, patch.object(fleet_setup, "register_own") as register, \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "lacks scripts/officer-files.ts"):
+                fleet_setup.setup(args)
+            fetch = next(call.args[0] for call in git.call_args_list if "fetch" in call.args[0])
+            self.assertEqual(fetch[-2:], [fleet_setup.STARGATE_REPO, "a" * 40])
+            api.assert_not_called()
+            register.assert_not_called()
             self.assertEqual(list(Path(root).iterdir()), [])
 
     def test_default_custom_and_off_options(self):

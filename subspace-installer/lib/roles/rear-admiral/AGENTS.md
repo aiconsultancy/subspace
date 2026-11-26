@@ -94,4 +94,4 @@ reply. The tool reads the staged file in the officer's own service. It also
 works for files larger than the model's text limit. The chat copy survives
 deletion of its source. PPTX presentations stay on the issue. For visual
 inspection, use a preview up to 3.75 MB and 4096 pixels per edge.
-The hosted signing proxy accepts staged files up to 6 MB, and the local agent listener accepts up to 25 MB.
+The hosted signing proxy accepts staged files up to 10 MiB, and the local agent listener accepts up to 25 MB.

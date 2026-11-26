@@ -43,6 +43,20 @@ def repository_name(path):
     raise PolicyError("Expected a GitHub owner/repository path.")
 
 
+def github_repository(address):
+    """A GitHub HTTPS repository's owner/repository, as Stargate reads a remote, or None."""
+    parts = urlsplit(address)
+    if parts.scheme != "https" or (parts.hostname or "").lower() != "github.com" or parts.query or parts.fragment:
+        return None
+    name = parts.path[1:].removesuffix("/").removesuffix(".git")
+    valid = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", name) and not re.search(r"/\.{1,2}$", name)
+    return name if valid else None
+
+
+def officer_github_repositories(cfg):
+    return {key: name for key, source in cfg.get("repositories", {}).items() if (name := github_repository(source["url"]))}
+
+
 def merge_repository(args, policy, checkout):
     """Resolve a squash merge to the repository assigned to this captain checkout."""
     repository = policy.get("captainMergeCheckouts", {}).get(str(checkout))

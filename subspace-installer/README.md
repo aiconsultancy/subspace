@@ -228,9 +228,33 @@ An installed repository is not checked again.
 The rear admiral can call `refresh_origin` on the `repo_refresh` MCP server
 with an installed repository ID. The tool fetches from the configured upstream
 into `refs/remotes/origin/*` in the rear admiral's reference checkout. Use
-`read_origin_file` with a branch and path to read the fetched version. The checkout
+`read_origin_file` with a branch and path to read the fetched version and its exact commit SHA. The checkout
 branch and working files remain read-only. Private fetches use the rear
-admiral's existing repository-scoped GitHub App credentials.
+admiral's existing repository-scoped GitHub App credentials. These tools use the
+Bun helper in the selected Stargate source. Use a Stargate release with
+`scripts/repo-refresh.ts` for repository refresh and `scripts/officer-files.ts`
+for Subspace chat uploads. Setup selects the latest tagged release by default.
+
+For a fleet with an agent API, the installer registers `subspace_publish`
+alongside the existing chat upload tool for OpenCode and Claude officers.
+`prepare_file` uses the officer's own access to prepare an issue attachment,
+existing upload, private outbox file, or new text. Set `preview: "teams"` for
+a labelled Markdown or plain-text PNG when the fleet has its sandboxed
+browser tools installed. Use `page` for subsequent pages. Stage local files in
+`/var/lib/subspace-fleet/agents/<officer>/outbox`. Systemd ages active and
+retired officers' generated exports after 30 days.
+File preparation under the service sandbox needs Stargate v0.49.0 or a
+compatible release declaring `sandboxFiles: 1`.
+
+Officers with a configured GitHub App and GitHub repository use
+`subspace-github-officer check --repo PROJECT` to confirm repository access.
+The installer selects the shared Stargate tool and its local App adapter.
+Claude SDK captains use the `operate` tool on `github_officer`. Their built-in
+Bash access remains governed by the harness settings.
+Use `--help` for signed commits, PR status and edits, and other authorised
+operations. If the fleet enables direct squash merging for the captain
+checkout, pass the full reviewed SHA with `merge --expected-head`.
+
 
 A repository also takes an optional one-line `description` and `tracker`,
 free text that names where its work is tracked, for example
@@ -551,7 +575,7 @@ captain read a crew worktree without also letting its allowed commands,
 crew who work in those worktrees share its Linux user anyway (see below).
 
 **Delegate captains** (`captainTools: "delegate"`) plan, review and open pull
-requests with `subspace-github gh pr create` and their GitHub App; their crew
+requests with the officer tool’s `pr-create` operation and their GitHub App. Their crew
 edit, test, commit and push. A delegate captain has no edit, write or patch
 tool, may work in any directory, and has an open shell with writes refused:
 any command runs, chained, piped or in a subshell, except
@@ -2012,8 +2036,12 @@ From the root of their own checkout of an enabled repository, a captain with
 a Contents write GitHub App can run:
 
 ```sh
-subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA
+subspace-github-officer merge --repo REPOSITORY_KEY --pr NUMBER --expected-head FULL_SHA --directory "$PWD"
 ```
+
+Claude captains use the same operation through `github_officer.operate`.
+Existing OpenCode sessions can also use the original `subspace-github gh pr merge`
+wrapper. It enforces the checkout, squash method and full reviewed head SHA.
 
 Use the full SHA the captain reviewed and check the repository's approval
 and CI requirements first. The helper scopes the installation token to that

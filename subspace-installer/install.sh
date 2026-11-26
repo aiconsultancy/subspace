@@ -123,19 +123,38 @@ install_file() {
     fi
 }
 
+disable_units() {
+    local unit
+    local -a regular=() instances=()
+    for unit; do
+        if [[ $unit == *@.service ]]; then
+            instances+=("${unit/@./@*.}")
+        else
+            regular+=("$unit")
+        fi
+    done
+    # Stop sockets before stopping any connections they accepted.
+    if (( ${#regular[@]} )); then
+        systemctl disable --now "${regular[@]}"
+    fi
+    if (( ${#instances[@]} )); then
+        systemctl stop "${instances[@]}"
+    fi
+}
+
 uninstall() {
     local unit
     local -a units=() enabled=()
     if [[ -f $etc/units || -f $etc/retired-units ]]; then
         mapfile -t units < <(sort -u -- "$etc/"*units)
         for unit in "${units[@]}"; do
-            [[ $unit =~ ^subspace-fleet-[a-z0-9@-]+\.(service|timer|target)$ ]] || die 'Invalid installed unit name.'
+            [[ $unit =~ ^subspace-fleet-[a-z0-9@-]+\.(service|socket|timer|target)$ ]] || die 'Invalid installed unit name.'
             if [[ -f /etc/systemd/system/$unit ]]; then
                 enabled+=("$unit")
             fi
         done
         if ! "$no_systemd" && (( ${#enabled[@]} )); then
-            systemctl disable --now "${enabled[@]}"
+            disable_units "${enabled[@]}"
         fi
         for unit in "${enabled[@]}"; do
             rm -f -- "/etc/systemd/system/$unit"
@@ -288,7 +307,7 @@ checkout_source() {
 
 start_services() {
     local unit
-    local -a units=() retired=()
+    local -a units=() retired=() removing=()
     if "$no_systemd"; then
         printf 'Service definitions installed. Activation skipped (--no-systemd).\n'
         return
@@ -303,9 +322,12 @@ start_services() {
     done < "$etc/units"
     for unit in "${retired[@]}"; do
         if [[ -f /etc/systemd/system/$unit ]]; then
-            systemctl disable --now "$unit"
-            rm -f -- "/etc/systemd/system/$unit"
+            removing+=("$unit")
         fi
+    done
+    disable_units "${removing[@]}"
+    for unit in "${removing[@]}"; do
+        rm -f -- "/etc/systemd/system/$unit"
     done
     if [[ -e $state/pending ]]; then
         systemctl daemon-reload
@@ -385,7 +407,7 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py repo_refresh.py officer_upload.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
 done
 # The screenshot tools' pinned versions and renderer, which runtime.py render installs from.

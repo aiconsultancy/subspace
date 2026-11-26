@@ -7,6 +7,7 @@ from string import Template
 import sys
 
 from agent_files import MAX_BYTES, agent_directory, write_private
+from github_policy import officer_github_repositories
 
 
 ROLES = Path(__file__).parent / "roles"
@@ -49,7 +50,7 @@ the index, branches, tags, the stash or Git's configuration (such as add,
 checkout, merge, rebase, reset, restore and switch), and `sed -i` and
 `perl -i`. Everything else runs, chained or piped: reading and searching,
 `git fetch`, `git log`, `git diff`, `git branch -a`, builds and tests, and
-`subspace-github gh pr create`. The refusals match command text, so they are
+any configured GitHub tools. The refusals match command text, so they are
 a working agreement, not a lock: never get round them with an interpreter, a
 script, a redirect or another spelling. Assign the change to a crew member
 instead. A read that names one of those Git words after a global option, such
@@ -267,6 +268,20 @@ def render(role, name, values):
     return Template((ROLES / role / name).read_text()).substitute(values)
 
 
+def github_officer_operations(cfg, person):
+    app = person.get("githubApp")
+    if not app or not officer_github_repositories(cfg):
+        return []
+    operations = ["check", "pr-status", "review-context"]
+    if person["role"] == "captain" and app.get("contents", "write") == "write":
+        operations.extend(("pr-create", "pr-edit", "ready"))
+        if not person.get("delegatesCoding"):
+            operations.extend(("push", "publish", "branch-create"))
+        if person.get("mergeCheckouts"):
+            operations.append("merge")
+    return operations
+
+
 def role_documents(cfg, person, references, home):
     """Instructions and skills for an officer, plus a system prompt per crew member it hosts."""
     role = person["role"].replace("_", "-")
@@ -282,9 +297,14 @@ def role_documents(cfg, person, references, home):
     values["dispatch"] = dispatch_guidance(cfg, person)
     guard_status = "on" if (cfg.get("usageGuard") or {}).get("enabled") else "off"
     values["guardStatus"] = f"The automated usage guard is {guard_status} for this fleet."
+    github_ops = github_officer_operations(cfg, person)
+    claude = (person.get("harness") or {}).get("type") == "claude-sdk"
+    github_tool = "`github_officer.operate`" if claude else "`subspace-github-officer`"
+    pull_request = (f"Open the pull request with {github_tool}, using `pr-create`." if "pr-create" in github_ops
+                    else "Ask an authorised officer to open the pull request.")
     values["completion"] = (
         "4. Have crew resolve overlaps, run the checks and push the reviewed branch.\n"
-        "   Inspect their work and open the pull request with `subspace-github gh pr create`.\n"
+        f"   Inspect their work. {pull_request}\n"
         "5. Report the result, the pull request and any remaining risk in " + values["channel"] + "."
         if person.get("delegatesCoding") else
         "4. Resolve overlaps and review the combined diff. Crew commit as you, so check\n"
@@ -299,16 +319,33 @@ def role_documents(cfg, person, references, home):
     else:
         values["crew"] = "You have no crew in this fleet. Do the work yourself in your checkout."
     instructions = render(role, "AGENTS.md", values)
+    if (cfg.get("api") or {}).get("agentMcpUrl") or (cfg.get("api") or {}).get("enrolment"):
+        instructions += (
+            "\n## Preparing files\n\n"
+            "Use the `prepare_file` tool on the `subspace_publish` server for an issue attachment, existing "
+            "chat upload, new text or a file staged in your private outbox at "
+            f"`{Path(home) / 'outbox'}`. The limit is 10 MiB per file. "
+            "Use `upload_file` on `subspace_files` for the existing IRC attachment workflow. "
+            "For Markdown or plain text in Teams, request `preview: teams` and post the returned PNG marker.\n"
+        )
+    if github_ops and (not claude or person["role"] == "captain"):
+        names = ", ".join(f"`{name}`" for name in github_ops)
+        repository_option = "its `repo` field" if claude else "`--repo`"
+        instructions += (
+            "\n## GitHub repository operations\n\n"
+            f"Use {github_tool} with {repository_option} set to a configured repository key. "
+            f"Your available operations are {names}.\n"
+        )
     if person.get("delegatesCoding"):
         instructions += DELEGATE_GUIDANCE
-    if checkouts := person.get("mergeCheckouts"):
-        repos = ", ".join(f"`{name}`" for name in checkouts)
+    if "merge" in github_ops:
+        repos = ", ".join(f"`{name}`" for name in person["mergeCheckouts"])
+        expected_head = "the `expected-head` field" if claude else "`--expected-head`"
         instructions += (
-            f"\n## Merging pull requests\n\n"
+            "\n## Merging pull requests\n\n"
             f"You may squash-merge pull requests from the root of your own checkout of {repos}. "
-            "Check the repository's approval and CI requirements first. Run "
-            "`subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA` "
-            "with the head SHA you reviewed. Handle the merge yourself.\n"
+            f"Check repository approvals and CI first, then use the `merge` operation in {github_tool}. "
+            f"Pass the full SHA you reviewed in {expected_head}. Handle the merge yourself.\n"
         )
     if person.get("slack"):
         # Stargate's pinned Slack turns carry a source line that the officer's definition explains once.
