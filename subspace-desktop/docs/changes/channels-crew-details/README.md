@@ -37,11 +37,16 @@ or reconnecting to the fleet also rearms the read. Hidden crew views do
 not start reads; showing a retained view rearms the read and ignores any
 older response. A 404 falls back to the roster without polling. Showing the
 detail again, Reload, a reconnect or a returning member each probes the route.
+Only a successful crew reply with `taskText: "full"` confirms full task text.
+Other successful replies still show all text they supplied, with the same
+pager and a note that Stargate may have shortened or replaced parts of it.
+A subsequent reply marked `full` clears the note. The 404 fallback is separate.
 Each project's current task text displays in 512-code-point pages with no
 truncation. Each field's Previous, Next and page-count jump menu sit below its
-value and fit the minimum 260 px inspector. The member header shows the primary task's ID and status
-without repeating its text. Control and bidirectional formatting codes are
-shown as code-point markers, including tabs and line breaks in task fields.
+value and fit the minimum 260 px inspector. The member header shows the primary
+task's ID and status without repeating its text. Control and bidirectional
+formatting codes are shown as code-point markers, including tabs and line
+breaks in task fields.
 
 The crew detail read budgets 15 tasks per project context, each with two
 64,000-code-point fields at up to six JSON bytes per code point. It multiplies
@@ -54,14 +59,15 @@ its usual handling. Fleet and ship reads still allow 8 MiB.
 
 ## Verification
 
-- The Fleet client tests cover the read, missing route, response identity and
-  JSON budgets for different context counts.
+- The Fleet client tests cover the read, the task-text marker, missing route,
+  response identity and JSON budgets for different context counts.
 - The Channels tests cover roster changes, whole Git observations, checkout
   changes and pull request identity, including same-revision previews and
   a context added during a read. Ship tab tests check accessible names,
   keyboard focus, clearing detail on a buffer change, and paging to the end
   of a 64,000-code-point progress field at the minimum inspector width
-  without losing control markers.
+  without losing control markers. The detail render tests check the cut marks
+  and notes, and that unconfirmed replies keep the supplied text pageable.
 
 ### Captures
 
@@ -79,9 +85,9 @@ conversation as the inspector moves from the roster to a crew member.
 Quill's capture shows the updated pager using a progress field that exceeds
 one page. The Fleet API fixture ran with `--tick 0` so the task did not advance
 during the capture. The roster and missing-token captures show unchanged
-states. The target branch has no crew detail view to capture. Tests cover the
-older-gateway fallback; the Fleet API fixture always serves the crew detail
-route.
+states. The target branch has no crew detail view to capture. The Fleet API
+fixture defaults to confirmed detail and can also simulate an older HTTP 200
+reply (`--crew-detail-mode old-200`) or a missing route (`not-found`).
 
 ## Space checklist
 

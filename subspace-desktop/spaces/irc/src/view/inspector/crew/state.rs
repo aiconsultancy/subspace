@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use subspace_client_fleet::model::CrewMember;
-use subspace_client_fleet::{Error, crew_detail_json_limit};
+use subspace_client_fleet::{CrewDetail, Error, crew_detail_json_limit};
 
 mod overlay;
 mod preview;
@@ -37,7 +37,7 @@ pub(super) struct DetailState {
     pending: bool,
     wait: Option<ReadWait>,
     flight: Option<(CrewRead, Box<CrewMember>)>,
-    detail: Option<FullDetail>,
+    detail: Option<HeldDetail>,
     error: Option<Error>,
     retries: u32,
 }
@@ -65,9 +65,10 @@ impl DetailState {
         }
         let invalidated = connection_changed || !self.roster.same_assignment(&roster);
         let needs_read = !invalidated
-            && self
-                .roster
-                .needs_read(&roster, self.detail.as_ref().map(|detail| &detail.member));
+            && self.roster.needs_read(
+                &roster,
+                self.detail.as_ref().map(|detail| &detail.fetched.member),
+            );
         let returned = self.roster.member_returned(&roster);
         if invalidated {
             self.detail = None;
@@ -163,7 +164,7 @@ impl DetailState {
         Some(read)
     }
 
-    pub fn finish(&mut self, read: CrewRead, result: Result<CrewMember, Error>) {
+    pub fn finish_read(&mut self, read: CrewRead, result: Result<FetchedMember, Error>) {
         let Some((_, roster)) = self.flight.take_if(|(active, _)| *active == read) else {
             return;
         };
@@ -180,8 +181,8 @@ impl DetailState {
         self.pending |= crew_detail_json_limit(self.roster.context_count())
             > crew_detail_json_limit(read.contexts);
         match result {
-            Ok(member) => {
-                self.detail = Some(FullDetail { member, roster });
+            Ok(fetched) => {
+                self.detail = Some(HeldDetail { fetched, roster });
                 self.error = None;
                 self.retries = 0;
             }
@@ -199,6 +200,18 @@ impl DetailState {
                 );
             }
         }
+    }
+
+    #[cfg(test)]
+    pub fn finish(&mut self, read: CrewRead, result: Result<CrewMember, Error>) {
+        // State fixtures pre-dating the wire marker model a confirmed reply.
+        self.finish_read(
+            read,
+            result.map(|member| FetchedMember {
+                member,
+                full_task_text: true,
+            }),
+        );
     }
 
     pub fn shown(&self, ship_available: bool) -> Shown<'_> {
@@ -233,8 +246,14 @@ impl DetailState {
         }
     }
 
-    pub fn has_full_detail(&self) -> bool {
+    pub fn has_fetched_detail(&self) -> bool {
         self.detail.is_some()
+    }
+
+    pub fn task_text_unconfirmed(&self) -> bool {
+        self.detail
+            .as_ref()
+            .is_some_and(|detail| !detail.fetched.full_task_text)
     }
 
     fn note(&self) -> Option<&'static str> {
@@ -251,15 +270,30 @@ impl DetailState {
     }
 }
 
-struct FullDetail {
+pub(super) struct FetchedMember {
     member: CrewMember,
+    full_task_text: bool,
+}
+
+impl From<CrewDetail> for FetchedMember {
+    fn from(detail: CrewDetail) -> Self {
+        let full_task_text = detail.has_full_task_text();
+        Self {
+            member: detail.member,
+            full_task_text,
+        }
+    }
+}
+
+struct HeldDetail {
+    fetched: FetchedMember,
     // Compare the bounded feed to itself, not to the full response.
     roster: Box<CrewMember>,
 }
 
-impl FullDetail {
+impl HeldDetail {
     fn shown<'a>(&'a self, latest: &'a CrewMember) -> (Cow<'a, CrewMember>, TaskPreviews<'a>) {
-        let mut shown = Cow::Borrowed(&self.member);
+        let mut shown = Cow::Borrowed(&self.fetched.member);
         let mut previews = TaskPreviews::default();
         if self.roster.activity != latest.activity {
             shown.to_mut().activity = latest.activity;

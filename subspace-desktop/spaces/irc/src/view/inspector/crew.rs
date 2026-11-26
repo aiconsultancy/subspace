@@ -229,7 +229,7 @@ impl Selection {
                 .background_spawn(async move {
                     client
                         .crew(&ship, &member, read.contexts)
-                        .map(|detail| detail.member)
+                        .map(state::FetchedMember::from)
                 })
                 .await;
             _ = board.update(cx, |board, cx| {
@@ -237,7 +237,7 @@ impl Selection {
                     && selection.back == selection_id
                 {
                     selection.update(api.read(cx));
-                    selection.state.finish(read, result);
+                    selection.state.finish_read(read, result);
                     sync(board, api, cx);
                     cx.notify();
                 }
@@ -248,7 +248,7 @@ impl Selection {
     fn connection_note(&self, roster_shown: bool, cx: &gpui_kit::App) -> Option<AnyElement> {
         let (label, mut reason) = super::reason::reason(self.client_state.as_ref()?)?;
         if roster_shown {
-            reason.push_str(if self.state.has_full_detail() {
+            reason.push_str(if self.state.has_fetched_detail() {
                 " Showing the last available detail and current roster tasks."
             } else {
                 " Showing the ship's roster data."
@@ -307,7 +307,7 @@ pub(super) fn body(
     });
     let detail = member
         .zip(board.dock.focused.as_ref())
-        .map(|(member, buffer)| detail::view(&member, &previews, &selection.pages, buffer, cx));
+        .map(|(member, buffer)| detail::view(&member, (&previews, selection), buffer, cx));
     Some(
         v_flex()
             .w_full()
@@ -323,16 +323,5 @@ pub(super) fn body(
 
 #[cfg(test)]
 mod tests;
-
 #[cfg(test)]
-pub(crate) fn seed_roster_for_test(
-    board: &mut Irc,
-    member: subspace_client_fleet::model::CrewMember,
-    cx: &mut Context<Irc>,
-) {
-    let Some(selection) = &mut board.inspector_crew else {
-        return;
-    };
-    selection.state = DetailState::new(Roster::Present(Box::new(member)), 0);
-    cx.notify();
-}
+pub(crate) use tests::fixture::{finish_crew_read_for_test, seed_roster_for_test};

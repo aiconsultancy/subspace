@@ -163,6 +163,7 @@ class FleetFixtureTests(unittest.TestCase):
                 self.assertLessEqual(CONTEXT_FIELDS, set(context))
         ines = self.get('/api/v1/ships/aurora-orion/crew/ines')[1]
         self.assertEqual(ines['ship'], 'aurora-orion')
+        self.assertEqual(ines['taskText'], 'full')
         self.assertEqual([context['project'] for context in ines['member']['contexts']], ['sector-atlas', 'relay-handover'])
 
     def test_quills_paged_progress_is_only_full_on_the_crew_route(self):
@@ -172,6 +173,21 @@ class FleetFixtureTests(unittest.TestCase):
         progress = full['contexts'][0]['current']['progress']
         self.assertGreater(len(progress), 512)
         self.assertEqual(preview['contexts'][0]['current']['progress'], progress[-400:])
+
+    def test_legacy_detail_is_successful_but_does_not_confirm_text(self):
+        with self.server.lock:
+            self.server.tick = 0
+            self.server.fleet = FIXTURE.Fleet(crew_detail_mode='old-200')
+        status, detail, _ = self.get('/api/v1/ships/aurora-lyra/crew/quill')
+        self.assertEqual(status, 200)
+        self.assertNotIn('taskText', detail)
+        self.assertEqual(detail['member']['contexts'][0]['current']['progress'], FIXTURE.QUILL_PREVIEW)
+
+    def test_missing_crew_detail_route_keeps_the_ship_available(self):
+        with self.server.lock:
+            self.server.fleet = FIXTURE.Fleet(crew_detail_mode='not-found')
+        self.assertEqual(self.get('/api/v1/ships/aurora-lyra/crew/quill')[0], 404)
+        self.assertTrue(self.get('/api/v1/ships/aurora-lyra')[1]['available'])
 
     def test_only_subspace_origins_get_cors_headers(self):
         with self.open('/api/v1/fleet', token=None, method='OPTIONS', origin='subspace://fleet-console') as response:

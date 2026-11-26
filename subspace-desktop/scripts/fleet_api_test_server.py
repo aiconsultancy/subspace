@@ -374,11 +374,12 @@ def gateway_features():
 class Fleet:
     """The aurora fleet and a small simulation that keeps it working."""
 
-    def __init__(self, now=None, seed=7):
+    def __init__(self, now=None, seed=7, crew_detail_mode='full'):
         now = int(now if now is not None else time.time() * 1000)
         self.clock = Clock(now)
         self.random = random.Random(seed)
         self.pr_number = 420
+        self.crew_detail_mode = crew_detail_mode
         c = self.clock
         self.name = 'aurora'
         self.host = dict(hostname='aurora-vm-01', platform='linux', arch='x64',
@@ -425,13 +426,20 @@ class Fleet:
         return detail
 
     def crew(self, ship_id, member_id):
+        if self.crew_detail_mode == 'not-found':
+            return None
         detail = self.ship(ship_id)
         found = next((entry for entry in detail['crewMembers'] if entry['id'] == member_id), None) if detail else None
-        if found and member_id == 'quill':
+        if not found:
+            return None
+        reply = dict(ship=ship_id, member=found)
+        if self.crew_detail_mode == 'old-200':
+            return reply
+        if member_id == 'quill':
             current = found['contexts'][0]['current']
             if current and current['progress'] == QUILL_PREVIEW:
                 current['progress'] = QUILL_PROGRESS
-        return dict(ship=ship_id, member=found) if found else None
+        return dict(reply, taskText='full')
 
     def snapshot(self):
         return dict(fleet=self.overview(), ships={entry['id']: self.ship(entry['id']) for entry in self.ships},
@@ -715,12 +723,13 @@ class FleetServer(ThreadingHTTPServer):
     # connection past it. Hold a burst instead (capped at somaxconn).
     request_queue_size = 128
 
-    def __init__(self, port, token, tick=5.0, now=None, refuse_events=False, log_requests=False):
+    def __init__(self, port, token, tick=5.0, now=None, refuse_events=False, log_requests=False,
+                 crew_detail_mode='full'):
         if not token:
             raise ValueError('A non-empty fixture token is required.')
         self.token = token
         self.log_requests = log_requests
-        self.fleet = Fleet(now)
+        self.fleet = Fleet(now, crew_detail_mode=crew_detail_mode)
         self.lock = threading.RLock()
         self.subscribers = set()
         self.closing = threading.Event()
@@ -780,16 +789,18 @@ def main():
                         help='Seconds between simulated crew changes; 0 keeps the fleet still.')
     parser.add_argument('--refuse-events', action='store_true',
                         help='Answer the event stream with 503, as Stargate does with eight streams open.')
+    parser.add_argument('--crew-detail-mode', choices=('full', 'old-200', 'not-found'), default='full',
+                        help='Serve confirmed detail, a legacy reply without the marker, or a missing route.')
     parser.add_argument('--log-requests', action='store_true',
                         help="Print each request's method, path, status and Authorization fingerprint.")
     parser.add_argument('--snapshot', action='store_true',
                         help='Print the fleet, every ship and every crew member as one JSON document and exit.')
     options = parser.parse_args()
     if options.snapshot:
-        print(json.dumps(Fleet().snapshot(), indent=2))
+        print(json.dumps(Fleet(crew_detail_mode=options.crew_detail_mode).snapshot(), indent=2))
         return
     server = FleetServer(options.port, options.token, options.tick, refuse_events=options.refuse_events,
-                         log_requests=options.log_requests)
+                         log_requests=options.log_requests, crew_detail_mode=options.crew_detail_mode)
     try:
         print(f'Stargate Fleet API fixture on {server.origin}', flush=True)
         server.serve_forever()

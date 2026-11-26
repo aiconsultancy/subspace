@@ -55,6 +55,10 @@ fn reads_the_selected_member_and_its_projects() {
     let detail = FleetClient::new(address, Secret::new(TOKEN))
         .crew("lyra", "wren", 2)
         .unwrap();
+    assert!(
+        !detail.has_full_task_text(),
+        "legacy HTTP 200 does not confirm completeness"
+    );
     let head = server.join().unwrap();
     assert_eq!(
         head.lines().next().unwrap(),
@@ -73,6 +77,23 @@ fn reads_the_selected_member_and_its_projects() {
     );
     assert_eq!(projects[1].git.as_ref().unwrap().changed_files, Some(0));
     assert_eq!(projects[1].pull_request.as_ref().unwrap().number, 3);
+}
+
+#[test]
+fn only_an_explicit_full_marker_confirms_crew_task_text() {
+    for (marker, full) in [
+        (serde_json::json!("full"), true),
+        (serde_json::json!("preview"), false),
+        (serde_json::json!("future-value"), false),
+        (serde_json::Value::Null, false),
+        (serde_json::json!(true), false),
+    ] {
+        let detail: crate::CrewDetail = serde_json::from_value(serde_json::json!({
+            "ship": "lyra", "member": {"id": "wren"}, "taskText": marker,
+        }))
+        .unwrap();
+        assert_eq!(detail.has_full_task_text(), full, "{marker}");
+    }
 }
 
 #[test]

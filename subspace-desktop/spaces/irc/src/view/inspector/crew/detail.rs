@@ -16,6 +16,7 @@ use crate::live::ship::state_word;
 use crate::{Irc, pull_requests};
 
 use super::super::ship::state_tone;
+use super::Selection;
 use super::state::{PartialFields, TaskPreviews};
 
 mod observations;
@@ -28,8 +29,7 @@ type Facts = Vec<(&'static str, String)>;
 
 pub(super) fn view(
     member: &CrewMember,
-    previews: &TaskPreviews<'_>,
-    pages: &TaskPages,
+    (previews, selection): (&TaskPreviews<'_>, &Selection),
     buffer: &BufferKey,
     cx: &Context<Irc>,
 ) -> AnyElement {
@@ -44,13 +44,19 @@ pub(super) fn view(
         .contexts
         .is_empty()
         .then(|| feedback::empty_line(&tokens, "irc-crew-no-projects", "No projects reported."));
-    let projects = workspace::section("Projects", cx).children(empty).children(
-        member.contexts.iter().enumerate().map(|(index, context)| {
+    let unconfirmed = selection.state.task_text_unconfirmed().then(|| feedback::empty_line(
+        &tokens,
+        "irc-crew-unconfirmed-task-text",
+        "This Stargate doesn't confirm that task text is complete. It may be shortened or have parts replaced. Update Stargate to see the full text.",
+    ));
+    let projects = workspace::section("Projects", cx)
+        .children(empty)
+        .children(unconfirmed)
+        .children(member.contexts.iter().enumerate().map(|(index, context)| {
             let key = project_key(context.project.as_deref(), index);
             let partial = previews.fields(context.project.as_deref());
-            project_row(context, (key, partial), pages, buffer, cx)
-        }),
-    );
+            project_row(context, (key, partial), &selection.pages, buffer, cx)
+        }));
     v_flex()
         .w_full()
         .min_w_0()

@@ -7,6 +7,59 @@ use super::{BACK, ROW, install_fleet_api, live, set_fleet, settle, ship, view};
 use crate::tests::remove::choose;
 
 #[gpui_kit::test]
+fn a_successful_crew_read_warns_until_stargate_confirms_full_text(cx: &mut TestAppContext) {
+    use gpui_kit::base::test_support::texts;
+    use serde_json::json;
+    use subspace_client_fleet::CrewDetail;
+
+    let (board, hub, cx) = ship(cx);
+    set_fleet(&hub, live(), cx);
+    install_fleet_api(cx);
+    let note = "This Stargate doesn't confirm that task text is complete.";
+    let progress = "x ".repeat(256) + "The supplied ending.";
+    let mut reply = json!({"ship":"aurora-lyra", "member": {
+        "id":"wren", "name":"Wren", "contexts":[{"project":"nav", "current":{
+            "id":"task-1", "summary":"Chart a coast", "progress":progress,
+        }}],
+    }});
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.click(ROW, cx);
+        let member = serde_json::from_value(reply["member"].clone()).unwrap();
+        board.update(cx, |board, cx| {
+            view::inspector::crew::seed_roster_for_test(board, member, cx)
+        });
+        for (marker, warnings) in [(None, 1), (Some("preview"), 1), (Some("full"), 0)] {
+            if let Some(marker) = marker {
+                reply["taskText"] = json!(marker);
+            }
+            let detail: CrewDetail = serde_json::from_value(reply.clone()).unwrap();
+            board.update(cx, |board, cx| {
+                view::inspector::crew::finish_crew_read_for_test(board, detail, cx)
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                texts(window)
+                    .iter()
+                    .filter(|text| text.text().contains(note))
+                    .count(),
+                warnings,
+                "{marker:?}"
+            );
+            if marker.is_none() {
+                window.within(PROGRESS_PAGER).click("next", cx);
+                window.render_frame(cx);
+            }
+            assert!(
+                texts(window)
+                    .iter()
+                    .any(|text| text.text() == "The supplied ending.")
+            );
+        }
+    });
+}
+
+#[gpui_kit::test]
 fn capped_roster_text_marks_the_cut_side_without_altering_the_value(cx: &mut TestAppContext) {
     use gpui_kit::base::test_support::texts;
 

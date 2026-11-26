@@ -5,6 +5,7 @@ use subspace_client_fleet::model::CrewMember;
 use super::{DetailState, Roster};
 
 mod budget;
+pub(super) mod fixture;
 mod previews;
 mod record_identity;
 mod recovery;
@@ -95,7 +96,7 @@ fn checked_at_churn_does_not_discard_a_read_or_queue_a_follow_up() {
         Roster::Present(Box::new(member))
     };
     assert!(state.update(revised(5), 0));
-    assert!(state.has_full_detail());
+    assert!(state.has_fetched_detail());
     assert_progress(&state, "Checking again…");
     let follow_up = state.begin().unwrap();
     assert!(state.update(revised(6), 0));
@@ -142,7 +143,7 @@ fn a_response_merges_task_text_changed_during_the_read() {
     let first = state.begin().unwrap();
     assert!(state.update(roster("first", "Checking the next chart…", 2), 0));
     state.finish(first, Ok(member("first", "Full older progress", 1)));
-    assert!(state.has_full_detail());
+    assert!(state.has_fetched_detail());
     assert_progress(&state, "Full older progress");
     assert!(state.begin().is_some(), "a changed preview queues a reread");
 }
@@ -267,6 +268,10 @@ fn refresh_not_found_switches_from_full_detail_to_the_roster() {
     let refresh = state.begin().unwrap();
     state.finish(refresh, Err(Error::NotFound));
     assert_progress(&state, "Checking…");
+    assert!(
+        !state.task_text_unconfirmed(),
+        "a missing route keeps only the older-gateway note"
+    );
     assert_eq!(
         state.shown(true).1,
         Some(

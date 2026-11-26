@@ -11,9 +11,17 @@ use crate::model::CrewMember;
 pub struct CrewDetail {
     pub ship: String,
     pub member: CrewMember,
+    #[serde(default, rename = "taskText")]
+    task_text: serde_json::Value,
 }
 
 impl CrewDetail {
+    /// Whether this reply positively confirms it carries full task text.
+    /// Missing and unrecognised markers don't invalidate a usable reply.
+    pub fn has_full_task_text(&self) -> bool {
+        self.task_text.as_str() == Some("full")
+    }
+
     pub(crate) fn matching(self, ship: &str, member: &str) -> Result<Self, Error> {
         if self.ship != ship || self.member.id != member {
             return Err(Error::InvalidResponse);
