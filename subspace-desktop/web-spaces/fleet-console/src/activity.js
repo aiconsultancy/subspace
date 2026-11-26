@@ -108,9 +108,14 @@ function unreadableTurn(turn, index) {
   return { id, seq, status: "unreadable", startedAt, reconnects: 0, unreadable: true, items: [{ id: "#turn", seq, kind: "unreadable", wholeTurn: true, raw: turn }] };
 }
 
+/**
+ * A turn as the view holds it. One whose `items` is not a list is kept as
+ * an unreadable turn too, its payload shown as sent, never as a turn that
+ * observed nothing (SUB-70).
+ */
 function decodeTurn(turn, index = 0) {
-  if (!isActivityTurn(turn)) return unreadableTurn(turn, index);
-  const items = Array.isArray(turn.items) ? turn.items.map((item, index) => decodeItem(item, index, turn.seq)) : [];
+  if (!isActivityTurn(turn) || !Array.isArray(turn.items)) return unreadableTurn(turn, index);
+  const items = turn.items.map((item, index) => decodeItem(item, index, turn.seq));
   return { ...turn, reconnects: isNum(turn.reconnects) ? turn.reconnects : 0, items };
 }
 
@@ -154,7 +159,9 @@ export function applyChange(turns, event) {
     // An unreadable turn holds no items to keep: read the snapshot again.
     if (existing?.unreadable) return null;
     // Turn events carry the turn without its items: keep the ones already held.
-    const merged = { ...decodeTurn({ ...incoming, items: [] }), items: existing ? existing.items : (decodeTurn(incoming)?.items ?? []) };
+    // A turn event that carries items that are not a list cannot be placed: read the snapshot again.
+    if (incoming.items !== undefined && !Array.isArray(incoming.items)) return null;
+    const merged = { ...decodeTurn({ ...incoming, items: [] }), items: existing ? existing.items : decodeTurn({ ...incoming, items: incoming.items ?? [] }).items };
     if (existing) return turns.map((turn, i) => (i === index ? merged : turn));
     // A turn the view does not hold goes where its start puts it, not on top:
     // a late `turn-ended` for a turn already evicted is older than those held,
