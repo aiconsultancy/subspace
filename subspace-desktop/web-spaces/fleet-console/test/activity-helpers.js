@@ -2,9 +2,11 @@
 // a fake activity client and the pages a gateway would send. Every fake
 // page reader in the tests stops itself after a few reads.
 
+import { createActivityWatcher, INLINE_KEY } from "../src/activity.js";
+import { createActivityPanel } from "../src/activity-view.js";
 import { HttpError } from "../src/api.js";
 import { splitUtf8, utf8Length } from "../src/utf8.js";
-import { activitySnapshot, GENERATION, T0 } from "./activity-fixtures.js";
+import { activitySnapshot, GENERATION, T0, toolItem } from "./activity-fixtures.js";
 
 export const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -172,3 +174,38 @@ export function pagedSnapshot(ids, { seq = 9, generation = GENERATION } = {}) {
 
 export const clickOn = (panel, node) => panel.root.listeners.click({ target: node });
 export const buttons = (root, words) => root.findAll((node) => node.tag === "button" && node.textContent === words);
+
+export const officer = { name: "Example", role: "captain", live: true };
+
+/** A watcher whose budget is the snapshot's inline charge plus `extra`, and a panel drawn from it. */
+export async function prepare(snapshot, extra) {
+  const probe = createActivityWatcher({ client: fakeActivityClient([snapshot]), agent: "example-captain", awaitStream: false });
+  probe.start();
+  await settle();
+  const inline = probe.view.budget.bytes(INLINE_KEY);
+  probe.stop();
+  const client = fakeActivityClient([snapshot]);
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: inline + extra });
+  watcher.start();
+  await settle();
+  const panel = createActivityPanel({ doc: fakeDoc });
+  panel.update(watcher.view, officer);
+  return { watcher, client, panel, inline };
+}
+
+/** Make the running turn's one item a paged tool call served as `pages`. */
+export function usePaged(snapshot, item, pages) {
+  snapshot.turns[1].items = [{ ...snapshot.turns[1].items[0], id: item.id, kind: "tool", name: "read", seq: item.seq, paged: { pages: pages.length, bytes: pages[0].bytes } }];
+}
+
+/** A snapshot whose running turn holds one paged item, `text` long, and the pages it is served as. */
+export function pagedWith(text, id = "ia") {
+  const item = toolItem(id, 9, { content: [{ type: "text", text }] });
+  const pages = pagesOf(item);
+  const snapshot = pagedSnapshot([id]);
+  usePaged(snapshot, item, pages);
+  return { item, pages, snapshot };
+}
+
+/** The windows of bodies drawn under `root`. */
+export const windowsIn = (root) => root.findAll((node) => node.attributes.class === "act-pre act-part");

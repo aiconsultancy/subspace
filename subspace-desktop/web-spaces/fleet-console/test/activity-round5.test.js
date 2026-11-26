@@ -6,48 +6,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { createActivityWatcher, INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
+import { createActivityWatcher, PART_MAX_BYTES } from "../src/activity.js";
 import { createActivityController } from "../src/activity-controller.js";
 import { createActivityPanel, DRAW_KEY, formatItem, itemDocument, itemTree, mount, WINDOW_BYTES } from "../src/activity-view.js";
 import { createBudget } from "../src/budget.js";
 import { createPager } from "../src/pager.js";
 import { activityEvent, stepItem, textItem, toolItem } from "./activity-fixtures.js";
-import { buttons, clickOn, fakeActivityClient, fakeDoc, pagedSnapshot, pagesOf, settle } from "./activity-helpers.js";
+import { buttons, clickOn, fakeActivityClient, fakeDoc, officer, pagedSnapshot, pagedWith, prepare, settle, windowsIn } from "./activity-helpers.js";
 
-const officer = { name: "Example", role: "captain", live: true };
 const ITEM = "turn-b\u0000ia";
-
-/** A watcher whose budget is the snapshot's inline charge plus `extra`, and a panel drawn from it. */
-async function prepare(snapshot, extra) {
-  const probe = createActivityWatcher({ client: fakeActivityClient([snapshot]), agent: "example-captain", awaitStream: false });
-  probe.start();
-  await settle();
-  const inline = probe.view.budget.bytes(INLINE_KEY);
-  probe.stop();
-  const client = fakeActivityClient([snapshot]);
-  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: inline + extra });
-  watcher.start();
-  await settle();
-  const panel = createActivityPanel({ doc: fakeDoc });
-  panel.update(watcher.view, officer);
-  return { watcher, client, panel, inline };
-}
-
-/** Make the running turn's one item a paged tool call served as `pages`. */
-function usePaged(snapshot, item, pages) {
-  snapshot.turns[1].items = [{ ...snapshot.turns[1].items[0], id: item.id, kind: "tool", name: "read", seq: item.seq, paged: { pages: pages.length, bytes: pages[0].bytes } }];
-}
-
-/** A snapshot whose running turn holds one paged item, `text` long, and the pages it is served as. */
-function pagedWith(text, id = "ia") {
-  const item = toolItem(id, 9, { content: [{ type: "text", text }] });
-  const pages = pagesOf(item);
-  const snapshot = pagedSnapshot([id]);
-  usePaged(snapshot, item, pages);
-  return { item, pages, snapshot };
-}
-
-const windowsIn = (root) => root.findAll((node) => node.attributes.class === "act-pre act-part");
 
 // ---------- 1. One budget owner ----------
 

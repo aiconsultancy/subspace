@@ -5,8 +5,39 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { formatItem, itemDocument, itemTree, json, mount } from "../src/activity-view.js";
 import { partBlocks, restOf, shownJsonPieces } from "../src/document.js";
-import { stepItem, tokens, toolItem } from "./activity-fixtures.js";
-import { fakeDoc } from "./activity-helpers.js";
+import { activityEvent, stepItem, tokens, toolItem } from "./activity-fixtures.js";
+import { buttons, fakeDoc, officer, pagedWith, prepare, windowsIn } from "./activity-helpers.js";
+
+// ---------- 4. A retained whole body keeps the live status and size ----------
+
+/** The running turn's paged placeholder in `watcher`'s view. */
+const placeholderOf = (watcher) => watcher.view.turns.find((turn) => turn.id === "turn-b").items[0];
+
+for (const [what, repeat] of [
+  ["in windows", 70_000],
+  ["field by field", 100],
+]) {
+  test(`4: an item read whole (${what}) shows its live status and size above the earlier version, and keeps its body node`, async () => {
+    const { pages, snapshot } = pagedWith("a".repeat(repeat));
+    const { watcher, client, panel } = await prepare(snapshot, 1024 * 1024);
+    client.activityItemPage = async (agent, turn, id, page) => pages[page];
+    await watcher.loadItem("turn-b", "ia");
+    panel.update(watcher.view, officer);
+    const bodyNode = () => (repeat > 1000 ? windowsIn(panel.root)[0] : panel.root.findAll((node) => node.attributes.class === "act-pre")[0]);
+    const body = bodyNode();
+    assert.ok(body, "the body is drawn");
+    assert.match(panel.root.textContent, /Read in full \(/);
+    watcher.event(activityEvent(10, { type: "item", item: { ...placeholderOf(watcher), status: "failed", seq: 10, paged: { pages: 4, bytes: 200_000 } } }));
+    panel.update(watcher.view, officer);
+    const shown = panel.root.textContent;
+    assert.match(shown, /Failed/, "the live status");
+    assert.match(shown, /4 pages/, "the live size");
+    assert.match(shown, /Below is the earlier version, as read/, "the body is labelled as the earlier version");
+    assert.equal(buttons(panel.root, "Load the latest").length, 1);
+    assert.equal(bodyNode(), body, "the same body node: a text selection in it survives");
+    watcher.stop();
+  });
+}
 
 // ---------- 5. The short step view leaves nothing out ----------
 

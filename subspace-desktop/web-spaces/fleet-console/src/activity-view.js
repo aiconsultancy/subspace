@@ -357,15 +357,18 @@ function pagedSegments(turnId, item, full, body) {
       foot: () => (reading ? null : [full?.state === "failed" ? h("p", { class: "act-warn" }, "Could not read it: ", txt(full.error)) : null, load(full?.state === "failed" ? "Try again" : "Load in full")]),
     };
   }
-  const note =
-    full.state === "loading" ? "Reading the newer version…" : full.state === "failed" ? null : full.seq < item.seq ? "A newer version is on the gateway." : `Read in full (${pages}).`;
+  // The head is the placeholder's, live: its status and size, and what the
+  // body below is, the earlier version once the item changed (SUB decision
+  // 533c2b29). It is keyed apart from the body, which stays as read.
+  const earlier = full.seq < item.seq;
+  const note = earlier ? `A newer version is on the gateway. Below is the earlier version, as read; the item is now ${pages}.` : `Read in full (${pages}).`;
   // A newer version is read only on request: a running tool changes often.
-  const latest = full.state === "ready" && full.seq < item.seq;
+  const latest = full.state === "ready" && earlier;
   return {
-    head: () => null,
+    head: () => [head(), h("p", { class: "act-note" }, note)],
     body: () => formattedBody(turnId, shown, body),
     foot: () => [
-      note ? h("p", { class: "act-note" }, note) : null,
+      full.state === "loading" ? h("p", { class: "act-note" }, "Reading the newer version…") : null,
       latest ? load("Load the latest") : null,
       full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the newer version: ", txt(full.error)), load("Try again")] : null,
     ],
