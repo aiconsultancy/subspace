@@ -22,14 +22,18 @@ use crate::product::ProductFiles;
 /// when a new install's product themes fail the checks startup makes, when
 /// `theme` is not a variant of the product's theme catalogue, or when the
 /// files' folder cannot be read, so a new install cannot be told from an
-/// existing one. Only the desktop app calls this, before it starts;
-/// command-line and headless runs must not.
+/// existing one. It first names the data directory after the context's
+/// binary, as `prepare_context` does, and returns that error, writing
+/// nothing, when a data path was read under another name before. Only the
+/// desktop app calls this, before it starts; command-line and headless runs
+/// must not.
 // qual:api (apps call it from their entrypoint, before the desktop starts)
 pub fn record_new_install_theme(
     context: &ProductContext,
     theme: &str,
     product_themes: ProductThemes,
 ) -> Result<bool, String> {
+    crate::startup::name_data_directory(context.product.binary_name.as_str())?;
     let files = ProductFiles::for_context(context);
     let new = is_new_install(&files).map_err(|error| file_error(&files, &error))?;
     new.then(|| record(&context.product, &files, theme, product_themes))

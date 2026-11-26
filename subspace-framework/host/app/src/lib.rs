@@ -21,6 +21,8 @@ mod bundled_fonts;
 mod capture;
 #[cfg(windows)]
 mod console;
+#[cfg(test)]
+mod data_directory_tests;
 mod diagnostics;
 #[cfg(debug_assertions)]
 mod inspector;

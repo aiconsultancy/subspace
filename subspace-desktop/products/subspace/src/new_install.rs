@@ -59,11 +59,8 @@ mod tests {
     }
 
     fn state_file(root: &Path) -> std::path::PathBuf {
-        let context = context(root);
         root.join("state")
-            .join(subspace_framework::product::product_data_name(
-                context.product.binary_name.as_str(),
-            ))
+            .join(subspace_framework::product::product_data_name())
             .join("state.json")
     }
 

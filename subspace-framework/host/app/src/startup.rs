@@ -3,8 +3,8 @@
 use std::process::ExitCode;
 
 use subspace_product::{
-    BuildInfo, Channel, MCP_COMMAND, ProductContext, ProductDescriptor, UPGRADE_COMMAND,
-    product_metadata, validate_product,
+    BuildInfo, Channel, DataNameError, MCP_COMMAND, ProductContext, ProductDescriptor,
+    UPGRADE_COMMAND, product_metadata, validate_product,
 };
 
 use crate::{BoardRegistration, DesktopOptions, prepare_context, run_desktop};
@@ -96,7 +96,10 @@ fn route(args: &[String], updates: bool) -> StartupRoute {
 }
 
 /// Called by thin binaries with only their selected board providers. Every
-/// mode first gets the user's `PATH`; nothing before that starts a thread.
+/// mode first names the data directory after the binary, unless the app
+/// called [`subspace_product::configure_data_name`] first, then gets the
+/// user's `PATH`; nothing before that starts a thread. It fails when
+/// something read a data path under another name before it.
 pub fn launch(
     build: ProductBuild,
     boards: Vec<BoardRegistration>,
@@ -108,7 +111,10 @@ pub fn launch(
         &[String],
     ) -> ExitCode,
 ) -> ExitCode {
-    crate::startup_path::apply(&build.descriptor);
+    if let Err(error) = name_data_directory(build.descriptor.binary_name.as_str()) {
+        return finish(Err(error));
+    }
+    crate::startup_path::apply();
     let mut descriptor = build.descriptor;
     let version = build.version;
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -158,6 +164,21 @@ pub fn launch(
             let sign_in = (boards.as_slice(), build.github_oauth.is_some());
             headless(&context, sign_in, &args, build.search_reranker, command)
         }
+    }
+}
+
+/// Names the data directory after the binary, unless the app named it
+/// first; `launch`, `prepare_context` and `record_new_install_theme` call
+/// it. Fails while a read has implicitly fixed another name, so the
+/// process never uses two data directories.
+pub(crate) fn name_data_directory(binary_name: &str) -> Result<(), String> {
+    data_name_outcome(subspace_product::configure_data_name(binary_name))
+}
+
+fn data_name_outcome(result: Result<(), DataNameError>) -> Result<(), String> {
+    match result {
+        Ok(()) | Err(DataNameError::Configured(_)) => Ok(()),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -294,9 +315,27 @@ fn finish(result: Result<(), String>) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use subspace_product::Channel;
+    use subspace_product::{Channel, DataNameError, ProductError};
 
-    use super::{StartupRoute, route, warning_line, warns};
+    use super::{StartupRoute, data_name_outcome, route, warning_line, warns};
+
+    #[test]
+    fn launch_keeps_an_app_s_own_data_name_and_refuses_a_second_one() {
+        assert_eq!(data_name_outcome(Ok(())), Ok(()));
+        assert_eq!(
+            data_name_outcome(Err(DataNameError::Configured("example-app".into()))),
+            Ok(())
+        );
+        let read_first = data_name_outcome(Err(DataNameError::Resolved("subspace".into())));
+        assert!(
+            read_first.as_ref().is_err_and(
+                |error| error.contains("'subspace'") && error.contains("configure_data_name")
+            ),
+            "{read_first:?}"
+        );
+        let invalid = DataNameError::Invalid(ProductError::UnsafeIdentity { name: "..".into() });
+        assert!(data_name_outcome(Err(invalid)).is_err());
+    }
 
     fn words(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()

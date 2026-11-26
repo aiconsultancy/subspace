@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::channel::Channel;
+use crate::data_name::data_name;
 use crate::platform::{OsKind, PlatformEnv};
 
 /// Cross-platform and native product configuration roots.
@@ -64,10 +65,13 @@ pub fn board_root(product_root: &Path, board_id: &str) -> PathBuf {
     product_root.join(board_id)
 }
 
-/// Directory name for a product's config, state and logs in this build's
-/// channel: the binary name on stable, `<binary>-<type>` for a pre-release.
-pub fn product_data_name(binary_name: &str) -> String {
-    Channel::current().name(binary_name)
+/// The data directory name of this process's channel: the app's
+/// [`data_name`] on stable, `<name>-<type>` for a pre-release type. Every
+/// config, state, cache and log path uses it as its directory name in the
+/// platform's config or state directory, and the Keychain service
+/// `<data name>.github`, and any an app derives from it, are named after it.
+pub fn product_data_name() -> String {
+    Channel::current().name(data_name())
 }
 
 #[cfg(test)]
@@ -163,10 +167,7 @@ mod tests {
                 "/no-such-home/fixture/Library/Application Support/subspace-nightly"
             ))
         );
-        assert_eq!(
-            product_data_name("subspace"),
-            Channel::current().name("subspace")
-        );
+        assert_eq!(product_data_name(), Channel::current().name("subspace"));
     }
 
     #[test]

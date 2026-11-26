@@ -4,6 +4,7 @@
 mod build;
 mod channel;
 mod context;
+mod data_name;
 mod descriptor;
 mod error;
 #[cfg(any(test, feature = "test-support"))]
@@ -17,8 +18,9 @@ mod platform;
 mod update;
 
 pub use build::{BuildInfo, BuildKind};
-pub use channel::{Channel, asset_stem};
+pub use channel::{Channel, asset_stem, configure_channel};
 pub use context::ProductContext;
+pub use data_name::{DEFAULT_DATA_NAME, DataNameError, configure_data_name, data_name};
 pub use descriptor::{
     BoardDescriptor, ProductDescriptor, ValidatedBoard, ValidatedProduct, validate_known_products,
     validate_product,

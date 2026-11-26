@@ -86,11 +86,12 @@ pub fn config_file(context: &ProductContext) -> PathBuf {
 }
 
 fn preference_file(context: &ProductContext) -> PathBuf {
-    state_directory(&context.env, context.product.binary_name.as_str()).join("state.json")
+    state_directory(&context.env).join("state.json")
 }
 
-/// The product's own state folder, which holds `state.json`.
-pub(crate) fn state_directory(env: &PlatformEnv, binary_name: &str) -> PathBuf {
+/// The app's data directory, [`product_data_name`] in the platform state
+/// directory, which holds `state.json`.
+pub(crate) fn state_directory(env: &PlatformEnv) -> PathBuf {
     let base = match env.os {
         OsKind::Linux => env
             .xdg_state_home
@@ -102,15 +103,20 @@ pub(crate) fn state_directory(env: &PlatformEnv, binary_name: &str) -> PathBuf {
             .clone()
             .unwrap_or_else(|| env.home.join("AppData/Local")),
     };
-    base.join(product_data_name(binary_name))
+    base.join(product_data_name())
 }
 
 /// Loads only product command aliases before CLI or desktop startup. Service
-/// credentials are not read here.
+/// credentials are not read here. It first names the data directory after
+/// the binary, as `launch` does, so nothing is read under another app's
+/// name; it fails, reading and writing nothing, when a data path was read
+/// under another name before.
 pub fn prepare_context(
     mut descriptor: ProductDescriptor,
     version: &str,
 ) -> Result<ProductContext, String> {
+    let product = validate_product(&descriptor).map_err(|error| error.to_string())?;
+    crate::startup::name_data_directory(product.binary_name.as_str())?;
     let env = PlatformEnv::from_process().map_err(|error| error.to_string())?;
     let mut context = context_with_env(&mut descriptor, env)?;
     context.version = version.to_owned();
@@ -242,7 +248,7 @@ mod tests {
         let files = ProductFiles::for_context(&context);
         assert_eq!(files.state, preference_file(&context));
         assert_eq!(files.config, config_file(&context));
-        let name = subspace_product::product_data_name("subspace");
+        let name = subspace_product::product_data_name();
         assert!(
             preference_file(&context).ends_with(format!("Application Support/{name}/state.json"))
         );
