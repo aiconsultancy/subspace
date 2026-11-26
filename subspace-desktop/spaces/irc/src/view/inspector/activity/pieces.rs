@@ -9,7 +9,12 @@
 //! most one stride of parts, and writes out only that part: a value is
 //! walked from the middle as indented JSON ([`json`]), a text sliced, an
 //! error's fields read one by one. Nothing before that start is formatted
-//! or scanned again (SUB decision `4311830a` item 5).
+//! or written out again (SUB decision `4311830a` item 5). To resume inside
+//! a value, the walk steps over the earlier members of each object on the
+//! path to that start, since a map offers no way to reach a member by
+//! position: counted, allocation-free iterator steps, never copied keys.
+//! The bound is one stride of parts plus those steps (SUB decision
+//! `1cdd7607`).
 
 use subspace_client_fleet::activity::ActivityError;
 

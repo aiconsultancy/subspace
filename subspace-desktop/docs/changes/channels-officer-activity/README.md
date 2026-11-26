@@ -92,8 +92,11 @@ item too large to send inline is paged and loads on demand, never hidden.
   never cut. Only the part shown is written out, from an index of where
   some parts start, made once per version of the body and charged with the
   part it draws: it keeps at most 4 KiB, its starts sparser as the body
-  grows, and moving to a part walks at most the parts from the nearest
-  start before it.
+  grows. Moving to a part walks at most one interval of parts, from the
+  nearest start before it, plus, to resume inside a JSON value, steps
+  over the earlier members of each object on the path to that start:
+  counted, allocation-free iterator steps, since a map offers no way to
+  reach a member by position (SUB decision `1cdd7607`).
 - **The floor** (SUB decisions `8357ec55` §2 and `33ccecf6` item 1).
   Inline content is the snapshot itself and is never let go. Only the item
   last asked for may pass the room, and only when no room is left: the view
