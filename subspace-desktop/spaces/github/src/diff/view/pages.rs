@@ -119,21 +119,53 @@ impl DiffView {
     }
 }
 
-pub(super) struct PageBusy {
+#[derive(Clone, Copy)]
+pub(super) struct BusyUntil {
     since: Instant,
     wait: u64,
+}
+
+impl BusyUntil {
+    pub(super) fn new(since: Instant, seconds: u64) -> Self {
+        Self {
+            since,
+            wait: seconds,
+        }
+    }
+
+    pub(super) fn delay(self, now: Instant) -> Duration {
+        Duration::from_secs(self.wait).saturating_sub(now.saturating_duration_since(self.since))
+    }
+
+    pub(super) fn remaining(self, now: Instant) -> u64 {
+        let delay = self.delay(now);
+        delay
+            .as_secs()
+            .saturating_add(u64::from(delay.subsec_nanos() != 0))
+    }
+}
+
+pub(super) struct PageBusy {
+    until: BusyUntil,
     _clock: Option<Task<()>>,
 }
 
 impl PageBusy {
     pub(super) fn new(wait: Option<u64>, cx: &mut Context<DiffView>) -> Self {
-        let since = cx.background_executor().now();
-        let wait = wait.unwrap_or_default();
-        let clock = (wait > 0).then(|| {
+        let until = BusyUntil::new(cx.background_executor().now(), wait.unwrap_or_default());
+        Self::at(until, cx)
+    }
+
+    pub(super) fn at(until: BusyUntil, cx: &mut Context<DiffView>) -> Self {
+        let clock = (until.remaining(cx.background_executor().now()) > 0).then(|| {
             cx.spawn(async move |view, cx| {
                 let executor = cx.background_executor().clone();
-                while executor.now().saturating_duration_since(since).as_secs() < wait {
-                    executor.timer(Duration::from_secs(1)).await;
+                loop {
+                    let delay = until.delay(executor.now());
+                    if delay.is_zero() {
+                        break;
+                    }
+                    executor.timer(delay.min(Duration::from_secs(1))).await;
                     if view.update(cx, |_, cx| cx.notify()).is_err() {
                         break;
                     }
@@ -141,19 +173,13 @@ impl PageBusy {
             })
         });
         Self {
-            since,
-            wait,
+            until,
             _clock: clock,
         }
     }
 
     pub(super) fn remaining(&self, cx: &App) -> u64 {
-        self.wait.saturating_sub(
-            cx.background_executor()
-                .now()
-                .saturating_duration_since(self.since)
-                .as_secs(),
-        )
+        self.until.remaining(cx.background_executor().now())
     }
 }
 

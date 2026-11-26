@@ -136,8 +136,8 @@ impl DiffView {
             Ok(preview) => {
                 binary.replace_preview(Some(preview), None, cx);
             }
-            Err(PreviewError::Fleet(Error::Busy(wait))) => {
-                self.hold_binary_retry(Retry::Preview(format, progress), wait, cx);
+            Err(PreviewError::Fleet(Error::Busy(_))) => {
+                self.show_binary_retry(Retry::Preview(format, progress), cx);
             }
             Err(PreviewError::Fleet(error)) => self.fleet_page_error(error, cx),
             Err(PreviewError::NotRenderable) => cx.emit(DiffEvent::Toast(Toast::error(

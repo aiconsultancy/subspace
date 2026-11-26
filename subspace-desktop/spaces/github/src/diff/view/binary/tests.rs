@@ -76,7 +76,7 @@ fn a_binary_page_conflict_keeps_the_displayed_bytes_and_offers_refresh(cx: &mut 
 
 #[test]
 fn an_empty_binary_terminator_keeps_the_last_nonempty_page_visible() {
-    let mut binary = BinaryView::new(0, DiffSide::New);
+    let mut binary = BinaryView::new(0, DiffSide::New, Default::default());
     let bytes = serde_json::from_value(json!({
         "side": "new", "encoding": "base64", "offset": 0, "size": 3,
         "data": "iVBO", "nextPage": "eof",

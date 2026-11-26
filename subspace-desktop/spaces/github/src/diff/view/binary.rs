@@ -64,7 +64,7 @@ impl BinaryView {
         }
     }
 
-    fn new(file: usize, side: DiffSide) -> Self {
+    fn new(file: usize, side: DiffSide, closed: DiffRead) -> Self {
         Self {
             file,
             side,
@@ -75,7 +75,7 @@ impl BinaryView {
             read: None,
             retry: None,
             preview: None,
-            closed: DiffRead::default(),
+            closed,
         }
     }
 
@@ -139,8 +139,7 @@ impl Drop for BinaryView {
 impl DiffView {
     pub(super) fn cancel_binary_read(&mut self) {
         if let Some(binary) = self.binary.as_mut() {
-            binary.closed.cancel();
-            binary.closed = DiffRead::default();
+            binary.closed.cancel_and_reset();
             binary.read = None;
             binary.retry = None;
         }
@@ -184,7 +183,9 @@ impl DiffView {
         cx: &mut Context<Self>,
     ) {
         self.close_binary(Some(window), cx);
-        self.binary = Some(BinaryView::new(file, side));
+        let path = self.files[file].file.path.clone();
+        let read = self.binary_holds.reader(path, side, cx);
+        self.binary = Some(BinaryView::new(file, side, read));
         self.read_binary(Move::Start, cx);
         cx.notify();
     }

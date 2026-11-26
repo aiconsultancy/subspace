@@ -26,10 +26,11 @@ the same page up to twice, respecting a numeric `Retry-After`. If the wait is
 over ten seconds or the retries run out, **Retry page** repeats the failed file,
 binary or preview page without reloading the file list or discarding loaded
 pages. A positive `Retry-After` disables that control until the countdown
-ends. Closing the byte reader or switching sides does not reset the wait for
-the same file and side in the pinned diff. A different fingerprint or diff
-mode starts a new read. A stale snapshot or a failed file-list load still
-uses **Refresh**.
+ends. The pinned file side records the deadline before any automatic retry
+wait, so closing the reader or switching sides does not reset it, even if a
+byte or preview read was still retrying. A different fingerprint or diff mode
+starts a new read. A stale snapshot or a failed file-list load still uses
+**Refresh**.
 
 **View binary** opens a readonly hex and ASCII dump. Its pages are read on
 demand at the original fingerprint; modified binaries offer **Old** and

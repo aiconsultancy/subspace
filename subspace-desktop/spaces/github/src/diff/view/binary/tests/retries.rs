@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use gpui_kit::TestAppContext;
@@ -154,6 +155,76 @@ fn reopening_binary_keeps_retry_after_for_the_pinned_side(cx: &mut TestAppContex
     click(window, "crew-binary-retry-page");
     assert_page(&view, window, DiffSide::New, 0);
     assert_eq!(new_side_reads(), 2);
+}
+
+fn busy_once_after_open() -> Mock {
+    let reads = AtomicUsize::new(0);
+    Mock::with_headers(move |request| {
+        if request.path.contains("/diff/file?") && reads.fetch_add(1, Ordering::Relaxed) == 1 {
+            return (
+                503,
+                vec![("Retry-After".into(), "10".into())],
+                String::new(),
+            );
+        }
+        let (status, body) = binary_response(request);
+        (status, vec![], body)
+    })
+}
+
+#[gpui_kit::test]
+fn closing_during_automatic_backoff_keeps_the_pinned_side_held(cx: &mut TestAppContext) {
+    let mock = busy_once_after_open();
+    let (view, window) = mount(cx, &mock);
+    click(window, ("crew-diff-bytes", 0usize));
+    assert_page(&view, window, DiffSide::New, 0);
+    let first = mock.requests().len();
+    let (busy, waiting) = mpsc::channel();
+    let (source, client, mode, read) = view.read_with(window, |view, cx| {
+        let DiffSource::Fleet(source) = &view.source else {
+            panic!("expected Fleet diff")
+        };
+        let read = view.binary.as_ref().unwrap().closed.clone();
+        let read = read.observing_busy(move |seconds| busy.send(seconds).unwrap());
+        (
+            source.clone(),
+            source.client(cx).unwrap(),
+            view.fleet.mode,
+            read,
+        )
+    });
+    // The visual test executor runs blocking I/O inline. Use the open reader's
+    // real token and Blob path on a worker so GPUI can close it during backoff.
+    let worker = std::thread::spawn(move || {
+        let blob = Blob {
+            path: PATH,
+            at: "B",
+            side: DiffSide::New,
+        };
+        PreviewRead::default().read(|position| {
+            blob.read(&client, source.request(mode), position, &read)
+                .map_err(PreviewError::Fleet)
+        })
+    });
+    assert_eq!(waiting.recv_timeout(Duration::from_secs(5)).unwrap(), 10);
+    click(window, "crew-binary-close");
+    assert!(matches!(
+        worker.join().unwrap(),
+        Err(PreviewError::Fleet(Error::DiffReadCancelled))
+    ));
+    click(window, ("crew-diff-bytes", 0usize));
+    assert_eq!(
+        mock.requests().len() - first,
+        1,
+        "reopening broke the server's backoff"
+    );
+    window.update(|window, _| {
+        assert_eq!(window.find("crew-binary-retry-page").disabled(), Some(true));
+    });
+    window.executor().advance_clock(Duration::from_secs(10));
+    click(window, "crew-binary-retry-page");
+    assert_page(&view, window, DiffSide::New, 0);
+    assert_eq!(mock.requests().len() - first, 2);
 }
 
 fn busy_tail(last_wait: &'static str) -> Mock {

@@ -12,28 +12,57 @@ const DEFAULT_WAIT_SECONDS: u64 = 1;
 const CANCEL_CHECK_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Default)]
-pub struct DiffRead(Arc<AtomicBool>);
+pub struct DiffRead {
+    cancelled: Arc<AtomicBool>,
+    on_busy: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+}
 
 impl DiffRead {
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Cancel outstanding clones, keeping the observer for future reads.
+    pub fn cancel_and_reset(&mut self) {
+        self.cancel();
+        self.cancelled = Arc::default();
     }
 
     pub fn check(&self) -> Result<(), Error> {
-        if self.0.load(Ordering::Acquire) {
+        if self.cancelled.load(Ordering::Acquire) {
             Err(Error::DiffReadCancelled)
         } else {
             Ok(())
         }
     }
 
+    /// Observe positive Retry-After values before waiting or returning Busy.
+    /// The observer also sees a reply if the request was cancelled in flight.
+    pub fn observing_busy(mut self, observe: impl Fn(u64) + Send + Sync + 'static) -> Self {
+        let prior = self.on_busy.take();
+        self.on_busy = Some(Arc::new(move |seconds| {
+            if let Some(prior) = &prior {
+                prior(seconds);
+            }
+            observe(seconds);
+        }));
+        self
+    }
+
     /// Retry the identical request, never a newer cursor or fingerprint.
     /// If the server asks for longer than the budget, return Busy instead
     /// of retrying before the server's requested time.
     pub fn retry<T>(&self, mut request: impl FnMut() -> Result<T, Error>) -> Result<T, Error> {
-        for _ in 1..MAX_ATTEMPTS {
+        let mut attempt = || {
             self.check()?;
-            match request() {
+            request().inspect_err(|error| {
+                if let (Error::Busy(Some(seconds @ 1..)), Some(observe)) = (error, &self.on_busy) {
+                    observe(*seconds);
+                }
+            })
+        };
+        for _ in 1..MAX_ATTEMPTS {
+            match attempt() {
                 Err(error @ Error::Busy(wait)) => {
                     let seconds = wait.unwrap_or(DEFAULT_WAIT_SECONDS);
                     if seconds > MAX_WAIT_SECONDS {
@@ -44,8 +73,7 @@ impl DiffRead {
                 result => return result,
             }
         }
-        self.check()?;
-        request()
+        attempt()
     }
 
     fn wait(&self, wait: Duration) -> Result<(), Error> {
@@ -63,6 +91,8 @@ impl DiffRead {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::{DiffRead, Error};
 
     #[test]
@@ -89,5 +119,24 @@ mod tests {
         });
         assert_eq!(result, Err(Error::DiffReadCancelled));
         assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn reports_positive_waits_before_backoff_and_on_the_last_attempt() {
+        let read = DiffRead::default();
+        let cancel = read.clone();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let out = seen.clone();
+        let mut read = read.observing_busy(move |seconds| {
+            out.lock().unwrap().push(seconds);
+            cancel.cancel();
+        });
+        let result: Result<(), _> = read.retry(|| Err(Error::Busy(Some(10))));
+        assert_eq!(result, Err(Error::DiffReadCancelled));
+        read.cancel_and_reset();
+        let mut waits = [Some(0), Some(0), Some(11)].into_iter();
+        let result: Result<(), _> = read.retry(|| Err(Error::Busy(waits.next().unwrap())));
+        assert_eq!(result, Err(Error::Busy(Some(11))));
+        assert_eq!(*seen.lock().unwrap(), [10, 11]);
     }
 }

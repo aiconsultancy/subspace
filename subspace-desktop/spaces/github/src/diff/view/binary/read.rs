@@ -27,6 +27,7 @@ impl DiffView {
             // A reopened reader has no bytes or cursor. Its retry is Start,
             // but an existing reader keeps the action that was refused.
             binary.retry.get_or_insert(Retry::Bytes(direction));
+            self.start_binary_clock(cx);
             cx.notify();
             return;
         }
@@ -82,8 +83,8 @@ impl DiffView {
                 binary.show(content, position, direction);
                 self.fleet.unstable |= unstable;
             }
-            Err(Error::Busy(wait)) => {
-                self.hold_binary_retry(Retry::Bytes(direction), wait, cx);
+            Err(Error::Busy(_)) => {
+                self.show_binary_retry(Retry::Bytes(direction), cx);
             }
             Err(error) => self.fleet_page_error(error, cx),
         }
