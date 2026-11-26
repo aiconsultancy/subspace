@@ -234,7 +234,9 @@ closes it, as does moving to another tier; focus returns to the button.
   reachable. Text longer than 64 KiB or 1,000 lines shows one section at a
   time with First, Previous, Next and Last; a closed turn holds no items,
   and an open one shows 20 at a time with **Earlier items** and **Later
-  items**. Each view has a 64 MiB memory budget. It is a cache budget
+  items**. The console has one 64 MiB memory budget, shared by the
+  Activity and crew diff views; the latest request of either is never
+  freed for the other. It is a cache budget
   only: nothing is hidden or cut to keep within it. The snapshot's own
   content is charged first and is never freed. Items read whole are charged
   twice (the item and the copy drawn from it); a part is charged with the
@@ -312,11 +314,17 @@ member has changed in its checkout: **All changes**, **Committed only** or
 an error. **Back** or Escape closes it, as does moving to another tier.
 
 - **Nothing is cut.** The whole file list is read before it shows, 200
-  files at a time on screen. A patch shows 1,000 lines at a time; a long
-  one continues with **Load next page**, and a failed page offers **Retry
+  files at a time on screen. A long patch shows one part (a gateway page)
+  at a time with **First part**, **Previous part**, **Next part** and, once
+  the count is known, **Last part**, each part 64 KiB or 1,000 lines on
+  screen at a time; a failed page keeps the part on show and offers **Retry
   page**. A binary file's **Old bytes** and **New bytes** open a hex and
-  ASCII view read a page (1 MiB) at a time, 4 KiB on screen. Images also
-  offer a preview of up to 10 MiB and 4,096 pixels a side. Long lines wrap.
+  ASCII view read a part (a page of up to 1 MiB) at a time, 4 KiB on
+  screen, moving across parts as you page. Parts count against the
+  console's 64 MiB budget; one freed to make room is read again, at the
+  same snapshot, when shown. Images also offer a preview of up to 10 MiB
+  and 4,096 pixels a side, which takes only free room and gives it back
+  first; one that does not fit says so with its size. Long lines wrap.
 - **Content is text.** Every value is set as text, never parsed as HTML,
   and control and bidi formatting characters show as `⟨U+XXXX⟩` markers.
   Diffs stay in memory only, never reach chat, and closing the view drops
@@ -396,7 +404,8 @@ through L0, officer activity (decoding, page joins, the snapshot and event
 join, refetches, join order, the one stream's `agent` parameters, paged
 and part reads within a bounded budget, bounded rendering that never parses
 HTML and marks hidden characters), the pager, crew diffs (the feature gate,
-status codes, cursor, patch and binary paging, the fingerprint banner,
+status codes, cursor, patch and binary parts, the shared budget, the image
+preview's room, the fingerprint banner,
 cancellation and source changes), and the package rules.
 
 | Path | Purpose |
@@ -405,8 +414,8 @@ cancellation and source changes), and the package rules.
 | `src/main.js` | Page wiring: mode, frame loop, navigation, inspector, bridge effects |
 | `src/api.js`, `src/live.js`, `src/sse.js`, `src/connection.js` | Fleet API client, event stream, SSE parser, connection states |
 | `src/activity.js`, `src/activity-view.js`, `src/activity-controller.js` | Officer activity: snapshot and event join, paged items; the Activity view; its lifecycle in the inspector |
-| `src/pager.js`, `src/budget.js` | Reading and showing a part at a time, fenced by revision; a view's byte budget, least recently opened first |
-| `src/diff.js`, `src/diff-view.js`, `src/diff-controller.js`, `src/sample-diff.js` | Crew diffs: paged list, patch and binary reads; the diff view; its lifecycle in the inspector; the sample checkout |
+| `src/pager.js`, `src/budget.js` | Reading and showing a part at a time, fenced by revision; the console's byte budget, least recently opened first, shared by views through scopes |
+| `src/diff.js`, `src/diff-parts.js`, `src/diff-view.js`, `src/diff-controller.js`, `src/sample-diff.js` | Crew diffs: paged list, patch and binary parts; their part sources and patch lines; the diff view; its lifecycle in the inspector; the sample checkout |
 | `src/contract.js`, `src/reducer.js`, `src/model.js` | Payload checks, state reducer, derived views |
 | `src/sample.js`, `src/sample-source.js` | Sample fleets and their simulation |
 | `src/fleet-sources.js`, `src/fleet-store.js`, `src/fleet-manager.js` | Fleet sources and their merge, the page's fleet list, one connection per fleet |

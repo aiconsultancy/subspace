@@ -41,29 +41,56 @@ one shows, and the differences are listed below with their reasons.
   and total, and add files; a repeated cursor, a cursor after `total` files
   or a list that does not add up to `total` is an invalid response. Nothing
   is cut.
-- **Patch paging.** A file whose patch carries `patchNextPage` offers
-  **Load next page**, which reads `…/diff/file?page=&at=<fingerprint>`. The
-  answer must be at `at`, for the same path, carry patch text and not point
-  back at the page asked for. A failed page offers **Retry page** for the
-  same page. Loaded continuation pages take at most 64 MiB per view; past
-  that the least recently read file's continuations are dropped and it says
-  so, offering Load next page again.
+- **Patch parts.** Each file's patch is one `createPager` (`src/pager.js`,
+  through `src/diff-parts.js`), keyed by the snapshot's fingerprint, the
+  mode and the path (SUB decision 75c3ed93 §1). A part is one gateway
+  patch page: the patch the list gave, then each page its `patchNextPage`
+  names, read by `…/diff/file?page=&at=<fingerprint>` with the cursor the
+  page before gave. One part shows at a time, with **First part**,
+  **Previous part** and **Next part**, and **Last part** once the count is
+  known (a page naming no next page is the last); Last reads only the last
+  page, by its remembered cursor. A patch with no next page is one part,
+  with no part controls. Each answer must be at `at`, for the same path,
+  carry patch text and not point back at the page asked for. The part on
+  show stays on show until its replacement arrives; a failed read keeps it
+  and offers **Retry page** for the same page.
 - **Binary files.** **Old bytes** and **New bytes** (an added file only
-  New, a removed one only Old) open a hex and ASCII view: a 16-digit offset,
-  8 bytes a row and `.` for bytes outside printable ASCII, as #110, shown
-  4 KiB at a time with First, Previous and Next. Pages are read by `?side=`
-  from the cursor the last page gave, at the snapshot's fingerprint. Each
+  New, a removed one only Old) open a hex and ASCII view: a 16-digit offset
+  in the file, 8 bytes a row and `.` for bytes outside printable ASCII, as
+  #110, shown 4 KiB at a time. Each side is one pager (75c3ed93 §2): a part
+  is one gateway binary page, read by `?side=` from the cursor the page
+  before gave, at the snapshot's fingerprint, and held as its base64; one
+  window is decoded at a time. **First**, **Previous** and **Next** move a
+  window; past a part's first or last window they read the part before or
+  after, Previous landing on its last window. **Last** shows only once the
+  last page's cursor is known, so it never reads the pages between. Each
   page must be for the side asked for, `encoding: "base64"`, start at the
   offset the previous one ended at, give the same size, decode to at most
   1 MiB and not run past the size. A page ending before the size must name
   a next page and hold bytes; a page ending exactly at the size is the
   last, even if it names a next page. An empty file is one page of size 0.
-  A failed page offers **Retry page**. PNG, JPEG, GIF and WebP paths also
-  offer **Preview image** for each side, which assembles the side in memory
-  (at most 10 MiB in 16 pages) and shows it through a `blob:` URL, refusing
-  images over 4,096 pixels a side; **Show bytes** stays available.
-  Submodules and symbolic links say what their patch shows; a link is never
-  followed.
+  A failed page keeps the part on show and offers **Retry page**. PNG,
+  JPEG, GIF and WebP paths also offer **Preview image** for each side,
+  which assembles the side in memory (at most 10 MiB in 16 pages) and
+  shows it through a `blob:` URL, refusing images over 4,096 pixels a side;
+  **Show bytes** stays available. Submodules and symbolic links say what
+  their patch shows; a link is never followed.
+- **One budget for the console.** The crew diff view and the Activity view
+  share one 64 MiB `createBudget` (`src/budget.js`; 75c3ed93 §3), each
+  through its own `scope`: the same room, order and latest request, with
+  keys kept apart. Each patch or binary part is charged with the window it
+  draws. Past the budget the least recently opened entry of either view is
+  freed, never the latest request; a freed part says so and is read again,
+  at the same `at`, when next shown (**Show it again**), at the part shown
+  before once the count is known and otherwise from the first part. A 409
+  or another fingerprint on that read shows the Refresh banner. The image
+  preview is a whole read (SUB decision feb0d839): once its first page
+  gives its size, it is charged that size only in room no other read holds,
+  frees nothing, and gives its room back before any other entry when a
+  later read needs it (**Show image again**). An image that does not fit
+  says so with its size and the free room, and keeps Show bytes. The
+  budget is a cache budget only: nothing is hidden or cut to keep within
+  it.
 - **Banners.** `unstable: true` on any list page shows "Changed while
   loading · Refresh". The `ship` event's
   `crewMembers[].contexts[].git.fingerprint` is passed to the view on each
@@ -86,8 +113,11 @@ one shows, and the differences are listed below with their reasons.
   and bidi formatting characters show as the Activity view's `⟨U+XXXX⟩`
   markers. Long lines wrap and stay selectable; the hex view scrolls
   sideways. Large content is windowed, never hidden: the file list 200 files
-  at a time and a patch 1,000 lines at a time, each with First, Previous,
-  Next and Last.
+  at a time, and a patch part in the Activity view's windows (at most
+  64 KiB as shown, markers included, and 1,000 lines, measured by
+  `src/document.js` `measurePieces`), each with First, Previous, Next and
+  Last. Line numbers run on across windows and parts; a line split by a
+  boundary continues in the next.
 - **Memory only and chat-free.** Diffs are never stored or logged, never
   reach chat or the page's `setContext` value, and are dropped when the
   view closes. Image previews revoke their object URL when replaced.
@@ -115,9 +145,9 @@ one shows, and the differences are listed below with their reasons.
   the Activity view. The hex ASCII column keeps `.` as #110.
 - **Windows of 200 files and 1,000 lines.** #110 virtualises its lists;
   here windows keep the page small.
-- **A memory bound on patch continuations** (64 MiB, least recently read
-  first). #110 keeps every loaded page; a web view's memory is shared with
-  the map.
+- **One patch part at a time.** #110 appends each loaded page to the
+  patch and keeps them all; here a part replaces the one before, so what is
+  held stays within the console's budget, which the map's page shares.
 - **No check when the Space becomes active.** The view follows each `ship`
   event while open instead.
 - **File pages carry no `unstable`.** The contract gives a file page
@@ -151,11 +181,18 @@ feature gate on the crew card (on, off, absent, Git error, no worktree), the
 fingerprint on `isGit`, the routes' query strings and unread error bodies,
 each status code of the first page, busy retries with `Retry-After`, the
 default wait and the ten-second cap, an empty snapshot, cursor paging,
-stale and invalid list pages, patch paging to the last page, **Retry page**
-for a patch and a binary page, busy and gone file pages, a self-pointing or
-wrong-path page, a 409 or another fingerprint for a stale `at` leading to
-Refresh, an empty binary file, binary paging by offset to a page ending
-exactly at the size, binary page checks, the fingerprint banner (moved,
+stale and invalid list pages, patch parts one at a time with Last once the
+count is known, a one-part patch, windows of a long part numbered across
+windows, **Retry page** for a patch and a binary page keeping the part on
+show, busy and gone file pages, a self-pointing or wrong-path page, a 409
+or another fingerprint for a stale `at` leading to Refresh, a part freed by
+the budget read again at the same `at` and at the same part, a 409 on that
+read, an empty binary file, hex windows paging across a part boundary with
+offsets running on, no Last until the last page's cursor is known, binary
+bytes freed and read again at the same part, binary page checks, an image
+preview grown into free room and given back first, a preview that cannot
+fit, the Activity and diff views sharing one budget without freeing the
+latest request, the fingerprint banner (moved,
 repeated, absent, moved during the load, unstable), cancellation of reads in
 backoff when the fingerprint goes stale, the view closes or Hide bytes is
 pressed, a late answer dropped after a stale fingerprint, Refresh and a mode
