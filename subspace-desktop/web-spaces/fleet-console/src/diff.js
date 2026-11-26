@@ -479,6 +479,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     busy = null;
     binary?.source.drop();
     binary = null;
+    if (preview) budget.release(preview.key);
     preview = null;
     emit();
     try {
@@ -587,6 +588,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
   function closeBinary() {
     binary?.source.drop();
     preview?.read.cancel();
+    if (preview) budget.release(preview.key);
     const had = binary || preview;
     binary = null;
     preview = null;
@@ -685,12 +687,28 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     return { index, path, side, window, size, windows: windowsIn(shown?.data), part: shown, offset: shown?.start.offset ?? 0, state: shown?.state ?? "idle", version: `${shown?.changes}.${moves}` };
   }
 
-  /** Assemble one side of an image in memory for a still preview, as #110. */
+  /**
+   * Assemble one side of an image in memory for a still preview, as #110: a
+   * whole read (SUB decisions feb0d839, 75c3ed93 §3). Once the first page
+   * gives its size, it is charged to the budget, but only in room no other
+   * read holds: it frees nothing, and gives its room back before anything
+   * else when a later read needs it. If its size does not fit, the view
+   * says so; Show bytes still pages through it.
+   */
   async function openPreview(index, side) {
     const entry = files[index];
     if (status !== "ready" || !entry?.file.binary || !binarySides(entry.file).includes(side) || changed()) return;
     closeBinary();
-    const view = { index, path: entry.file.path, side, state: "loading", error: null, type: null, bytes: null, read: read.child(), version: 0 };
+    const key = ["preview", fingerprint, mode, entry.file.path, side].join("\u0000");
+    const view = { index, path: entry.file.path, side, key, state: "loading", error: null, type: null, bytes: null, size: null, room: null, read: read.child(), version: 0 };
+    // The room given back to a later read: stop reading, let the bytes go.
+    const giveBack = () => {
+      view.read.cancel();
+      view.bytes = null;
+      view.state = "given-back";
+      view.version += 1;
+      emit();
+    };
     preview = view;
     const token = view.read;
     const gen = generation;
@@ -711,9 +729,18 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
           view.state = "too-large";
           break;
         }
+        if (number === 0) {
+          const room = budget.limit - budget.used;
+          if (size > room) {
+            Object.assign(view, { state: "no-room", size, room });
+            break;
+          }
+          budget.reserve(key, size, giveBack, { makeRoom: false, yields: true });
+        }
         const bytes = decodeBase64(content.data);
         if (number === 0 && !imageType(bytes)) {
           view.state = "unsupported";
+          budget.release(key);
           break;
         }
         parts.push(bytes);
@@ -733,7 +760,8 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
         cursor = content.nextPage;
       }
     } catch (failure) {
-      if (!current(gen) || preview !== view) return;
+      if (!current(gen) || preview !== view || view.state === "given-back") return;
+      budget.release(key);
       const problem = diffError(failure, { file: true, action: "Retry page" });
       if (problem.kind === "cancelled") {
         preview = null;

@@ -585,6 +585,56 @@ test("diff binary: bytes the budget let go are read again at the same `at`, at t
   assert.equal(watcher.view.binary.offset, 1024);
 });
 
+/** An 8 KiB PNG, as far as the signature check goes. */
+const PNG = Uint8Array.from({ length: 8 * 1024 }, (_, i) => [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a][i] ?? 0);
+
+test("diff preview: an image grows only into free room, charged its size, and gives it back before anything else", async () => {
+  const budget = createBudget(64 * 1024);
+  const activity = budget.scope("activity\u0000");
+  activity.reserve("older", 20 * 1024, null);
+  const { watcher, files } = watch(binaryRoutes({ new: PNG }), { budget: budget.scope("diff\u0000") });
+  watcher.start();
+  await flush();
+  await watcher.openPreview(0, "new");
+  assert.equal(watcher.view.preview.state, "ready");
+  assert.equal(watcher.view.preview.type, "image/png");
+  assert.equal(budget.used, 20 * 1024 + PNG.length, "charged its size, freeing nothing");
+  assert.equal(files().length, 1);
+  activity.request("newer");
+  activity.reserve("newer", 40 * 1024, null);
+  assert.equal(watcher.view.preview.state, "given-back", "the image's room went first");
+  assert.equal(watcher.view.preview.bytes, null);
+  assert.ok(activity.has("older"), "though the Activity view's entry is older");
+  assert.equal(budget.used, 60 * 1024);
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.match(panel.root.textContent, /gave its room back to a newer read/);
+  assert.equal(panel.root.findAll((node) => node.tag === "button" && node.textContent === "Show image again").length, 1);
+  watcher.closeBinary();
+  assert.equal(budget.used, 60 * 1024);
+});
+
+test("diff preview: an image that cannot fit in the free room says so with its size, and keeps Show bytes", async () => {
+  const budget = createBudget(64 * 1024);
+  const activity = budget.scope("activity\u0000");
+  activity.request("item");
+  activity.reserve("item", 60 * 1024, null);
+  const { watcher, files } = watch(binaryRoutes({ new: PNG }), { budget: budget.scope("diff\u0000") });
+  watcher.start();
+  await flush();
+  await watcher.openPreview(0, "new");
+  assert.equal(watcher.view.preview.state, "no-room");
+  assert.equal(files().length, 1, "no more pages are read");
+  assert.equal(budget.used, 60 * 1024, "nothing is charged or freed");
+  assert.ok(activity.has("item"));
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.match(panel.root.textContent, /This image is 8 KiB, more than the 4 KiB the console has free for a preview\./);
+  panel.root.listeners.click({ target: panel.root.findAll((node) => node.tag === "button" && node.textContent === "Show bytes")[0] });
+  await flush();
+  assert.equal(watcher.view.binary.state, "ready", "Show bytes pages through it instead");
+});
+
 test("diff binary: a failed page offers Retry page for that page", async () => {
   const routes = binaryRoutes({ new: Uint8Array.from([1, 2, 3]) });
   let fail = true;
@@ -860,6 +910,21 @@ test("diff budget: the views share one budget through scopes; each frees the oth
   assert.equal(budget.used, 30, "clear gives back only that view's keys");
   assert.equal(budget.requested, null, "and its claim to the latest request");
   assert.equal(diff.bytes("next"), 30);
+});
+
+test("diff budget: an entry that yields is freed before any other, however recently used, and never by its own reservation", () => {
+  const budget = createBudget(100);
+  const evicted = [];
+  const evict = (key) => evicted.push(key);
+  budget.reserve("old", 30, evict);
+  budget.reserve("whole", 30, evict, { makeRoom: false, yields: true });
+  budget.reserve("mid", 30, evict);
+  budget.touch("whole");
+  assert.deepEqual(evicted, []);
+  budget.request("new");
+  budget.reserve("new", 30, evict);
+  assert.deepEqual(evicted, ["whole"]);
+  assert.equal(budget.used, 90);
 });
 
 test("diff budget: an Activity view on the console's budget gives back only its own keys when it stops", async () => {

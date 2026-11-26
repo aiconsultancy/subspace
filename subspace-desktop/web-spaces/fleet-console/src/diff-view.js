@@ -232,6 +232,9 @@ function previewTree(preview) {
   const side = SIDE[preview.side];
   const parts = [];
   if (PREVIEW_NOTES[preview.state]) parts.push(h("p", { class: "act-note" }, PREVIEW_NOTES[preview.state]));
+  // A whole read takes only room no other read holds (SUB decision feb0d839).
+  if (preview.state === "no-room") parts.push(h("p", { class: "act-note" }, `This image is ${formatBytes(preview.size)}, more than the ${formatBytes(preview.room)} the console has free for a preview. View its bytes instead, a page at a time.`));
+  if (preview.state === "given-back") parts.push(h("p", { class: "act-note" }, "The image gave its room back to a newer read."), h("button", { class: "btn", type: "button", "data-diff-preview": preview.side }, "Show image again"));
   if (preview.state === "failed") parts.push(h("p", { class: "act-warn" }, txt(preview.error.message)), h("button", { class: "btn", type: "button", "data-diff-preview": preview.side }, "Retry page"));
   if (preview.state === "ready") parts.push(h("div", { class: "diff-image", "data-diff-image": "" }));
   return h(

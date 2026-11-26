@@ -35,14 +35,19 @@ export function createBudget(limit) {
     return bytes;
   }
 
-  /** The least recently used entry that may be freed and that `skip` does not name, or null. */
+  /**
+   * The least recently used entry that may be freed and that `skip` does
+   * not name, or null. An entry that yields (a whole read grown into free
+   * room) goes before any other.
+   */
   function oldestKey(skip) {
     let oldest = null;
     let oldestUsed = Infinity;
     for (const [key, entry] of entries) {
-      if (!kept(key) && !skip(key) && entry.used < oldestUsed) {
+      const used = entry.yields ? entry.used - Number.MAX_SAFE_INTEGER : entry.used;
+      if (!kept(key) && !skip(key) && used < oldestUsed) {
         oldest = key;
-        oldestUsed = entry.used;
+        oldestUsed = used;
       }
     }
     return oldest;
@@ -111,19 +116,22 @@ export function createBudget(limit) {
      * Otherwise nothing is held, nothing is freed, and what `key` held
      * stays. Returns whether it is held. `makeRoom: false` frees nothing:
      * for a caller that fitted `bytes` to the room itself (the panel's
-     * drawn bodies).
+     * drawn bodies, a whole read grown into free room). `yields`: freed
+     * before every other entry whenever room is needed (a whole read that
+     * grew into free room gives it back first, SUB decisions feb0d839 and
+     * 75c3ed93 §3).
      *
      * @param {string} key
      * @param {number} bytes
      * @param {((key: string) => void)|null} evict
-     * @param {{pinned?: boolean, makeRoom?: boolean}} [options]
+     * @param {{pinned?: boolean, makeRoom?: boolean, yields?: boolean}} [options]
      */
-    reserve(key, bytes, evict, { pinned = false, makeRoom: free = true } = {}) {
+    reserve(key, bytes, evict, { pinned = false, makeRoom: free = true, yields = false } = {}) {
       if (!pinned && key !== requested && fixedBeside(key) + bytes > limit) return false;
       release(key);
       const freed = free ? makeRoom(bytes, key) : [];
       clock += 1;
-      entries.set(key, { bytes, used: clock, evict, pinned });
+      entries.set(key, { bytes, used: clock, evict, pinned, yields });
       total += bytes;
       for (const call of freed) call();
       return true;
