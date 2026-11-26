@@ -514,7 +514,7 @@ function onSelection() {
   }
   app.manager?.setLandscape(sel.level === -1);
   if (form.isOpen) form.close();
-  closeActivity(false);
+  activity.close(false);
   app.confirmRemove = null;
   const focus = inspectorView.captureFocus();
   // Pulling out: land on the row for the tier just left.
@@ -619,7 +619,7 @@ document.addEventListener("keydown", (event) => {
   }
   if (activity.isOpen && (chrome.el.inspector.contains(event.target) || event.target === document.body)) {
     event.preventDefault();
-    closeActivity(true);
+    activity.close(true);
     return;
   }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
@@ -739,10 +739,6 @@ function openActivity(agent, name, role) {
   if (app.manager?.active) activity.open(agent, name, role);
 }
 
-function closeActivity(restore) {
-  activity.close(restore);
-}
-
 function markInspector() {
   if (!inspectorTimer) inspectorTimer = setTimeout(() => renderInspector(false), 180);
 }
@@ -826,7 +822,7 @@ async function readConfig(retry = false) {
 }
 
 async function startManager(mode, fleets) {
-  closeActivity(false);
+  activity.close(false);
   app.manager?.stop();
   app.mode = mode;
   app.sample = mode === "sample";
