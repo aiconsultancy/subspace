@@ -310,12 +310,16 @@ function partsBody(turnId, item, full, body) {
  * A paged item: read on request, then shown whole (field by field or in
  * windows) or, when larger than the view's budget, a part at a time.
  * `full` is the watcher's entry; `body` what its body is drawn from, or
- * null when there is none.
+ * null when there is none. Built in three segments, each a function: its
+ * head and status, its body, and its notes and actions. The panel keys the
+ * body by the read's revision and the others by the placeholder's, so a
+ * new status, size or seq redraws them and leaves the body (and any text
+ * selected in it) alone (SUB decision 1c19f413 §3).
  */
-function pagedItem(turnId, item, full, body) {
+function pagedSegments(turnId, item, full, body) {
   const what = item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind);
   const pages = `${item.paged.pages} ${item.paged.pages === 1 ? "page" : "pages"}, ${formatBytes(item.paged.bytes)}`;
-  const head = h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(what)), item.callId ? h("span", { class: "act-sub mono" }, txt(item.callId)) : null, chip(item.status, { ...TOOL_STATUS, ...TEXT_STATUS }));
+  const head = () => h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(what)), item.callId ? h("span", { class: "act-sub mono" }, txt(item.callId)) : null, chip(item.status, { ...TOOL_STATUS, ...TEXT_STATUS }));
   const load = (words) => h("button", { class: "btn", type: "button", "data-activity-load": item.id, "data-activity-turn": turnId }, words);
   if (full?.mode === "parts") {
     const latest = full.state === "ready" && full.seq !== null && full.seq < item.seq;
@@ -327,29 +331,59 @@ function pagedItem(turnId, item, full, body) {
         : full.newer
           ? "The item changed while it was read: this is the newer version, from its first part."
           : `Large item (${pages}), more than this view holds at once, so it shows a part at a time.`;
-    return [
-      head,
-      h("p", { class: "act-note" }, note),
-      full.data !== null ? partsBody(turnId, item, full, body) : null,
-      latest ? [h("p", { class: "act-note" }, "A newer version is on the gateway."), load("Load the latest")] : null,
-      full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the part: ", txt(full.error)), load("Try again")] : null,
-    ];
+    return {
+      head: () => [head(), h("p", { class: "act-note" }, note)],
+      body: () => (full.data !== null ? partsBody(turnId, item, full, body) : null),
+      foot: () => [
+        latest ? [h("p", { class: "act-note" }, "A newer version is on the gateway."), load("Load the latest")] : null,
+        full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the part: ", txt(full.error)), load("Try again")] : null,
+      ],
+    };
   }
   const shown = full?.item ?? null;
   if (!shown) {
-    if (full?.state === "loading" || full?.state === "queued") return [head, h("p", { class: "act-note" }, `Large item (${pages}). Reading every page…`)];
-    return [head, h("p", { class: "act-note" }, `Large item (${pages}), read on request and then shown in full.`), full?.state === "failed" ? h("p", { class: "act-warn" }, "Could not read it: ", txt(full.error)) : null, load(full?.state === "failed" ? "Try again" : "Load in full")];
+    const reading = full?.state === "loading" || full?.state === "queued";
+    return {
+      head: () => [head(), h("p", { class: "act-note" }, reading ? `Large item (${pages}). Reading every page…` : `Large item (${pages}), read on request and then shown in full.`)],
+      body: () => null,
+      foot: () => (reading ? null : [full?.state === "failed" ? h("p", { class: "act-warn" }, "Could not read it: ", txt(full.error)) : null, load(full?.state === "failed" ? "Try again" : "Load in full")]),
+    };
   }
   const note =
     full.state === "loading" ? "Reading the newer version…" : full.state === "failed" ? null : full.seq < item.seq ? "A newer version is on the gateway." : `Read in full (${pages}).`;
   // A newer version is read only on request: a running tool changes often.
   const latest = full.state === "ready" && full.seq < item.seq;
-  return [
-    formattedBody(turnId, shown, body),
-    note ? h("p", { class: "act-note" }, note) : null,
-    latest ? load("Load the latest") : null,
-    full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the newer version: ", txt(full.error)), load("Try again")] : null,
-  ];
+  return {
+    head: () => null,
+    body: () => formattedBody(turnId, shown, body),
+    foot: () => [
+      note ? h("p", { class: "act-note" }, note) : null,
+      latest ? load("Load the latest") : null,
+      full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the newer version: ", txt(full.error)), load("Try again")] : null,
+    ],
+  };
+}
+
+/**
+ * An item's three segments (`pagedSegments`): an item shown from its own
+ * fields is all body.
+ */
+export function itemSegments(turnId, item, full, body) {
+  if (item.paged) return pagedSegments(turnId, item, full, body);
+  return { head: () => null, body: () => formattedBody(turnId, item, body), foot: () => null };
+}
+
+/**
+ * What each of an item's segments is drawn from, as keys: the head and
+ * foot from the placeholder's revision (its seq, status and size) and the
+ * read's state; the body from the version of its source, the window shown,
+ * whether it is held back and the part's place among the parts.
+ */
+export function segmentKeys(item, full, bodyVersion, window, held) {
+  const read = full ? [full.mode, full.state, full.seq, full.error ?? "", full.want ?? "", full.newer ?? "", full.data === null, full.item ? 1 : 0] : [];
+  const chrome = JSON.stringify([item.seq, item.status, item.kind, item.name ?? "", item.callId ?? "", item.paged?.pages ?? "", item.paged?.bytes ?? "", ...read]);
+  const parts = full?.mode === "parts" ? [full.part, full.count, full.known, full.hasPrevious, full.hasNext, full.hasLast] : [];
+  return { head: chrome, foot: chrome, body: JSON.stringify([bodyVersion, window, held, ...parts]) };
 }
 
 /** What an item's body is made from: its own fields, the item read whole, or the part shown; null when there is nothing to draw yet. */
@@ -368,7 +402,8 @@ export function itemSource(item, full) {
 export function itemTree(turnId, item, full = null, { window = 0, measure = null, held = false } = {}) {
   const source = itemSource(item, full);
   const body = source ? { source, measure: measure ?? measureSource(source), window, held } : null;
-  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full, body) : formattedBody(turnId, item, body));
+  const segments = itemSegments(turnId, item, full, body);
+  return h("li", { class: `act-item k-${item.kind}` }, segments.head(), segments.body(), segments.foot());
 }
 
 /** A turn's summary line. */
@@ -538,7 +573,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   list.setAttribute("class", "act-turns");
   root.appendChild(header);
   root.appendChild(list);
-  /** turn ID -> {element, summary, notes, nav, items, version, navKey, start, defaultOpen, kids: Map(item ID -> {element, version})} */
+  /** turn ID -> {element, summary, notes, nav, items, version, navKey, start, defaultOpen, kids: Map(item ID -> {element, kind, head, body, foot})}, each segment {element, key} */
   const turns = new Map();
   let headerKey = "";
   /**
@@ -750,15 +785,34 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
       kid.element.remove();
       entry.kids.delete(id);
     }
-    for (const { item, full, key, index, measure, version: bodyVersion, window } of bodies) {
+    for (const { item, full, key, index, source, measure, version: bodyVersion, window } of bodies) {
       const held = measure !== null && !drawn.has(key);
-      const version = `${bodyVersion}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}|${full.part ?? ""}|${full.want ?? ""}|${full.newer ?? ""}|${full.data === null}` : ""}|${window}|${held}`;
+      const keys = segmentKeys(item, full, bodyVersion, window, held);
       let kid = entry.kids.get(item.id);
-      if (!kid || kid.version !== version) {
-        const element = mount(itemTree(turn.id, item, full, { window, measure, held }), doc);
-        if (kid) kid.element.replaceWith(element);
-        kid = { element, version };
+      if (!kid) {
+        const element = doc.createElement("li");
+        const segment = () => {
+          const each = doc.createElement("div");
+          each.setAttribute("class", "act-seg");
+          element.appendChild(each);
+          return { element: each, key: null };
+        };
+        kid = { element, kind: "", head: segment(), body: segment(), foot: segment() };
         entry.kids.set(item.id, kid);
+      }
+      if (kid.kind !== item.kind) {
+        kid.element.setAttribute("class", `act-item k-${item.kind}`);
+        kid.kind = item.kind;
+      }
+      // Each segment is rebuilt only when what it is drawn from changed.
+      let segments = null;
+      for (const name of ["head", "body", "foot"]) {
+        const segment = kid[name];
+        if (segment.key === keys[name]) continue;
+        segments ??= itemSegments(turn.id, item, full, source ? { source, measure, window, held } : null);
+        const tree = segments[name]();
+        segment.element.replaceChildren(...h("div", {}, tree).children.map((node) => mount(node, doc)));
+        segment.key = keys[name];
       }
       place(entry.items, kid.element, index);
     }

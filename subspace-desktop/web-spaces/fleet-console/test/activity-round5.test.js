@@ -9,7 +9,7 @@ import { createActivityWatcher, INLINE_KEY, PART_MAX_BYTES } from "../src/activi
 import { createActivityPanel, DRAW_KEY, WINDOW_BYTES } from "../src/activity-view.js";
 import { createBudget } from "../src/budget.js";
 import { createPager } from "../src/pager.js";
-import { textItem, toolItem } from "./activity-fixtures.js";
+import { activityEvent, textItem, toolItem } from "./activity-fixtures.js";
 import { buttons, clickOn, fakeActivityClient, fakeDoc, pagedSnapshot, pagesOf, settle } from "./activity-helpers.js";
 
 const officer = { name: "Example", role: "captain", live: true };
@@ -172,5 +172,51 @@ test("2: a short plain part reserves only the window it shows", async () => {
   assert.ok(part.size < WINDOW_BYTES);
   assert.equal(watcher.view.budget.bytes(ITEM), 2 * part.size, "the part and its whole drawn copy, below one window");
   assert.equal(windowsIn(panel.root).length, 1);
+  watcher.stop();
+});
+
+// ---------- 3. Live row keys ----------
+
+test("3: a newer unread placeholder redraws its status and size (probe 2)", async () => {
+  const snapshot = pagedSnapshot(["ia"]);
+  const { watcher, panel } = await prepare(snapshot, 1024 * 1024);
+  assert.match(panel.root.textContent, /2 pages/);
+  watcher.event(activityEvent(10, { type: "item", item: { ...snapshot.turns[1].items[0], status: "failed", seq: 10, paged: { pages: 4, bytes: 200_000 } } }));
+  panel.update(watcher.view, officer);
+  assert.match(panel.root.textContent, /4 pages/);
+  assert.doesNotMatch(panel.root.textContent, /2 pages/);
+  assert.match(panel.root.textContent, /Failed/, "and its status");
+  watcher.stop();
+});
+
+test("3: an item read whole offers Load the latest once its seq is raised, and its body is not rebuilt (probe 3)", async () => {
+  const { pages, snapshot } = pagedWith("a".repeat(70_000));
+  const { watcher, client, panel } = await prepare(snapshot, 1024 * 1024);
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  panel.update(watcher.view, officer);
+  assert.equal(buttons(panel.root, "Load the latest").length, 0);
+  const body = windowsIn(panel.root)[0];
+  assert.ok(body, "drawn in windows");
+  watcher.event(activityEvent(10, { type: "item", item: { ...snapshot.turns[1].items[0], status: "failed", seq: 10 } }));
+  panel.update(watcher.view, officer);
+  assert.equal(buttons(panel.root, "Load the latest").length, 1);
+  assert.equal(windowsIn(panel.root)[0], body, "the same body node: a text selection in it survives");
+  watcher.stop();
+});
+
+test("3: a part's body stays mounted while its placeholder's status and size change", async () => {
+  const { pages, snapshot } = pagedWith("a".repeat(600 * 1024));
+  const { watcher, client, panel } = await prepare(snapshot, 0);
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  panel.update(watcher.view, officer);
+  const body = windowsIn(panel.root)[0];
+  const placeholder = watcher.view.turns.find((turn) => turn.id === "turn-b").items[0];
+  watcher.event(activityEvent(10, { type: "item", item: { ...placeholder, status: "completed", seq: 10, paged: { pages: 9, bytes: 700 * 1024 } } }));
+  panel.update(watcher.view, officer);
+  assert.match(panel.root.textContent, /9 pages/);
+  assert.equal(buttons(panel.root, "Load the latest").length, 1);
+  assert.equal(windowsIn(panel.root)[0], body, "the part's window is the same node");
   watcher.stop();
 });
