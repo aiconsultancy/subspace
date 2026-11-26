@@ -9,9 +9,9 @@ use gpui_kit::{Entity, SharedString, TestAppContext, VisualTestContext};
 use serde_json::{Map, Value, json};
 
 use super::super::super::remove::settle;
-use super::{answer, drawn, opened, running};
+use super::{answer, drawn, mounted, opened, running};
 use crate::Irc;
-use crate::view::inspector::activity::{set_room, walked};
+use crate::view::inspector::activity::{PIECE, set_room, walked};
 
 /// The most bytes one part of a body drawn in parts draws.
 const PART: usize = 64 * 1024;
@@ -60,7 +60,7 @@ fn tool(name: &str, key: &str, fields: Value) -> Value {
 #[gpui_kit::test]
 fn a_held_back_card_mounts_only_its_bounded_heading(cx: &mut TestAppContext) {
     let (board, cx) = opened(cx);
-    let name = "N".repeat(200);
+    let name = "N".repeat(5_000);
     let key = "\u{202E}".repeat(24);
     answer(
         &board,
@@ -68,7 +68,7 @@ fn a_held_back_card_mounts_only_its_bounded_heading(cx: &mut TestAppContext) {
         cx,
     );
     // The name, the key's 24 markers and the value.
-    let bytes = 200 + 24 * 12 + 1;
+    let bytes = 5_000 + 24 * 12 + 1;
     roomed(&board, bytes - 1, cx);
     assert_eq!(drawn(&on("heading"), cx), "Tool · completed");
     assert_eq!(
@@ -84,10 +84,11 @@ fn a_held_back_card_mounts_only_its_bounded_heading(cx: &mut TestAppContext) {
     assert!(drawn(&on("piece"), cx).starts_with("Part 1 of "));
     assert!(drawn(&on("name"), cx).is_empty(), "in parts, not whole");
 
+    // Whole, the name pushes the rest below the fold: mounted, not seen.
     roomed(&board, bytes, cx);
-    assert_eq!(drawn(&on("name"), cx), name);
-    assert_eq!(drawn(&on("input:0:key"), cx), "⟨U+202E⟩".repeat(24));
-    assert_eq!(drawn(&on("input:0"), cx), "v");
+    assert_eq!(mounted(&on("name"), cx), name);
+    assert_eq!(mounted(&on("input:0:key"), cx), "⟨U+202E⟩".repeat(24));
+    assert_eq!(mounted(&on("input:0"), cx), "v");
 }
 
 /// Round 5 thermo (P2), SUB decision `33ccecf6` item 4: a known output
@@ -134,7 +135,7 @@ fn a_step_in_parts_shows_its_use_and_writes_out_only_the_part_shown(cx: &mut Tes
     );
     assert_eq!(drawn(&on("heading"), cx), "Step · failed");
     let body = format!("Provider\np\n\nModel\nm\n\nError\napi: boom\nStatus 500\n{response}");
-    let parts = body.len().div_ceil(PART);
+    let parts = body.len().div_ceil(PIECE);
     assert_eq!(drawn(&on("piece"), cx), format!("Part 1 of {parts}"));
 
     let before = walked();

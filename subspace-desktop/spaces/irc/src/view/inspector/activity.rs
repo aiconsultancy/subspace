@@ -69,11 +69,15 @@ use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::workspace;
 
 use crate::Irc;
+#[cfg(test)]
+pub(crate) use draw::PIECE;
 use draw::{Key, Measure, Plan, Version};
 use fetch::{poll, start_fetch};
 use load::{Held, Loaded, MAX_LOADED, Parts};
 use load::{load, prune, show_page};
 use parts::Prepare;
+#[cfg(test)]
+pub(crate) use pieces::INDEX_BYTES;
 
 /// How often the snapshot is read again while no live stream carries the
 /// captain's events.

@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use super::Selection;
-use super::draw::{Key, MIN_PIECE, measure};
+use super::draw::{Key, MIN_WINDOW, measure};
 use super::load::{PAGE, PAGE_READ, refit};
 use super::parts::PART;
 
@@ -159,9 +159,10 @@ pub(super) fn spare(selection: &Selection, keep: &Key) -> u64 {
 
 /// What a page's window may draw beside it, given the `left` bytes the
 /// room leaves once the page is counted: what is left, up to a part, when
-/// that holds a part at all; otherwise the floor's part.
+/// that holds a part, its copy and their index at all; otherwise the
+/// floor's part.
 pub(super) fn window_allowance(left: u64) -> u64 {
-    if left >= 2 * MIN_PIECE as u64 {
+    if left >= MIN_WINDOW {
         left.min(PART as u64)
     } else {
         PART as u64
@@ -198,7 +199,7 @@ fn floor_allowance((raw, incoming, reading): (u64, u64, Option<u64>), left: u64)
     if let Some(allowance) = reading {
         return (allowance <= PAGE_READ).then_some(allowance);
     }
-    let need = raw.saturating_add(2 * MIN_PIECE as u64);
+    let need = raw.saturating_add(MIN_WINDOW);
     let steady = left.saturating_sub(incoming);
     if steady >= need {
         return Some(steady);
@@ -208,7 +209,7 @@ fn floor_allowance((raw, incoming, reading): (u64, u64, Option<u64>), left: u64)
 
 #[cfg(test)]
 mod tests {
-    use super::{MIN_PIECE, PAGE, PAGE_READ, PART, floor_allowance, window_allowance};
+    use super::{MIN_WINDOW, PAGE, PAGE_READ, PART, floor_allowance, window_allowance};
 
     /// SUB decision `4311830a` item 1: a window is sized to the positive
     /// room left, and to the floor only when none is.
@@ -217,7 +218,7 @@ mod tests {
         assert_eq!(window_allowance(4_464), 4_464);
         assert_eq!(window_allowance(u64::MAX), PART as u64);
         assert_eq!(window_allowance(0), PART as u64);
-        assert_eq!(window_allowance(2 * MIN_PIECE as u64 - 1), PART as u64);
+        assert_eq!(window_allowance(MIN_WINDOW - 1), PART as u64);
     }
 
     /// SUB decision `4311830a` item 1: the floor keeps the steady
@@ -228,8 +229,8 @@ mod tests {
         assert_eq!(floor_allowance((PAGE, PAGE, None), 0), Some(PAGE_READ));
         // Room left beside the page coming in: sized to it.
         assert_eq!(
-            floor_allowance((PAGE, PAGE, None), 2 * PAGE + 100),
-            Some(PAGE + 100)
+            floor_allowance((PAGE, PAGE, None), 2 * PAGE + 5_000),
+            Some(PAGE + 5_000)
         );
         // More than a part and its window held: not even the floor.
         assert_eq!(floor_allowance((PAGE_READ, 0, None), 0), None);

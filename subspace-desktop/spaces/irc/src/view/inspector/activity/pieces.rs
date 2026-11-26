@@ -3,11 +3,13 @@
 //! text, the blocks a blank line apart, cut into parts drawing at most a
 //! part's bytes, markers and all, never inside a character or its marker.
 //!
-//! One pass over a version of the body finds where every part starts
-//! ([`Index`]); moving to a part then writes out only that part, from its
-//! start: a value is written from the middle as indented JSON
-//! ([`json`]), a text sliced, an error's fields read one by one. Nothing
-//! before the part is formatted or scanned again.
+//! One pass over a version of the body finds where its parts start and
+//! keeps some of them, never more than a few kilobytes ([`Index`]);
+//! moving to a part then walks from the nearest start kept before it, at
+//! most one stride of parts, and writes out only that part: a value is
+//! walked from the middle as indented JSON ([`json`]), a text sliced, an
+//! error's fields read one by one. Nothing before that start is formatted
+//! or scanned again (SUB decision `4311830a` item 5).
 
 use subspace_client_fleet::activity::ActivityError;
 
@@ -27,18 +29,66 @@ pub(super) struct Piece {
     pub(super) pieces: usize,
 }
 
-/// Where each part of one version of a body starts, for parts drawing at
-/// most `size` bytes.
+/// The most bytes an [`Index`] keeps, charged to the read or plan that
+/// draws its body (SUB decision `4311830a` item 5).
+pub(crate) const INDEX_BYTES: usize = 4096;
+
+/// Where some of the parts of one version of a body start, for parts
+/// drawing at most `size` bytes: every `stride`-th, sparser as the body
+/// grows so that it never keeps more than [`INDEX_BYTES`].
 pub(super) struct Index {
     pub(super) size: usize,
-    starts: Vec<Mark>,
+    pieces: usize,
+    /// The parts from one kept start to the next.
+    stride: usize,
+    /// Where parts `0`, `stride`, `2 × stride`, … start.
+    marks: Vec<Mark>,
 }
 
 impl Index {
     pub(super) fn pieces(&self) -> usize {
-        self.starts.len()
+        self.pieces
+    }
+
+    /// The bytes it keeps: never more than [`INDEX_BYTES`].
+    pub(super) fn bytes(&self) -> u64 {
+        let marks = self.marks.capacity() * size_of::<Mark>();
+        let paths: usize = self.marks.iter().map(|mark| mark.at.heap()).sum();
+        (size_of::<Self>() + marks + paths) as u64
+    }
+
+    /// Counts a part starting at `here`, keeping where it starts when it is
+    /// a `stride`-th one, then thins what it keeps while it is full.
+    fn add(&mut self, here: Mark) {
+        if self.pieces.is_multiple_of(self.stride) {
+            self.marks.push(here);
+        }
+        self.pieces += 1;
+        while self.full() {
+            self.thin();
+        }
+    }
+
+    /// Whether it keeps as many starts as it holds room for, or more than
+    /// [`INDEX_BYTES`], with more than the first.
+    fn full(&self) -> bool {
+        let over = self.marks.len() >= MARKS || self.bytes() > INDEX_BYTES as u64;
+        over && self.marks.len() > 1
+    }
+
+    /// Keeps every other start, twice as far apart.
+    fn thin(&mut self) {
+        self.stride *= 2;
+        let mut at = 0;
+        self.marks.retain(|_| {
+            at += 1;
+            at % 2 == 1
+        });
     }
 }
+
+/// The most part starts an [`Index`] holds room for: its fixed capacity.
+const MARKS: usize = 32;
 
 /// A point in a body: a block, and where in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,6 +112,14 @@ enum At {
 }
 
 impl At {
+    /// The bytes it keeps beyond itself.
+    fn heap(&self) -> usize {
+        match self {
+            Self::Json(mark) => mark.heap(),
+            _ => 0,
+        }
+    }
+
     /// The order of the parts of a block.
     fn rank(&self) -> u8 {
         match self {
@@ -76,43 +134,55 @@ impl At {
 /// is; the walk stops when it answers `false`.
 type Take<'t> = dyn FnMut(char, &dyn Fn() -> Mark) -> bool + 't;
 
-/// Finds where each part of `blocks` starts, for parts of at most `size`
-/// bytes drawn, in one pass.
+/// Finds where the parts of `blocks` start, for parts of at most `size`
+/// bytes drawn, in one pass, keeping some of them ([`Index`]).
 pub(super) fn index(blocks: &[Block<'_>], size: usize) -> Index {
     count_measure();
     let start = Mark {
         block: 0,
         at: At::Gap(0),
     };
-    let mut starts = vec![start.clone()];
+    let mut index = Index {
+        size,
+        pieces: 0,
+        stride: 1,
+        marks: Vec::with_capacity(MARKS),
+    };
+    index.add(start.clone());
     let mut len = 0;
     walk(blocks, &start, &mut |ch, here| {
         let unit = unit_len(ch);
         if len > 0 && len + unit > size {
-            starts.push(here());
+            index.add(here());
             len = 0;
         }
         len += unit;
         true
     });
-    Index { size, starts }
+    index
 }
 
-/// Part `wanted` of `blocks`, or its last part when it has fewer: written
-/// out from where `index` says it starts, and no further.
+/// Part `wanted` of `blocks`, or its last part when it has fewer: walked
+/// from the nearest start `index` keeps before it, at most one stride of
+/// parts, and written out no further than its end.
 pub(super) fn piece(blocks: &[Block<'_>], index: &Index, wanted: usize) -> Piece {
     let piece = wanted.min(index.pieces().saturating_sub(1));
     let mut text = String::new();
-    let mut len = 0;
-    if let Some(start) = index.starts.get(piece) {
+    let (mut part, mut len) = (piece - piece % index.stride, 0);
+    if let Some(start) = index.marks.get(piece / index.stride) {
         walk(blocks, start, &mut |ch, _| {
             let unit = unit_len(ch);
             if len > 0 && len + unit > index.size {
-                return false;
+                if part == piece {
+                    return false;
+                }
+                (part, len) = (part + 1, 0);
             }
             len += unit;
             walked();
-            push_visible(&mut text, ch);
+            if part == piece {
+                push_visible(&mut text, ch);
+            }
             true
         });
     }
@@ -234,11 +304,21 @@ thread_local! {
 
 /// Counts a character written out for a part.
 fn walked() {
-    #[cfg(test)]
-    WALKED.with(|walked| walked.set(walked.get() + 1));
+    stepped(1);
 }
 
-/// How many characters were written out for parts on this thread.
+/// Counts `steps` of the work of moving to a part: characters walked, or
+/// the members of an object stepped over to resume inside it, which
+/// serde_json's map offers no way to reach by position.
+fn stepped(steps: usize) {
+    #[cfg(test)]
+    WALKED.with(|walked| walked.set(walked.get() + steps as u64));
+    #[cfg(not(test))]
+    let _ = steps;
+}
+
+/// How much work moving to parts took on this thread: characters walked
+/// and members stepped over.
 #[cfg(test)]
 pub(crate) fn walked_chars() -> u64 {
     WALKED.with(std::cell::Cell::get)
@@ -249,7 +329,7 @@ mod tests {
     use serde_json::json;
     use subspace_client_fleet::activity::ActivityError;
 
-    use super::{index, piece, walked_chars};
+    use super::{INDEX_BYTES, MARKS, index, piece, walked_chars};
     use crate::view::inspector::activity::blocks::{Block, Source, error_text};
     use crate::view::inspector::activity::parts::{LONG, PART};
     use crate::view::inspector::activity::size::measured;
@@ -349,5 +429,81 @@ mod tests {
             assert!(!part.text.is_empty() && part.text.len() <= PART);
         }
         assert_eq!(measured(), measured_once, "no part scans the body again");
+    }
+
+    /// Round 6 thermo (P2 4), SUB decision `4311830a` item 5: however many
+    /// parts a body is cut in, its index keeps no more than its fixed cap,
+    /// sparser as the body grows, and still reaches every part.
+    #[test]
+    fn an_index_keeps_no_more_than_its_cap_however_many_parts() {
+        // Phobos's fixture: a value of about 4 KB in parts of a character.
+        let value = json!({"rows": (0..400).map(|row| json!({"n": row})).collect::<Vec<_>>()});
+        let blocks = [block(None, Source::Json(&value))];
+        let pretty = serde_json::to_string_pretty(&value).unwrap();
+        let index = index(&blocks, 1);
+        assert_eq!(index.pieces(), pretty.chars().count());
+        assert!(
+            index.bytes() <= INDEX_BYTES as u64,
+            "{} bytes",
+            index.bytes()
+        );
+        assert!(index.marks.len() < MARKS && index.marks.capacity() <= 2 * MARKS);
+        let joined: String = (0..index.pieces())
+            .map(|wanted| piece(&blocks, &index, wanted).text)
+            .collect();
+        assert_eq!(joined, pretty);
+    }
+
+    /// Round 6 thermo (P2 4), SUB decision `4311830a` item 5: moving to a
+    /// part walks from the nearest start the index keeps before it, at
+    /// most one stride of parts.
+    #[test]
+    fn moving_to_a_part_walks_at_most_one_stride_of_parts() {
+        let text = "t".repeat(10_000);
+        let blocks = [block(None, Source::Text(&text))];
+        let index = index(&blocks, 10);
+        assert_eq!(index.pieces(), 1_000);
+        assert!(index.stride > 1 && index.stride * index.marks.len() >= 1_000);
+        for wanted in [999, 0, 517, 998] {
+            let before = walked_chars();
+            let part = piece(&blocks, &index, wanted);
+            let walked = walked_chars() - before;
+            assert!(
+                walked <= (index.stride * 10) as u64,
+                "{walked} for part {wanted}"
+            );
+            assert_eq!(part.text, "t".repeat(10));
+        }
+    }
+
+    /// Round 6 thermo (P2 4), SUB decision `4311830a` item 5: the index of
+    /// Phobos's value of about 4 KB in parts of 24 bytes keeps no more than
+    /// its cap, nor does one of a value a hundred times larger; moving to
+    /// any part walks at most one stride of parts, plus the members of the
+    /// object it resumes in stepped over, never the value from its start.
+    #[test]
+    fn the_work_of_moving_to_a_part_is_one_stride_and_the_members_stepped_over() {
+        let small: serde_json::Map<_, _> =
+            (0..300).map(|n| (format!("k{n:03}"), json!(n))).collect();
+        let large: serde_json::Map<_, _> = (0..30_000)
+            .map(|n| (format!("k{n:05}"), json!(n)))
+            .collect();
+        for (members, value) in [(300, small), (30_000, large)] {
+            let value = serde_json::Value::Object(value);
+            let blocks = [block(None, Source::Json(&value))];
+            let pretty = serde_json::to_string_pretty(&value).unwrap();
+            let index = index(&blocks, 24);
+            assert!(index.bytes() <= INDEX_BYTES as u64, "{}", index.bytes());
+            let pieces = index.pieces();
+            for wanted in [pieces - 1, pieces / 2, 1, pieces - 2] {
+                let before = walked_chars();
+                let part = piece(&blocks, &index, wanted);
+                let work = walked_chars() - before;
+                let bound = (index.stride * 24 + members) as u64;
+                assert!(work <= bound, "{work} for part {wanted} of {pieces}");
+                assert!(work < pretty.len() as u64 / 2, "{work}: not from the start");
+                assert!(pretty.contains(&part.text) && !part.text.is_empty());
+            }
+        }
     }
 }

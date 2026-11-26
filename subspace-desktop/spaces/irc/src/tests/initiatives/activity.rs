@@ -120,6 +120,19 @@ fn drawn(id: &str, cx: &mut VisualTestContext) -> String {
     })
 }
 
+/// The text mounted inside the element `id`, seen or scrolled out of
+/// sight, joined with ` | `.
+fn mounted(id: &str, cx: &mut VisualTestContext) -> String {
+    cx.update(|window, _| {
+        gpui_kit::base::test_support::texts(window)
+            .into_iter()
+            .filter(|text| text.path().contains(&id.to_owned().into()))
+            .map(|text| text.text().to_owned())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    })
+}
+
 #[gpui_kit::test]
 fn the_captain_card_opens_the_turns_and_back_returns_to_the_ship(cx: &mut TestAppContext) {
     let (board, hub, cx) = ship(cx);

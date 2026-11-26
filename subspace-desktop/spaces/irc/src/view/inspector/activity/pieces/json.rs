@@ -22,6 +22,13 @@ pub(super) struct Mark {
     sub: usize,
 }
 
+impl Mark {
+    /// The bytes it keeps beyond itself: its path.
+    pub(super) fn heap(&self) -> usize {
+        self.path.capacity() * size_of::<usize>()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Token {
     /// A scalar, a string, an empty container or an opening bracket.
@@ -71,13 +78,18 @@ impl<'v> Iterator for Children<'v> {
         self.nth(0)
     }
 
-    /// Skips the children before child `n` by count.
+    /// Skips the children before child `n`: an array's at once, an
+    /// object's one by one, counted as work ([`super::stepped`]), since
+    /// serde_json's map offers no way to reach a member by position.
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         match self {
             Self::Array(items) => items.nth(n).map(|item| (None, item)),
-            Self::Object(fields) => fields
-                .nth(n)
-                .map(|(key, value)| (Some(key.as_str()), value)),
+            Self::Object(fields) => {
+                super::stepped(n);
+                fields
+                    .nth(n)
+                    .map(|(key, value)| (Some(key.as_str()), value))
+            }
             Self::Done => None,
         }
     }

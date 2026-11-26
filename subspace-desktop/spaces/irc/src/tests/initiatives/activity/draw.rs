@@ -11,7 +11,7 @@ use subspace_client_fleet::activity::AgentActivity;
 use super::super::super::remove::settle;
 use super::{answer, drawn, opened, refresh, turn};
 use crate::Irc;
-use crate::view::inspector::activity::{drawn_bytes, measured, set_room};
+use crate::view::inspector::activity::{INDEX_BYTES, PIECE, drawn_bytes, measured, set_room};
 
 /// The bytes of each reply's text.
 const TEXT: usize = 200;
@@ -201,9 +201,9 @@ fn a_body_past_the_room_is_drawn_in_parts_once_asked_for(cx: &mut TestAppContext
         "not whole"
     );
     assert_eq!(drawn("irc-activity:t-now:big:piece", cx), "Part 1 of 3");
-    assert_eq!(drawn("irc-activity:t-now:big:body", cx), "x".repeat(PART));
-    // One part and its drawn copy, within the room (SUB decision
-    // `33ccecf6` item 1).
+    assert_eq!(drawn("irc-activity:t-now:big:body", cx), "x".repeat(PIECE));
+    // One part, its drawn copy and their index, within the room (SUB
+    // decisions `33ccecf6` item 1 and `4311830a` item 5).
     assert_eq!(drawn_total(&board, cx), 2 * PART as u64);
 
     let mut joined = drawn("irc-activity:t-now:big:body", cx);
@@ -235,7 +235,7 @@ fn a_body_asked_for_is_drawn_within_any_room_left(cx: &mut TestAppContext) {
     assert_eq!(drawn("irc-activity:t-now:big:piece", cx), "Part 1 of 5");
     assert_eq!(
         drawn("irc-activity:t-now:big:body", cx),
-        "x".repeat(PART / 2)
+        "x".repeat((PART - INDEX_BYTES) / 2)
     );
     click("irc-activity:t-now:big:piece-last", cx);
     assert_eq!(drawn("irc-activity:t-now:big:piece", cx), "Part 5 of 5");

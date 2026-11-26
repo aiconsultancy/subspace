@@ -51,7 +51,7 @@ use super::blocks::{Block, entry_blocks, page_block, whole_blocks};
 use super::ledger::{held, latest, make_room, room, stamp};
 use super::load::Window;
 use super::parts::{PART, Prepare};
-use super::pieces::{Index, Piece, index, piece};
+use super::pieces::{INDEX_BYTES, Index, Piece, index, piece};
 use super::size::body_bytes;
 use super::turn::is_open;
 use super::{Held, Loaded, Selection};
@@ -70,8 +70,16 @@ pub(super) type Key = (String, String);
 pub(super) type Version = (u64, u64, u64);
 
 /// The fewest bytes a part draws: a marker, the most one character draws.
-/// A room smaller than such a part and its copy is no room at all.
 pub(super) const MIN_PIECE: usize = 12;
+
+/// The fewest bytes a body drawn in parts holds: the smallest part, its
+/// copy and the index of where its parts start. A room smaller is no room
+/// at all.
+pub(super) const MIN_WINDOW: u64 = (2 * MIN_PIECE + INDEX_BYTES) as u64;
+
+/// The most bytes a part draws: one, its copy and the index of where the
+/// parts start fit two parts' bytes ([`PART`]).
+pub(crate) const PIECE: usize = PART - INDEX_BYTES / 2;
 
 /// An item's body as last measured.
 pub(super) struct Measure {
@@ -104,9 +112,10 @@ pub(super) struct Pieced {
 }
 
 impl Pieced {
-    /// What it holds: the part kept and its drawn copy.
+    /// What it holds: the part kept, its drawn copy and the index of where
+    /// the parts start (SUB decision `4311830a` item 5).
     pub(super) fn charge(&self) -> u64 {
-        2 * self.index.size as u64
+        2 * self.index.size as u64 + self.index.bytes()
     }
 
     /// Shows part `wanted` of `blocks`, the body it was cut from: that
@@ -296,8 +305,8 @@ fn fit(
         match piece_size(left) {
             None if *bytes <= PART as u64 => fit.drawn = fit.drawn.saturating_add(*bytes),
             size => {
-                let size = size.unwrap_or(PART);
-                fit.drawn = fit.drawn.saturating_add(2 * size as u64);
+                let size = size.unwrap_or(PIECE);
+                fit.drawn = fit.drawn.saturating_add(pieced_bytes(size));
                 fit.pieced = Some((key.clone(), *bytes, size));
             }
         }
@@ -305,12 +314,20 @@ fn fit(
     fit
 }
 
-/// The size of the parts a body is drawn in within `left` bytes, a part
-/// and its drawn copy: at most one part. `None` when `left` holds no part
-/// at all, which is the floor.
+/// The size of the parts a body is drawn in within `left` bytes, a part,
+/// its drawn copy and the index of where its parts start: at most
+/// [`PIECE`]. `None` when `left` holds no part at all, which is the floor.
 pub(super) fn piece_size(left: u64) -> Option<usize> {
-    let half = usize::try_from(left / 2).unwrap_or(usize::MAX);
-    (half >= MIN_PIECE).then(|| half.min(PART))
+    (left >= MIN_WINDOW).then(|| {
+        let half = (left - INDEX_BYTES as u64) / 2;
+        usize::try_from(half).unwrap_or(usize::MAX).min(PIECE)
+    })
+}
+
+/// What a body drawn in parts of `size` bytes counts in the plan: a part,
+/// its copy and the most its index keeps.
+fn pieced_bytes(size: usize) -> u64 {
+    (2 * size + INDEX_BYTES) as u64
 }
 
 /// The body of `key` drawn in parts of `size`: the one drawn before when
@@ -442,7 +459,7 @@ pub(super) fn ask(selection: &mut Selection, key: &Key) {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{Key, MIN_PIECE, PART, fit, piece_size};
+    use super::{INDEX_BYTES, Key, MIN_PIECE, MIN_WINDOW, PART, PIECE, fit, piece_size};
 
     fn key(item: &str) -> Key {
         ("t".to_owned(), item.to_owned())
@@ -463,11 +480,12 @@ mod tests {
     /// is drawn in parts within it, a part and its copy, never past it.
     #[test]
     fn the_body_last_asked_for_is_drawn_first_and_within_any_room_left() {
-        let bodies = [(key("a"), 40), (key("b"), 50), (key("c"), 100)];
+        let bodies = [(key("a"), 40), (key("b"), 50), (key("c"), 10_000)];
         let asked = HashMap::from([(key("b"), 1), (key("c"), 2)]);
-        let plan = fit(&bodies, (&asked, Some(&key("c"))), 60);
-        assert_eq!(plan.pieced, Some((key("c"), 100, 30)));
-        assert_eq!(plan.drawn, 60);
+        let room = 60 + INDEX_BYTES as u64;
+        let plan = fit(&bodies, (&asked, Some(&key("c"))), room);
+        assert_eq!(plan.pieced, Some((key("c"), 10_000, 30)));
+        assert_eq!(plan.drawn, room);
         assert_eq!(
             plan.held_back,
             HashMap::from([(key("a"), 40), (key("b"), 50)])
@@ -488,7 +506,7 @@ mod tests {
 
         let big = PART as u64 + 1;
         let plan = fit(&[(key("b"), big)], (&asked, Some(&key("b"))), 0);
-        assert_eq!(plan.pieced, Some((key("b"), big, PART)));
+        assert_eq!(plan.pieced, Some((key("b"), big, PIECE)));
         assert_eq!(plan.drawn, 2 * PART as u64);
     }
 
@@ -501,7 +519,7 @@ mod tests {
         let bodies = [(key("a"), 40), (key("b"), big)];
         let asked = HashMap::from([(key("b"), 1)]);
         let plan = fit(&bodies, (&asked, Some(&key("b"))), 3 * PART as u64);
-        assert_eq!(plan.pieced, Some((key("b"), big, PART)));
+        assert_eq!(plan.pieced, Some((key("b"), big, PIECE)));
         assert_eq!(plan.drawn, 2 * PART as u64 + 40);
         assert!(plan.held_back.is_empty());
     }
@@ -517,14 +535,17 @@ mod tests {
         assert_eq!((plan.drawn, plan.held_back), (0, held_back));
     }
 
-    /// A part and its copy fit what is left, at most one part each; less
-    /// than a character and its copy is the floor.
+    /// A part, its copy and the index of where the parts start fit what
+    /// is left, a part and its copy at most two parts' bytes with the
+    /// index; less than a character, its copy and the index is the floor
+    /// (SUB decision `4311830a` item 5).
     #[test]
-    fn parts_fit_what_is_left_up_to_one_part() {
+    fn parts_fit_what_is_left_beside_their_index_up_to_one_part() {
         assert_eq!(piece_size(0), None);
-        assert_eq!(piece_size(2 * MIN_PIECE as u64 - 1), None);
-        assert_eq!(piece_size(2 * MIN_PIECE as u64), Some(MIN_PIECE));
-        assert_eq!(piece_size(1001), Some(500));
-        assert_eq!(piece_size(u64::MAX), Some(PART));
+        assert_eq!(piece_size(MIN_WINDOW - 1), None);
+        assert_eq!(piece_size(MIN_WINDOW), Some(MIN_PIECE));
+        assert_eq!(piece_size(1001 + INDEX_BYTES as u64), Some(500));
+        assert_eq!(piece_size(u64::MAX), Some(PIECE));
+        assert_eq!(2 * PIECE + INDEX_BYTES, 2 * PART);
     }
 }

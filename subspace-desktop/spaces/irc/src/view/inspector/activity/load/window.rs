@@ -4,7 +4,7 @@
 
 use super::super::Selection;
 use super::super::blocks::{Block, page_block, whole_blocks};
-use super::super::draw::{Key, MIN_PIECE, Version, cut, read_version};
+use super::super::draw::{Key, MIN_PIECE, Version, cut, piece_size, read_version};
 use super::super::ledger::{held, left, room};
 use super::super::parts::PART;
 use super::super::size::body_bytes;
@@ -87,7 +87,8 @@ fn fit_window(selection: &mut Selection, key: &Key, free: u64) {
 /// The window of `blocks`, the body of `key` at `version`, within the
 /// `left` bytes of its allowance: block by block when it fits them, or
 /// them and the `free` room no read holds; otherwise in parts of which
-/// one and its copy fit its allowance, keeping the part `old` showed.
+/// one, its copy and their index fit its allowance, keeping the part `old`
+/// showed.
 fn window(
     blocks: &[Block<'_>],
     (key, version): (&Key, Version),
@@ -98,8 +99,6 @@ fn window(
     if bytes <= left.saturating_add(free) {
         return Window::Whole(bytes);
     }
-    let size = usize::try_from(left / 2)
-        .unwrap_or(usize::MAX)
-        .clamp(MIN_PIECE, PART);
+    let size = piece_size(left).unwrap_or(MIN_PIECE);
     Window::Pieced(cut(blocks, (key.clone(), version), (size, bytes), old))
 }
