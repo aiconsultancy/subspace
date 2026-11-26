@@ -187,14 +187,15 @@ pub(super) fn measure(selection: &mut Selection) {
 }
 
 /// Each body of the open turns as measured: again only when its version
-/// changed. An item read whole draws within its own reservation, so it
-/// is not measured here.
+/// changed. An item too large to send inline that is read whole draws
+/// within its read's own allowance, so it alone is not measured here (SUB
+/// decision `4311830a` item 3); any other body is planned.
 fn measures(selection: &Selection) -> HashMap<Key, Measure> {
     open_entries(selection)
         .into_iter()
         .filter_map(|(key, entry)| {
             let loaded = selection.loaded.get(&key);
-            if loaded.is_some_and(|loaded| matches!(loaded.held, Held::Whole(_))) {
+            if read_draws(entry, loaded) {
                 return None;
             }
             let version = version(selection.epoch, entry, loaded);
@@ -205,6 +206,13 @@ fn measures(selection: &Selection) -> HashMap<Key, Measure> {
             Some((key, Measure { version, bytes }))
         })
         .collect()
+}
+
+/// Whether the read `loaded` draws the body of `entry` itself: when the
+/// snapshot names it as too large to send inline and it is read whole.
+fn read_draws(entry: &ActivityEntry, loaded: Option<&Loaded>) -> bool {
+    matches!(entry, ActivityEntry::Paged(_))
+        && loaded.is_some_and(|loaded| matches!(loaded.held, Held::Whole(_)))
 }
 
 /// The items of the open turns, in the order they draw, and their items

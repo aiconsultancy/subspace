@@ -407,6 +407,12 @@ pub(crate) fn held_bytes(selection: &Selection) -> u64 {
     selection.inline + ledger::held(selection)
 }
 
+/// The bytes the snapshot's inline content of `selection` holds.
+#[cfg(test)]
+pub(crate) fn inline_bytes(selection: &Selection) -> u64 {
+    selection.inline
+}
+
 /// Leaves `bytes` of room beside the inline content of `selection`.
 #[cfg(test)]
 pub(crate) fn set_room(selection: &mut Selection, bytes: u64) {
