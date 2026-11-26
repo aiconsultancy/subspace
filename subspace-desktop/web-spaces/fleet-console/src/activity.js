@@ -23,7 +23,9 @@
 // whole; one larger than it is read and shown a part (a run of pages) at a
 // time, pinned to one version, so every byte stays reachable and memory
 // stays bounded. The budget is shared with the panel, which counts what it
-// formats and mounts against it too.
+// draws against it too. The snapshot's inline content is charged first, as
+// the floor: it is never freed, and only it (with the one part last asked
+// for) may take the view past its budget.
 //
 // A failed read keeps the last snapshot on show, marked stale, and applies no
 // events until a read succeeds; it is tried again with backoff (1, 2, 4 … 30 s,
@@ -35,6 +37,7 @@
 import { ChangingError, DEFAULT_ROOM_BYTES, PAGE_DATA_BYTES, PART_PAGES, readItemPart, readPagedItem, TooLargeError } from "./api.js";
 import { createBudget } from "./budget.js";
 import { coalesce } from "./coalesce.js";
+import { jsonBytes } from "./document.js";
 import { createPager } from "./pager.js";
 import { utf8Length } from "./utf8.js";
 
@@ -43,7 +46,7 @@ export const MAX_TURNS = 16;
 /** Events held while a snapshot is read; past this many, or past MAX_BUFFER_BYTES, they are dropped and the snapshot read again (as Channels). */
 export const MAX_BUFFER = 512;
 export const MAX_BUFFER_BYTES = 8 * 1024 * 1024;
-/** One view's budget for items read, their formatted copies and mounted text; the least recently opened go first. */
+/** One view's budget: the inline snapshot (never freed), items read and what the panel draws; the least recently opened read goes first. */
 export const MAX_LOADED_BYTES = DEFAULT_ROOM_BYTES;
 /** How often a gateway that refuses the subscription is read instead. */
 export const POLL_MS = 5_000;
@@ -242,6 +245,19 @@ export const PART_MAX_BYTES = PART_PAGES * PAGE_DATA_BYTES;
  * read in parts.
  */
 export const FORMAT_FACTOR = 2;
+/** The inline snapshot's key in the budget: pinned, never freed. */
+export const INLINE_KEY = "inline";
+
+/** Each turn's compact JSON length, counted once per turn object (a change makes a new one). */
+const turnBytes = new WeakMap();
+function bytesOfTurn(turn) {
+  let bytes = turnBytes.get(turn);
+  if (bytes === undefined) {
+    bytes = jsonBytes(turn);
+    turnBytes.set(turn, bytes);
+  }
+  return bytes;
+}
 
 /**
  * One officer's activity, joined from its snapshot and events.
@@ -288,8 +304,21 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   let failures = 0;
   let pollTimer = null;
 
+  /**
+   * Charge the turns held, as their compact JSON: the inline content, which
+   * is the floor and is never freed. Pinned and forced, so the snapshot
+   * always shows; loaded items are freed for it first.
+   */
+  function chargeInline() {
+    let bytes = 0;
+    for (const turn of state.turns) bytes += bytesOfTurn(turn);
+    if (bytes !== budget.bytes(INLINE_KEY) || !budget.has(INLINE_KEY)) budget.reserve(INLINE_KEY, bytes, null, { force: true, pinned: true });
+  }
+
   const changed = () => {
-    if (!stopped) onChange?.(view());
+    if (stopped) return;
+    chargeInline();
+    onChange?.(view());
   };
 
   const load = coalesce(
@@ -326,6 +355,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
             break;
           }
         }
+        chargeInline();
         refreshFull();
       } catch (error) {
         if (gone()) return;
@@ -713,6 +743,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       const event = decodeActivityEvent(data);
       if (!event || stopped) return;
       apply(event);
+      chargeInline();
       if (!pending && !state.stale) refreshFull();
       changed();
     },

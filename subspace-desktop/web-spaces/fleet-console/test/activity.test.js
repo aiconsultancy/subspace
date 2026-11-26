@@ -781,7 +781,14 @@ test("fix 2: loaded items are evicted least recently opened first, and released 
   const client = fakeActivityClient([pagedSnapshot(["i2", "i4", "i5"]), withoutTurnB]);
   client.activityItemPage = async (agent, turnId, item, page) => pagesOf(items[item], { id: item })[page];
   const one = utf8Length(JSON.stringify(items.i2));
-  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: one * 4 + 10 });
+  // The inline snapshot is charged first, as the floor: room for two loaded items beside it.
+  const probe = createActivityWatcher({ client: fakeActivityClient([pagedSnapshot(["i2", "i4", "i5"])]), agent: "example-captain", awaitStream: false });
+  probe.start();
+  await settle();
+  const inline = probe.view.budget.bytes("inline");
+  probe.stop();
+  assert.ok(inline > 0);
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: inline + one * 4 + 10 });
   watcher.start();
   await settle();
   await watcher.loadItem("turn-b", "i2");

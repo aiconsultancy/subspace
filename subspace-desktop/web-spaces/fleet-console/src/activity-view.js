@@ -22,6 +22,11 @@
 // text after each hidden character becomes its 12-byte marker. A body is
 // measured once per version, as numbers only (`document.js`), and only the
 // window drawn is ever built as text (§2).
+//
+// What draws is planned before anything is built and charged to the view's
+// budget beside the inline snapshot and the items read (`planBodies`, SUB
+// decisions ed71a299, 6f5e67dd, 0c13b784 §3–4). A body with no room shows
+// its size and Show; no turn is closed to make room.
 
 import { ACTIVITY_MESSAGES, isWellFormedItem } from "./activity.js";
 import { documentPieces, HIDDEN, marker, measurePieces, sliceOfPieces, sourcePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
@@ -239,10 +244,27 @@ export function formatItem(item) {
 
 const clampIndex = (index, count) => Math.min(Math.max(0, index), Math.max(0, count - 1));
 
-/** One window of a body, with First, Previous, Next and Last among them when there are several. */
-function windowed(turnId, itemId, source, measure, index) {
+/**
+ * A body held back to keep the view within its budget: a caption with its
+ * size as shown, and Show, which asks for it (SUB decision ed71a299).
+ */
+function heldBack(turnId, itemId, measure) {
+  return [
+    h("p", { class: "act-note" }, `Not drawn, to stay within the view's memory budget (${count(measure.bytes)} bytes).`),
+    h("button", { class: "btn", type: "button", "data-activity-show": itemId, "data-activity-turn": turnId }, "Show"),
+  ];
+}
+
+/**
+ * One window of a body, with First, Previous, Next and Last among them when
+ * there are several; or its caption when it is held back.
+ * `body` is {source, measure, window, held}.
+ */
+function windowed(turnId, itemId, body) {
+  const { source, measure } = body;
+  if (body.held) return heldBack(turnId, itemId, measure);
   const count = windowCount(measure);
-  const at = clampIndex(index, count);
+  const at = clampIndex(body.window, count);
   const text = windowText(source, measure, at);
   if (count === 1) return [pre(text, "act-part")];
   const go = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-activity-window": to, "data-activity-turn": turnId, "data-activity-item": itemId, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
@@ -258,13 +280,14 @@ function windowed(turnId, itemId, source, measure, index) {
   return [nav, pre(text, "act-part")];
 }
 
-/** An item's body from its measure: field by field when it fits one window, or else one window of its text. */
-function formattedBody(turnId, item, source, measure, window) {
-  return windowCount(measure) > 1 ? [h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind ?? "Item")))), windowed(turnId, item.id, source, measure, window)] : itemBody(item);
+/** An item's body from its measure: field by field when it fits one window, or else one window of its text; its caption when held back. */
+function formattedBody(turnId, item, body) {
+  if (windowCount(body.measure) < 2 && !body.held) return itemBody(item);
+  return [h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind ?? "Item")))), windowed(turnId, item.id, body)];
 }
 
 /** An item read part by part: the part's navigation, then one window of the part. */
-function partsBody(turnId, item, full, source, measure, window) {
+function partsBody(turnId, item, full, body) {
   const go = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-activity-part": to, "data-activity-turn": turnId, "data-activity-item": item.id, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
   const of = full.count === null ? `${full.known}+` : String(full.count);
   const nav = h(
@@ -276,16 +299,16 @@ function partsBody(turnId, item, full, source, measure, window) {
     go("next", "Next part", !full.hasNext),
     go("last", "Last part", !full.hasLast),
   );
-  return [nav, measure ? windowed(turnId, item.id, source, measure, window) : null];
+  return [nav, body ? windowed(turnId, item.id, body) : null];
 }
 
 /**
  * A paged item: read on request, then shown whole (field by field or in
  * windows) or, when larger than the view's budget, a part at a time.
- * `full` is the watcher's entry; `source` and `measure` what its body is
- * drawn from, or null when there is none.
+ * `full` is the watcher's entry; `body` what its body is drawn from, or
+ * null when there is none.
  */
-function pagedItem(turnId, item, full, source, measure, window) {
+function pagedItem(turnId, item, full, body) {
   const what = item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind);
   const pages = `${item.paged.pages} ${item.paged.pages === 1 ? "page" : "pages"}, ${formatBytes(item.paged.bytes)}`;
   const head = h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(what)), item.callId ? h("span", { class: "act-sub mono" }, txt(item.callId)) : null, chip(item.status, { ...TOOL_STATUS, ...TEXT_STATUS }));
@@ -303,7 +326,7 @@ function pagedItem(turnId, item, full, source, measure, window) {
     return [
       head,
       h("p", { class: "act-note" }, note),
-      full.data !== null ? partsBody(turnId, item, full, source, measure, window) : null,
+      full.data !== null ? partsBody(turnId, item, full, body) : null,
       latest ? [h("p", { class: "act-note" }, "A newer version is on the gateway."), load("Load the latest")] : null,
       full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the part: ", txt(full.error)), load("Try again")] : null,
     ];
@@ -318,7 +341,7 @@ function pagedItem(turnId, item, full, source, measure, window) {
   // A newer version is read only on request: a running tool changes often.
   const latest = full.state === "ready" && full.seq < item.seq;
   return [
-    formattedBody(turnId, shown, source, measure, window),
+    formattedBody(turnId, shown, body),
     note ? h("p", { class: "act-note" }, note) : null,
     latest ? load("Load the latest") : null,
     full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the newer version: ", txt(full.error)), load("Try again")] : null,
@@ -335,12 +358,13 @@ export function itemSource(item, full) {
 /**
  * One item of a turn. `full` is the item's read when it is paged. `measure`
  * is the measure of its source (`measureSource`), which the panel keeps per
- * version; `window` is the window shown.
+ * version; `window` is the window shown; `held` draws the body's caption
+ * and Show instead of the body.
  */
-export function itemTree(turnId, item, full = null, { window = 0, measure = null } = {}) {
+export function itemTree(turnId, item, full = null, { window = 0, measure = null, held = false } = {}) {
   const source = itemSource(item, full);
-  const made = source ? (measure ?? measureSource(source)) : null;
-  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full, source, made, window) : formattedBody(turnId, item, source, made, window));
+  const body = source ? { source, measure: measure ?? measureSource(source), window, held } : null;
+  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full, body) : formattedBody(turnId, item, body));
 }
 
 /** A turn's summary line. */
@@ -431,15 +455,72 @@ export function sourceVersion(source, item, full, view) {
 /** The bytes a body draws, as shown: the window drawn, or the whole body when it fits one. */
 const drawnBytes = (measure, window) => measure.sizes[clampIndex(window, measure.sizes.length)];
 
+/** What a measure holds between frames: its numbers (§2). */
+const measureHeld = (measure) => 8 * (measure.bounds.length + measure.sizes.length);
+
+/**
+ * What a read already reserved for its body's drawn copy: an item read
+ * whole holds its length twice and a part its length twice, the held copy
+ * and the drawn one (SUB decision 6f5e67dd). An inline body reserved none.
+ */
+function allowanceOf(source, full) {
+  if (source.kind === "whole") return full.bytes ?? 0;
+  if (source.kind === "part") return full.size ?? 0;
+  return 0;
+}
+
+/** What drawing a body costs the budget beyond its read's allowance: the bytes it draws as shown, and its measure. */
+const drawCost = (measure, window, allowance) => Math.max(0, drawnBytes(measure, window) + measureHeld(measure) - allowance);
+
+/**
+ * Which bodies draw (SUB decisions ed71a299, 6f5e67dd, 0c13b784): those
+ * asked for with Show first, the latest first; then those of turns opened
+ * by hand, the turn opened last first; then those of turns open by
+ * default (the running turn), newest first; within a turn, top to bottom.
+ * Each draws while its cost fits what is left of `room`; the rest are held
+ * back, to show a caption and Show. A body whose read reserved its drawn
+ * copy (an item read whole, a part) costs nothing more and always draws. The latest asked for (`latest`) always
+ * draws: with the inline content it is the floor, the one thing that may
+ * take the view past its budget.
+ *
+ * @param {Array<{key: string, cost: number, asked: number, group: number, turnRank: number, index: number}>} bodies
+ * @param {number} room
+ * @param {number} latest  the latest `asked` clock, or 0
+ * @returns {{drawn: Set<string>, cost: number}}
+ */
+export function planBodies(bodies, room, latest = 0) {
+  const ranked = [...bodies].sort((a, b) => b.asked - a.asked || a.group - b.group || a.turnRank - b.turnRank || a.index - b.index);
+  const drawn = new Set();
+  let left = room;
+  let cost = 0;
+  for (const body of ranked) {
+    // A body its read already reserved for costs nothing more, and draws.
+    const floor = body.cost === 0 || (latest > 0 && body.asked === latest);
+    if (!floor && body.cost > left) continue;
+    drawn.add(body.key);
+    left -= body.cost;
+    cost += body.cost;
+  }
+  return { drawn, cost };
+}
+
+/** The panel's key in the view's budget: what it draws, fitted to the room each frame. */
+export const DRAW_KEY = "draw";
+
 /**
  * The live panel. `update(view, officer)` redraws what changed.
  *
- * What it mounts is bounded: a closed turn mounts no items; an open one
+ * What it mounts is bounded: a closed turn builds no bodies; an open one
  * mounts at most ITEM_WINDOW items, each at most one window (WINDOW_BYTES
- * and WINDOW_LINES). The formats it keeps and the content it mounts are
- * charged to the view's budget (`view.budget`) beside the items read, so
- * the least recently opened goes first: a format is made again when next
- * drawn, and an open turn is closed.
+ * and WINDOW_LINES as shown). Every body is measured before it is built,
+ * and what the panel draws is charged to the view's budget (`view.budget`)
+ * beside the inline snapshot and the items read, fitted each frame to the
+ * room they leave (`planBodies`). A body that does not fit is not drawn:
+ * it shows its size and Show, never closing its turn. Show asks for it:
+ * room is made by freeing items read, the least recently opened first, then
+ * bodies asked for earlier, and it draws, a window at a time, whatever room
+ * is left. A read may free the panel's charge; the next frame fits it
+ * again.
  *
  * @param {{doc: Document, onClose?: () => void, onLoad?: (turn: string, item: string) => void, onPart?: (turn: string, item: string, to: string) => void, onRetry?: () => void}} options
  */
@@ -451,7 +532,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   list.setAttribute("class", "act-turns");
   root.appendChild(header);
   root.appendChild(list);
-  /** turn ID -> {element, summary, notes, nav, items, version, navKey, start, kids: Map(item ID -> {element, version, bytes})} */
+  /** turn ID -> {element, summary, notes, nav, items, version, navKey, start, defaultOpen, kids: Map(item ID -> {element, version})} */
   const turns = new Map();
   let headerKey = "";
   /**
@@ -463,6 +544,14 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   const measures = new Map();
   /** The window shown of each item, for the version it was chosen in: key -> {version, index}. */
   const windows = new Map();
+  /** Bodies asked for with Show: key -> when, on the `opened` clock. */
+  const asked = new Map();
+  /** Turns opened by hand: turn ID -> when, on the `opened` clock. */
+  const turnOpened = new Map();
+  /** Ticks on each Show and each turn opened by hand: later is larger. */
+  let opened = 0;
+  /** Each body's cost in the last plan: key -> bytes. */
+  let costs = new Map();
   let last = null;
   const itemKey = (turn, item) => `${turn}\u0000${item}`;
   const budgetOf = () => last?.view.budget ?? null;
@@ -484,11 +573,12 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     return at?.version === version ? at.index : 0;
   }
 
-  /** Unmount a turn's items and give back their charge. */
-  function closeTurn(id, entry) {
+  /** Unmount a turn's items. */
+  function closeTurn(entry) {
     entry.items.replaceChildren();
     entry.kids.clear();
-    budgetOf()?.release(`mnt\u0000${id}`);
+    entry.nav.replaceChildren();
+    entry.navKey = "";
   }
 
   function moveWindow(button) {
@@ -518,12 +608,42 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     redraw();
   }
 
+  /**
+   * Make room for a body asked for (SUB decision 0c13b784 §3): free items
+   * read, the least recently opened first and never this body's own, then
+   * forget bodies asked for earlier, until what is held, the other bodies
+   * asked for and this one fit. What still does not fit draws anyway, a
+   * window at a time: it is the floor.
+   */
+  function makeRoom(key) {
+    const budget = budgetOf();
+    if (!budget) return;
+    const wanted = costs.get(key) ?? 0;
+    const others = () => [...asked.keys()].reduce((sum, other) => sum + (other === key ? 0 : (costs.get(other) ?? 0)), 0);
+    while (budget.used - budget.bytes(DRAW_KEY) + others() + wanted > budget.limit) {
+      if (budget.freeOldest((other) => other === key || other === DRAW_KEY)) continue;
+      let earliest = null;
+      for (const [other, at] of asked) if (other !== key && (earliest === null || at < asked.get(earliest))) earliest = other;
+      if (earliest === null) break;
+      asked.delete(earliest);
+    }
+  }
+
+  /** Show: ask for a body held back. */
+  function ask(turnId, itemId) {
+    const key = itemKey(turnId, itemId);
+    opened += 1;
+    asked.set(key, opened);
+    makeRoom(key);
+    redraw();
+  }
+
   const redraw = () => last && update(last.view, last.officer);
 
   /**
-   * Forget the measures and windows of bodies whose version shown changed
-   * or that are gone: an item no longer shown, a read evicted or replaced,
-   * another part. Nothing kept outlives the version it was made for.
+   * Forget the measures, windows and asks of bodies whose version shown
+   * changed or that are gone: an item no longer shown, a read evicted or
+   * replaced, another part. Nothing kept outlives the version it was made for.
    */
   function forgetStale(shown, view) {
     const live = new Map();
@@ -536,6 +656,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     }
     for (const [key, held] of [...measures]) if (live.get(key) !== held.version) measures.delete(key);
     for (const [key, held] of [...windows]) if (live.get(key) !== held.version) windows.delete(key);
+    for (const key of [...asked.keys()]) if (!live.has(key)) asked.delete(key);
   }
 
   root.addEventListener("click", (event) => {
@@ -545,7 +666,10 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     else if (on("data-activity-retry")) onRetry?.();
     else if (on("data-activity-window")) moveWindow(on("data-activity-window"));
     else if (on("data-activity-items")) moveItems(on("data-activity-items"));
-    else if (on("data-activity-part")) {
+    else if (on("data-activity-show")) {
+      const { activityTurn: turn, activityShow: item } = on("data-activity-show").dataset;
+      ask(turn, item);
+    } else if (on("data-activity-part")) {
       const { activityTurn: turn, activityItem: item, activityPart: to } = on("data-activity-part").dataset;
       onPart?.(turn, item, to);
     } else {
@@ -559,8 +683,9 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     if (entry) return entry;
     const element = doc.createElement("details");
     element.setAttribute("class", "act-turn");
-    // The running turn opens; ended ones open on request.
-    if (turn.status === "running") element.setAttribute("open", "");
+    // The running turn opens by default; ended ones open on request.
+    const defaultOpen = turn.status === "running";
+    if (defaultOpen) element.setAttribute("open", "");
     const summary = doc.createElement("summary");
     const notes = doc.createElement("div");
     const nav = doc.createElement("div");
@@ -570,9 +695,20 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     element.appendChild(notes);
     element.appendChild(nav);
     element.appendChild(items);
-    entry = { element, summary, notes, nav, items, version: "", navKey: "", start: null, kids: new Map() };
-    // Opening a turn mounts its items; closing it unmounts them.
-    element.addEventListener("toggle", () => redraw());
+    entry = { element, summary, notes, nav, items, version: "", navKey: "", start: null, defaultOpen, kids: new Map() };
+    // Opening a turn draws its items; closing it unmounts them. Opening by
+    // hand is timed, as its bodies draw before those of turns open by
+    // default; the toggle the default opening fires is not opening by hand.
+    element.addEventListener("toggle", () => {
+      if (isOpen(element)) {
+        if (!entry.defaultOpen && !turnOpened.has(turn.id)) turnOpened.set(turn.id, ++opened);
+      } else {
+        entry.defaultOpen = false;
+        turnOpened.delete(turn.id);
+        for (const key of [...asked.keys()]) if (key.startsWith(`${turn.id}\u0000`)) asked.delete(key);
+      }
+      redraw();
+    });
     turns.set(turn.id, entry);
     return entry;
   }
@@ -591,35 +727,40 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     return turn.items.slice(start, start + ITEM_WINDOW);
   }
 
-  function drawItems(turn, entry, view) {
-    const shown = itemsWindow(turn, entry);
-    const ids = new Set(shown.map((item) => item.id));
+  /** An open turn's bodies, each measured (once per version) and costed, before anything is built. */
+  function bodiesOf(turn, entry, view) {
+    return itemsWindow(turn, entry).map((item, index) => {
+      const full = item.paged ? view.full(turn.id, item.id) : null;
+      const key = itemKey(turn.id, item.id);
+      const source = itemSource(item, full);
+      if (!source) return { item, full, key, index, source: null, version: "", window: 0, measure: null, cost: 0 };
+      const version = sourceVersion(source, item, full, view);
+      const measure = measureFor(key, version, source);
+      const window = clampIndex(windowAt(key, version), windowCount(measure));
+      return { item, full, key, index, source, version, window, measure, cost: drawCost(measure, window, allowanceOf(source, full)) };
+    });
+  }
+
+  /** Mount an open turn's items as planned: a body drawn, or held back with its caption. */
+  function drawItems(turn, entry, bodies, drawn) {
+    const ids = new Set(bodies.map((body) => body.item.id));
     for (const [id, kid] of entry.kids) {
       if (ids.has(id)) continue;
       kid.element.remove();
       entry.kids.delete(id);
     }
-    let mounted = 0;
-    shown.forEach((item, at) => {
-      const full = item.paged ? view.full(turn.id, item.id) : null;
-      const key = itemKey(turn.id, item.id);
-      const source = itemSource(item, full);
-      const bodyVersion = source ? sourceVersion(source, item, full, view) : "";
-      const window = source ? windowAt(key, bodyVersion) : 0;
-      const version = `${bodyVersion}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}|${full.part ?? ""}|${full.want ?? ""}|${full.newer ?? ""}|${full.data === null}` : ""}|${window}`;
+    for (const { item, full, key, index, measure, version: bodyVersion, window } of bodies) {
+      const held = measure !== null && !drawn.has(key);
+      const version = `${bodyVersion}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}|${full.part ?? ""}|${full.want ?? ""}|${full.newer ?? ""}|${full.data === null}` : ""}|${window}|${held}`;
       let kid = entry.kids.get(item.id);
       if (!kid || kid.version !== version) {
-        const measure = source ? measureFor(key, bodyVersion, source) : null;
-        const tree = itemTree(turn.id, item, full, { window, measure });
-        const element = mount(tree, doc);
+        const element = mount(itemTree(turn.id, item, full, { window, measure, held }), doc);
         if (kid) kid.element.replaceWith(element);
-        kid = { element, version, bytes: measure ? drawnBytes(measure, window) : 0 };
+        kid = { element, version };
         entry.kids.set(item.id, kid);
       }
-      mounted += kid.bytes;
-      place(entry.items, kid.element, at);
-    });
-    return mounted;
+      place(entry.items, kid.element, index);
+    }
   }
 
   function update(view, officer) {
@@ -633,11 +774,14 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     const keep = new Set(shown.map((turn) => turn.id));
     for (const [id, entry] of turns) {
       if (keep.has(id)) continue;
-      closeTurn(id, entry);
+      closeTurn(entry);
       entry.element.remove();
       turns.delete(id);
+      turnOpened.delete(id);
     }
     forgetStale(shown, view);
+    // Plan before anything is built: measure and cost each body of each open turn.
+    const open = [];
     shown.forEach((turn, index) => {
       const entry = turnEntry(turn);
       const version = turnVersion(turn);
@@ -646,25 +790,27 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
         entry.notes.replaceChildren(...turnNotes(turn).filter(Boolean).map((node) => mount(node, doc)));
         entry.version = version;
       }
+      // A closed turn builds no item bodies.
       if (!isOpen(entry.element)) {
-        // A closed turn builds no item bodies.
-        if (entry.kids.size) closeTurn(turn.id, entry);
-        entry.nav.replaceChildren();
-        entry.navKey = "";
-      } else {
-        const mounted = drawItems(turn, entry, view);
-        // Charged as mounted; freed by closing the turn when least recently opened.
-        view.budget?.reserve(`mnt\u0000${turn.id}`, mounted, () => {
-          const evicted = turns.get(turn.id);
-          if (!evicted) return;
-          evicted.element.removeAttribute("open");
-          closeTurn(turn.id, evicted);
-          evicted.nav.replaceChildren();
-          evicted.navKey = "";
-        }, { force: true });
-      }
+        if (entry.kids.size || entry.navKey) closeTurn(entry);
+      } else open.push({ turn, entry, index, bodies: bodiesOf(turn, entry, view) });
       place(list, entry.element, index);
     });
+    const ranked = [];
+    for (const { turn, index, bodies } of open) {
+      const byHand = turnOpened.get(turn.id);
+      for (const body of bodies) {
+        if (body.measure) ranked.push({ key: body.key, cost: body.cost, asked: asked.get(body.key) ?? 0, group: byHand === undefined ? 1 : 0, turnRank: byHand === undefined ? index : -byHand, index: body.index });
+      }
+    }
+    const budget = view.budget ?? null;
+    const room = budget ? budget.limit - (budget.used - budget.bytes(DRAW_KEY)) : Infinity;
+    const latest = asked.size ? Math.max(...asked.values()) : 0;
+    const plan = planBodies(ranked, room, latest);
+    costs = new Map(ranked.map((body) => [body.key, body.cost]));
+    for (const { turn, entry, bodies } of open) drawItems(turn, entry, bodies, plan.drawn);
+    // Fitted to the room above, so it frees nothing; only the floor may pass the limit.
+    budget?.reserve(DRAW_KEY, plan.cost, null, { force: true, makeRoom: false });
   }
 
   return {

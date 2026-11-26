@@ -175,6 +175,167 @@ test("P2: an evicted read's measure and window are forgotten, and a read again s
   watcher.stop();
 });
 
+// ---------- P1: the inline floor, a caption with Show, and the order bodies draw in ----------
+
+/** The inline charge a snapshot makes once held: read from a watcher that only holds it. */
+async function inlineOf(snapshot) {
+  const probe = createActivityWatcher({ client: fakeActivityClient([snapshot]), agent: "example-captain", awaitStream: false });
+  probe.start();
+  await settle();
+  const bytes = probe.view.budget.bytes(activity.INLINE_KEY);
+  probe.stop();
+  return bytes;
+}
+
+const captions = (element) => element.findAll((node) => node.tag === "p" && node.textContent.startsWith("Not drawn, to stay within the view's memory budget ("));
+const showOf = (element) => buttons(element, "Show");
+const big = (id, seq, letter) => textItem(id, seq, letter.repeat(100 * 1024));
+const bodyWith = (element, letter) => itemsOf(element).find((li) => li.textContent.includes(letter.repeat(64)));
+const heldBackWith = (element, id) => itemsOf(element).find((li) => li.findAll((node) => node.attributes["data-activity-show"] === id).length);
+
+test("P1: the inline snapshot is charged first, pinned as the floor, and no read frees it", async () => {
+  const a = toolItem("ia", 9, { name: "read", content: [{ type: "text", text: "a".repeat(150 * 1024) }] });
+  const served = { ia: pagesOf(a) };
+  const snapshot = snapshotOf([big("t1", 3, "K"), a], { ia: placeholder(served.ia) });
+  const inline = await inlineOf(snapshot);
+  const decoded = decodeActivity(snapshot);
+  assert.equal(inline, decoded.turns.reduce((sum, each) => sum + document.jsonBytes(each), 0), "its compact JSON");
+  assert.ok(inline > 100 * 1024);
+  const client = fakeActivityClient([snapshot]);
+  client.activityItemPage = bounded(20, async (agent, turnId, item, page) => served[item][page]).read;
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: inline + 200 * 1024 });
+  watcher.start();
+  await settle();
+  const budget = watcher.view.budget;
+  assert.equal(budget.bytes(activity.INLINE_KEY), inline);
+  // 150 KiB read whole needs 300 KiB: not in the 200 KiB left beside the floor, so it is read in parts, and the floor stays.
+  await watcher.loadItem("turn-b", "ia");
+  assert.equal(watcher.view.full("turn-b", "ia").mode, "parts");
+  assert.equal(budget.bytes(activity.INLINE_KEY), inline, "never freed for a read");
+  assert.equal(budget.freeOldest(() => false), true, "the read can be freed");
+  assert.equal(budget.freeOldest(() => false), false, "the floor cannot");
+  assert.equal(budget.bytes(activity.INLINE_KEY), inline);
+  watcher.stop();
+});
+
+test("P1: a body past the room shows its size and Show, its turn stays open, and Show draws it, freeing bodies shown earlier", async () => {
+  const snapshot = snapshotOf([big("b1", 3, "P"), big("b2", 4, "Q"), big("b3", 5, "R")]);
+  const inline = await inlineOf(snapshot);
+  const client = fakeActivityClient([snapshot]);
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: inline + 100 * 1024 });
+  watcher.start();
+  await settle();
+  const panel = view.createActivityPanel({ doc: fakeDoc });
+  panel.update(watcher.view, officer);
+  const running = () => turnsOf(panel)[watcher.view.turns.findIndex((each) => each.id === "turn-b")];
+  const budget = watcher.view.budget;
+  assert.notEqual(running().getAttribute("open"), null, "the turn stays open");
+  assert.ok(bodyWith(running(), "P"), "the first body draws, a window of it");
+  assert.equal(captions(running()).length, 2, "the two that do not fit show a caption");
+  const measured = view.formatItem(big("b3", 5, "R")).bytes;
+  assert.ok(heldBackWith(running(), "b3").textContent.includes(`(${measured.toLocaleString("en-GB")} bytes)`), "with their size as shown");
+  assert.ok(budget.used <= budget.limit, "within the budget");
+  assert.ok(budget.bytes(view.DRAW_KEY) > 0, "what draws is charged");
+  // Show the third: it draws, and the first is held back to make room.
+  clickOn(panel, showOf(heldBackWith(running(), "b3"))[0]);
+  assert.ok(bodyWith(running(), "R"));
+  assert.ok(heldBackWith(running(), "b1") && heldBackWith(running(), "b2"));
+  assert.ok(budget.used <= budget.limit);
+  // Show the second: the third, shown earlier, gives way.
+  clickOn(panel, showOf(heldBackWith(running(), "b2"))[0]);
+  assert.ok(bodyWith(running(), "Q"));
+  assert.ok(heldBackWith(running(), "b3"), "the body shown earlier gives way");
+  assert.notEqual(running().getAttribute("open"), null);
+  watcher.stop();
+});
+
+test("P1: Show frees loaded items first, the least recently opened, and never the body's own", async () => {
+  const ia = toolItem("ia", 9, { name: "read", content: [{ type: "text", text: "a".repeat(30 * 1024) }] });
+  const ib = toolItem("ib", 9, { name: "read", content: [{ type: "text", text: "b".repeat(30 * 1024) }] });
+  const served = { ia: pagesOf(ia), ib: pagesOf(ib) };
+  const snapshot = snapshotOf([big("k", 3, "K"), ia, ib], { ia: placeholder(served.ia), ib: placeholder(served.ib) });
+  const inline = await inlineOf(snapshot);
+  const client = fakeActivityClient([snapshot]);
+  client.activityItemPage = bounded(20, async (agent, turnId, item, page) => served[item][page]).read;
+  const one = 2 * utf8Length(JSON.stringify(ia));
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: inline + 2 * one + 20 * 1024 });
+  watcher.start();
+  await settle();
+  await watcher.loadItem("turn-b", "ia");
+  await watcher.loadItem("turn-b", "ib");
+  const panel = view.createActivityPanel({ doc: fakeDoc });
+  panel.update(watcher.view, officer);
+  const running = () => turnsOf(panel)[0];
+  assert.ok(heldBackWith(running(), "k"), "the inline body does not fit beside two loaded items");
+  clickOn(panel, showOf(heldBackWith(running(), "k"))[0]);
+  assert.equal(watcher.view.full("turn-b", "ia"), null, "the least recently opened is freed");
+  assert.equal(watcher.view.full("turn-b", "ib").state, "ready", "one is enough");
+  panel.update(watcher.view, officer);
+  assert.ok(bodyWith(running(), "K"));
+  const budget = watcher.view.budget;
+  assert.ok(budget.used <= budget.limit);
+  watcher.stop();
+});
+
+test("P1: bodies draw asked first, then turns opened by hand (newest first), then the running turn", async () => {
+  const snapshot = snapshotOf([big("rb", 7, "B")]);
+  snapshot.turns[0].items = [big("ra", 1, "A")];
+  snapshot.turns.unshift({ ...snapshot.turns[0], id: "turn-x", seq: 2, items: [big("rx", 1, "X")] });
+  const inline = await inlineOf(snapshot);
+  const client = fakeActivityClient([snapshot]);
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: inline + 100 * 1024 });
+  watcher.start();
+  await settle();
+  const panel = view.createActivityPanel({ doc: fakeDoc });
+  panel.update(watcher.view, officer);
+  const of = (id) => turnsOf(panel)[watcher.view.turns.findIndex((each) => each.id === id)];
+  const toggle = (details, open) => {
+    if (open) details.setAttribute("open", "");
+    else details.removeAttribute("open");
+    details.listeners.toggle?.();
+  };
+  assert.ok(bodyWith(of("turn-b"), "B"), "only the running turn is open");
+  toggle(of("turn-a"), true);
+  assert.ok(bodyWith(of("turn-a"), "A"), "a turn opened by hand draws before the running turn");
+  assert.ok(heldBackWith(of("turn-b"), "rb"), "the running turn's body is held back, its turn still open");
+  assert.notEqual(of("turn-b").getAttribute("open"), null);
+  toggle(of("turn-x"), true);
+  assert.ok(bodyWith(of("turn-x"), "X"), "the turn opened last first");
+  assert.ok(heldBackWith(of("turn-a"), "ra"));
+  // Asked for draws before any of them.
+  clickOn(panel, showOf(heldBackWith(of("turn-b"), "rb"))[0]);
+  assert.ok(bodyWith(of("turn-b"), "B"));
+  assert.ok(heldBackWith(of("turn-x"), "rx"));
+  // Closing a turn forgets its ask and its opening.
+  toggle(of("turn-b"), false);
+  assert.ok(bodyWith(of("turn-x"), "X"));
+  toggle(of("turn-x"), false);
+  assert.ok(bodyWith(of("turn-a"), "A"));
+  watcher.stop();
+});
+
+test("P1: a body asked for that is larger than the room still draws, a window at a time: the floor", async () => {
+  const snapshot = snapshotOf([big("f", 3, "F")]);
+  const inline = await inlineOf(snapshot);
+  const client = fakeActivityClient([snapshot]);
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, maxLoadedBytes: inline + 10 * 1024 });
+  watcher.start();
+  await settle();
+  const panel = view.createActivityPanel({ doc: fakeDoc });
+  panel.update(watcher.view, officer);
+  const body = () => itemsOf(turnsOf(panel)[0])[0];
+  assert.equal(captions(body()).length, 1, "no room for one window");
+  clickOn(panel, showOf(body())[0]);
+  assert.ok(body().textContent.includes("Section 1 of 2"));
+  assert.deepEqual(["First", "Previous", "Next", "Last"].map((words) => buttons(body(), words).length), [1, 1, 1, 1]);
+  clickOn(panel, buttons(body(), "Next")[0]);
+  assert.ok(body().textContent.includes("Section 2 of 2"), "every window reachable");
+  const budget = watcher.view.budget;
+  assert.ok(budget.used > budget.limit, "only the floor passes the limit");
+  assert.ok(budget.used <= inline + view.WINDOW_BYTES + 4096, "the inline content and one window of what was asked for");
+  watcher.stop();
+});
+
 // ---------- P3: a part read reserves the part and its drawn copy ----------
 
 test("P3: a part read reserves the part held and its drawn copy before it reads, and keeps both", async () => {
