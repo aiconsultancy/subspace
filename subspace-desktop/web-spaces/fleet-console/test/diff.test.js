@@ -22,7 +22,10 @@ import { createSampleDiffClient } from "../src/sample-diff.js";
 import { createSampleSource } from "../src/sample-source.js";
 import { sampleResolve } from "../src/sample.js";
 import { loadedState, NOW } from "./fixtures.js";
-import { fakeDoc, fakeTimers } from "./activity-helpers.js";
+import { fakeActivityClient, fakeDoc, fakeTimers, settle } from "./activity-helpers.js";
+import { activitySnapshot } from "./activity-fixtures.js";
+import { createActivityWatcher, INLINE_KEY } from "../src/activity.js";
+import { createBudget } from "../src/budget.js";
 
 const flush = async () => {
   for (let i = 0; i < 20; i += 1) await Promise.resolve();
@@ -673,4 +676,44 @@ test("diff source: the sample fleet serves a checkout with paging, markers and b
   assert.match(panel.root.textContent, /⟨U\+0007⟩/);
   watcher.stop();
   manager.stop();
+});
+
+// ---------- the console's one budget (SUB decision 75c3ed93 §3) ----------
+
+test("diff budget: the views share one budget through scopes; each frees the other's oldest, never the latest request", () => {
+  const budget = createBudget(100);
+  const activity = budget.scope("activity\u0000");
+  const diff = budget.scope("diff\u0000");
+  const evicted = [];
+  activity.reserve("item", 40, (key) => evicted.push(`activity ${key}`));
+  diff.request("patch");
+  assert.equal(diff.reserve("patch", 50, (key) => evicted.push(`diff ${key}`)), true);
+  assert.equal(activity.used, 90, "one total, seen from either view");
+  assert.equal(diff.requested, "patch");
+  assert.equal(activity.requested, null, "the latest request is the diff view's");
+  assert.equal(activity.bytes("patch"), 0, "each view's keys are its own");
+  assert.equal(activity.reserve("other", 60, null), false, "the other view's latest request is never freed for it");
+  assert.deepEqual(evicted, []);
+  activity.request("other");
+  assert.equal(activity.reserve("other", 60, null), true);
+  assert.deepEqual(evicted, ["activity item", "diff patch"], "least recently used first, across views, each told its own key");
+  assert.equal(budget.used, 60);
+  diff.reserve("next", 30, null);
+  activity.clear();
+  assert.equal(budget.used, 30, "clear gives back only that view's keys");
+  assert.equal(budget.requested, null, "and its claim to the latest request");
+  assert.equal(diff.bytes("next"), 30);
+});
+
+test("diff budget: an Activity view on the console's budget gives back only its own keys when it stops", async () => {
+  const budget = createBudget(64 * 1024 * 1024);
+  budget.scope("diff\u0000").reserve("held", 1000, null);
+  const watcher = createActivityWatcher({ client: fakeActivityClient([activitySnapshot()]), agent: "example-captain", awaitStream: false, budget: budget.scope("activity\u0000") });
+  watcher.start();
+  await settle();
+  const inline = watcher.view.budget.bytes(INLINE_KEY);
+  assert.ok(inline > 0, "the inline snapshot is charged");
+  assert.equal(budget.used, 1000 + inline, "to the shared budget");
+  watcher.stop();
+  assert.equal(budget.used, 1000, "the diff view's entry stays");
 });

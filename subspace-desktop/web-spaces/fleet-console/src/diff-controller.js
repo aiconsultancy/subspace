@@ -6,8 +6,9 @@
 // back on the View diff button the view was opened from.
 //
 // One view is open at a time. Closing cancels the frame, stops the watcher,
-// which cancels reads still in flight or waiting to retry and drops the
-// content, stops the handle and destroys the panel.
+// which cancels reads still in flight or waiting to retry, drops the content
+// and gives back what it held of the console's budget, stops the handle and
+// destroys the panel.
 
 import { createDiffWatcher } from "./diff.js";
 import { createDiffPanel } from "./diff-view.js";
@@ -29,6 +30,8 @@ import { createDiffPanel } from "./diff-view.js";
  * @param {(id: number) => void} [options.cancelFrame]
  * @param {typeof createDiffWatcher} [options.createWatcher]
  * @param {typeof createDiffPanel} [options.createPanel]
+ * @param {ReturnType<import("./budget.js").createBudget>|null} [options.budget]  the console's budget, shared
+ *   with the Activity view (SUB decision 75c3ed93 §3); each view has its own scope of it. A view of its own when null.
  */
 export function createDiffController({
   inspector,
@@ -43,6 +46,7 @@ export function createDiffController({
   cancelFrame = (id) => globalThis.cancelAnimationFrame(id),
   createWatcher = createDiffWatcher,
   createPanel = createDiffPanel,
+  budget = null,
 }) {
   /** The open view: {ship, member, project, name, handle, watcher, panel}, or null. */
   let view = null;
@@ -116,6 +120,7 @@ export function createDiffController({
     owner.watcher = createWatcher({
       client: owner.handle.client,
       target: { ship, member: memberId, project },
+      ...(budget ? { budget: budget.scope("diff\u0000") } : {}),
       onChange: () => {
         if (!pending) pending = frame(draw);
       },

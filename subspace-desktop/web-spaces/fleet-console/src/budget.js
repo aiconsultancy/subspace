@@ -4,8 +4,9 @@
 // or cut to keep within it (SUB 20ce0349). Room is made before anything is
 // read or drawn: a reservation frees the least recently used other entries
 // until it fits. Nothing here reads or draws; the owner of
-// each entry says how to free it. Shared by every view that pages content
-// (officer activity, crew diffs), through `createPager` or directly.
+// each entry says how to free it. The console holds one, shared by every
+// view that pages content (officer activity, crew diffs; SUB decision
+// 75c3ed93 §3), each through its own `scope`, by `createPager` or directly.
 //
 // The budget alone decides what may take the total past the limit (SUB
 // decision 1c19f413): the pinned entries (the activity view's inline
@@ -73,7 +74,7 @@ export function createBudget(limit) {
     total -= entry.bytes;
   }
 
-  return {
+  const budget = {
     limit,
     /** Bytes held now. At most `limit`, unless the pinned entries and the latest request (the floor) are larger. */
     get used() {
@@ -156,5 +157,44 @@ export function createBudget(limit) {
       total = 0;
       requested = null;
     },
+    /**
+     * This budget as one view sees it (SUB decision 75c3ed93 §3): the same
+     * limit, room, order and latest request as every other view's, its keys
+     * kept apart under `prefix`. Each view frees the others' least recently
+     * used entries as it frees its own, and never the latest request,
+     * whichever view made it. `clear` gives up this view's keys only, and
+     * its claim to the latest request.
+     *
+     * @param {string} prefix
+     */
+    scope(prefix) {
+      const own = (key) => key.startsWith(prefix);
+      const outer = (key) => prefix + key;
+      const inner = (key) => key.slice(prefix.length);
+      const evictOf = (evict) => (evict ? (key) => evict(inner(key)) : evict);
+      return {
+        limit,
+        get used() {
+          return total;
+        },
+        get requested() {
+          return requested !== null && own(requested) ? inner(requested) : null;
+        },
+        has: (key) => budget.has(outer(key)),
+        bytes: (key) => budget.bytes(outer(key)),
+        request: (key) => budget.request(outer(key)),
+        fits: (key, bytes) => budget.fits(outer(key), bytes),
+        reserve: (key, bytes, evict, options) => budget.reserve(outer(key), bytes, evictOf(evict), options),
+        freeOldest: (skip) => budget.freeOldest((key) => own(key) && skip(inner(key))),
+        touch: (key) => budget.touch(outer(key)),
+        release: (key) => release(outer(key)),
+        releaseWhere: (match) => budget.releaseWhere((key) => own(key) && match(inner(key))),
+        clear() {
+          budget.releaseWhere(own);
+          if (requested !== null && own(requested)) requested = null;
+        },
+      };
+    },
   };
+  return budget;
 }

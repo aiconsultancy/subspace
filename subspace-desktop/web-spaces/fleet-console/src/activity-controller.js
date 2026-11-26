@@ -30,6 +30,8 @@ import { createActivityPanel } from "./activity-view.js";
  * @param {(id: number) => void} [options.cancelFrame]
  * @param {typeof createActivityWatcher} [options.createWatcher]
  * @param {typeof createActivityPanel} [options.createPanel]
+ * @param {ReturnType<import("./budget.js").createBudget>|null} [options.budget]  the console's budget, shared
+ *   with the diff view (SUB decision 75c3ed93 §3); each view has its own scope of it. A view of its own when null.
  */
 export function createActivityController({
   inspector,
@@ -44,6 +46,7 @@ export function createActivityController({
   cancelFrame = (id) => globalThis.cancelAnimationFrame(id),
   createWatcher = createActivityWatcher,
   createPanel = createActivityPanel,
+  budget = null,
 }) {
   /** The open view: {agent, name, role, handle, watcher, panel}, or null. */
   let view = null;
@@ -116,6 +119,7 @@ export function createActivityController({
     owner.watcher = createWatcher({
       client: owner.handle.client,
       agent,
+      ...(budget ? { budget: budget.scope("activity\u0000") } : {}),
       onChange: () => {
         if (mine() && !pending) pending = frame(draw);
       },

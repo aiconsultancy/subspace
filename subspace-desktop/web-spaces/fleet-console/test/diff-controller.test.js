@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { createBudget } from "../src/budget.js";
 import { createDiffController } from "../src/diff-controller.js";
 
 const SHIPS = {
@@ -17,7 +18,7 @@ function button(ship, member, project) {
   return node;
 }
 
-function controllerOver({ token = true, ships = SHIPS } = {}) {
+function controllerOver({ token = true, ships = SHIPS, budget = null } = {}) {
   const log = { opened: [], stopped: 0, toasts: [], announced: [], opening: 0, closed: [], watchers: [], panels: [] };
   const hooks = [];
   const buttons = [button("galactica", "starbuck", null), button("galactica", "starbuck", "subspace")];
@@ -32,6 +33,7 @@ function controllerOver({ token = true, ships = SHIPS } = {}) {
   const frames = new Map();
   let nextFrame = 0;
   const controller = createDiffController({
+    budget,
     inspector,
     doc: {},
     open: (hook) => {
@@ -187,4 +189,17 @@ test("diff controller: main.js leaves the diff view's lifecycle to the controlle
   const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
   for (const gone of ["createDiffWatcher", "createDiffPanel", "app.diff", "closeDiff", "drawDiff"]) assert.ok(!main.includes(gone), gone);
   assert.ok(main.includes("createDiffController"));
+});
+
+test("diff controller: the watcher holds content in its own scope of the console's budget", () => {
+  const budget = createBudget(1000);
+  const { controller, log } = controllerOver({ budget });
+  controller.open("galactica", "starbuck", "subspace");
+  const scoped = log.watchers[0].options.budget;
+  scoped.reserve("part", 100, null);
+  assert.equal(budget.bytes("diff\u0000part"), 100, "under the diff view's prefix");
+  controller.close();
+  const plain = controllerOver();
+  plain.controller.open("galactica", "starbuck", null);
+  assert.equal(plain.log.watchers[0].options.budget, undefined, "a controller without one gives its watcher none: it makes its own");
 });

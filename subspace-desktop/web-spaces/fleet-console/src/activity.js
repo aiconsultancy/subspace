@@ -275,11 +275,13 @@ function bytesOfTurn(turn) {
  * @param {(view: object) => void} options.onChange
  * @param {boolean} [options.awaitStream]  read the snapshot only on `reopened()`, once the stream answered with this agent
  * @param {number} [options.maxLoadedBytes]  the view's budget (`view.budget`): items read, and what the panel formats and mounts
+ * @param {ReturnType<import("./budget.js").createBudget>} [options.budget]  that budget, when the console shares one
+ *   (a `scope` of it, SUB decision 75c3ed93 §3); `stop` gives up this view's keys only
  * @param {(callback: () => void, ms: number) => unknown} [options.setTimer]  schedules the backoff retries and polls (tests pass fake timers)
  * @param {(timer: unknown) => void} [options.clearTimer]  cancels a timer `setTimer` returned
  */
 
-export function createActivityWatcher({ client, agent, onChange, awaitStream = true, maxLoadedBytes = MAX_LOADED_BYTES, setTimer = defaultTimer, clearTimer = clearTimeout }) {
+export function createActivityWatcher({ client, agent, onChange, awaitStream = true, maxLoadedBytes = MAX_LOADED_BYTES, budget = createBudget(maxLoadedBytes), setTimer = defaultTimer, clearTimer = clearTimeout }) {
   const initial = () => ({ status: "loading", agent: null, turns: [], cursor: null, snapshotSeq: 0, lastSeq: 0, error: null, refreshing: false, stale: false, polling: false });
   // `stale`: a read failed while ready. The last snapshot stays on show, but
   // events are only buffered, not applied, until a snapshot is read again.
@@ -290,7 +292,6 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * `mode: "parts"`, for an item over the budget, is {turnId, itemId, pager}.
    */
   const full = new Map();
-  const budget = createBudget(maxLoadedBytes);
   /** Where the view shows each item read whole: key -> {at, bytes}, `place` below. */
   const positions = new Map();
   /** Keys waiting to be read; one item is read at a time. */

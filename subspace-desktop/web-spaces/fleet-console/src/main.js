@@ -4,7 +4,8 @@
 // Canvas 2D), and keeps the inspector, chrome and Subspace in step.
 
 import { connectBridge } from "./bridge.js";
-import { createApiClient, normalizeEndpoint } from "./api.js";
+import { createApiClient, DEFAULT_ROOM_BYTES, normalizeEndpoint } from "./api.js";
+import { createBudget } from "./budget.js";
 import { createLiveSource } from "./live.js";
 import { createSampleActivitySource, createSampleSource } from "./sample-source.js";
 import { createActivityController } from "./activity-controller.js";
@@ -735,10 +736,11 @@ function renderInspector(navigated, focus) {
 
 // ---------- officer activity ----------
 
-// The Activity view's lifecycle is the controller's (activity-controller.js);
-// the shell opens it for the fleet you are inside and restores the inspector
-// and focus when it closes.
+// Each view's lifecycle is its controller's (activity-controller.js, diff-controller.js),
+// and both views hold content in the console's one budget (SUB decision 75c3ed93 §3).
+const budget = createBudget(DEFAULT_ROOM_BYTES);
 const activity = createActivityController({
+  budget,
   inspector: chrome.el.inspector,
   doc: document,
   watch: (agent, hooks) => app.manager.watchActivity?.(app.manager.active, agent, hooks),
@@ -759,10 +761,8 @@ function openActivity(agent, name, role) {
 
 // ---------- crew diffs ----------
 
-// The diff view's lifecycle is the controller's (diff-controller.js); the
-// shell opens it for the fleet you are inside and redraws the inspector when
-// it closes.
 const diff = createDiffController({
+  budget,
   inspector: chrome.el.inspector,
   doc: document,
   open: (hooks) => app.manager.openDiff?.(app.manager.active, hooks),
