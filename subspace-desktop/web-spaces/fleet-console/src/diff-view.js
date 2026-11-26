@@ -6,39 +6,22 @@
 //
 // Everything is reachable and nothing is cut (SUB-70). Long lines wrap.
 // Large content is shown a window at a time, so the page stays small: the
-// file list 200 files at a time, a patch 1,000 lines at a time and the hex
-// view 4 KiB at a time, each with First, Previous, Next and Last.
+// file list 200 files at a time; a patch one part (a gateway page) at a
+// time, each part in the Activity view's windows of at most 64 KiB as shown
+// and 1,000 lines (SUB decision 75c3ed93 §1); and the hex view 4 KiB at a
+// time. Each has First, Previous and Next, and Last where it is known.
 
 import { h, mount, txt } from "./activity-view.js";
-import { binarySides, DIFF_MODES, hexRows, HEX_WINDOW_BYTES, knownKind, knownStatus, PREVIEW_MAX_PIXELS, previewable } from "./diff.js";
+import { binarySides, DIFF_MODES, diffError, hexRows, HEX_WINDOW_BYTES, knownKind, knownStatus, PREVIEW_MAX_PIXELS, previewable } from "./diff.js";
+import { patchLines } from "./diff-parts.js";
+import { measurePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
 import { formatBytes, formatClock } from "./format.js";
 
 export const FILES_WINDOW = 200;
-export const LINES_WINDOW = 1000;
 
 const STATUS = { added: ["A", "Added"], removed: ["D", "Removed"], modified: ["M", "Modified"], renamed: ["R", "Renamed"] };
 const SIDE = { old: "Old", new: "New" };
 const count = (n) => n.toLocaleString("en-GB");
-
-/** Lines of a patch with their old and new line numbers, from the hunk headers. */
-export function patchLines(text) {
-  const lines = text.split("\n");
-  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
-  let oldLine = 0;
-  let newLine = 0;
-  return lines.map((line) => {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (hunk) {
-      oldLine = Number(hunk[1]);
-      newLine = Number(hunk[2]);
-      return { kind: "hunk", text: line, old: null, new: null };
-    }
-    if (line.startsWith("+")) return { kind: "add", text: line, old: null, new: newLine++ };
-    if (line.startsWith("-")) return { kind: "del", text: line, old: oldLine++, new: null };
-    if (line.startsWith("\\")) return { kind: "note", text: line, old: null, new: null };
-    return { kind: "ctx", text: line, old: oldLine++, new: newLine++ };
-  });
-}
 
 /** First, Previous, Next and Last for a window over `total` things. */
 function pager(name, at, windows, label) {
@@ -133,23 +116,65 @@ export function fileListTree(view, at, selected) {
   );
 }
 
-function patchTree(entry, lines, at, view) {
-  const windows = Math.max(1, Math.ceil(lines.length / LINES_WINDOW));
-  const shown = lines.slice(at * LINES_WINDOW, (at + 1) * LINES_WINDOW);
+/**
+ * The windows of one patch part, as the Activity view draws a part: at most
+ * WINDOW_BYTES as shown and WINDOW_LINES each, never splitting a marker.
+ * `starts[w]` is where window `w` starts in the patch's numbering, worked
+ * out as far as a window shown.
+ */
+export function partWindows(data, start) {
+  const { bounds } = measurePieces([data], { maxBytes: WINDOW_BYTES, maxLines: WINDOW_LINES });
+  const starts = [start];
+  return {
+    count: bounds.length - 1,
+    /** Window `w`'s lines, numbered from where it starts. */
+    lines(w) {
+      for (let k = starts.length; k <= w; k += 1) starts[k] = patchLines(data.slice(bounds[k - 1], bounds[k]), starts[k - 1]).end;
+      return patchLines(data.slice(bounds[w], bounds[w + 1]), starts[w]).lines;
+    },
+  };
+}
+
+/** Where a part read for the patch stands, in words, or null when its window says it all. */
+function partNotes(entry, patch, view) {
+  const notes = [];
+  const button = (attribute, words) => h("button", { class: "btn", type: "button", [attribute]: String(entry.index) }, words);
+  if (patch.evicted) notes.push(h("p", { class: "act-note" }, "This part was let go to make room for a newer read. It is read again, at the same snapshot, when shown."), button("data-diff-reopen", "Show it again"));
+  else if (patch.state === "loading") notes.push(h("p", { class: "act-note" }, patch.data === null ? "Reading the patch…" : `Reading part ${patch.want + 1}; this part stays on show until it arrives…`));
+  else if (patch.state === "failed") {
+    const problem = diffError(patch.error, { file: true, action: "Retry page" });
+    if (view.changed || problem.kind === "cancelled" || problem.kind === "stale") notes.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read this part."));
+    else notes.push(h("p", { class: "act-warn" }, txt(problem.message)), button("data-diff-retry", "Retry page"));
+  } else if (view.changed && patch.hasNext) notes.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read the rest of this patch."));
+  return notes.length ? h("div", { class: "act-messages" }, notes) : null;
+}
+
+/** First, Previous, Next and Last part of a patch; Last only once the part count is known. */
+function partNav(patch) {
+  if (patch.data === null || patch.count === 1) return null;
+  const button = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-diff-part": to, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
+  const of = patch.count === null ? `${patch.known}+` : String(patch.count);
+  return h(
+    "div",
+    { class: "act-parts", role: "group", "aria-label": "Patch parts" },
+    button("first", "First part", !patch.hasPrevious),
+    button("previous", "Previous part", !patch.hasPrevious),
+    h("span", { class: "act-sub" }, `Part ${patch.part + 1} of ${of}`),
+    button("next", "Next part", !patch.hasNext),
+    patch.count !== null ? button("last", "Last part", !patch.hasLast) : null,
+  );
+}
+
+/** One part of a patch: its navigation, one window of it with its line numbers, and where its reads stand. */
+function patchTree(entry, shown, view) {
+  const { patch, windows, section } = shown;
   const numbers = (line) => [h("span", { class: "ln" }, line.old === null ? "" : String(line.old)), h("span", { class: "ln" }, line.new === null ? "" : String(line.new))];
-  const body = shown.map((line) => h("div", { class: `dl ${line.kind}` }, numbers(line), h("span", { class: "code" }, txt(line.text))));
-  const footer = [];
-  if (entry.unloaded) footer.push(h("p", { class: "act-note" }, "Later pages of this patch were unloaded to keep memory bounded. Load next page reads them again."));
-  if (entry.next) {
-    if (view.changed) footer.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read the rest of this patch."));
-    else if (entry.page?.state === "loading") footer.push(h("p", { class: "act-note" }, "Reading the next page…"));
-    else if (entry.page?.state === "failed") footer.push(h("p", { class: "act-warn" }, txt(entry.page.error.message)), h("button", { class: "btn", type: "button", "data-diff-load": String(entry.index) }, "Retry page"));
-    else footer.push(h("button", { class: "btn", type: "button", "data-diff-load": String(entry.index) }, "Load next page"));
-  }
+  const body = windows ? windows.lines(section).map((line) => h("div", { class: `dl ${line.kind}${line.more ? " more" : ""}` }, numbers(line), h("span", { class: "code" }, txt(line.text)))) : [];
   return [
-    pager("lines", at, windows, "Lines page"),
-    h("div", { class: "diff-patch", role: "table", "aria-label": `Patch of ${entry.file.path}` }, body),
-    footer.length ? h("div", { class: "act-messages" }, footer) : null,
+    partNav(patch),
+    windows ? pager("lines", section, windows.count, "Section") : null,
+    windows ? h("div", { class: "diff-patch", role: "table", "aria-label": `Patch of ${entry.file.path}` }, body) : null,
+    partNotes(entry, patch, view),
   ];
 }
 
@@ -219,7 +244,12 @@ const KIND_NOTES = {
   symlink: "Symbolic link: the patch shows the target text Git records. It is never followed.",
 };
 
-export function fileTree(view, entry, lines, at) {
+/**
+ * The selected file. `shown` is its patch as the panel draws it:
+ * {patch, windows, section}, the watcher's part view, the windows of the
+ * part on show and the one drawn; null before the patch is opened.
+ */
+export function fileTree(view, entry, shown) {
   if (!entry) return null;
   const file = entry.file;
   const [, words] = STATUS[file.status] ?? [null, file.status];
@@ -236,8 +266,8 @@ export function fileTree(view, entry, lines, at) {
   if (KIND_NOTES[file.kind]) notes.push(h("p", { class: "act-note" }, KIND_NOTES[file.kind]));
   let body;
   if (file.binary) body = binaryTree(view, entry);
-  else if (!lines.length && !entry.next) body = h("p", { class: "act-note" }, file.status === "renamed" ? "Renamed with no changes to its content." : "No text changes.");
-  else body = patchTree(entry, lines, at, view);
+  else if (!shown || (shown.patch.count === 1 && shown.patch.data === "")) body = h("p", { class: "act-note" }, file.status === "renamed" ? "Renamed with no changes to its content." : "No text changes.");
+  else body = patchTree(entry, shown, view);
   return h("section", { class: "sec diff-detail" }, head, notes, body);
 }
 
@@ -257,8 +287,9 @@ export function createDiffPanel({ doc, watcher, onClose, urls = globalThis.URL }
   let files = null;
   let selected = null;
   let fileWindow = 0;
-  let lineWindow = 0;
-  let linesCache = { entry: null, version: -1, count: 0, lines: [] };
+  /** The section (window) of the patch part on show, and the windows of that part. */
+  let section = 0;
+  let windowsOf = { data: null, start: null, windows: null };
   let imageUrl = null;
   let last = null;
 
@@ -267,32 +298,43 @@ export function createDiffPanel({ doc, watcher, onClose, urls = globalThis.URL }
     imageUrl = null;
   };
 
-  function linesOf(entry) {
-    if (!entry || entry.file.binary) return [];
-    if (linesCache.entry !== entry || linesCache.version !== entry.version || linesCache.count !== entry.pages.length) {
-      linesCache = { entry, version: entry.version, count: entry.pages.length, lines: patchLines(entry.pages.join("")) };
+  /** The selected file's patch as the panel draws it, or null: the part on show, its windows and the section drawn. */
+  function shownPatch(view) {
+    const patch = view.status === "ready" && selected !== null ? view.patch(selected) : null;
+    if (!patch) return null;
+    if (patch.data === null) return { patch, windows: null, section: 0 };
+    if (windowsOf.data !== patch.data || windowsOf.start !== patch.start) {
+      windowsOf = { data: patch.data, start: patch.start, windows: partWindows(patch.data, patch.start) };
+      section = 0;
     }
-    return linesCache.lines;
+    section = Math.min(section, windowsOf.windows.count - 1);
+    return { patch, windows: windowsOf.windows, section };
+  }
+
+  /** Open the selected file's patch: the part on show before, read again at the same snapshot if it was let go. */
+  function openSelected() {
+    if (selected !== null && !last.view.files[selected]?.file.binary) watcher.openPatch(selected);
   }
 
   function select(index) {
     if (!last || !last.view.files[index] || index === selected) return;
     selected = index;
-    lineWindow = 0;
+    windowsOf = { data: null, start: null, windows: null };
+    section = 0;
+    openSelected();
     redraw();
     root.querySelector?.("[data-diff-select][aria-current]")?.focus?.();
   }
 
   function move(kind, to) {
     if (!last) return;
-    const total = kind === "files" ? last.view.files.length : linesOf(last.view.files[selected]).length;
-    const size = kind === "files" ? FILES_WINDOW : LINES_WINDOW;
-    const windows = Math.max(1, Math.ceil(total / size));
-    const at = kind === "files" ? fileWindow : lineWindow;
+    const shown = kind === "lines" ? shownPatch(last.view) : null;
+    const windows = kind === "files" ? Math.max(1, Math.ceil(last.view.files.length / FILES_WINDOW)) : (shown?.windows?.count ?? 1);
+    const at = kind === "files" ? fileWindow : section;
     const next = Math.max(0, Math.min(windows - 1, { first: 0, previous: at - 1, next: at + 1, last: windows - 1 }[to] ?? at));
     if (next === at) return;
     if (kind === "files") fileWindow = next;
-    else lineWindow = next;
+    else section = next;
     redraw();
   }
 
@@ -307,7 +349,9 @@ export function createDiffPanel({ doc, watcher, onClose, urls = globalThis.URL }
     else if ((node = hit("data-diff-select"))) select(Number(node.dataset.diffSelect));
     else if ((node = hit("data-diff-files")) && !disabled(node)) move("files", node.dataset.diffFiles);
     else if ((node = hit("data-diff-lines")) && !disabled(node)) move("lines", node.dataset.diffLines);
-    else if ((node = hit("data-diff-load"))) watcher.loadPage(Number(node.dataset.diffLoad));
+    else if ((node = hit("data-diff-part")) && !disabled(node)) watcher.movePatch(selected, node.dataset.diffPart);
+    else if (hit("data-diff-retry")) watcher.retryPatch(selected);
+    else if (hit("data-diff-reopen")) watcher.openPatch(selected);
     else if (hit("data-diff-binary-retry")) watcher.retryBinary();
     else if (hit("data-diff-binary-close")) watcher.closeBinary();
     else if ((node = hit("data-diff-binary")) && !disabled(node)) watcher.openBinary(selected, node.dataset.diffBinary);
@@ -350,8 +394,10 @@ export function createDiffPanel({ doc, watcher, onClose, urls = globalThis.URL }
       files = view.files;
       selected = same >= 0 ? same : view.files.length ? 0 : null;
       fileWindow = selected === null ? 0 : Math.floor(selected / FILES_WINDOW);
-      lineWindow = 0;
+      windowsOf = { data: null, start: null, windows: null };
+      section = 0;
       keys.list = keys.detail = "";
+      if (view.status === "ready") openSelected();
     }
     const listKey = `${view.status}|${fileWindow}|${selected}`;
     if (listKey !== keys.list) {
@@ -360,13 +406,12 @@ export function createDiffPanel({ doc, watcher, onClose, urls = globalThis.URL }
       keys.list = listKey;
     }
     const entry = view.status === "ready" ? view.files[selected] : null;
-    const lines = linesOf(entry);
-    lineWindow = Math.min(lineWindow, Math.max(0, Math.ceil(lines.length / LINES_WINDOW) - 1));
+    const shown = shownPatch(view);
     const open = (part) => (part?.index === selected ? `${part.side}|${part.state}|${part.version}` : "");
-    const detailKey = `${view.status}|${selected}|${entry?.version}|${lineWindow}|${view.changed}|${open(view.binary)}|${open(view.preview)}`;
+    const detailKey = `${view.status}|${selected}|${shown?.patch.changes}|${section}|${view.changed}|${open(view.binary)}|${open(view.preview)}`;
     if (detailKey !== keys.detail) {
       dropImage();
-      const tree = fileTree(view, entry, lines, lineWindow);
+      const tree = fileTree(view, entry, shown);
       detail.replaceChildren(...(tree ? [mount(tree, doc)] : []));
       if (view.preview?.index === selected && view.preview.state === "ready") showImage(view.preview);
       keys.detail = detailKey;

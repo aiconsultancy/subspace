@@ -1,10 +1,12 @@
 // Crew worktree diffs: what a crew member has changed in one project's
 // checkout, from `GET /api/v1/ships/{id}/crew/{member}/diff` and its file
 // route (STAR-5, SUB-DOC-1 §4). Nothing is redacted or cut: the file list is
-// read page by page until every file is listed, a long patch continues with
-// **Load next page**, and a binary file's bytes are read page by page for the
-// hex view. Content lives in memory only, for as long as the view is open; it
-// is never stored, logged or shared with chat.
+// read page by page until every file is listed, a patch shows a page at a
+// time with First, Previous, Next and Last (`diff-parts.js`), and a binary
+// file's bytes are read page by page for the hex view. Content lives in
+// memory only, for as long as the view is open, charged to the console's
+// budget (SUB decision 75c3ed93); it is never stored, logged or shared with
+// chat.
 //
 // One snapshot at a time. Every read of a snapshot (its list pages, patch
 // pages and binary pages) is pinned to its fingerprint and shares one
@@ -16,8 +18,10 @@
 // gateway's Retry-After (one second when it sends none). A wait over ten
 // seconds, or a third 503, stops and offers Refresh (or Retry page).
 
-import { HttpError, InvalidResponseError } from "./api.js";
-import { utf8Length } from "./utf8.js";
+import { DEFAULT_ROOM_BYTES, HttpError, InvalidResponseError } from "./api.js";
+import { createBudget } from "./budget.js";
+import { createPartSource, PATCH_START, patchLines } from "./diff-parts.js";
+import { shownBytes, WINDOW_BYTES } from "./document.js";
 
 /** The gateway feature that says it serves the diff routes. */
 export const DIFF_FEATURE = "api.crewDiffs";
@@ -37,8 +41,8 @@ export const BUSY_DEFAULT_WAIT_MS = 1_000;
 
 /** A binary page holds at most 1 MiB of raw bytes (STAR-5). */
 export const BINARY_PAGE_BYTES = 1024 * 1024;
-/** Patch continuations a view keeps loaded; the least recently read files' go first. */
-export const MAX_LOADED_BYTES = 64 * 1024 * 1024;
+/** A patch page holds at most 1 MiB (STAR-5): a patch part is one page. */
+export const PATCH_PART_BYTES = 1024 * 1024;
 /** The hex view shows this many bytes at a time, 8 to a row. */
 export const HEX_WINDOW_BYTES = 4096;
 export const HEX_ROW_BYTES = 8;
@@ -392,9 +396,11 @@ function defaultTimer(callback, ms) {
 /**
  * Follow one crew member's diff for one project. `client` has `diff` and
  * `diffFile` as in api.js; `target` is {ship, member, project}. `observe`
- * takes the fingerprint the `ship` event carries for this checkout.
+ * takes the fingerprint the `ship` event carries for this checkout. `budget`
+ * is the diff view's scope of the console's budget (SUB decision 75c3ed93
+ * §3); without one the view has a budget of its own.
  */
-export function createDiffWatcher({ client, target, mode: startMode = "branch", onChange, maxLoadedBytes = MAX_LOADED_BYTES, setTimer = defaultTimer, clearTimer = clearTimeout }) {
+export function createDiffWatcher({ client, target, mode: startMode = "branch", onChange, budget = createBudget(DEFAULT_ROOM_BYTES), setTimer = defaultTimer, clearTimer = clearTimeout }) {
   const timers = { setTimer, clearTimer };
   let mode = startMode;
   let status = "loading";
@@ -410,7 +416,8 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
   let generation = 0;
   let read = null;
   let stopped = false;
-  let used = 0;
+  /** The parts read at this snapshot, one source per file patch: key -> createPartSource. */
+  const sources = new Map();
   // The fingerprint banner, as desktop #110's FleetState: a repeat of the
   // value already seen proves nothing, nor does a missing one.
   let fingerprint = null;
@@ -430,14 +437,21 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     read?.cancel();
   }
 
+  /** Let go of every part read at this snapshot, and what it held of the budget. */
+  function dropSources() {
+    for (const source of sources.values()) source.drop();
+    sources.clear();
+  }
+
+  /** A file of the list: its inline patch is its first part, `first` the cursor of the page after it. */
   function entryFor(file, index) {
     const { patch, patchNextPage, ...rest } = file;
-    const inline = patch === null || patch === undefined ? [] : [patch];
-    return { index, file: { ...rest, previousPath: file.previousPath ?? null }, pages: inline, inline: inline.length, first: patchNextPage ?? null, next: patchNextPage ?? null, bytes: 0, used: 0, unloaded: false, page: null, version: 0 };
+    return { index, file: { ...rest, previousPath: file.previousPath ?? null }, inline: patch ?? null, first: patchNextPage ?? null };
   }
 
   async function load() {
     cancelSnapshotReads();
+    dropSources();
     generation += 1;
     const gen = generation;
     read = createRead(timers);
@@ -475,57 +489,83 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     emit();
   }
 
-  /** Drop continuation pages of the least recently read files until the loaded pages fit. */
-  function trim(keep) {
-    let total = files.reduce((sum, entry) => sum + entry.bytes, 0);
-    const others = files.filter((entry) => entry !== keep && entry.bytes > 0).sort((a, b) => a.used - b.used);
-    for (const entry of others) {
-      if (total <= maxLoadedBytes) break;
-      total -= entry.bytes;
-      entry.pages = entry.pages.slice(0, entry.inline);
-      entry.bytes = 0;
-      entry.next = entry.first;
-      entry.unloaded = true;
-      entry.version += 1;
+  // ----- parts: a file page at a time, pinned to the snapshot's fingerprint -----
+
+  /** Read one file page at the snapshot's fingerprint, under the snapshot's token and the pager's signal. */
+  async function readFile(snapshot, at, query, signal) {
+    const token = snapshot.child();
+    const abort = () => token.cancel();
+    if (signal?.aborted) abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      return await retryBusy(token, (inner) => client.diffFile(target.ship, target.member, { project: target.project, mode, ...query, at }, inner));
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      token.cancel();
     }
   }
 
-  async function loadPage(index) {
-    const entry = files[index];
-    if (status !== "ready" || !entry?.next || entry.page?.state === "loading" || changed()) return;
-    const gen = generation;
-    const page = entry.next;
-    const at = fingerprint;
-    entry.page = { state: "loading" };
-    entry.version += 1;
-    emit();
+  /**
+   * Run one part read and say what its end means for the snapshot: a stale
+   * `at` (409, another fingerprint) cancels the snapshot's reads and shows
+   * the Refresh banner; a busy gateway says so. The pager keeps the part on
+   * show, and offers Retry page for any other failure.
+   */
+  async function partRead(gen, body) {
     try {
-      const answer = await retryBusy(read, (signal) => client.diffFile(target.ship, target.member, { project: target.project, mode, path: entry.file.path, page, at }, signal));
-      const result = validatePatchPage(answer, { path: entry.file.path, page, at });
-      if (!current(gen)) return;
-      entry.pages.push(result.patch);
-      entry.bytes += utf8Length(result.patch);
-      entry.next = result.next;
-      entry.page = null;
-      entry.unloaded = false;
-      entry.used = ++used;
-      busy = null;
-      trim(entry);
+      const reply = await body();
+      if (current(gen)) busy = null;
+      return reply;
     } catch (failure) {
-      if (!current(gen)) return;
       const problem = diffError(failure, { file: true, action: "Retry page" });
-      if (problem.kind === "cancelled") entry.page = null;
-      else if (problem.kind === "stale") {
-        entry.page = null;
+      if (current(gen) && problem.kind === "stale") {
         stalePage = true;
         cancelSnapshotReads();
-      } else {
-        entry.page = { state: "failed", error: problem };
-        if (problem.kind === "busy") busy = problem.message;
-      }
+      } else if (current(gen) && problem.kind === "busy") busy = problem.message;
+      throw failure;
     }
-    entry.version += 1;
-    emit();
+  }
+
+  const patchKey = (entry) => ["patch", fingerprint, mode, entry.file.path].join("\u0000");
+  const hasPatch = (entry) => Boolean(entry) && !entry.file.binary && (entry.inline !== null || entry.first !== null);
+
+  /**
+   * The patch of file `index` as parts (SUB decision 75c3ed93 §1): its
+   * inline patch, then each page `patchNextPage` names, read at the
+   * snapshot's fingerprint. A patch with no next page is one part.
+   */
+  function patchSource(index) {
+    const entry = files[index];
+    if (status !== "ready" || !hasPatch(entry)) return null;
+    const key = patchKey(entry);
+    if (sources.has(key)) return sources.get(key);
+    const gen = generation;
+    const at = fingerprint;
+    const snapshot = read;
+    const path = entry.file.path;
+    const source = createPartSource({
+      budget,
+      key,
+      version: at,
+      partBytes: PATCH_PART_BYTES,
+      // A part draws one window at a time: at most WINDOW_BYTES as shown, as an Activity part.
+      drawn: (data) => Math.min(WINDOW_BYTES, shownBytes(data)),
+      first: PATCH_START,
+      onChange: emit,
+      read: ({ part, cursor, start, signal }) =>
+        partRead(gen, async () => {
+          let text = entry.inline;
+          let next = entry.first;
+          if (part > 0 || text === null) {
+            const page = cursor ?? entry.first;
+            const answer = await readFile(snapshot, at, { path, page }, signal);
+            ({ patch: text, next } = validatePatchPage(answer, { path, page, at }));
+          }
+          return { data: text, next, after: patchLines(text, start).end };
+        }),
+    });
+    sources.set(key, source);
+    return source;
   }
 
   // ----- binary bytes: one hex view or one preview at a time -----
@@ -710,7 +750,9 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
         binary,
         preview,
         revision,
-        loading: (index) => files[index]?.page?.state === "loading",
+        budget,
+        /** File `index`'s patch as parts: the pager's view and where its part starts, or null before it is opened. */
+        patch: (index) => (status === "ready" && hasPatch(files[index]) ? (sources.get(patchKey(files[index]))?.view ?? null) : null),
       };
     },
     start() {
@@ -725,8 +767,12 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       mode = next;
       load();
     },
-    /** Load next page, or Retry page after a failed one. */
-    loadPage,
+    /** Show file `index`'s patch: the part on show before, read again at the same `at` if the budget freed it. */
+    openPatch: (index) => patchSource(index)?.show(),
+    /** First, Previous, Next or Last part of file `index`'s patch. */
+    movePatch: (index, to) => patchSource(index)?.move(to),
+    /** Retry page: the part of file `index`'s patch that failed. */
+    retryPatch: (index) => patchSource(index)?.retry(),
     openBinary,
     moveBinary,
     retryBinary,
@@ -755,6 +801,8 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       stopped = true;
       generation += 1;
       read?.cancel();
+      dropSources();
+      budget.clear();
       binary = null;
       preview = null;
       files = [];

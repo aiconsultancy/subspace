@@ -14,7 +14,8 @@ import {
   isDiffFile,
   validateContent,
 } from "../src/diff.js";
-import { createDiffPanel, patchLines } from "../src/diff-view.js";
+import { createDiffPanel } from "../src/diff-view.js";
+import { patchLines } from "../src/diff-parts.js";
 import { crewPanel } from "../src/inspector.js";
 import { isGit } from "../src/contract.js";
 import { createFleetManager, createSampleFleetManager } from "../src/fleet-manager.js";
@@ -260,67 +261,121 @@ test("diff list: an unknown status or kind is kept and shown, never dropped", ()
   assert.equal(isDiffFile({ path: 1 }), false);
 });
 
-// ---------- patch paging ----------
+// ---------- patch parts (SUB decision 75c3ed93 §1, §4) ----------
 
-test("diff patch: Load next page appends pages pinned to the fingerprint until there are none", async () => {
-  const pages = { p2: { patch: "@@ -10,1 +10,1 @@\n-x\n+y\n", next: "p3" }, p3: { patch: "@@ -20,1 +20,1 @@\n-z\n+w\n" } };
-  const { watcher, files } = watch({
-    list: () => page([file("big.ts", { patchNextPage: "p2" })]),
-    file: (query) => ({ fingerprint: FP, file: file("big.ts", { patch: pages[query.page].patch, ...(pages[query.page].next ? { patchNextPage: pages[query.page].next } : {}) }) }),
-  });
+/** Pages of a patch by cursor: `p2`, `p3`, ... each a hunk, the last naming no next page. */
+const PATCH_PAGES = {
+  p2: { patch: "@@ -10,1 +10,1 @@\n-x\n+y\n", next: "p3" },
+  p3: { patch: "@@ -20,1 +20,1 @@\n-z\n+w\n" },
+};
+
+const patchPage = (path, at = FP) => (query) => ({ fingerprint: at, file: file(path, { patch: PATCH_PAGES[query.page].patch, ...(PATCH_PAGES[query.page].next ? { patchNextPage: PATCH_PAGES[query.page].next } : {}) }) });
+const buttonsIn = (root, words) => root.findAll((node) => node.tag === "button" && node.textContent === words);
+const added = (panel) => panel.root.findAll((node) => node.attributes.class === "dl add").map((node) => node.children[1].textContent);
+
+test("diff patch: one part at a time, each a gateway page pinned to the fingerprint, with First, Previous and Next; Last once the count is known", async () => {
+  const { watcher, files } = watch({ list: () => page([file("big.ts", { patchNextPage: "p2" })]), file: patchPage("big.ts") });
   watcher.start();
   await flush();
-  assert.equal(watcher.view.files[0].next, "p2");
-  watcher.loadPage(0);
-  await flush();
-  assert.deepEqual(files()[0].query, { project: "subspace", mode: "branch", path: "big.ts", page: "p2", at: FP });
-  watcher.loadPage(0);
-  await flush();
-  const entry = watcher.view.files[0];
-  assert.equal(entry.pages.length, 3);
-  assert.equal(entry.next, null, "the last page names no next one");
-  watcher.loadPage(0);
-  await flush();
-  assert.equal(files().length, 2, "nothing more to read");
-  const lines = patchLines(entry.pages.join(""));
-  assert.deepEqual(lines.filter((line) => line.kind === "add").map((line) => line.new), [1, 10, 20]);
-});
-
-test("diff patch: a failed page offers Retry page, which reads the same page again", async () => {
-  const { watcher, files } = watch({
-    list: () => page([file("big.ts", { patchNextPage: "p2" })]),
-    file: (_, n) => (n === 0 ? Promise.reject(new HttpError(500)) : { fingerprint: FP, file: file("big.ts", { patch: "+more\n" }) }),
-  });
-  watcher.start();
-  await flush();
-  watcher.loadPage(0);
-  await flush();
-  assert.equal(watcher.view.files[0].page.state, "failed");
-  assert.equal(watcher.view.files[0].page.error.message, DIFF_MESSAGES.failed);
   const panel = createDiffPanel({ doc: fakeDoc, watcher });
   panel.update(watcher.view, { name: "Starbuck" });
-  const retry = panel.root.findAll((node) => node.tag === "button" && node.textContent === "Retry page");
-  assert.equal(retry.length, 1);
-  panel.root.listeners.click({ target: retry[0] });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+  const patch = () => watcher.view.patch(0);
+  assert.equal(patch().part, 0, "the inline patch is the first part");
+  assert.equal(files().length, 0, "read from the list, not the file route");
+  assert.match(panel.root.textContent, /Part 1 of 2\+/);
+  assert.deepEqual(buttonsIn(panel.root, "Last part"), [], "no Last while the count is unknown");
+  panel.root.listeners.click({ target: buttonsIn(panel.root, "Next part")[0] });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.deepEqual(files()[0].query, { project: "subspace", mode: "branch", path: "big.ts", page: "p2", at: FP });
+  assert.equal(patch().data, PATCH_PAGES.p2.patch, "the part replaces the one before: nothing appends");
+  assert.deepEqual(added(panel), ["10"], "line numbers from the part's own hunk");
+  await watcher.movePatch(0, "next");
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(patch().count, 3, "the last page names no next one");
+  assert.match(panel.root.textContent, /Part 3 of 3/);
+  await watcher.movePatch(0, "first");
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(buttonsIn(panel.root, "Last part").length, 1, "Last, now that the count is known");
+  const reads = files().length;
+  panel.root.listeners.click({ target: buttonsIn(panel.root, "Last part")[0] });
+  await flush();
+  assert.equal(patch().part, 2);
+  assert.equal(files().length, reads + 1, "Last reads only the last page");
+  assert.equal(files().at(-1).query.page, "p3");
+  assert.equal(watcher.view.budget.used, 2 * PATCH_PAGES.p3.patch.length, "only the part on show and its drawn window are charged");
+});
+
+test("diff patch: a patch with no next page is one part, with no part controls", async () => {
+  const { watcher } = watch({ list: () => page([file("a.txt")]) });
+  watcher.start();
+  await flush();
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(watcher.view.patch(0).count, 1);
+  assert.deepEqual(buttonsIn(panel.root, "Next part"), []);
+  assert.deepEqual(added(panel), ["1"]);
+});
+
+test("diff patch: a part draws in windows of at most 1,000 lines, numbered across windows and parts", async () => {
+  const long = `@@ -1,1500 +1,1500 @@\n${Array.from({ length: 1500 }, (_, i) => `+line ${i}`).join("\n")}\n`;
+  const { watcher } = watch({ list: () => page([file("long.ts", { patch: long })]) });
+  watcher.start();
+  await flush();
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.match(panel.root.textContent, /Section 1 of 2/);
+  assert.ok(added(panel).length < 1000);
+  panel.root.listeners.click({ target: panel.root.findAll((node) => node.attributes["data-diff-lines"] === "next")[0] });
+  const second = added(panel);
+  assert.equal(second.at(-1), "1500", "the second window numbers on from the first");
+  assert.deepEqual(patchLines("+a\n+b", { old: 4, new: 7, open: null }).end, { old: 4, new: 9, open: "add" }, "a split line carries its kind on");
+  assert.deepEqual(patchLines("c\n+d\n", { old: 4, new: 9, open: "add" }).lines.map((line) => [line.kind, line.new, line.more ?? false]), [["add", null, true], ["add", 9, false]]);
+});
+
+test("diff patch: a failed page keeps the part on show and offers Retry page, which reads the same page again", async () => {
+  const good = patchPage("big.ts");
+  const { watcher, files } = watch({ list: () => page([file("big.ts", { patchNextPage: "p2" })]), file: (query, n) => (n === 0 ? Promise.reject(new HttpError(500)) : good(query)) });
+  watcher.start();
+  await flush();
+  await watcher.openPatch(0);
+  await watcher.movePatch(0, "next");
+  const patch = watcher.view.patch(0);
+  assert.equal(patch.state, "failed");
+  assert.equal(patch.part, 0, "the part on show stays");
+  assert.equal(patch.data, file("big.ts").patch);
+  assert.ok(watcher.view.budget.used > 0, "and stays charged");
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.match(panel.root.textContent, new RegExp(DIFF_MESSAGES.failed.replace(/[()]/g, "\\$&")));
+  panel.root.listeners.click({ target: buttonsIn(panel.root, "Retry page")[0] });
   await flush();
   assert.deepEqual(files().map((call) => call.query.page), ["p2", "p2"]);
-  assert.equal(watcher.view.files[0].pages.length, 2);
-  assert.equal(watcher.view.files[0].page, null);
+  assert.equal(watcher.view.patch(0).part, 1);
+  assert.equal(watcher.view.patch(0).state, "ready");
 });
 
 test("diff patch: busy and gone pages say what to do", async () => {
   const busy = watch({ list: () => page([file("a", { patchNextPage: "p2" })]), file: () => Promise.reject(new HttpError(503, 60_000)) });
   busy.watcher.start();
   await flush();
-  busy.watcher.loadPage(0);
-  await flush();
-  assert.equal(busy.watcher.view.files[0].page.error.message, "Stargate is busy. Wait 60 seconds, then select Retry page.");
+  await busy.watcher.openPatch(0);
+  await busy.watcher.movePatch(0, "next");
+  assert.equal(busy.watcher.view.busy, "Stargate is busy. Wait 60 seconds, then select Retry page.");
   const gone = watch({ list: () => page([file("a", { patchNextPage: "p2" })]), file: () => Promise.reject(new HttpError(404)) });
   gone.watcher.start();
   await flush();
-  gone.watcher.loadPage(0);
-  await flush();
-  assert.equal(gone.watcher.view.files[0].page.error.message, DIFF_MESSAGES.missing);
+  await gone.watcher.openPatch(0);
+  await gone.watcher.movePatch(0, "next");
+  const panel = createDiffPanel({ doc: fakeDoc, watcher: gone.watcher });
+  panel.update(gone.watcher.view, { name: "Starbuck" });
+  assert.match(panel.root.textContent, new RegExp(DIFF_MESSAGES.missing));
 });
 
 test("diff patch: a page that points back at itself or is for another path is refused", async () => {
@@ -328,9 +383,10 @@ test("diff patch: a page that points back at itself or is for another path is re
     const { watcher } = watch({ list: () => page([file("a", { patchNextPage: "p2" })]), file: () => answer });
     watcher.start();
     await flush();
-    watcher.loadPage(0);
-    await flush();
-    assert.equal(watcher.view.files[0].page.error.kind, "invalid");
+    await watcher.openPatch(0);
+    await watcher.movePatch(0, "next");
+    assert.equal(watcher.view.patch(0).state, "failed");
+    assert.equal(watcher.view.patch(0).part, 0);
   }
 });
 
@@ -339,10 +395,10 @@ test("diff patch: a 409 for a stale `at`, or a page at another fingerprint, lead
     const { watcher, lists } = watch({ list: (_, n) => page([file("a", { patchNextPage: "p2" })], { fingerprint: n === 0 ? FP : "fp-2" }), file: answer });
     watcher.start();
     await flush();
-    watcher.loadPage(0);
-    await flush();
+    await watcher.openPatch(0);
+    await watcher.movePatch(0, "next");
     assert.equal(watcher.view.banner, DIFF_MESSAGES.changed, "Changed since loaded");
-    assert.equal(watcher.view.files[0].pages.length, 1, "nothing from the stale page is shown");
+    assert.equal(watcher.view.patch(0).part, 0, "nothing from the stale page is shown");
     const panel = createDiffPanel({ doc: fakeDoc, watcher });
     panel.update(watcher.view, { name: "Starbuck" });
     const banner = panel.root.findAll((node) => node.attributes.class === "act-warn diff-banner")[0];
@@ -353,6 +409,56 @@ test("diff patch: a 409 for a stale `at`, or a page at another fingerprint, lead
     assert.equal(watcher.view.banner, null);
     assert.equal(watcher.view.diff.fingerprint, "fp-2");
   }
+});
+
+/** Two files whose patches are a page each beyond the inline one, in a budget with room for one part's read beside the other's part. */
+function twoPatches(fileRoute) {
+  const pad = (path) => `@@ -1,1 +1,1 @@\n-${"o".repeat(200)}\n+${path}\n`;
+  const budget = createBudget(1024 * 1024 + 100);
+  const routes = {
+    list: () => page([file("a.ts", { patch: pad("a"), patchNextPage: "p2" }), file("b.ts", { patch: pad("b") })]),
+    file: fileRoute,
+  };
+  return { ...watch(routes, { budget }), budget };
+}
+
+test("diff patch: a part the budget let go is read again at the same `at` when next opened, never from the start once the count is known", async () => {
+  const pages = patchPage("a.ts");
+  const { watcher, files } = twoPatches((query) => ({ ...pages({ page: "p3" }), file: file("a.ts", { patch: `@@ -20,1 +20,1 @@\n-${"z".repeat(300)}\n+w\n` }) }));
+  watcher.start();
+  await flush();
+  await watcher.openPatch(0);
+  await watcher.movePatch(0, "next");
+  assert.equal(watcher.view.patch(0).count, 2, "the second page is the last");
+  assert.equal(files().length, 1);
+  await watcher.openPatch(1);
+  assert.equal(watcher.view.patch(0).evicted, true, "opening b.ts's patch let a.ts's part go");
+  assert.equal(watcher.view.patch(1).state, "ready", "the latest request is held");
+  await watcher.openPatch(0);
+  assert.equal(files().length, 2);
+  assert.deepEqual(files()[1].query, { project: "subspace", mode: "branch", path: "a.ts", page: "p2", at: FP }, "the same page at the same `at`");
+  assert.equal(watcher.view.patch(0).part, 1, "the part shown before, not the first");
+  assert.equal(watcher.view.patch(0).state, "ready");
+  assert.equal(watcher.view.patch(0).hasLast, false, "on the last part");
+  assert.equal(watcher.view.patch(0).hasPrevious, true);
+});
+
+test("diff patch: a 409 on the read after an eviction shows the Refresh banner", async () => {
+  const later = `@@ -20,1 +20,1 @@\n-${"z".repeat(300)}\n+w\n`;
+  const { watcher, files } = twoPatches((_, n) => (n === 0 ? { fingerprint: FP, file: file("a.ts", { patch: later }) } : Promise.reject(new HttpError(409))));
+  watcher.start();
+  await flush();
+  await watcher.openPatch(0);
+  await watcher.movePatch(0, "next");
+  await watcher.openPatch(1);
+  assert.equal(watcher.view.patch(0).evicted, true);
+  assert.equal(watcher.view.banner, null);
+  await watcher.openPatch(0);
+  assert.equal(files()[1].query.at, FP);
+  assert.equal(watcher.view.banner, DIFF_MESSAGES.changed, "the snapshot can no longer be read: Refresh");
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.match(panel.root.textContent, /Changed since loaded · Refresh/);
 });
 
 // ---------- binary pages ----------
@@ -512,7 +618,8 @@ test("diff cancel: a page read waiting in backoff is cancelled when the fingerpr
   const { watcher, files, timers } = watch({ list: () => page([file("a", { patchNextPage: "p2" })]), file: () => Promise.reject(new HttpError(503, 2000)) });
   watcher.start();
   await flush();
-  watcher.loadPage(0);
+  await watcher.openPatch(0);
+  watcher.movePatch(0, "next");
   await flush();
   assert.equal(timers.pending(), 1, "waiting to retry");
   watcher.observe("fp-2");
@@ -520,14 +627,15 @@ test("diff cancel: a page read waiting in backoff is cancelled when the fingerpr
   timers.fire();
   await flush();
   assert.equal(files().length, 1, "no read at the stale fingerprint");
-  assert.equal(watcher.view.files[0].page, null);
+  assert.equal(watcher.view.patch(0).part, 0, "the part on show stays");
 });
 
 test("diff cancel: closing the view cancels reads in backoff and in flight", async () => {
   const { watcher, files, lists, timers, changes } = watch({ list: () => page([file("a", { patchNextPage: "p2" })]), file: () => Promise.reject(new HttpError(503, 2000)) });
   watcher.start();
   await flush();
-  watcher.loadPage(0);
+  await watcher.openPatch(0);
+  watcher.movePatch(0, "next");
   await flush();
   const before = changes();
   watcher.stop();
@@ -536,6 +644,7 @@ test("diff cancel: closing the view cancels reads in backoff and in flight", asy
   await flush();
   assert.equal(files().length, 1);
   assert.equal(changes(), before, "nothing reaches a closed view");
+  assert.equal(watcher.view.budget.used, 0, "and it holds nothing of the budget");
   // A list read in flight when the view closes: its signal aborts and its answer is dropped.
   let release;
   const held = watch({ list: () => new Promise((resolve) => (release = () => resolve(page([file("a")])))) });
@@ -585,13 +694,14 @@ test("diff cancel: a page answer still in flight when the fingerprint goes stale
   const { watcher } = watch({ list: () => page([file("a", { patchNextPage: "p2" })]), file: () => new Promise((resolve) => (release = () => resolve({ fingerprint: FP, file: file("a", { patch: "+late\n" }) }))) });
   watcher.start();
   await flush();
-  watcher.loadPage(0);
+  await watcher.openPatch(0);
+  watcher.movePatch(0, "next");
   await flush();
   watcher.observe("fp-2");
   release();
   await flush();
-  assert.equal(watcher.view.files[0].pages.length, 1, "the late page is not shown");
-  assert.equal(watcher.view.files[0].page, null);
+  assert.equal(watcher.view.patch(0).part, 0, "the late page is not shown");
+  assert.notEqual(watcher.view.patch(0).data, "+late\n");
   assert.equal(watcher.view.banner, DIFF_MESSAGES.changed);
 });
 
@@ -657,10 +767,10 @@ test("diff source: the sample fleet serves a checkout with paging, markers and b
   assert.equal(watcher.view.status, "ready", JSON.stringify(watcher.view.error));
   assert.equal(watcher.view.files.length, watcher.view.diff.total);
   assert.ok(watcher.view.files.length > 4, "more than one list page");
-  const route = watcher.view.files.findIndex((e) => e.next);
-  watcher.loadPage(route);
-  await flush();
-  assert.equal(watcher.view.files[route].pages.length, 2);
+  const route = watcher.view.files.findIndex((e) => e.first);
+  await watcher.openPatch(route);
+  await watcher.movePatch(route, "next");
+  assert.equal(watcher.view.patch(route).part, 1, "a patch in parts");
   const chart = watcher.view.files.findIndex((e) => e.file.path === "assets/chart.bin");
   watcher.openBinary(chart, "old");
   await flush();
@@ -672,6 +782,8 @@ test("diff source: the sample fleet serves a checkout with paging, markers and b
   const notes = watcher.view.files.findIndex((e) => e.file.path === "docs/notes.md");
   panel.update(watcher.view, { name: member.name });
   panel.root.listeners.click({ target: panel.root.findAll((node) => node.attributes["data-diff-select"] === String(notes))[0] });
+  await flush();
+  panel.update(watcher.view, { name: member.name });
   assert.match(panel.root.textContent, /⟨U\+202E⟩evil⟨U\+202C⟩/, "bidi controls show as markers");
   assert.match(panel.root.textContent, /⟨U\+0007⟩/);
   watcher.stop();
