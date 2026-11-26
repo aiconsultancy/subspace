@@ -234,26 +234,32 @@ closes it, as does moving to another tier; focus returns to the button.
   and an open one shows 20 at a time with **Earlier items** and **Later
   items**. Each view has a 64 MiB memory budget. It is a cache budget
   only: nothing is hidden or cut to keep within it. The snapshot's own
-  content is charged first and is never freed. Items read are charged twice
-  (the item and the copy drawn from it), and what is drawn is charged as it
-  shows, markers included. An item read whole must fit beside the rest
+  content is charged first and is never freed. Items read whole are charged
+  twice (the item and the copy drawn from it); a part is charged with the
+  one section it draws, at most 64 KiB as shown. What is drawn is charged
+  as it shows, markers included. An item read whole must fit beside the rest
   with both copies; otherwise it is read in parts. Past the budget, the
   least recently opened item read is freed and offers **Load in full**
   again. A body with no room left shows "Not drawn, to stay within the
   view's memory budget" with its size and **Show**; its turn stays open.
   Bodies are drawn in this order: those asked for with **Show** (the latest
   first), then those of turns opened by hand (the turn opened last first),
-  then those of the running turn, which opens by default. **Show** makes
-  room by freeing items read (the least recently opened first, never its
-  own), then bodies asked for earlier; a body still larger than the room
-  draws one section at a time. The view can go past 64 MiB only by its
-  floor: the snapshot's content, plus one part or section of the item last
-  asked for and its drawn copy. A loaded item is not read again
+  then those of the running turn, which opens by default. The latest thing
+  you asked for (a **Show**, a **Load** or another part) is never freed for
+  anything else; a later request ends that claim, so an earlier **Show**
+  goes back to its caption. A body still larger than the room draws one
+  section at a time. The view can go past 64 MiB only by its floor: the
+  snapshot's content, plus one incoming part (at most 256 KiB) and one
+  drawn section (at most 64 KiB). A loaded item is not read again
   by itself when it changes, as a running tool changes often: it says a
-  newer version is on the gateway and offers **Load the latest**. When a
-  tool call has both parsed
-  and streamed input, both show. An item or content of a kind this console
-  doesn't know, or that fails its checks, shows as JSON.
+  newer version is on the gateway and offers **Load the latest**; its body
+  stays as it is, so a selection in it survives. Items read belong to the
+  stream's generation: when it changes, they are dropped and their reads
+  stop. When a tool call has both parsed
+  and streamed input, both show. Fields an item, its error or an output
+  part carries beyond those laid out show as **Other fields**, beside a
+  text part's text in a long one's sections too. An item or content of a
+  kind this console doesn't know, or that fails its checks, shows as JSON.
 - **Content is text.** Every value is set as text, never parsed as HTML.
   Control characters (other than newline and tab) and bidi formatting
   characters show as `⟨U+XXXX⟩` markers, in JSON keys and values too, so
@@ -363,7 +369,7 @@ package rules.
 | `subspace-board.json`, `index.html`, `styles.css` | Manifest, page and styles |
 | `src/main.js` | Page wiring: mode, frame loop, navigation, inspector, bridge effects |
 | `src/api.js`, `src/live.js`, `src/sse.js`, `src/connection.js` | Fleet API client, event stream, SSE parser, connection states |
-| `src/activity.js`, `src/activity-view.js` | Officer activity: snapshot and event join, paged items; the Activity view |
+| `src/activity.js`, `src/activity-view.js`, `src/activity-controller.js` | Officer activity: snapshot and event join, paged items; the Activity view; its lifecycle in the inspector |
 | `src/pager.js`, `src/budget.js` | Reading and showing a part at a time, fenced by revision; a view's byte budget, least recently opened first |
 | `src/contract.js`, `src/reducer.js`, `src/model.js` | Payload checks, state reducer, derived views |
 | `src/sample.js`, `src/sample-source.js` | Sample fleets and their simulation |

@@ -38,11 +38,15 @@ the desktop side are separate work.
 - **Pager.** `src/pager.js` `createPager({budget, key, read, partBytes,
   drawn?})` shows one part of anything read part by part. `read({part,
   cursor, version, signal})` answers `{data, next, version, count?,
-  newer?}`. Each part is charged with its drawn copy (`drawn(bytes)`, one
-  more copy by default; SUB decision `6f5e67dd`). Room for the part and its
-  drawn copy is reserved before each read, beside the part on show and its
-  copy, and only the part shown and its copy stay charged. These are forced
-  reservations: the part last asked for is the floor. Every read is fenced by a revision: a
+  newer?}`. Each part is charged with the window it draws (`drawn(part)`,
+  one more copy by default; SUB decisions `6f5e67dd`, `1c19f413` §1). The
+  activity view draws one window of a part, so it charges the part plus
+  at most 64 KiB of shown bytes, its markers at 12 bytes: a settled
+  256 KiB part holds 320 KiB, not 512. Room for the incoming part and
+  its window is reserved before each read, beside the part on show and
+  its window, which stay charged only until the reply arrives. The pager
+  decides nothing about the limit: the budget does, and a reservation it
+  refuses evicts the pager. Every read is fenced by a revision: a
   reply that arrives after an eviction, a restart, a drop or another read is
   dropped. An evicted pager reads again from its first part with no cursor,
   so the next read may have different page boundaries. A reply that holds
@@ -58,13 +62,18 @@ the desktop side are separate work.
   Room is made before each read by evicting the least recently opened item
   read; an evicted item offers **Load in full** again. An item read whole
   is charged twice its length (the item and its drawn copy); one that does
-  not fit so beside the snapshot is read in parts. `freeOldest(skip)` frees
-  one entry for the panel's **Show**.
-- **Floor** (SUB decision `0c13b784` §4). The view goes past its budget
-  only by its floor: the inline content, plus one part or window (at most
-  256 KiB read, one 64 KiB window drawn) of the item last asked for, plus
-  its drawn copy. Pinned and forced reservations are the only ones that may
-  exceed the limit.
+  not fit so beside the snapshot is read in parts.
+- **Floor** (SUB decisions `0c13b784` §4, `8357ec55`, `1c19f413` §1). The
+  budget alone owns the floor. `request(key)` names the latest request, the
+  one thing last asked for: a **Show**, a **Load** or another part. The
+  pinned entries and the latest request are the only ones that may take
+  the total past the limit, and neither is freed for another entry; every
+  other reservation fits beside them (`fits(key, bytes)`) or is refused. A
+  new request ends the last one's claim, so a **Show** after a **Load**
+  frees the read and a **Load** after a **Show** sends that body back to
+  its caption: at the floor the view holds the inline content, one
+  incoming part (at most 256 KiB) and one drawn window (at most 64 KiB
+  shown), never two windows.
 - **Draw plan** (SUB decisions `ed71a299`, `6f5e67dd`, `0c13b784`). Each
   frame, the panel measures every body of every open turn before building
   any. A body is measured once per version (`sourceVersion`: generation and
@@ -75,12 +84,14 @@ the desktop side are separate work.
   one. `planBodies` fits bodies to the room the snapshot and items read
   leave, in this order: asked for with **Show** (latest first), then turns
   opened by hand (opened last first), then the running turn open by
-  default; within a turn, top to bottom. A body whose read already reserved
-  its drawn copy costs nothing more. The plan is charged as `draw`. A body
+  default; within a turn, top to bottom. A part's body costs nothing more:
+  its read reserved the window it draws, so a short final part heavy in
+  markers draws as soon as it arrives. The plan is charged as `draw`. A body
   that does not fit shows "Not drawn, to stay within the view's memory
-  budget (N bytes)." and **Show**, and its turn stays open. **Show** frees
-  items read (least recently opened first, never its own), then forgets
-  bodies asked for earlier, until it fits. The latest asked for always
+  budget (N bytes)." and **Show**, and its turn stays open. **Show** makes
+  its body the latest request; at the floor it is charged under its own key,
+  the budget frees items read that are not kept to fit it, and bodies asked
+  for earlier go back to their captions. The latest asked for always
   draws, a window at a time, with First, Previous, Next and Last. Closing a
   turn forgets its asks. Measures and windows are forgotten when their
   version is no longer shown: a new seq, an evicted or replaced read, or
@@ -110,6 +121,10 @@ the desktop side are separate work.
   `generation`, an item for an unknown turn and every stream (re)open read
   the snapshot again, single-flight, as does an item event with no `id`.
   `seq` may skip; a skip is not a gap.
+  Items read belong to the snapshot generation they were read in (SUB
+  decision `1c19f413` §4): a snapshot of a new generation aborts every page
+  read, settles its waiters and drops every item read, and a reply from the
+  old generation is never shown. `seq` is compared only within a generation.
   Readiness is per stream attempt: each new attempt, and each close or
   failure of the one that carried the agent, makes the view wait again for
   the next answer, and **Try again** queues until then. The wait is checked
@@ -141,7 +156,9 @@ the desktop side are separate work.
   fleet form. Turns are newest first, the running one open; steps show
   model, settled tokens and cost; tool calls show name, input (both the
   parsed `input` and the streamed `rawInput` when both came),
-  progress (`metadata`), full output (`content`) and errors; when a tool
+  progress (`metadata`), full output (`content`) and errors, then any
+  fields of the item or its error that the friendly layout does not show,
+  as **Other fields**; when a tool
   call has both a parsed `input` and the streamed `rawInput`, both show,
   labelled, as they can differ. Text and reasoning show in full. What is
   mounted is bounded: a closed turn mounts no items; an open turn mounts at
@@ -151,14 +168,30 @@ the desktop side are separate work.
   has First part, Previous part, Next part and Last part, and "Part k of N",
   and each part shows in windows the same way. What is drawn is planned
   and charged to the view's budget first (see **Draw plan**). An unknown kind or content type, and a known kind that fails
-  its checks, show as indented JSON: nothing is withheld (SUB-70). DOM is built with `createElement` and text nodes
+  its checks, show as indented JSON: nothing is withheld (SUB-70). The
+  short view and the windowed document share one block model for output
+  parts (`partBlocks` in `src/document.js`, SUB decision `1c19f413` §5): a
+  text part is its other fields (an `annotation`, say) as JSON, then its
+  text; any other part is its JSON whole. What is measured is what shows. DOM is built with `createElement` and text nodes
   only, never `innerHTML`; attributes are an allow-list. Control and bidi
   characters other than newline and tab show as `⟨U+XXXX⟩`, each its own
   marker, with a run of them in one element, so a copy is exactly what
   shows; including in
   nested JSON keys and values and the backend label; a backslash typed
   before `u0000` stays escaped, so it reads differently from a marker. Unchanged turns
-  and items keep their nodes across updates, so a selection survives.
+  and items keep their nodes across updates, so a selection survives. Each
+  item row has three parts, keyed apart (SUB decision `1c19f413` §3): its
+  head and foot by the placeholder's revision (seq, status, pages, bytes)
+  and the read's state, its body by the body's revision. A placeholder
+  going from 2 to 4 pages redraws its size, a raised seq offers **Load the
+  latest**, and the body, with any selection in it, stays mounted.
+- **Controller** (SUB decision `1c19f413` §6). `src/activity-controller.js`
+  owns the view's lifecycle in the inspector: the subscription, the
+  watcher, the panel, its redraw frame and the teardown. Every callback is
+  tied to the view it was made for and does nothing once that view closed.
+  Closing stops the subscription and the watcher, cancels the frame and
+  disposes of the panel. `src/main.js` keeps selection, focus and the
+  shell's wiring.
 - **Messages.** "Some changes may be missing (the stream reconnected)" when
   `turn.reconnects > 0`; "This officer's backend isn't collected yet." when
   `collected` is false; "Activity isn't available on this gateway." on 404.
@@ -264,3 +297,23 @@ The round 4 tests are in `test/activity-round4.test.js` (SUB-69 comment
 - draw in the order asked, opened by hand, then running;
 - draw the latest body asked for a window at a time past the room;
 - reserve a part's drawn copy before it is read.
+
+The round 5 tests are in `test/activity-round5.test.js` (SUB decision
+`1c19f413`); each fails at the commit before its fix, except the check
+that a snapshot of the same generation keeps what was read. They:
+
+- charge a settled 256 KiB part at the floor as the part and one window,
+  320 KiB;
+- send a **Show** back to its caption on a later **Load**, and free a read
+  on a later **Show**, so one window draws at the floor;
+- keep the outgoing part charged only until its replacement arrives, and
+  refuse a part read that is no longer the latest request;
+- draw a short final part heavy in bidi markers right after its read;
+- redraw a newer placeholder's status and size, offer **Load the latest**
+  on a raised seq, and keep the body's nodes;
+- drop items read in an old generation, and abort a whole or part read in
+  flight when the generation changes;
+- show a text part's `annotation` in the short view and in the document,
+  and an item's, error's or file part's other fields;
+- open, redraw and close the view through the controller, ignore a closed
+  view's callbacks, and keep `src/main.js` under 1,000 lines.
