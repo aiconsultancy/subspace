@@ -17,7 +17,7 @@ from threading import Thread
 from time import monotonic, sleep
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request, url2pathname, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from standard_channels import command  # noqa: E402
@@ -689,6 +689,42 @@ def check_firewall():
     print("Kernel nftables rules restrict operator services and admit only registered model clients.")
 
 
+def officer_file_tools():
+    engine = json.loads(Path("/etc/subspace-fleet/opencode-orion.json").read_text())
+    tools = engine["mcp"]["servers"]
+    command = tools["subspace_publish"]["command"]
+    assert any(arg.endswith("/scripts/officer-files.ts") for arg in command)
+    assert "--legacy-upload" in tools["subspace_files"]["command"]
+    for option in ("--playwright", "--browser-cache"):
+        assert Path(command[command.index(option) + 1]).exists()
+    requests = [
+        {"method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
+        {"method": "tools/list"},
+        {"method": "tools/call", "params": {"name": "prepare_file", "arguments": {
+            "source": "text", "text": "Fixture officer document\n", "fileName": "fleet-notes.md",
+        }}},
+    ]
+    result = subprocess.run(
+        ["runuser", "-u", "ss-orion", "--", *command], check=True, capture_output=True, text=True, timeout=20,
+        input="".join(json.dumps({"jsonrpc": "2.0", "id": i, **request}) + "\n"
+                      for i, request in enumerate(requests)),
+    )
+    results = {reply["id"]: reply["result"] for reply in map(json.loads, result.stdout.splitlines())}
+    assert "prepare_file" in {tool["name"] for tool in results[1]["tools"]}
+    assert not results[2].get("isError"), results[2]
+    prepared = json.loads(results[2]["content"][0]["text"])
+    uri = re.search(r"\((file://[^)]+)\)$", prepared["marker"]).group(1)
+    exported = Path(url2pathname(urlsplit(uri).path))
+    assert exported.is_relative_to("/var/lib/subspace-fleet/file-exports/orion")
+    assert exported.name == "fleet-notes.md"
+    assert stat.S_IMODE(exported.stat().st_mode) == 0o640
+    assert exported.read_text() == "Fixture officer document\n"
+    gateway = ["runuser", "-u", "ss-fleet-gateway", "--"]
+    assert subprocess.run([*gateway, "test", "-r", exported]).returncode == 0
+    assert subprocess.run([*gateway, "test", "-w", exported]).returncode != 0
+    print("A captain discovered and called the installed file tool; the gateway can read its scoped export.")
+
+
 def check_cloud():
     for agent in MEMBERS:
         identity = pwd.getpwnam(f"ss-{agent}")
@@ -716,12 +752,13 @@ def local():
     source = json.loads((WORK / "fleet.secrets.json").read_text())
     source["ircPasswords"]["example-lyra"] = "fixture-irc-password"
     source["ircOperatorPassword"] = "fixture-operator-password"
-    Path("/etc/subspace-fleet/local-fixture.json").write_text(json.dumps(config))
-    path = Path("/etc/subspace-fleet/local-fixture-secrets.json")
+    config_path = WORK / "local-fixture.json"
+    config_path.write_text(json.dumps(config))
+    path = WORK / "local-fixture-secrets.json"
     path.write_text(json.dumps(source))
     path.chmod(0o600)
     subprocess.run(
-        ["/opt/subspace-fleet/lib/runtime.py", "render", "/etc/subspace-fleet/local-fixture.json", str(path)], check=True,
+        ["/opt/subspace-fleet/lib/runtime.py", "render", str(config_path), str(path)], check=True,
     )
     subprocess.run(["/opt/subspace-fleet/lib/runtime.py", "check"], check=True)
     etc = Path("/etc/subspace-fleet")
@@ -733,7 +770,11 @@ def local():
     assert {"name": MEDICAL_ACCOUNT, "password": "fixture-irc-password"} in json.loads((etc / "irc/accounts.json").read_text())
     medical_unit = Path("/etc/systemd/system/subspace-fleet-medical.service").read_text()
     assert "After=network-online.target subspace-fleet-firewall.service subspace-fleet-irc.service" in medical_unit
-    registrations = json.loads((etc / "stargate.json").read_text())["irc"]
+    assert [entry["id"] for entry in json.loads((etc / "stargate.json").read_text())["irc"]] == ["atlas", "orion"]
+
+
+def local_routing():
+    registrations = json.loads(Path("/etc/subspace-fleet/stargate.json").read_text())["irc"]
     assert registrations[0]["channels"] == ["#example-fleet-starbase", COMMAND, "#example-fleet-orion", "#example-fleet-lyra"]
     assert registrations[1]["channels"] == ["#example-fleet-orion", COMMAND, "#example-fleet-lyra"]
     assert registrations[2]["channels"] == ["#example-fleet-lyra", COMMAND, "#example-fleet-orion"]

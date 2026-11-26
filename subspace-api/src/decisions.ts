@@ -39,7 +39,11 @@ import {
 } from "./validation";
 
 const decisionNotFound =
-  "Decision was not found. Use an ID returned by list decisions (GET /api/v1/decisions or subspace_list_decisions).";
+  "Decision was not found. Use an identifier or ID returned by list decisions.";
+const DecisionIdentifier = Schema.String.check(
+  Schema.isPattern(/^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$/u),
+);
+export const DecisionRef = Schema.Union([Uuid, DecisionIdentifier]);
 const Status = Schema.Literals(decisionStatuses);
 const Maker = Schema.Literals(["human", "agent"]);
 const Evidence = Schema.Literals(evidenceKinds);
@@ -54,7 +58,18 @@ const Provenance = Schema.Struct({
   evidenceReference: NullableString,
   evidenceExcerpt: NullableString,
 }).annotate({ identifier: "DecisionProvenance" });
-const DecisionSummary = Schema.Struct({ id: Uuid, title: Line(200), status: Status });
+const decisionSummary = {
+  id: decisions.id,
+  identifier: decisions.identifier,
+  title: decisions.title,
+  status: decisions.status,
+};
+const DecisionSummary = Schema.Struct({
+  id: Uuid,
+  identifier: DecisionIdentifier,
+  title: Line(200),
+  status: Status,
+});
 const DecisionMember = Schema.Struct({
   userId: Uuid,
   displayName: Line(120),
@@ -63,6 +78,7 @@ const DecisionMember = Schema.Struct({
 });
 const Decision = Schema.Struct({
   id: Uuid,
+  identifier: DecisionIdentifier,
   title: Line(200),
   status: Status,
   decidedOn: DateOnly,
@@ -219,11 +235,13 @@ function joinedDecisions(db: Db, member: Member) {
     );
 }
 
-function rowData(db: Db, member: Member, id: string, project?: string) {
+function rowData(db: Db, member: Member, reference: string, project?: string) {
   return joinedDecisions(db, member).where(
     and(
       orgScope(member),
-      eq(decisions.id, id),
+      isUuid(reference)
+        ? eq(decisions.id, reference)
+        : eq(decisions.identifier, reference.toUpperCase()),
       project ? eq(decisions.projectId, project) : undefined,
     ),
   );
@@ -272,7 +290,7 @@ function relatedSummaries(db: Db, member: Member, rows: Joined[]) {
   return ids.length
     ? Effect.map(
         db
-          .select({ id: decisions.id, title: decisions.title, status: decisions.status })
+          .select(decisionSummary)
           .from(decisions)
           .where(and(orgScope(member), inArray(decisions.id, ids))),
         (found) => new Map(found.map((row) => [row.id, row])),
@@ -298,6 +316,7 @@ export function decisionDto(
   };
   return {
     id: record.id,
+    identifier: record.identifier,
     title: record.title,
     decidedOn: record.decidedOn,
     status: record.status,
@@ -331,10 +350,11 @@ export function decisionDto(
   };
 }
 
-export function getDecision(db: Db, member: Member, id: string) {
+export function getDecision(db: Db, member: Member, reference: string) {
   return Effect.gen(function* () {
-    const [row] = yield* rowData(db, member, id);
+    const [row] = yield* rowData(db, member, reference);
     if (!row) return yield* Effect.fail(problem(404, decisionNotFound));
+    const { id } = row.decision;
     const links = yield* linkedIssues(db, member, [id]);
     return decisionDto(row, links.get(id) ?? [], yield* relatedSummaries(db, member, [row]));
   });
@@ -378,6 +398,7 @@ function decisionFilters(db: Db, member: Member, filters: typeof CountQuery.Type
         : undefined,
       search
         ? or(
+            eq(decisions.identifier, search.toUpperCase()),
             ...[
               decisions.title,
               decisions.decision,
@@ -714,6 +735,15 @@ export const createDecision = (member: Member, input: typeof NewDecision.Type) =
           );
         const status = fields.status ?? "proposed";
         const target = yield* predecessor(tx, member, project.id, fields.supersedesId);
+        const number = project.nextDecisionNumber;
+        if (number === 2_147_483_647)
+          return yield* Effect.fail(problem(409, "This project has reached its decision limit."));
+        yield* tx
+          .update(projects)
+          .set({ nextDecisionNumber: number + 1 })
+          .where(
+            and(eq(projects.organisationId, member.organisationId), eq(projects.id, project.id)),
+          );
         const [row] = yield* tx
           .insert(decisions)
           .values({
@@ -722,6 +752,7 @@ export const createDecision = (member: Member, input: typeof NewDecision.Type) =
             ...statusFields(status, member.id),
             organisationId: member.organisationId,
             recordedById: member.id,
+            identifier: `D-${String(number).padStart(5, "0")}-${project.key}`,
             tags: [...new Set(fields.tags)],
             status,
           })
@@ -740,16 +771,17 @@ export const createDecision = (member: Member, input: typeof NewDecision.Type) =
 
 export function changeDecision(
   member: Member,
-  id: string,
+  reference: string,
   input: typeof DecisionEdit.Type | typeof StatusChange.Type,
 ) {
   return Effect.flatMap(Database, (db) =>
     db.transaction((tx) =>
       Effect.gen(function* () {
         yield* lockIssues(tx, member);
-        const [joined] = yield* rowData(tx, member, id);
+        const [joined] = yield* rowData(tx, member, reference);
         if (!joined) return yield* Effect.fail(problem(404, decisionNotFound));
         const prior = joined.decision;
+        const { id } = prior;
         if (member.agentRank && prior.recordedById !== member.id)
           return yield* Effect.fail(problem(403, "Agents can change decisions they recorded."));
         if (input.version !== undefined && input.version !== prior.version)
@@ -811,9 +843,10 @@ export function changeDecision(
   );
 }
 
-function revisions(db: Db, member: Member, id: string) {
+function revisions(db: Db, member: Member, reference: string) {
   return Effect.gen(function* () {
-    const current = yield* getDecision(db, member, id);
+    const current = yield* getDecision(db, member, reference);
+    const { id } = current;
     const rows = yield* db
       .select()
       .from(decisionRevisions)
@@ -867,11 +900,11 @@ export function listRevisions(
 ) {
   return Effect.gen(function* () {
     const db = yield* Database;
-    const { rows } = yield* revisions(db, member, id);
+    const { current, rows } = yield* revisions(db, member, id);
     const key = (row: (typeof rows)[number]) => String(2147483647 - row.number).padStart(10, "0");
     const result = yield* page(
       rows.reverse(),
-      { org: member.organisationId, decisionId: id },
+      { org: member.organisationId, decisionId: current.id },
       key,
       query.limit,
       query.cursor,
@@ -922,30 +955,30 @@ export const decisionGroup = HttpApiGroup.make("decisions")
       error: endpointErrors,
     }),
     HttpApiEndpoint.get("decision", "/decisions/:id", {
-      params: { id: Uuid },
+      params: { id: DecisionRef },
       success: Detail,
       error: endpointErrors,
     }),
     HttpApiEndpoint.put("updateDecision", "/decisions/:id", {
-      params: { id: Uuid },
+      params: { id: DecisionRef },
       payload: DecisionEdit,
       success: Detail,
       error: endpointErrors,
     }),
     HttpApiEndpoint.put("changeStatus", "/decisions/:id/status", {
-      params: { id: Uuid },
+      params: { id: DecisionRef },
       payload: StatusChange,
       success: Detail,
       error: endpointErrors,
     }),
     HttpApiEndpoint.get("listRevisions", "/decisions/:id/revisions", {
-      params: { id: Uuid },
+      params: { id: DecisionRef },
       query: PageQuery,
       success: pageOf(RevisionMetadata),
       error: endpointErrors,
     }),
     HttpApiEndpoint.get("getRevision", "/decisions/:id/revisions/:revisionId", {
-      params: { id: Uuid, revisionId: Uuid },
+      params: { id: DecisionRef, revisionId: Uuid },
       success: RevisionDetail,
       error: endpointErrors,
     }),

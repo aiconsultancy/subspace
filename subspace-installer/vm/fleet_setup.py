@@ -1837,6 +1837,22 @@ def check_usage_guard_source(answers, rear, ref):
             raise SetupError(str(error)) from None
 
 
+def check_officer_tool_source(answers, members, ref):
+    # Build the same capabilities as the actual fleet using only public settings.
+    planned = fleet_config(answers, members, '0' * 40, planned_api_block(answers), stargate_ref=ref)
+    try:
+        api = dict(planned.get("api") or {})
+        if api.get("agentUrl"):
+            api["agentMcpUrl"] = api["agentUrl"]
+        runtime.require_officer_tool_sources({
+            **planned, "stargate": {**planned["stargate"], "repo": STARGATE_REPO},
+            "repositories": runtime.repository_config(planned["repositories"]),
+            "api": api, "members": [planned["rearAdmiral"], *planned["captains"]],
+        })
+    except runtime.Invalid as error:
+        raise SetupError(str(error)) from None
+
+
 def run_inputs(answers, members, secret_store, stargate_ref, irc_ref, api_block=None, stargate_api=False, token="",
                history=None, dispatch_token=""):
     """The fleet installer's inputs, fleet.json and its secrets, as a run writes them."""
@@ -3324,6 +3340,8 @@ def configure(args):
     stargate_tag, stargate_ref = stargate_release(answers)
     say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
     check_usage_guard_source(answers, rear, stargate_ref)
+    members = roster(answers, rear, captains)
+    check_officer_tool_source(answers, members, stargate_ref)
     enrolment = None
     if answers.get("apiUrl"):
         # Every check of the hosted API comes before setup saves anything, so a refused run, a switch from an
@@ -3340,7 +3358,6 @@ def configure(args):
         store_enrolment_token(enrolment)
     # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
     secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
-    members = roster(answers, rear, captains)
     # The toolchains as confirmed, with this run's choices: fleet.json's toolchains and systemPackages come from it.
     record, changes = update_toolchains(args, answers)
     for line in changes:

@@ -448,6 +448,7 @@ export const projects = pgTable(
     archivedByUserId: uuid("archived_by_user_id"),
     version: integer().default(1).notNull(),
     nextIssueNumber: integer("next_issue_number").default(1).notNull(),
+    nextDecisionNumber: integer("next_decision_number").default(1).notNull(),
     lastCycleNumber: integer("last_cycle_number").default(0).notNull(),
     cycleSettings: jsonb("cycle_settings")
       .$type<CycleSchedule>()
@@ -857,6 +858,7 @@ export const decisions = pgTable(
   {
     id: id(),
     organisationId: organisationId(),
+    identifier: text().notNull(),
     projectId: uuid("project_id").notNull(),
     recordedById: uuid("recorded_by_id").notNull(),
     title: text().notNull(),
@@ -888,6 +890,7 @@ export const decisions = pgTable(
   },
   (table) => [
     unique().on(table.organisationId, table.id),
+    unique().on(table.organisationId, table.identifier),
     index().on(table.organisationId, table.projectId, table.decidedOn),
     foreignKey({
       columns: [table.organisationId, table.supersedesId],
@@ -909,6 +912,43 @@ export const decisions = pgTable(
       columns: [table.organisationId, table.recordedById],
       foreignColumns: [users.organisationId, users.id],
     }),
+  ],
+);
+
+export const decisionOutcomes = pgTable(
+  "decision_outcomes",
+  {
+    organisationId: organisationId(),
+    decisionId: uuid("decision_id").notNull(),
+    fleetId: uuid("fleet_id").notNull(),
+    recordedById: uuid("recorded_by_id").notNull(),
+    recordedByRank: text("recorded_by_rank", { enum: ["captain", "rearAdmiral"] }).notNull(),
+    status: text({ enum: ["accepted", "rejected"] }).notNull(),
+    createdAt: createdAt(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organisationId, table.decisionId] }),
+    foreignKey({
+      columns: [table.organisationId, table.decisionId],
+      foreignColumns: [decisions.organisationId, decisions.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.fleetId],
+      foreignColumns: [fleets.organisationId, fleets.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.recordedById],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    check("decision_outcomes_status", sql`${table.status} IN ('accepted', 'rejected')`),
+    check(
+      "decision_outcomes_recorder_rank",
+      sql`${table.recordedByRank} IN ('captain', 'rearAdmiral')`,
+    ),
+    index("decision_outcomes_pending")
+      .on(table.organisationId, table.fleetId, table.createdAt, table.decisionId)
+      .where(sql`${table.deliveredAt} IS NULL`),
   ],
 );
 

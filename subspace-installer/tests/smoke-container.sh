@@ -45,9 +45,8 @@ zip -q -j "$work/check.zip" "$config"
 unzip -tq "$work/check.zip"
 mapfile -t units < "$etc/units"
 systemd-analyze verify "${units[@]/#//etc/systemd/system/}"
-test -x "$app/lib/officer_upload.py"
 python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
-python3 -B /installer/tests/officer_upload_test.py
+python3 /installer/tests/fixture.py officer_file_tools "$work"
 python3 -B /installer/tests/policy_test.py
 python3 -B /installer/tests/medical_test.py
 (
@@ -74,7 +73,6 @@ fi
 ) > "$work/after"
 diff -u "$work/before" "$work/after"
 test -f "$crew_checkout/worker-draft"
-test -x "$app/lib/officer_upload.py"
 python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
 "$app/lib/runtime.py" maintenance tools
 printf 'Second install preserved binaries, configuration and service units.\n'
@@ -219,6 +217,17 @@ grep -Fxq 'Next revision' "$state/references/atlas/sample/README.md"
 grep -Fxq sample "$crew_checkout/README.md"
 
 python3 /installer/tests/fixture.py local "$work"
+# The new captain does not join the gateway until its engine has a pinned root.
+# Give commission the local scenario's inputs without starting an IRC container.
+cp -p "$etc/fleet.json" "$work/installed-fleet.json"
+cp -p "$etc/secrets.json" "$work/installed-secrets.json"
+install -m 0600 "$work/local-fixture.json" "$etc/fleet.json"
+install -m 0600 "$work/local-fixture-secrets.json" "$etc/secrets.json"
+run_as lyra ss-lyra "$app/lib/runtime.py" engine "$etc/engine-lyra.json"
+"$app/lib/runtime.py" commission false
+mv "$work/installed-fleet.json" "$etc/fleet.json"
+mv "$work/installed-secrets.json" "$etc/secrets.json"
+python3 /installer/tests/fixture.py local_routing "$work"
 grep -Fxq 'Next revision' "$state/agents/lyra/worktrees/codex-1/sample/README.md"
 id ss-lyra-codex-1 >/dev/null 2>&1 && { printf 'Crew got a Linux user.\n' >&2; exit 1; }
 python3 /installer/tests/fixture.py addons "$work"
@@ -246,6 +255,8 @@ test ! -e "$etc/github-apps/atlas/github-app.pem"
 "$installer" uninstall --no-systemd
 test ! -e "$app"
 test ! -e "$etc/units"
+test ! -e /etc/systemd/system/subspace-fleet-repo-refresh.socket
+test ! -e /etc/systemd/system/subspace-fleet-repo-refresh@.service
 test -f "$secrets"
 test -d "$state/agents/atlas/workspace"
 printf 'Fleet installer smoke test passed.\n'

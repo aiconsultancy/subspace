@@ -490,6 +490,17 @@ with `PATCH /api/v1/ships/{shipId}`. The fleet reports its agents in rank and
 name order, and its ships in name order. The deprecated leadership fields
 `rearAdmiralName` and `captainNames` come from linked agents.
 
+The active rear admiral can read its fleet's pending decision outcomes with
+`GET /api/v1/fleets/{fleetId}/decision-outcomes`. It supports the usual `limit`
+and `cursor` and returns `id`, `identifier`, `recordedByUserId`, `status` and
+`createdAt` per item. Subspace queues an outcome when a proposal recorded by
+an active captain becomes `accepted` or `rejected`. The record and its outcome
+are saved in the same transaction. Rear-admiral outcomes are saved for future
+delivery. After the IRC server echoes the captain's DM, the
+dispatcher acknowledges it with
+`POST /api/v1/fleets/{fleetId}/decision-outcomes/{id}/delivered`. Repeating
+the receipt returns 204 and leaves the first delivery time in place.
+
 A fleet records its standard IRC channels: `starbaseChannel` (people, the
 rear admiral and the captains) and `commandChannel` (the rear admiral and its
 captains), each optional and set on create or with `PATCH`. A ship records its
@@ -986,7 +997,19 @@ Decision and document revisions are available through the versioned REST routes.
 `GET /api/v1/decisions` sorts by creation time and ID, newest first. It
 filters by `issue`, `project`, `status`, `madeByType`, and the exact
 lower-case `tag`. Use `q` to search the title, decision, context, why,
-implications and alternatives without matching case.
+implications and alternatives without matching case, or to match a full
+decision identifier.
+
+Every decision has a server-assigned `identifier` such as `D-00042-EXA`.
+The number increments within its project, padded to at least five digits.
+The suffix is the project key at assignment. List, detail, write responses,
+supersession summaries and revision snapshots carry this field alongside the
+decision UUID `id`. The migration assigns references to existing decisions by
+creation time, then UUID, within each project.
+
+Decision path parameters (detail, edit, status and revisions) and the MCP
+`decisionId` argument accept either the UUID or the identifier, regardless of
+case. Fields that store relationships, such as `supersedesId`, take UUIDs.
 
 List items and detail responses return `recordedBy` and `madeBy` with
 `userId`, `displayName`, `available` and `kind`. The recorder is the
@@ -1004,6 +1027,8 @@ the list's filters except `status`, with the same validation, access rules and
 errors, and ignores `status` and paging parameters as the list ignores an
 unknown parameter. The MCP tools `subspace_list_decisions` and
 `subspace_count_decisions` return the same items and counts.
+
+See the [decision identifiers change record](docs/changes/decision-identifiers/README.md).
 
 ## Reading long text through MCP
 

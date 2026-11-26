@@ -34,6 +34,7 @@ import {
   countDecisions,
   createDecision,
   DecisionEdit,
+  DecisionRef,
   getDecision,
   listDecisions,
   listRevisions,
@@ -206,7 +207,7 @@ export const mcpInstructions = `This is the Subspace tracker. The subspace-track
 5. Group related issues under a tracker (type "tracker", children by parentId). Reuse a tracker that fits before creating one, keep trees shallow, and do not park unrelated issues under a tracker: its state follows its direct children.`;
 
 const { projectId: _projectId, ...decisionFields } = NewDecision.fields;
-const decision = { decisionId: Uuid };
+const decision = { decisionId: DecisionRef };
 const document = { document: Ref };
 const comment = { ...issue, commentId: Uuid };
 const view = { viewId: Uuid };
@@ -597,7 +598,7 @@ export const mcpTools = {
     (member, { filters }) => countDecisions(member, filters ?? {}),
   ),
   subspace_get_decision: tool(
-    "Get the current project decision.",
+    "Get the current project decision by UUID or identifier, such as D-00042-EXA.",
     true,
     Schema.Struct(decision),
     (member, { decisionId }) =>

@@ -203,7 +203,8 @@ type ProjectRow = typeof projects.$inferSelect;
 export function projectDto(project: ProjectRow, lead: Member) {
   const {
     organisationId: _,
-    nextIssueNumber: _counter,
+    nextIssueNumber: _issues,
+    nextDecisionNumber: _decisions,
     lastCycleNumber: _cycles,
     ...fields
   } = project;

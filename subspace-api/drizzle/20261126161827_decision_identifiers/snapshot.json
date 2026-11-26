@@ -1,0 +1,117 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "86597254-86f4-4301-8e01-ee163453996a",
+  "prevIds": [
+    "907bb351-e5b4-42dc-8d59-008c54eefb3e"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_decisions",
+        "identifier"
+      ],
+      "writes": [
+        "s|col|public.project_decisions.identifier",
+        "n|col|public.project_decisions.identifier",
+        "e|col|public.project_decisions.identifier"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "projects",
+        "next_decision_number"
+      ],
+      "writes": [
+        "s|col|public.projects.next_decision_number",
+        "n|col|public.projects.next_decision_number",
+        "e|col|public.projects.next_decision_number"
+      ],
+      "reads": [
+        "n|tbl|public.projects",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_unique",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decisions"
+      ],
+      "writes": [
+        "s|uq|public.project_decisions.project_decisions_organisation_id_identifier_unique",
+        "n|uq|public.project_decisions.project_decisions_organisation_id_identifier_unique",
+        "e|uq|public.project_decisions.project_decisions_organisation_id_identifier_unique",
+        "n|con|public.project_decisions.project_decisions_organisation_id_identifier_unique",
+        "n|rel|public.project_decisions_organisation_id_identifier_unique"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.identifier"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "identifier",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "projects",
+        "name": "next_decision_number",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_organisation_id_identifier_unique",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "identifier"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    }
+  ]
+}
