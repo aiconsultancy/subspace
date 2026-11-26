@@ -9,7 +9,8 @@ use std::io;
 
 use serde_json::Value;
 use subspace_client_fleet::activity::{
-    ActivityContent, ActivityEntry, ActivityError, ActivityItem, AgentActivity, ToolItem,
+    ActivityContent, ActivityEntry, ActivityError, ActivityItem, ActivityTokens, AgentActivity,
+    ToolItem,
 };
 
 use super::blocks::{Block, Source, error_text};
@@ -20,14 +21,26 @@ use super::text::visible_len;
 const SCALAR: u64 = 8;
 
 /// About how many bytes the snapshot's inline content holds: the length
-/// of every text, input, output and value in it.
+/// of every text, input, output and value in it, and the token counts
+/// this version does not know that each turn's use keeps, shown or not
+/// (SUB decision `084f5236` item 3).
 pub(super) fn inline_bytes(activity: &AgentActivity) -> u64 {
     activity
         .turns
         .iter()
-        .flat_map(|turn| &turn.items)
-        .map(entry_bytes)
+        .map(|turn| {
+            let usage = turn.summary.usage.as_ref();
+            let items: u64 = turn.items.iter().map(entry_bytes).sum();
+            items + usage.map_or(0, |usage| tokens_bytes(&usage.tokens))
+        })
         .sum()
+}
+
+/// The token counts this version does not know, kept so they can still
+/// be shown: every retained byte is charged (SUB decision `084f5236` item
+/// 3). Those it knows are numbers inside the item.
+fn tokens_bytes(tokens: &ActivityTokens) -> u64 {
+    map_bytes(&tokens.extra)
 }
 
 fn entry_bytes(entry: &ActivityEntry) -> u64 {
@@ -57,6 +70,7 @@ fn item_bytes(item: &ActivityItem) -> u64 {
             text(&step.status)
                 + model
                 + step.finish.as_deref().map_or(0, text)
+                + step.tokens.as_ref().map_or(0, tokens_bytes)
                 + error_bytes(step.error.as_ref())
                 + map_bytes(&step.extra)
         }
@@ -298,5 +312,30 @@ mod tests {
         // Both texts in bytes, with the ids and the unknown item's fields.
         assert!(bytes >= 2 * 12_000, "{bytes}");
         assert!(bytes < 2 * 12_000 + 200, "{bytes}");
+    }
+
+    /// Round 7 delta (P2), SUB decision `084f5236` item 3: the token counts
+    /// this version does not know that a turn's use keeps are charged too,
+    /// though only its total is shown.
+    #[test]
+    fn a_turns_use_charges_the_token_counts_this_version_does_not_know() {
+        let activity = |tokens| -> AgentActivity {
+            serde_json::from_value(serde_json::json!({
+                "agent": {"id": "aurora-lyra", "role": "captain", "backend": "opencode",
+                          "collected": true},
+                "turns": [{
+                    "id": "t-1", "seq": 1, "status": "completed", "startedAt": 1,
+                    "updatedAt": 2, "endedAt": 2, "reconnects": 0,
+                    "usage": {"steps": 1, "tokens": tokens, "cost": 0},
+                    "items": []
+                }],
+                "cursor": {"generation": "g1", "seq": 1}
+            }))
+            .unwrap()
+        };
+        let known = inline_bytes(&activity(serde_json::json!({"input": 1})));
+        let extension = "x".repeat(8192);
+        let kept = activity(serde_json::json!({"input": 1, "newCount": extension}));
+        assert_eq!(inline_bytes(&kept) - known, 8192 + "newCount".len() as u64);
     }
 }

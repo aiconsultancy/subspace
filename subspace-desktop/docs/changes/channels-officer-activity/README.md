@@ -49,8 +49,9 @@ item too large to send inline is paged and loads on demand, never hidden.
   allocated: a size the pages could not carry, or a joined length other
   than the declared one, is an invalid answer.
 - **One budget.** Everything the view holds counts against 64 MiB: the
-  snapshot's inline content (estimated from its strings and values) and
-  every item read, inline text counted in UTF-8 bytes. Room is made before
+  snapshot's inline content (estimated from its strings and values, every
+  field and token count this version does not know included, drawn or not)
+  and every item read, inline text counted in UTF-8 bytes. Room is made before
   each read for the item's declared size and its drawn copy, and the
   budget holds during the read as after it: a read never holds more than
   its room. An item whose page 0 claims more is read again once with room

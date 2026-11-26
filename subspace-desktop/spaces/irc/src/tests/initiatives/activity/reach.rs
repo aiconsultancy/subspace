@@ -9,9 +9,9 @@ use gpui_kit::{Entity, SharedString, TestAppContext, VisualTestContext};
 use serde_json::{Map, Value, json};
 
 use super::super::super::remove::settle;
-use super::{answer, drawn, mounted, opened, running};
+use super::{answer, drawn, mounted, opened, refresh, running};
 use crate::Irc;
-use crate::view::inspector::activity::{PIECE, set_room, walked};
+use crate::view::inspector::activity::{PIECE, inline_bytes, set_room, walked};
 
 /// The most bytes one part of a body drawn in parts draws.
 const PART: usize = 64 * 1024;
@@ -176,4 +176,34 @@ fn a_step_shows_the_token_counts_this_version_does_not_know(cx: &mut TestAppCont
     assert_eq!(drawn(&on("tokens:0"), cx), "3");
     assert_eq!(drawn(&on("tokens:1:key"), cx), "detail");
     assert!(drawn(&on("tokens:1"), cx).contains("\"image\": \"IMAGE-TOKENS\""));
+}
+
+/// Round 7 delta (P2), SUB decision `084f5236` item 3 (Deimos's fixture):
+/// a token count this version does not know is kept to be shown, so the
+/// inline content charges every byte of it, its key and its value.
+#[gpui_kit::test]
+fn a_step_charges_the_token_counts_this_version_does_not_know(cx: &mut TestAppContext) {
+    let (board, cx) = opened(cx);
+    let inline = |cx: &mut VisualTestContext| {
+        board.read_with(cx, |board, _| {
+            inline_bytes(board.inspector_activity.as_ref().unwrap())
+        })
+    };
+    let step = |tokens| {
+        running(
+            json!([{"id": "i2", "kind": "step", "seq": 6, "startedAt": 1,
+                        "updatedAt": 2, "status": "completed", "tokens": tokens}]),
+        )
+    };
+    answer(&board, Ok(step(json!({"input": 10}))), cx);
+    let before = inline(cx);
+    refresh(&board, cx);
+    let extension = "x".repeat(8192);
+    answer(
+        &board,
+        Ok(step(json!({"input": 10, "newCount": extension}))),
+        cx,
+    );
+    assert_eq!(drawn(&on("tokens:0:key"), cx), "newCount");
+    assert_eq!(inline(cx) - before, 8192 + "newCount".len() as u64);
 }
