@@ -27,8 +27,9 @@ import secrets
 import shutil
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
-from fleet_setup import PAYLOAD, SetupError, read_json, require, run, say, write_json, write_private
+from fleet_setup import PAYLOAD, SetupError, password_file, read_json, require, run, say, write_json, write_private
 import standard_channels  # On the path through fleet_setup, from the installer's lib.
 
 HERE = Path(__file__).resolve().parent
@@ -104,6 +105,19 @@ def gather(args, saved):
     for key, value in (("tlsCert", args.tls_cert), ("tlsKey", args.tls_key)):
         if value:
             answers[key] = value
+    if args.auth_api_url and saved.get("authApiUrl") and not args.auth_api_token_file:
+        old, new = (auth_api_origin(value) for value in (saved["authApiUrl"], args.auth_api_url))
+        require((old.hostname, old.port or 443) == (new.hostname, new.port or 443),
+                "Changing --auth-api-url to a different origin requires --auth-api-token-file.")
+    if args.auth_api_url == "":
+        for key in ("authApiUrl", "authApiTokenFile", "authApiCaFile"):
+            answers.pop(key, None)
+    for key, value in (("authApiUrl", args.auth_api_url), ("authApiTokenFile", args.auth_api_token_file),
+                       ("authApiCaFile", args.auth_api_ca_file)):
+        if value:
+            answers[key] = value
+    if args.auth_api_ca_file == "":
+        answers.pop("authApiCaFile", None)
     answers["operator"] = args.operator or answers.get("operator") or os.environ.get("SUDO_USER") or ""
     answers["access"] = args.access or answers.get("access", "ssh")
     if args.ssh_from is not None:
@@ -129,6 +143,34 @@ def check(answers):
         if key in answers:
             require(Path(answers[key]).is_absolute() and Path(answers[key]).is_file(), f"{answers[key]} is not a file.")
     require(answers["operator"] and answers["operator"] != "root", "Pass --operator with the Linux login that SSHes in.")
+    if answers.get("authApiUrl"):
+        auth_api(answers)
+    else:
+        require(not (answers.get("authApiTokenFile") or answers.get("authApiCaFile")),
+                "Configure --auth-api-url before the IRC hook token or CA file.")
+
+
+def auth_api_origin(value):
+    try:
+        url = urlsplit(value)
+        require(url.scheme == "https" and re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", url.netloc)
+                and (url.port is None or url.port > 0) and url.path in ("", "/") and not (url.query or url.fragment),
+                "--auth-api-url must be the Subspace API's HTTPS origin.")
+    except ValueError:
+        raise SetupError("--auth-api-url must be the Subspace API's HTTPS origin.") from None
+    return url
+
+
+def auth_api(answers):
+    url = auth_api_origin(answers["authApiUrl"])
+    token_path = answers.get("authApiTokenFile")
+    require(token_path, "--auth-api-url requires --auth-api-token-file.")
+    token = password_file(token_path, "--auth-api-token-file", "IRC auth hook token")
+    require(re.fullmatch(r"[A-Za-z0-9_+/=-]{32,512}", token), "The IRC auth hook token has an invalid format.")
+    ca = answers.get("authApiCaFile")
+    require(not ca or (Path(ca).is_absolute() and Path(ca).is_file()),
+            "--auth-api-ca-file must name an existing absolute file.")
+    return f"https://{url.netloc}", token, ca
 
 
 def generated():
@@ -212,6 +254,15 @@ def render(answers, db=None):
             ergo_file(ETC / name, Path(answers[key]).read_text())
             volumes.append(f"{ETC / name}:/run/subspace/{name}:ro")
             environment[variable] = f"/run/subspace/{name}"
+    if answers.get("authApiUrl"):
+        url, token, ca = auth_api(answers)
+        ergo_file(ETC / "auth-api-token", token + "\n")
+        volumes.append(f"{ETC / 'auth-api-token'}:/run/subspace/auth-api-token:ro")
+        environment.update(IRC_AUTH_API_URL=url, IRC_AUTH_API_TOKEN_FILE="/run/subspace/auth-api-token")
+        if ca:
+            ergo_file(ETC / "auth-api-ca.pem", Path(ca).read_text())
+            volumes.append(f"{ETC / 'auth-api-ca.pem'}:/run/subspace/auth-api-ca.pem:ro")
+            environment["IRC_AUTH_API_CA_FILE"] = "/run/subspace/auth-api-ca.pem"
     service = {"environment": environment, "volumes": volumes}
     override = {"services": {"irc": service}}
     environment["IRC_HISTORY_DATABASE"] = "postgresql" if db else "sqlite"
@@ -377,6 +428,9 @@ def main(argv):
         parser.add_argument("--admin", help="comma-separated human IRC accounts (default admiral)")
         parser.add_argument("--tls-cert", help="absolute path to a certificate chain for the server name")
         parser.add_argument("--tls-key", help="absolute path to its private key")
+        parser.add_argument("--auth-api-url", help="HTTPS origin of the API that verifies IRC sign-in; '' disables it")
+        parser.add_argument("--auth-api-token-file", help="root-only file on this VM containing the API's IRC hook token")
+        parser.add_argument("--auth-api-ca-file", help="PEM CA file when the IRC server does not trust the API's TLS certificate")
         parser.add_argument("--operator", help="Linux login that may SSH in (default: the sudo user)")
         parser.add_argument("--access", choices=["ssh", "tailscale", "cloudflare"])
         parser.add_argument("--ssh-from", help="comma-separated addresses or CIDRs allowed to SSH in")

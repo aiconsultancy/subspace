@@ -1070,6 +1070,27 @@ rather than one fleet's Ergo:
 
 ### IRC sign-in
 
+When guided setup runs both Ergo and a development-sign-in API on one VM,
+they share an authentication hook over the private API Compose network.
+The API's signing secret is mounted only into the API. Ergo receives the
+separate hook token. The advertised IRC addresses are the loopback listener
+ports. An existing operator-configured IRC issuer is retained.
+
+If a managed shared Ergo server uses the API selected by `--api-target` or
+`--api-url`, first configure that API to issue credentials for the shared
+IRC server. Set its `IRC_AUTH_SERVERS`, `IRC_AUTH_ORGANISATION`,
+`IRC_CREDENTIAL_SECRET_FILE` and `IRC_AUTH_HOOK_TOKEN_FILE`. On the shared
+IRC VM, install the matching hook token in a root-only file and run:
+
+```sh
+sudo subspace-setup irc-server --auth-api-url https://subspace.example.com \
+  --auth-api-token-file /root/irc/hook-token
+```
+
+The API address must be reachable from that VM over HTTPS. Use
+`--auth-api-ca-file` to trust a private CA for the API. The server retains
+those settings across reruns. Clear the hook with `--auth-api-url ''`.
+
 `irc.auth` sets how the rear admiral and the captains sign in to IRC:
 `certificate` (SASL EXTERNAL) or `password` (SASL PLAIN). Guided setup uses
 certificates for fresh fleets and retains existing sign-in modes. Crew have no IRC accounts,
@@ -1447,18 +1468,25 @@ A project that lists none of the fleet's repositories is not checked.
 
 ## The API's agent listener
 
-The fleet's rear admiral and captains use the Subspace API as their own agent
-records, through its MCP server, without WorkOS, Entra or a token.
+With development sign-in and a shared OpenCode gateway, a new fleet uses
+Stargate's signed bridge by default for both the local PostgreSQL and
+`--database-url-file` modes. Setup registers the fleet with the local API
+and issues a short-lived enrollment token scoped to that fleet. The gateway
+holds the officers' keys, while their harnesses each reach its own Unix
+socket. No administrator token is written to the fleet's installer inputs.
 
-- **`subspace-setup`** offers the API's agent listener once:
+The legacy loopback listener remains available for existing fleets and for
+fleets containing only native Claude Agent SDK officers.
+
+- **`subspace-setup --agent-listener`** enables the legacy listener:
   `AGENT_PORT=3001` and `AGENT_ORGANISATION=dev:<organisation>` in
   `/root/fleet/api.env`, the development sign-in organisation the agents are
-  registered in, with a comment line recording the offer. It publishes
+  registered in. Existing listener settings and previous opt-outs are retained. Setup publishes
   `127.0.0.1:3001` only while the listener is on, and keeps
   `AGENT_ORGANISATION` in step with the organisation while it has the
   installer's `dev:<organisation>` form. An operator turns the listener off
-  for good by setting `AGENT_PORT=` (or deleting it), and back on with
-  `AGENT_PORT=3001`. Setup also turns it off when `NODE_ENV` is `production`,
+  with `--no-agent-listener` and back on with `--agent-listener`. Setup
+  also turns it off when `NODE_ENV` is `production`,
   where the API refuses it, and when development sign-in is off (WorkOS or
   Entra); the agents then have no way into the API yet. While it is on, setup adds
   `api.agentUrl: "http://127.0.0.1:3001"` to the fleet configuration.

@@ -488,9 +488,9 @@ def irc_config(value, slug, check_files, plain=False):
     if "compose" in value:
         require(mode == "local", "IRC compose settings require local mode.")
     if mode == "local":
-        compose = fields(value.get("compose", {}), "irc.compose", "repo ref tlsBind tlsPort tlsCert tlsKey serverName operator channels history", ["operator"])
+        compose = fields(value.get("compose", {}), "irc.compose", "repo ref tlsBind tlsPort tlsCert tlsKey serverName operator channels history localApiIrcHook", ["operator"])
         irc["compose"] = source({key: compose[key] for key in ("repo", "ref") if key in compose}, "IRC source", SUBSPACE_REPO)
-        for key in ("tlsCert", "tlsKey"):
+        for key in ("tlsCert", "tlsKey", "localApiIrcHook"):
             if key in compose:
                 irc["compose"][key] = absolute_file(compose[key], check_files)
         bind = ip(compose.get("tlsBind", LOOPBACK))
@@ -1406,7 +1406,8 @@ def validate(config, credentials, check_files=True):
                 "themselves.")
         require(any(person["harness"]["type"] == "opencode" for person in agents),
                 "api.enrolment needs an OpenCode officer: the shared gateway that holds the officers' keys serves "
-                "OpenCode officers, and a fleet of Claude Agent SDK officers has none.")
+                "OpenCode officers, and a fleet of Claude Agent SDK officers has none. With a local API, "
+                "subspace-setup --agent-listener enables the legacy listener instead.")
         release = tuple(int(part) for part in re.findall(r"\d+", STARGATE_RELEASE)[:3])
         require(stargate.get("ref", STARGATE_REF) != STARGATE_REF or release >= SUBSPACE_AGENTS_RELEASE,
                 f"api.enrolment needs a Stargate with its subspaceAgents section, from commit "
@@ -1865,7 +1866,7 @@ def subspace_mcp_url(cfg):
 
 
 def enrolled(cfg):
-    """Whether the fleet's officers reach a hosted API through Stargate's signing proxy (api.enrolment)."""
+    """Whether the fleet's officers reach the API through Stargate's signing proxy (api.enrolment)."""
     return bool((cfg.get("api") or {}).get("enrolment"))
 
 
@@ -3206,6 +3207,20 @@ def render_irc(cfg, extra):
             override["networks"] = {history["network"]: {"external": True}}
     else:
         history_path.unlink(missing_ok=True)
+    hook_path = config_dir / "api-hook-token"
+    if "localApiIrcHook" in local:
+        token = Path(local["localApiIrcHook"]).read_text().strip()
+        require(re.fullmatch(r"[0-9a-f]{48}", token), "The local API IRC hook token is invalid.")
+        write(hook_path, token + "\n", 0o440, ERGO_GID)
+        volumes.append(f"{hook_path}:/run/subspace/api-hook-token:ro")
+        service_env.update(IRC_AUTH_API_URL="http://api:3000",
+                           IRC_AUTH_API_TOKEN_FILE="/run/subspace/api-hook-token", IRC_AUTH_API_ALLOW_HTTP="true")
+        api_network = "subspace-api_default"
+        if api_network not in service.setdefault("networks", ["default"]):
+            service["networks"].append(api_network)
+        override.setdefault("networks", {})[api_network] = {"external": True}
+    else:
+        hook_path.unlink(missing_ok=True)
     write(config_dir / "override.json", json_text(override))
     write(config_dir / "source", str(APP / "src" / f"irc-{local['ref']}" / "subspace-irc") + "\n")
     unit = f"{PREFIX}irc.service"
@@ -3937,10 +3952,8 @@ def main(args):
             else:
                 print("Agent dispatch is off.")
             if enrolled(cfg):
-                print(f"The Subspace API is hosted at {cfg['api']['origin']}: each officer enrols its own key through "
-                      "Stargate with the fleet's enrolment token and reaches the API through its signing proxy. This "
-                      "VM keeps no administrator token and registers nothing; the API's administrators keep the "
-                      "fleet's records.")
+                print(f"Subspace API at {cfg['api']['origin']}: each officer enrols its own key through "
+                      "Stargate and uses its signing proxy. No administrator token is kept in the fleet configuration.")
                 if (APP / "src" / f"stargate-{cfg['stargate']['ref']}").is_dir():
                     require_subspace_agents(cfg)
                 else:
