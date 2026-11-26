@@ -101,6 +101,26 @@ export function createBudget(limit) {
     /** Whether `bytes` under `key` fit within `limit` beside what is never freed for it. */
     fits: (key, bytes) => fixedBeside(key) + bytes <= limit,
     /**
+     * The keys that holding `bytes` under `key` would free, least recently
+     * used first, freeing nothing: so an owner can let go of an entry in its
+     * own way before `reserve` would evict it.
+     *
+     * @param {string} key
+     * @param {number} bytes
+     * @returns {string[]}
+     */
+    wouldFree(key, bytes) {
+      let held = total - (entries.get(key)?.bytes ?? 0);
+      const freed = [];
+      const others = [...entries].filter(([other]) => other !== key && !kept(other)).sort((a, b) => a[1].used - b[1].used);
+      for (const [other, entry] of others) {
+        if (held + bytes <= limit) break;
+        freed.push(other);
+        held -= entry.bytes;
+      }
+      return freed;
+    },
+    /**
      * Hold `bytes` under `key`, replacing what it held, after freeing the
      * least recently used other entries until it fits. Each freed entry's
      * `evict(key)` is called once the reservation is in place, never in the

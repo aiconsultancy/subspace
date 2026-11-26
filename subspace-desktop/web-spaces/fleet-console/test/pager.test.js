@@ -263,3 +263,22 @@ test("budget: least recently opened first out; the latest request is the floor; 
   assert.equal(budget.reserve("e", 10, null), true, "a new request ends the last one's claim");
   assert.equal(budget.has("d"), false);
 });
+
+test("budget: wouldFree names what a reservation would free, in the order it would, and frees nothing", () => {
+  const budget = createBudget(100);
+  const out = [];
+  budget.reserve("pin", 20, null, { pinned: true });
+  budget.reserve("a", 30, (key) => out.push(key));
+  budget.reserve("b", 30, (key) => out.push(key));
+  budget.request("c");
+  budget.reserve("c", 10, (key) => out.push(key));
+  budget.touch("a");
+  assert.deepEqual(budget.wouldFree("pin", 20), [], "it fits");
+  assert.deepEqual(budget.wouldFree("pin", 40), ["b"], "the least recently used first; the latest request is never freed");
+  assert.deepEqual(budget.wouldFree("pin", 80), ["b", "a"]);
+  assert.deepEqual(budget.wouldFree("a", 60), ["b"], "what the key holds is replaced, not freed");
+  assert.equal(budget.used, 90);
+  assert.deepEqual(out, []);
+  budget.reserve("pin", 40, null, { pinned: true });
+  assert.deepEqual(out, ["b"], "reserve frees what it named");
+});

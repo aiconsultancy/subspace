@@ -322,8 +322,27 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     let bytes = 0;
     for (const turn of state.turns) bytes += bytesOfTurn(turn);
     const grew = bytes > budget.bytes(INLINE_KEY);
+    if (grew) refitShown(bytes);
     if (bytes !== budget.bytes(INLINE_KEY) || !budget.has(INLINE_KEY)) budget.reserve(INLINE_KEY, bytes, null, { pinned: true });
     if (grew) recheckWholes();
+  }
+
+  /** Whether `key` is an item read whole whose window the panel draws. */
+  const displayed = (key) => full.get(key)?.mode === "whole" && (positions.get(key)?.bytes ?? 0) > 0;
+
+  /**
+   * Before the pinned charge grows to `bytes`: each item read whole whose
+   * window is on show and that growth would free reads in parts instead,
+   * its window kept on show and charged until the part arrives (SUB
+   * decision a5275d81). One that is not on show is freed as before.
+   */
+  function refitShown(bytes) {
+    for (;;) {
+      // Each switch changes what is held, so what growth would free is asked again.
+      const key = budget.wouldFree(INLINE_KEY, bytes).find(displayed);
+      if (key === undefined) return;
+      wholeToParts(key);
+    }
   }
 
   /**
