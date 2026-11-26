@@ -200,7 +200,7 @@ fn a_joined_item_must_be_the_one_its_pages_name() {
 fn a_part_is_pinned_to_its_version_and_restarts_once_when_it_changed() {
     let go = AtomicBool::new(false);
     let first = page(6, 0, 3, "{\"a\":", 9);
-    let part = read_part(&go, 2, Some(&first), |number| {
+    let part = read_part(&go, 2, Some(first.version()), |number| {
         Ok(page(6, number, 3, "1}", 9))
     })
     .unwrap()
@@ -208,7 +208,7 @@ fn a_part_is_pinned_to_its_version_and_restarts_once_when_it_changed() {
     .unwrap();
     assert_eq!((part.page.page, part.newer), (2, false));
     let reads = Mutex::new(Vec::new());
-    let part = read_part(&go, 2, Some(&first), |number| {
+    let part = read_part(&go, 2, Some(first.version()), |number| {
         reads.lock().unwrap().push(number);
         Ok(page(7, number, 3, "{\"b\"", 10))
     })
@@ -221,7 +221,9 @@ fn a_part_is_pinned_to_its_version_and_restarts_once_when_it_changed() {
         [2, 0],
         "read again once, from page 0"
     );
-    let unsound = read_part(&go, 1, Some(&first), |number| Ok(page(6, number, 3, "", 9)));
+    let unsound = read_part(&go, 1, Some(first.version()), |number| {
+        Ok(page(6, number, 3, "", 9))
+    });
     assert!(matches!(
         unsound,
         Some(Err(PartFailed {
@@ -230,7 +232,30 @@ fn a_part_is_pinned_to_its_version_and_restarts_once_when_it_changed() {
         }))
     ));
     let cancel = AtomicBool::new(true);
-    assert!(read_part(&cancel, 1, Some(&first), |_| unreachable!("never read")).is_none());
+    assert!(
+        read_part(&cancel, 1, Some(first.version()), |_| unreachable!(
+            "never read"
+        ))
+        .is_none()
+    );
+}
+
+/// Round 4 review (P2), SUB decision `0c13b784` §5: a part read is
+/// pinned by its version alone, its `seq`, page count and bytes: the pin
+/// is `Copy`, so holds no page, and pages of one version share it whatever
+/// their data.
+#[test]
+fn a_part_is_pinned_by_its_version_alone_without_a_copy_of_the_page() {
+    fn pin<T: Copy + 'static>(pin: T) -> T {
+        pin
+    }
+    let first = page(6, 0, 3, &"x".repeat(64 * 1024), 9);
+    let version = pin(first.version());
+    assert!(std::mem::size_of_val(&version) <= 24, "no page in the pin");
+    assert!(version == page(6, 2, 3, "other", 9).version());
+    assert!(version != page(7, 0, 3, "x", 9).version());
+    assert!(version != page(6, 0, 4, "x", 9).version());
+    assert!(version != page(6, 0, 3, "x", 10).version());
 }
 
 /// An item that shrank answers a page past its last with 404: that is a
@@ -242,7 +267,7 @@ fn a_part_past_the_last_of_an_item_that_shrank_restarts_from_page_0() {
     let first = page(6, 0, 3, "{\"a\":", 9);
     for asked in [1, 2, 7] {
         let reads = Mutex::new(Vec::new());
-        let part = read_part(&go, asked, Some(&first), |number| {
+        let part = read_part(&go, asked, Some(first.version()), |number| {
             reads.lock().unwrap().push(number);
             if number == 0 {
                 Ok(page(7, 0, 1, "{}", 2))
@@ -256,7 +281,7 @@ fn a_part_past_the_last_of_an_item_that_shrank_restarts_from_page_0() {
         assert_eq!((part.page.page, part.page.seq, part.newer), (0, 7, true));
         assert_eq!(*reads.lock().unwrap(), [asked, 0], "page 0 read once");
     }
-    let failed = read_part(&go, 2, Some(&first), |number| {
+    let failed = read_part(&go, 2, Some(first.version()), |number| {
         if number == 0 {
             Err(Error::Busy(None))
         } else {
@@ -270,7 +295,7 @@ fn a_part_past_the_last_of_an_item_that_shrank_restarts_from_page_0() {
             error: Error::Busy(None)
         }))
     ));
-    let gone = read_part(&go, 0, Some(&first), |_| Err(Error::NotFound));
+    let gone = read_part(&go, 0, Some(first.version()), |_| Err(Error::NotFound));
     assert!(matches!(
         gone,
         Some(Err(PartFailed {

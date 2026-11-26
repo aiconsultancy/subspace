@@ -355,6 +355,29 @@ pub struct ItemPage {
     pub data: String,
 }
 
+impl ItemPage {
+    /// The version of the item this page belongs to.
+    pub fn version(&self) -> ItemVersion {
+        ItemVersion {
+            seq: self.seq,
+            pages: self.pages,
+            bytes: self.bytes,
+        }
+    }
+}
+
+/// What tells one version of a paged item from another: its `seq`, page
+/// count and total bytes. Pages of different versions do not join, and a
+/// part read is pinned to one ([`crate::FleetClient::activity_item_part`])
+/// without holding a copy of any page.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ItemVersion {
+    pub seq: u64,
+    pub pages: u32,
+    pub bytes: u64,
+}
+
 /// `V1AgentActivityEvent`: one coalesced change to an officer's turns.
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

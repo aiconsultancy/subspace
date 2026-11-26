@@ -8,7 +8,7 @@ use serde::Deserialize as _;
 use serde_json::Value;
 use url::Url;
 
-use super::{ActivityEntry, ActivityItem, AgentActivity, ItemPage, UnknownItem};
+use super::{ActivityEntry, ActivityItem, AgentActivity, ItemPage, ItemVersion, UnknownItem};
 use crate::{Error, FleetClient};
 
 /// Sixteen turns of settled JSON stay below Stargate's 64 MiB of settled
@@ -91,7 +91,8 @@ impl FleetClient {
     }
 
     /// Page `page` of an item too large to hold whole, of the version
-    /// `pinned` (a page read before); page 0 of the newest version instead
+    /// `pinned` (that of a page read before, [`ItemPage::version`], so the
+    /// caller keeps no copy of the page); page 0 of the newest version instead
     /// when the item changed since, or shrank so `page` is past its last,
     /// at most once. Run in the background;
     /// `None` once `cancel` is set, checked before each page is requested.
@@ -100,7 +101,7 @@ impl FleetClient {
         agent: &str,
         turn: &str,
         item: &str,
-        (page, pinned): (u32, Option<&ItemPage>),
+        (page, pinned): (u32, Option<ItemVersion>),
         cancel: &AtomicBool,
     ) -> Option<Result<ItemPart, PartFailed>> {
         read_part(cancel, page, pinned, |page| {
@@ -248,7 +249,7 @@ fn rest_of(
     let mut json = first.data.clone();
     for page in 1..first.pages {
         let next = read(page)?;
-        if !same_version(&next, first) {
+        if next.version() != first.version() {
             return Ok(None);
         }
         if next.data.is_empty() || (json.len() + next.data.len()) as u64 > first.bytes {
@@ -263,11 +264,6 @@ fn rest_of(
     }
 }
 
-/// Whether two pages belong to the same version of the item.
-fn same_version(page: &ItemPage, other: &ItemPage) -> bool {
-    page.seq == other.seq && page.pages == other.pages && page.bytes == other.bytes
-}
-
 /// Page `page` of the version `pinned`, or, when the item changed since,
 /// page 0 of its newest version: read again once, never more. A page past
 /// the item's last (404) means it shrank, so it changed too. A failure
@@ -276,7 +272,7 @@ fn same_version(page: &ItemPage, other: &ItemPage) -> bool {
 pub(crate) fn read_part(
     cancel: &AtomicBool,
     page: u32,
-    pinned: Option<&ItemPage>,
+    pinned: Option<ItemVersion>,
     mut read: impl FnMut(u32) -> Result<ItemPage, Error>,
 ) -> Option<Result<ItemPart, PartFailed>> {
     let mut read = |page| {
@@ -292,7 +288,7 @@ pub(crate) fn read_part(
         }))
     };
     let changed = match read(page)? {
-        Ok(answer) if pinned.is_none_or(|pinned| same_version(&answer, pinned)) => {
+        Ok(answer) if pinned.is_none_or(|pinned| answer.version() == pinned) => {
             return Some(Ok(ItemPart {
                 page: answer,
                 newer: false,
