@@ -44,6 +44,8 @@
 #                              Settings > Fleets token and configures the built-in Fleet Console on
 #                              macOS. With CAPTURE_FLEET=1 the API's aurora fleet records the address
 #                              as its fleetApiUrl, so the app uses it
+#   CAPTURE_FLEET_REFUSE_DIFF_PAGES=1  still fleet with busy file continuations (Retry-After: 30);
+#                              requires CAPTURE_FLEET_API=1
 #   CAPTURE_FLEET_TOKEN=<saved|none|moved>  with CAPTURE_FLEET_API=1, the aurora fleet's Settings > Fleets
 #                              token: saved for the fixture's address (the default), none saved, or
 #                              fixture-fleet-moved saved for https://aurora-old.example.test, so the
@@ -89,6 +91,10 @@ case "${CAPTURE_FLEET_TOKEN:-saved}" in
     saved | none | moved) ;;
     *) echo "CAPTURE_FLEET_TOKEN must be saved, none or moved" >&2; exit 2 ;;
 esac
+if [[ -n "${CAPTURE_FLEET_REFUSE_DIFF_PAGES:-}" && -z "${CAPTURE_FLEET_API:-}" ]]; then
+    echo "CAPTURE_FLEET_REFUSE_DIFF_PAGES requires CAPTURE_FLEET_API=1." >&2
+    exit 2
+fi
 if [[ "$platform" = Linux ]]; then
     for helper in dbus-run-session dbus-daemon xvfb-run Xvfb xauth; do
         type -P "$helper" >/dev/null || {
@@ -162,7 +168,11 @@ fi
 if [ -n "${CAPTURE_FLEET:-}" ]; then api_args+=(--fleet); fi
 fleet_api=""
 if [ -n "${CAPTURE_FLEET_API:-}" ]; then
-    python3 -u "$root/scripts/fleet_api_test_server.py" --port 0 --token fixture-fleet --log-requests \
+    fleet_args=(--port 0 --token fixture-fleet --log-requests)
+    if [ -n "${CAPTURE_FLEET_REFUSE_DIFF_PAGES:-}" ]; then
+        fleet_args+=(--tick 0 --refuse-diff-pages)
+    fi
+    python3 -u "$root/scripts/fleet_api_test_server.py" "${fleet_args[@]}" \
         >"$fixture/fleet-api.log" 2>&1 &
     servers+=("$!")
     fleet_api="$(server_address "$fixture/fleet-api.log")"

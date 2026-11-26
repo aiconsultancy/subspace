@@ -70,14 +70,18 @@ tree combines two successful file-list requests.
 
 - Wren: [first patch page](evidence/01-text-first.png),
   [continued patch](evidence/02-text-complete.png),
-  [full-line reader at its start](evidence/03-full-line.png) and
-  [scrolled to the line's closing `";`](evidence/03-full-line-end.png).
+  [full-line reader with a leading `⇥`](evidence/03-full-line.png) and
+  [scrolled to the closing `";` and `␍`](evidence/03-full-line-end.png).
 - Wren: [new PNG preview](evidence/04-png-new.png) and
   [old PNG preview](evidence/05-png-old.png).
 - Wren: removed binary, [first hex page](evidence/06-hex-first.png) and
   [last hex page](evidence/07-hex-last.png).
 - Talon: [no changed files](evidence/08-empty.png) (HTTP 200).
 - Corvin: [diff unavailable](evidence/09-unavailable.png) (HTTP 404).
+- Wren: disabled **Retry page** during the countdown for a
+  [text continuation](evidence/10-text-retry.png) and a
+  [binary continuation](evidence/11-binary-retry.png). The loaded patch and
+  bytes remain visible while the Fleet API asks the viewer to wait.
 
 ## Board checklist: `github`
 

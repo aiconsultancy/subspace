@@ -97,6 +97,25 @@ class FleetFixtureTests(unittest.TestCase):
         self.assertIn('+export const MAX_VISIBLE_TILES = 48;\n', joined)
         long_line = next(file['patch'] for file in last_list['files'] if file['path'] == 'src/chart/waypoints.ts')
         self.assertGreater(len(long_line.splitlines()[-1]), 550)
+        self.assertIn('+\texport const corridor', long_line)
+        self.assertTrue(long_line.endswith('";\r\n'))
+
+    def test_refuse_diff_pages_only_blocks_valid_file_continuations(self):
+        self.server.refuse_diff_pages = True
+        status, first = self.diff()
+        self.assertEqual(status, 200)
+        status, _ = self.diff(cursor=first['nextCursor'])
+        self.assertEqual(status, 200)
+        for path in ('src/chart/tiles.ts', 'fixtures/legacy-tile.bin'):
+            with self.subTest(path=path):
+                params = dict(path=path, at=first['fingerprint'])
+                status, page = self.diff(WREN_DIFF + '/file', **params)
+                self.assertEqual(status, 200)
+                cursor = (page['content']['nextPage'] if 'content' in page
+                          else page['file']['patchNextPage'])
+                status, _, headers = self.get(WREN_DIFF + '/file?' + urlencode(dict(params, page=cursor)))
+                self.assertEqual((status, headers['Retry-After']), (503, '30'))
+                self.assertEqual(self.diff(WREN_DIFF + '/file', page='invalid', **params), (400, None))
 
     def test_binary_pages_reassemble_both_png_sides_and_end_exactly_at_eof(self):
         snapshot = self.diff()[1]

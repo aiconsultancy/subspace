@@ -102,7 +102,7 @@ WORKING_DIFF = (
                   chart_png(b'\x15\x2d\x3e', b'\x71\xe3\xda')),
     binary_change('fixtures/legacy-tile.bin', 'removed', b'CHART\x00\x01\xff' + bytes(range(184))),
     text_change('src/chart/waypoints.ts', 'added', 1, 0,
-                '@@ -0,0 +1 @@\n+export const corridor = "' + 'AuroraFallowReachWaypoint' * 24 + '";\n'),
+                '@@ -0,0 +1 @@\n+\texport const corridor = "' + 'AuroraFallowReachWaypoint' * 24 + '";\r\n'),
 )
 DIFF_MODES = {'branch': sorted(COMMITTED_DIFF + WORKING_DIFF, key=lambda entry: entry[0]['path']),
               'committed': COMMITTED_DIFF, 'working': WORKING_DIFF}
@@ -771,13 +771,15 @@ class Handler(BaseHTTPRequestHandler):
         given = self.headers.get('Authorization', '')
         return hmac.compare_digest(given.encode(), f'Bearer {self.server.token}'.encode())
 
-    def reply(self, status, value, head=False):
+    def reply(self, status, value, head=False, *, retry_after=None):
         body = json.dumps(value).encode() if value is not None else b''
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Connection', 'close')
+        if retry_after is not None:
+            self.send_header('Retry-After', str(retry_after))
         self.cors()
         self.end_headers()
         if not head:
@@ -823,26 +825,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200 if value else 404, value or dict(error='Unknown crew member.'), head)
             if (len(route) >= 5 and route[0] == 'ships' and route[2] == 'crew'
                     and route[4:] in (['diff'], ['diff', 'file'])):
-                status, value = crew_diff(fleet, route[1], route[3], len(route) == 6, urlsplit(self.path).query)
+                file_route = len(route) == 6
+                query = urlsplit(self.path).query
+                status, value = crew_diff(fleet, route[1], route[3], file_route, query)
+                if status == 200 and file_route and self.server.refuse_diff_pages and 'page' in parse_qs(query):
+                    return self.reply(503, None, head, retry_after=30)
                 return self.reply(status, value, head)
         if route == ['events'] and not head and self.server.refuse_events:
             # Stargate serves at most eight streams and answers 503 beyond.
-            return self.busy()
+            return self.reply(503, dict(error='Too many event streams.'), retry_after=5)
         if route == ['events'] and not head:
             return self.stream()
         return self.reply(404, dict(error='Not found.'), head)
-
-    def busy(self):
-        body = json.dumps(dict(error='Too many event streams.')).encode()
-        self.send_response(503)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Retry-After', '5')
-        self.send_header('Content-Length', str(len(body)))
-        self.send_header('Connection', 'close')
-        self.cors()
-        self.end_headers()
-        self.wfile.write(body)
-        self.close_connection = True
 
     def stream(self):
         self.send_response(200)
@@ -879,7 +873,8 @@ class FleetServer(ThreadingHTTPServer):
     # connection past it. Hold a burst instead (capped at somaxconn).
     request_queue_size = 128
 
-    def __init__(self, port, token, tick=5.0, now=None, refuse_events=False, log_requests=False):
+    def __init__(self, port, token, tick=5.0, now=None, refuse_events=False, log_requests=False,
+                 *, refuse_diff_pages=False):
         if not token:
             raise ValueError('A non-empty fixture token is required.')
         self.token = token
@@ -890,6 +885,7 @@ class FleetServer(ThreadingHTTPServer):
         self.closing = threading.Event()
         self.tick = tick
         self.refuse_events = refuse_events
+        self.refuse_diff_pages = refuse_diff_pages
         super().__init__(('127.0.0.1', port), Handler)
         self.origin = f'http://127.0.0.1:{self.server_address[1]}'
         threading.Thread(target=self.simulate, daemon=True).start()
@@ -944,6 +940,8 @@ def main():
                         help='Seconds between simulated crew changes; 0 keeps the fleet still.')
     parser.add_argument('--refuse-events', action='store_true',
                         help='Answer the event stream with 503, as Stargate does with eight streams open.')
+    parser.add_argument('--refuse-diff-pages', action='store_true',
+                        help='Answer valid crew file continuations with 503 and Retry-After: 30.')
     parser.add_argument('--log-requests', action='store_true',
                         help="Print each request's method, path, status and Authorization fingerprint.")
     parser.add_argument('--snapshot', action='store_true',
@@ -953,7 +951,7 @@ def main():
         print(json.dumps(Fleet().snapshot(), indent=2))
         return
     server = FleetServer(options.port, options.token, options.tick, refuse_events=options.refuse_events,
-                         log_requests=options.log_requests)
+                         log_requests=options.log_requests, refuse_diff_pages=options.refuse_diff_pages)
     try:
         print(f'Stargate Fleet API fixture on {server.origin}', flush=True)
         server.serve_forever()

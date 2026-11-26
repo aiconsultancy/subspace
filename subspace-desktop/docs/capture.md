@@ -132,6 +132,11 @@ same service, wait for Aurora, then close Settings before the `link:` step.
 The [crew diff evidence](changes/crew-diff-view/README.md#screenshot-evidence)
 uses this path.
 
+Add `CAPTURE_FLEET_REFUSE_DIFF_PAGES=1` to hold the fleet still and return
+`503` with `Retry-After: 30` for valid text and binary file continuations.
+The file list and initial pages remain available, so a capture can show the
+disabled **Retry page** control alongside the already loaded content.
+
 `CAPTURE_FLEET_API=1` runs `scripts/fleet_api_test_server.py` on loopback: a
 fictional Stargate Fleet API v1 serving the demo world's `aurora` fleet (host
 `aurora-vm-01`, Stargate 0.43.0) with the routes, fields and event stream of
