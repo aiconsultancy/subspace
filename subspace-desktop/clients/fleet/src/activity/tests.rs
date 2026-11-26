@@ -131,7 +131,7 @@ fn the_snapshot_decodes_every_item_kind_and_keeps_newlines() {
     assert_eq!(tool.name.as_deref(), Some("bash"));
     assert_eq!(tool.input, Some(json!({"command": "ls"})));
     let content = tool.content.as_deref().unwrap();
-    assert!(matches!(&content[0], ActivityContent::Text { text } if text == "a\nb"));
+    assert!(matches!(&content[0], ActivityContent::Text { text, .. } if text == "a\nb"));
     assert!(matches!(&content[1], ActivityContent::File { mime, .. } if mime == "text/plain"));
     assert!(
         matches!(&content[2], ActivityContent::Other(raw) if *raw == json!({"type": "hologram"}))
@@ -142,6 +142,38 @@ fn the_snapshot_decodes_every_item_kind_and_keeps_newlines() {
     assert_eq!((paged.paged.pages, paged.paged.bytes), (3, 140_000));
     assert_eq!(paged.call_id.as_deref(), Some("call-2"));
     assert!(matches!(&now.items[4], ActivityEntry::Unknown(item) if item.kind == "hologram"));
+}
+
+/// Round 5 thermo (P2), SUB decision `33ccecf6` item 4: a known shape
+/// keeps every field this version does not know, read inline or joined
+/// from pages alike, so the view can still show it.
+#[test]
+fn a_known_shape_keeps_the_fields_it_does_not_know() {
+    let value = json!({
+        "id": "i3", "seq": 6, "startedAt": 1, "updatedAt": 2, "kind": "tool", "callId": "c",
+        "status": "completed", "sandbox": "on",
+        "content": [{"type": "text", "text": "seen", "detail": "kept"},
+                    {"type": "file", "uri": "data:,", "mime": "text/plain", "size": 3}],
+        "error": {"type": "Timeout", "message": "slow", "hint": "retry"}
+    });
+    let check = |entry: ActivityEntry| {
+        let ActivityEntry::Item(item) = entry else {
+            panic!("an item");
+        };
+        let ActivityItem::Tool(tool) = *item else {
+            panic!("a tool call");
+        };
+        assert_eq!(tool.extra.get("sandbox"), Some(&json!("on")));
+        assert!(!tool.extra.contains_key("id") && !tool.extra.contains_key("kind"));
+        let content = tool.content.as_deref().unwrap();
+        assert!(matches!(&content[0], ActivityContent::Text { text, extra }
+            if text == "seen" && extra.get("detail") == Some(&json!("kept")) && extra.len() == 1));
+        assert!(matches!(&content[1], ActivityContent::File { extra, .. }
+            if extra.get("size") == Some(&json!(3)) && extra.len() == 1));
+        assert_eq!(tool.error.unwrap().extra.get("hint"), Some(&json!("retry")));
+    };
+    check(serde_json::from_value(value.clone()).unwrap());
+    check(decode_item(&value.to_string(), "i3", 6).ok().unwrap());
 }
 
 #[test]

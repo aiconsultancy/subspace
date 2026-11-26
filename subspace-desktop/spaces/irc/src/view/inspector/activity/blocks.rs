@@ -2,15 +2,23 @@
 //! label or none: one list that drawing ([`super::item`]), measuring
 //! ([`super::size`]) and drawing in parts ([`super::pieces`]) all read,
 //! so what is charged is what is drawn.
+//!
+//! A label is fixed, structural text this version writes (SUB decision
+//! `33ccecf6` item 2): `Input`, `Output`, `Name` and the like. Everything
+//! an officer's tools sent, a tool's name, an argument's key, a file's
+//! name and type, a model, a status that is not a short word, is a block's
+//! text, measured and drawn in parts like any other. Fields this version
+//! does not know follow, each as its key and its JSON (item 4), so nothing
+//! sent is out of reach.
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use subspace_client_fleet::activity::{
-    ActivityContent, ActivityEntry, ActivityError, ActivityItem, ToolItem,
+    ActivityContent, ActivityEntry, ActivityError, ActivityItem, PagedItem, StepItem, StepModel,
+    TextItem, ToolItem,
 };
 
 use super::Held;
 use super::parts::{LONG, PART};
-use super::text::visible;
 
 /// What a block draws: text as it is, or a value formatted for it.
 #[derive(Clone, Copy)]
@@ -24,17 +32,19 @@ pub(super) enum Source<'a> {
 
 /// One block of an item's body.
 pub(super) struct Block<'a> {
-    /// What its element's ID adds to the item's: `{item}:{suffix}`.
+    /// What its element's ID adds to the item's: `{item}:{suffix}`. Made of
+    /// this version's words and indices only, never of what was sent.
     pub(super) suffix: String,
-    /// The small label above it, as drawn; none for a reply's text.
-    pub(super) label: Option<String>,
+    /// The small label above it, fixed text; none for a reply's text or a
+    /// field's value under its key.
+    pub(super) label: Option<&'static str>,
     pub(super) source: Source<'a>,
     /// Longer than this, in bytes drawn, it shows in parts of [`PART`].
     pub(super) long: usize,
 }
 
 impl<'a> Block<'a> {
-    fn new(suffix: String, label: Option<String>, source: Source<'a>) -> Self {
+    fn new(suffix: String, label: Option<&'static str>, source: Source<'a>) -> Self {
         Self {
             suffix,
             label,
@@ -42,15 +52,20 @@ impl<'a> Block<'a> {
             long: LONG,
         }
     }
+
+    fn text(suffix: impl Into<String>, label: &'static str, text: &'a str) -> Self {
+        Self::new(suffix.into(), Some(label), Source::Text(text))
+    }
 }
 
 /// The blocks of an entry's body; for an item read on demand, of what is
-/// held of it (`held`): nothing until it is read.
+/// held of it (`held`): the item once read whole, otherwise what its
+/// placeholder names. A page read in parts draws beside them, within its
+/// read's reservation ([`super::load`]).
 pub(super) fn entry_blocks<'a>(entry: &'a ActivityEntry, held: Option<&'a Held>) -> Vec<Block<'a>> {
     match (entry, held) {
         (ActivityEntry::Paged(_), Some(Held::Whole(read))) => whole_blocks(read),
-        (ActivityEntry::Paged(_), Some(Held::Parts(parts))) => page_blocks(&parts.page.data),
-        (ActivityEntry::Paged(_), _) => no_blocks(),
+        (ActivityEntry::Paged(paged), _) => paged_blocks(paged),
         (entry, _) => whole_blocks(entry),
     }
 }
@@ -60,23 +75,31 @@ pub(super) fn whole_blocks(entry: &ActivityEntry) -> Vec<Block<'_>> {
     match entry {
         ActivityEntry::Item(item) => item_blocks(item),
         ActivityEntry::Unknown(unknown) => json_blocks(&unknown.raw),
-        ActivityEntry::Paged(_) => no_blocks(),
+        // A page read never decodes as a paged item: drawn as invalid.
+        ActivityEntry::Paged(_) => Vec::new(),
     }
 }
 
-/// Nothing to draw: an item not read yet.
-fn no_blocks<'a>() -> Vec<Block<'a>> {
-    Vec::new()
+/// What an item too large to send inline names besides its size: its
+/// status when that is not a short word, its kind when this version does
+/// not know it, and its name.
+pub(super) fn paged_blocks(paged: &PagedItem) -> Vec<Block<'_>> {
+    status_block(&paged.status)
+        .into_iter()
+        .chain(kind_block(&paged.kind))
+        .chain(name_block(paged.name.as_deref()))
+        .collect()
+}
+
+/// A kind this version does not know.
+fn kind_block(kind: &str) -> Option<Block<'_>> {
+    (!matches!(kind, "tool" | "text" | "reasoning" | "step"))
+        .then(|| Block::text("kind", "Kind", kind))
 }
 
 /// An item of a kind this version does not know: its JSON.
 fn json_blocks(raw: &Value) -> Vec<Block<'_>> {
     vec![Block::new("json".to_owned(), None, Source::Json(raw))]
-}
-
-/// One page of the JSON of an item read part by part.
-fn page_blocks(data: &str) -> Vec<Block<'_>> {
-    vec![page_block(data)]
 }
 
 /// One page of the JSON of an item read part by part. A page holds at
@@ -92,58 +115,127 @@ pub(super) fn page_block(data: &str) -> Block<'_> {
 /// The blocks of an item of a kind this version knows.
 pub(super) fn item_blocks(item: &ActivityItem) -> Vec<Block<'_>> {
     match item {
-        ActivityItem::Text(words) | ActivityItem::Reasoning(words) => text_blocks(&words.text),
-        ActivityItem::Step(step) => error_blocks(step.error.as_ref()),
+        ActivityItem::Text(words) | ActivityItem::Reasoning(words) => text_blocks(words),
+        ActivityItem::Step(step) => step_blocks(step),
         ActivityItem::Tool(tool) => tool_blocks(tool),
     }
 }
 
+/// A status as the card's heading shows it: a short word of letters,
+/// digits, `-` and `_`, as Stargate sends; anything else is drawn in the
+/// body instead ([`status_block`]), so the heading stays bounded.
+pub(super) fn short_status(status: &str) -> Option<&str> {
+    let short = (1..=SHORT_STATUS).contains(&status.len())
+        && status
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+    short.then_some(status)
+}
+
+/// The most bytes a status the heading shows has.
+const SHORT_STATUS: usize = 24;
+
+/// A status the heading cannot show ([`short_status`]).
+fn status_block(status: &str) -> Option<Block<'_>> {
+    short_status(status)
+        .is_none()
+        .then(|| Block::text("status", "Status", status))
+}
+
+/// A name, when there is one.
+fn name_block(name: Option<&str>) -> Option<Block<'_>> {
+    name.map(|name| Block::text("name", "Name", name))
+}
+
 /// A reply's or reasoning's text, with no label.
-fn text_blocks(text: &str) -> Vec<Block<'_>> {
-    vec![Block::new("text".to_owned(), None, Source::Text(text))]
-}
-
-/// A provider failure, if there was one.
-fn error_blocks(error: Option<&ActivityError>) -> Vec<Block<'_>> {
-    error.into_iter().map(error_block).collect()
-}
-
-/// A tool's input as parsed and as streamed, then its progress or
-/// metadata, its output and its error.
-fn tool_blocks(tool: &ToolItem) -> Vec<Block<'_>> {
-    let mut blocks = input_blocks(tool);
-    blocks.extend(raw_block(tool));
-    blocks.extend(meta_blocks(tool));
-    blocks.extend(tool.content.iter().flatten().enumerate().map(output_block));
-    blocks.extend(error_blocks(tool.error.as_ref()));
+fn text_blocks(words: &TextItem) -> Vec<Block<'_>> {
+    let mut blocks: Vec<Block<'_>> = status_block(&words.status).into_iter().collect();
+    blocks.push(Block::new(
+        "text".to_owned(),
+        None,
+        Source::Text(&words.text),
+    ));
+    blocks.extend(extra_blocks("", &words.extra));
     blocks
 }
 
-/// A tool's input as parsed, field by field.
-fn input_blocks(tool: &ToolItem) -> Vec<Block<'_>> {
-    match &tool.input {
-        Some(input) => value_blocks("input", "Input", input),
-        None => no_blocks(),
-    }
+/// A model step: its model and how it finished, then its failure.
+fn step_blocks(step: &StepItem) -> Vec<Block<'_>> {
+    let mut blocks: Vec<Block<'_>> = status_block(&step.status).into_iter().collect();
+    blocks.extend(step.model.iter().flat_map(model_blocks));
+    blocks.extend(
+        step.finish
+            .as_deref()
+            .map(|finish| Block::text("finish", "Finish", finish)),
+    );
+    blocks.extend(error_blocks(step.error.as_ref()));
+    blocks.extend(extra_blocks("", &step.extra));
+    blocks
+}
+
+/// The model a step ran on: its provider, ID and variant.
+fn model_blocks(model: &StepModel) -> Vec<Block<'_>> {
+    let mut blocks = vec![
+        Block::text("provider", "Provider", &model.provider),
+        Block::text("model", "Model", &model.id),
+    ];
+    blocks.extend(
+        model
+            .variant
+            .as_deref()
+            .map(|variant| Block::text("variant", "Variant", variant)),
+    );
+    blocks.extend(extra_blocks("model:", &model.extra));
+    blocks
+}
+
+/// A provider failure, if there was one, then its fields this version
+/// does not know.
+fn error_blocks(error: Option<&ActivityError>) -> Vec<Block<'_>> {
+    let Some(error) = error else {
+        return Vec::new();
+    };
+    let mut blocks = vec![Block::new(
+        "error".to_owned(),
+        Some("Error"),
+        Source::Error(error),
+    )];
+    blocks.extend(extra_blocks("error:", &error.extra));
+    blocks
+}
+
+/// A tool's name, its input as parsed and as streamed, then its progress
+/// or metadata, its output and its error.
+fn tool_blocks(tool: &ToolItem) -> Vec<Block<'_>> {
+    let mut blocks: Vec<Block<'_>> = status_block(&tool.status).into_iter().collect();
+    blocks.extend(name_block(tool.name.as_deref()));
+    blocks.extend(
+        tool.input
+            .iter()
+            .flat_map(|input| value_blocks("input", "Input", input)),
+    );
+    blocks.extend(raw_block(&tool.raw_input));
+    let progress = progress_label(&tool.status);
+    blocks.extend(
+        tool.metadata
+            .iter()
+            .flat_map(|metadata| value_blocks("meta", progress, metadata)),
+    );
+    blocks.extend(
+        tool.content
+            .iter()
+            .flatten()
+            .enumerate()
+            .flat_map(output_blocks),
+    );
+    blocks.extend(error_blocks(tool.error.as_ref()));
+    blocks.extend(extra_blocks("", &tool.extra));
+    blocks
 }
 
 /// A tool's input as streamed, when any was.
-fn raw_block(tool: &ToolItem) -> Option<Block<'_>> {
-    (!tool.raw_input.is_empty()).then(|| {
-        Block::new(
-            "raw".to_owned(),
-            Some("Input as streamed".to_owned()),
-            Source::Text(&tool.raw_input),
-        )
-    })
-}
-
-/// A tool's progress while it runs, its metadata once it is done.
-fn meta_blocks(tool: &ToolItem) -> Vec<Block<'_>> {
-    match &tool.metadata {
-        Some(metadata) => value_blocks("meta", progress_label(&tool.status), metadata),
-        None => no_blocks(),
-    }
+fn raw_block(raw: &str) -> Option<Block<'_>> {
+    (!raw.is_empty()).then(|| Block::text("raw", "Input as streamed", raw))
 }
 
 fn progress_label(status: &str) -> &'static str {
@@ -154,64 +246,82 @@ fn progress_label(status: &str) -> &'static str {
     }
 }
 
-/// One part of a tool's output: text, a file, or the JSON of a type this
-/// version does not know.
-fn output_block((index, content): (usize, &ActivityContent)) -> Block<'_> {
+/// One part of a tool's output: text, a file with its name and type, or
+/// the JSON of a type this version does not know.
+fn output_blocks((index, content): (usize, &ActivityContent)) -> Vec<Block<'_>> {
     let suffix = format!("out:{index}");
     match content {
-        ActivityContent::Text { text } => output_text(suffix, text),
-        ActivityContent::File { uri, mime, name } => {
-            output_file(suffix, uri, file_label(name.as_deref(), mime))
-        }
-        ActivityContent::Other(raw) => output_other(suffix, raw),
+        ActivityContent::Text { text, extra } => output_text(suffix, text, extra),
+        ActivityContent::File {
+            uri,
+            mime,
+            name,
+            extra,
+        } => output_file(suffix, (uri, mime, name.as_deref()), extra),
+        ActivityContent::Other(raw) => vec![Block::new(
+            suffix,
+            Some("Output of a type this version can't show"),
+            Source::Json(raw),
+        )],
     }
 }
 
-fn output_text(suffix: String, text: &str) -> Block<'_> {
-    Block::new(suffix, Some("Output".to_owned()), Source::Text(text))
+/// Text a tool gave, then its fields this version does not know.
+fn output_text<'a>(suffix: String, text: &'a str, extra: &'a Map<String, Value>) -> Vec<Block<'a>> {
+    let mut blocks = vec![Block::text(suffix.clone(), "Output", text)];
+    blocks.extend(extra_blocks(&format!("{suffix}:"), extra));
+    blocks
 }
 
-/// A file a tool gave: its URI, under its name and type.
-fn output_file(suffix: String, uri: &str, label: String) -> Block<'_> {
-    Block::new(suffix, Some(visible(&label)), Source::Text(uri))
+/// A file a tool gave: its URI, name and type, then its fields this
+/// version does not know.
+fn output_file<'a>(
+    suffix: String,
+    (uri, mime, name): (&'a str, &'a str, Option<&'a str>),
+    extra: &'a Map<String, Value>,
+) -> Vec<Block<'a>> {
+    let mut blocks = vec![Block::text(suffix.clone(), "File", uri)];
+    blocks.extend(name.map(|name| Block::text(format!("{suffix}:name"), "Name", name)));
+    blocks.push(Block::text(format!("{suffix}:type"), "Type", mime));
+    blocks.extend(extra_blocks(&format!("{suffix}:"), extra));
+    blocks
 }
 
-/// `File · notes.txt · text/plain`, as sent.
-fn file_label(name: Option<&str>, mime: &str) -> String {
-    match name {
-        Some(name) => format!("File · {name} · {mime}"),
-        None => format!("File · {mime}"),
-    }
-}
-
-fn output_other(suffix: String, raw: &Value) -> Block<'_> {
-    Block::new(
-        suffix,
-        Some("Output of a type this version can't show".to_owned()),
-        Source::Json(raw),
-    )
-}
-
-/// A JSON value: an object field by field, a string field as its text,
-/// anything else as indented JSON.
-fn value_blocks<'a>(suffix: &str, label: &str, value: &'a Value) -> Vec<Block<'a>> {
+/// A JSON value: an object field by field, each its key under `label`
+/// and then its value; anything else whole under `label`.
+fn value_blocks<'a>(suffix: &str, label: &'static str, value: &'a Value) -> Vec<Block<'a>> {
     match value {
-        Value::Object(fields) if !fields.is_empty() => fields
-            .iter()
-            .map(|(key, value)| {
-                Block::new(
-                    format!("{suffix}:{key}"),
-                    Some(visible(&format!("{label} · {key}"))),
-                    json_source(value),
-                )
-            })
-            .collect(),
+        Value::Object(fields) if !fields.is_empty() => field_blocks(suffix, label, fields),
         value => vec![Block::new(
             suffix.to_owned(),
-            Some(label.to_owned()),
+            Some(label),
             json_source(value),
         )],
     }
+}
+
+/// Each field of `fields`: its key, as text under `label`, then its value
+/// under no label. Their IDs number the fields, never name them.
+fn field_blocks<'a>(
+    suffix: &str,
+    label: &'static str,
+    fields: &'a Map<String, Value>,
+) -> Vec<Block<'a>> {
+    fields
+        .iter()
+        .enumerate()
+        .flat_map(|(index, (key, value))| {
+            [
+                Block::text(format!("{suffix}:{index}:key"), label, key),
+                Block::new(format!("{suffix}:{index}"), None, json_source(value)),
+            ]
+        })
+        .collect()
+}
+
+/// The fields a known shape carries that this version does not know.
+fn extra_blocks<'a>(prefix: &str, extra: &'a Map<String, Value>) -> Vec<Block<'a>> {
+    field_blocks(&format!("{prefix}extra"), "Other field", extra)
 }
 
 /// A string as its text, anything else as indented JSON.
@@ -220,15 +330,6 @@ fn json_source(value: &Value) -> Source<'_> {
         Value::String(text) => Source::Text(text),
         value => Source::Json(value),
     }
-}
-
-/// A provider failure.
-fn error_block(error: &ActivityError) -> Block<'_> {
-    Block::new(
-        "error".to_owned(),
-        Some("Error".to_owned()),
-        Source::Error(error),
-    )
 }
 
 /// The text a block formats, kept while it is drawn; `None` for text drawn
@@ -248,15 +349,29 @@ pub(super) fn pretty(value: &Value) -> String {
 
 /// A provider failure as drawn: its type, message, status and response.
 pub(super) fn error_text(error: &ActivityError) -> String {
-    let mut text = format!("{}: {}", error.kind, error.message);
+    error_segments(error).concat()
+}
+
+/// A provider failure as the pieces of text it draws, in order: what is
+/// formatted ([`error_text`]) and what is drawn in parts
+/// ([`super::pieces`]) both read these, so a part never formats the
+/// whole failure.
+pub(super) fn error_segments(error: &ActivityError) -> Vec<std::borrow::Cow<'_, str>> {
+    use std::borrow::Cow;
+    let mut segments: Vec<Cow<'_, str>> = vec![
+        Cow::Borrowed(error.kind.as_str()),
+        Cow::Borrowed(": "),
+        Cow::Borrowed(error.message.as_str()),
+    ];
     if let Some(status) = error.status {
-        text.push_str(&format!("\nStatus {status}"));
+        segments.push(Cow::Owned(format!("\nStatus {status}")));
     }
     if let Some(wait) = error.retry_after_ms {
-        text.push_str(&format!("\nRetry after {wait} ms"));
+        segments.push(Cow::Owned(format!("\nRetry after {wait} ms")));
     }
     if let Some(body) = &error.response_body {
-        text.push_str(&format!("\n{body}"));
+        segments.push(Cow::Borrowed("\n"));
+        segments.push(Cow::Borrowed(body.as_str()));
     }
-    text
+    segments
 }

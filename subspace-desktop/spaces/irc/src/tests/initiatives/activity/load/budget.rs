@@ -7,8 +7,8 @@ use gpui_kit::{Entity, SharedString, TestAppContext, VisualTestContext};
 
 use super::super::super::super::remove::settle;
 use super::{
-    Error, Irc, PAGE, answer, changed_under_parts, drawn, held_bytes, label, late_reply, load,
-    loaded_keys, on, paged, read_of, refresh, running, served, served_json, set_budget, tool,
+    Error, Irc, PAGE, answer, changed_under_parts, drawn, held_bytes, in_parts, label, late_reply,
+    load, loaded_keys, on, paged, read_of, refresh, running, served, served_json, set_budget, tool,
 };
 use crate::view::inspector::activity::{drawn_bytes, set_room};
 
@@ -118,13 +118,18 @@ fn a_late_reply_is_dropped(cx: &mut TestAppContext) {
     let first = board.read_with(cx, |board, _| {
         read_of(board.inspector_activity.as_ref().unwrap(), "t-now", "i3").unwrap()
     });
-    // No room for any item: the next snapshot lets it go.
+    // No room for any item, and a snapshot of a new generation: the item
+    // read for the old one goes with it (SUB decision `33ccecf6` item 3).
+    // A refresh of the same generation would keep it: it is the item last
+    // asked for, which the floor keeps (item 1).
     board.update(cx, |board, _| {
         set_budget(board.inspector_activity.as_mut().unwrap(), 0);
     });
     let bytes = served.item.lock().unwrap().1.len();
     refresh(&board, cx);
-    answer(&board, Ok(running(paged(6, bytes))), cx);
+    let mut next = running(paged(6, bytes));
+    next.cursor.generation = "g2".to_owned();
+    answer(&board, Ok(next), cx);
     let keys = |board: &Entity<Irc>, cx: &mut VisualTestContext| {
         board.read_with(cx, |board, _| {
             loaded_keys(board.inspector_activity.as_ref().unwrap())
@@ -162,14 +167,17 @@ fn an_item_that_grew_past_its_room_is_read_whole_once_room_is_made(cx: &mut Test
     let budget = 8 * PAGE as u64;
     budgeted(&board, budget, cx);
     // The snapshot still names the short version.
+    let short = served.item.lock().unwrap().1.len() as u64;
     served.serve(7, tool(7, &format!("{}GROWN-END", "g".repeat(200_000))));
     let (json, pages) = served_json(&served);
     let inline = held(&board, cx);
     cx.update(|window, cx| window.click(SharedString::from(on("load")), cx));
+    // SUB decision `33ccecf6` item 1: one reservation from admission, room
+    // for page 0 and the drawn copy of the size the snapshot names.
     assert_eq!(
         held(&board, cx) - inline,
-        PAGE as u64,
-        "room for page 0 while read"
+        PAGE as u64 + short,
+        "room for page 0 and its drawn copy while read"
     );
     settle(cx);
     let asked = served.asked();
@@ -180,7 +188,14 @@ fn an_item_that_grew_past_its_room_is_read_whole_once_room_is_made(cx: &mut Test
     );
     assert!(asked[0].contains("page=0") && asked[1].contains("page=0"));
     assert!(drawn(&on("out:0"), cx).ends_with("GROWN-END"));
-    assert_eq!(held(&board, cx) - inline, json.len() as u64);
+    // What it holds and draws, within the reservation made for the size
+    // page 0 claimed: the item and its drawn copy.
+    let read = held(&board, cx) - inline;
+    assert!(
+        read > json.len() as u64 && read <= 2 * json.len() as u64,
+        "{read} for {}",
+        json.len()
+    );
     assert!(held(&board, cx) <= budget);
 }
 
@@ -196,15 +211,58 @@ fn load_in_full_needs_room_for_the_item_and_its_drawn_copy(cx: &mut TestAppConte
 
     roomed(&board, 2 * bytes + PAGE as u64, cx);
     assert_eq!(label(&on("load"), cx).as_deref(), Some("Load in full"));
+    let inline = held(&board, cx);
     load(cx);
     assert!(drawn(&on("out:0"), cx).ends_with('x'));
     let (held, drawn) = board.read_with(cx, |board, _| {
         let selection = board.inspector_activity.as_ref().unwrap();
         (held_bytes(selection), drawn_bytes(selection))
     });
-    let inline = held - bytes;
     assert!(
         held + drawn <= inline + 2 * bytes + PAGE as u64,
         "{held} + {drawn}"
     );
+}
+
+/// Round 5 thermo (P1), SUB decisions `8357ec55` §2 and `33ccecf6` item
+/// 1: a refresh never lets go of the part of the item last asked for,
+/// even when the inline content leaves no room: the floor keeps it, and
+/// moving to another part still works there.
+#[gpui_kit::test]
+fn a_refresh_keeps_the_part_last_asked_for_at_the_floor(cx: &mut TestAppContext) {
+    let (board, served, cx) = in_parts(cx, &"x".repeat(200_000));
+    let (json, pages) = served_json(&served);
+    roomed(&board, 0, cx);
+    let bytes = served.item.lock().unwrap().1.len();
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(6, bytes))), cx);
+    let keys = board.read_with(cx, |board, _| {
+        loaded_keys(board.inspector_activity.as_ref().unwrap())
+    });
+    assert_eq!(keys, vec![("t-now".to_owned(), "i3".to_owned())]);
+    shows_part(cx, (1, pages), &json[..PAGE]);
+
+    cx.update(|window, cx| window.click(SharedString::from(on("page-next")), cx));
+    settle(cx);
+    shows_part(cx, (2, pages), &json[PAGE..2 * PAGE]);
+}
+
+/// Round 5 thermo (P1), SUB decisions `8357ec55` §3 and `33ccecf6` item
+/// 1: an item read whole draws within its own reservation, never planned
+/// beside the snapshot's bodies, so it still draws whole when no room is
+/// left for them.
+#[gpui_kit::test]
+fn an_item_read_whole_draws_within_its_own_reservation(cx: &mut TestAppContext) {
+    let (board, _served, cx) = served(cx, 6, &format!("{}END", "x".repeat(100_000)));
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load in full"));
+    load(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("END"));
+    roomed(&board, 0, cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("END"), "drawn whole");
+    assert!(drawn(&on("held-back"), cx).is_empty());
+    assert!(drawn(&on("pieced"), cx).is_empty());
+    let planned = board.read_with(cx, |board, _| {
+        drawn_bytes(board.inspector_activity.as_ref().unwrap())
+    });
+    assert_eq!(planned, 0, "not planned");
 }

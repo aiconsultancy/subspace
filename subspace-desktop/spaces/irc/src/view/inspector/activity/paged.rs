@@ -1,24 +1,29 @@
 //! An item too large to send inline: what it is and a load action, then
 //! the item whole once read, or, when it is larger than the view can hold,
-//! its JSON one page at a time, every page in reach.
+//! its JSON one page at a time, every page in reach. Its heading is fixed
+//! words, its status and its size; its name is in its body.
 
 use gpui_kit::{AnyElement, Context, IntoElement as _, SharedString};
 use subspace_client_fleet::activity::{ActivityEntry, PagedItem};
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
-use super::blocks::page_block;
+use super::blocks::{page_block, paged_blocks};
 use super::draw::Pieced;
+use super::load::Window;
 use super::parts::{Draw, body_block, caption, card, part_controls};
-use super::text::visible;
 use super::{Held, Loaded, Parts, Selection};
 use crate::Irc;
 
 /// An item too large to send inline: what it is, then a load action, or
-/// the item in full once read.
+/// the item in full once read. Until it is read whole, what its
+/// placeholder names is drawn within the plan like any inline body: held
+/// back (`held_back`, the bytes it would draw) or in parts (`pieced`), its
+/// load action stays. What is read of it draws within its read's own
+/// reservation, whatever the plan ([`super::load`]).
 pub(super) fn paged(
     selection: &Selection,
-    (turn, paged, pieced): (&str, &PagedItem, Option<&Pieced>),
+    (turn, paged, pieced, held_back): (&str, &PagedItem, Option<&Pieced>, Option<u64>),
     draw: &Draw<'_>,
     cx: &Context<Irc>,
 ) -> AnyElement {
@@ -27,20 +32,28 @@ pub(super) fn paged(
     let loaded = selection.loaded.get(&key);
     // Read whole only when the item and its drawn copy both fit the room.
     let whole = super::load::fits_whole(selection, paged.paged.bytes);
-    let shown = Drawing { draw, pieced };
-    let parts = load_parts(&id, (&key, paged, whole), loaded, &shown, cx);
-    card(&id, &label(paged), parts, cx)
+    let mut parts = match (loaded.map(|loaded| &loaded.held), held_back, pieced) {
+        (Some(Held::Whole(_)), ..) => Vec::new(),
+        (_, Some(bytes), _) => super::draw::held_back_parts(&id, (&key, bytes), cx),
+        (_, None, Some(pieced)) => super::draw::pieced_parts(&id, pieced, cx),
+        (_, None, None) => named(&id, paged, draw, cx),
+    };
+    parts.extend(load_parts(&id, (&key, paged, whole), loaded, draw, cx));
+    card(&id, &heading(paged), parts, cx)
 }
 
-/// How an item read is drawn: its blocks, or in parts when it is the body
-/// last asked for and too large for the room ([`super::draw`]).
-pub(super) struct Drawing<'a> {
-    draw: &'a Draw<'a>,
-    pieced: Option<&'a Pieced>,
+/// What the placeholder names besides its size: its name, and its status
+/// or kind when the heading cannot show them.
+fn named(id: &str, paged: &PagedItem, draw: &Draw<'_>, cx: &Context<Irc>) -> Vec<AnyElement> {
+    paged_blocks(paged)
+        .iter()
+        .map(|block| body_block(id, block, draw, cx))
+        .collect()
 }
 
-/// `Tool · read · completed · 140000 bytes in 3 pages`.
-pub(super) fn label(paged: &PagedItem) -> String {
+/// `Tool · completed · 140000 bytes in 3 pages`: fixed words, its status
+/// when that is a short word, and its size.
+pub(super) fn heading(paged: &PagedItem) -> String {
     let kind = match paged.kind.as_str() {
         "tool" => "Tool",
         "text" => "Reply",
@@ -48,14 +61,12 @@ pub(super) fn label(paged: &PagedItem) -> String {
         "step" => "Step",
         _ => "Item",
     };
-    let name = paged.name.as_deref().map(|name| format!(" · {name}"));
-    visible(&format!(
-        "{kind}{} · {} · {} bytes in {} pages",
-        name.unwrap_or_default(),
-        paged.status,
+    format!(
+        "{} · {} bytes in {} pages",
+        super::item::with_status(kind, &paged.status),
         paged.paged.bytes,
         paged.paged.pages
-    ))
+    )
 }
 
 /// A button that reads the item again from its first page.
@@ -86,7 +97,7 @@ pub(super) fn load_parts(
     id: &str,
     (key, paged, fits): (&(String, String), &PagedItem, bool),
     loaded: Option<&Loaded>,
-    shown: &Drawing<'_>,
+    draw: &Draw<'_>,
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
     let action = |label| load_action(id, (key, paged.paged.bytes), label, cx);
@@ -98,9 +109,14 @@ pub(super) fn load_parts(
         Held::Whole(entry) => {
             let latest = (entry.base().seq < paged.base.seq).then(|| action("Load the latest"));
             let mut drawn: Vec<AnyElement> = latest.into_iter().collect();
-            match shown.pieced {
-                Some(pieced) => drawn.extend(super::draw::pieced_parts(id, pieced, cx)),
-                None => drawn.push(whole(id, entry, shown.draw, cx)),
+            // Drawn within its reservation: in parts when its body is
+            // larger than what the reservation leaves beside it.
+            match &loaded.window {
+                Window::Pieced(pieced) => {
+                    drawn.extend(super::item::note(id, entry, cx));
+                    drawn.extend(super::draw::pieced_parts(id, pieced, cx));
+                }
+                _ => drawn.push(whole(id, entry, draw, cx)),
             }
             drawn
         }
@@ -109,7 +125,7 @@ pub(super) fn load_parts(
             if parts.page.seq < paged.base.seq {
                 shown_parts.push(action("Load the latest"));
             }
-            shown_parts.extend(in_parts(id, key, parts, shown.draw, cx));
+            shown_parts.extend(in_parts(id, key, parts, draw, cx));
             shown_parts
         }
         Held::Failed(error) => vec![

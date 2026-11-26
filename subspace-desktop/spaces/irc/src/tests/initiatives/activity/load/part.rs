@@ -18,8 +18,10 @@ fn click(id: &str, cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.click(SharedString::from(on(id)), cx));
 }
 
-/// Captain's ruling on round 4, point 2: while a part is read the item
-/// counts the part shown plus a whole page, then the new part alone.
+/// Captain's ruling on round 4, point 2, and SUB decisions `8357ec55` §2
+/// and `33ccecf6` item 1: while a part is read the item counts the part
+/// shown and its drawn window plus a whole page, then the new part and its
+/// window alone.
 #[gpui_kit::test]
 fn a_part_read_holds_a_page_of_room_until_it_arrives(cx: &mut TestAppContext) {
     let (board, served, cx) = in_parts(cx, &"x".repeat(200_000));
@@ -33,7 +35,11 @@ fn a_part_read_holds_a_page_of_room_until_it_arrives(cx: &mut TestAppContext) {
     );
     settle(cx);
     let last = json.len() - (pages - 1) * PAGE;
-    assert_eq!(held(&board, cx), shown - PAGE as u64 + last as u64);
+    assert_eq!(
+        held(&board, cx),
+        shown - 2 * PAGE as u64 + 2 * last as u64,
+        "the new part and its window"
+    );
 }
 
 /// Captain's ruling on round 4, point 3: a part past the last of an item

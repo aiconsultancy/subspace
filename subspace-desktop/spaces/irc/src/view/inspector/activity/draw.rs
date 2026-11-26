@@ -1,64 +1,73 @@
 //! Which item bodies the view draws (SUB decisions `a17870f4` §5,
-//! `ed71a299` and `0c13b784`). What the open turns draw counts against
-//! the one budget beside the inline content and the items read, in the
-//! UTF-8 bytes it mounts: each block as it draws, markers and all, or one
-//! part when it is long, plus the formatted text kept for it (an unknown
-//! item's indented JSON, an error); an item read on demand what is shown
-//! of it. Collapsed turns build no bodies, so they draw nothing.
+//! `ed71a299`, `0c13b784`, `8357ec55` and `33ccecf6`). What the open turns
+//! draw of the snapshot counts against the one budget beside the inline
+//! content and the items read, in the UTF-8 bytes it mounts: each block as
+//! it draws, markers and all, or one part when it is long, plus the
+//! formatted text kept for it (an unknown item's indented JSON, an error).
+//! An item read on demand draws within its own reservation
+//! ([`super::load`]) and is never planned here: only what its placeholder
+//! names is. Collapsed turns build no bodies, so they draw nothing.
 //!
-//! Each body is measured once per version of its item, by turn, item and
-//! `seq` (and, for an item read on demand, what is held of it), and the
-//! plan below is worked out again only when the snapshot, the items read,
-//! the turns opened or the bodies asked for change: drawing a frame
-//! neither measures nor formats anything already drawn.
+//! Each body is measured once per version of its item: its snapshot's
+//! generation, its `seq`, and for an item read on demand what is held of
+//! it. The plan below is worked out again only when the snapshot, the
+//! items read, the turns opened or the bodies asked for change: drawing a
+//! frame neither measures nor formats anything already drawn.
 //!
 //! The order: the bodies the person asked for come first, the latest
-//! first; then the open turns, the most recently opened first, and their
-//! items in order. Each is drawn while it fits the room the budget leaves
-//! beside the inline content and the items read; one that would pass it
-//! shows its label, a caption with its size saying it is not drawn to
-//! stay within the view's memory budget, and **Show**. Nothing is cut:
-//! every body is one click away. **Show** first makes room, letting go of
-//! the least recently opened items read, then of the bodies asked for
-//! earlier, the least recent first, until what is held and drawn fits
-//! beside the body asked for. If the body still does not fit, it is drawn
-//! in parts of at most 64 KiB with First, Previous, Next and Last
-//! ([`super::pieces`]), never hidden and never cut; a body of no more than
-//! one part draws whole. Reading an item asks for its body too.
+//! first; then the open turns, those opened by hand first, the most
+//! recently opened first, then those open by default because they are
+//! running, the newest first; and their items in order. Each is drawn
+//! while it fits the room the budget leaves beside the inline content and
+//! the items read; one that would pass it shows its heading, a caption
+//! with its size saying it is not drawn to stay within the view's memory
+//! budget, and **Show**. Nothing is cut: every body is one click away.
+//! **Show** first makes room, letting go of the least recently opened
+//! items read, then of the bodies asked for earlier, the least recent
+//! first, until what is held and drawn fits beside the body asked for. If
+//! the body still does not fit, it is drawn in parts within the room left,
+//! of at most 64 KiB each, with First, Previous, Next and Last
+//! ([`super::pieces`]): never hidden and never cut, and only the part
+//! shown is written out.
 //!
-//! The floor: inline content is the snapshot itself and is never let go.
-//! When it alone fills the budget, the view holds one part (at most
-//! 64 KiB) of the item last asked for, and its drawn copy, besides it;
-//! while a part of an item read on demand is read, the page coming in.
+//! The floor (SUB decision `8357ec55` §2): inline content is the snapshot
+//! itself and is never let go. Only the body last asked for may pass the
+//! room, and only when no room is left (less than one character and its
+//! copy): it is then drawn whole up to one part, or one part of at most
+//! 64 KiB at a time, the part and its drawn copy held beside the inline
+//! content. With any room left, every body asked for is drawn within it.
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use subspace_client_fleet::activity::{ActivityEntry, ActivityTurn};
+use subspace_client_fleet::activity::{ActivityEntry, ActivityJoin, ActivityTurn};
 
-use super::blocks::entry_blocks;
-use super::load::{held, room};
+use super::blocks::{Block, entry_blocks, whole_blocks};
+use super::load::{Window, held, room};
 use super::parts::{PART, Prepare};
-use super::pieces::{Piece, piece};
+use super::pieces::{Index, Piece, index, piece};
 use super::size::body_bytes;
 use super::turn::is_open;
-use super::{Loaded, Selection};
+use super::{Held, Loaded, Selection};
 
 mod cards;
 
-pub(super) use cards::{held_back, pieced, pieced_parts};
+pub(super) use cards::{held_back, held_back_parts, pieced, pieced_parts};
 
 /// An item, by its turn and item IDs.
 pub(super) type Key = (String, String);
 
-/// One version of an item's body: its `seq`, and for an item read on
-/// demand, the version of what is held of it ([`Loaded::version`]).
-pub(super) type Version = (u64, u64);
+/// One version of an item's body: the generation of the snapshot it came
+/// in ([`Selection::epoch`]), its `seq`, and for an item read on demand
+/// the version of what is held of it ([`Loaded::version`]). A `seq` is
+/// only ever compared within one generation.
+pub(super) type Version = (u64, u64, u64);
 
-/// What a body drawn in parts counts: the part kept and its drawn copy.
-const PIECED: u64 = 2 * PART as u64;
+/// The fewest bytes a part draws: a marker, the most one character draws.
+/// A room smaller than such a part and its copy is no room at all.
+pub(super) const MIN_PIECE: usize = 12;
 
 /// An item's body as last measured.
 pub(super) struct Measure {
@@ -79,16 +88,56 @@ pub(super) struct Plan {
     pub(super) drawn: u64,
 }
 
-/// The body last asked for, too large for the room even once room was
-/// made, and the part of it shown.
+/// A body too large for its room, drawn one part at a time: where each of
+/// its parts starts, found once for its version, and the part shown.
 pub(super) struct Pieced {
     pub(super) key: Key,
     version: Version,
-    /// The part asked for, which `piece` may stop short of.
-    asked: usize,
+    index: Index,
     /// The bytes it would hold drawn whole.
     pub(super) bytes: u64,
     pub(super) piece: Piece,
+}
+
+impl Pieced {
+    /// What it holds: the part kept and its drawn copy.
+    pub(super) fn charge(&self) -> u64 {
+        2 * self.index.size as u64
+    }
+
+    /// Shows part `wanted` of `blocks`, the body it was cut from: that
+    /// part alone is written out.
+    fn show(&mut self, blocks: &[Block<'_>], wanted: usize) {
+        self.piece = piece(blocks, &self.index, wanted);
+    }
+}
+
+/// `blocks`, the body of `key` at `version`, drawn in parts of `size`
+/// bytes: `old` again when it is the same body cut the same way, so
+/// nothing is scanned twice; otherwise cut once, showing the part `old`
+/// showed of it, or the first.
+pub(super) fn cut(
+    blocks: &[Block<'_>],
+    (key, version): (Key, Version),
+    (size, bytes): (usize, u64),
+    old: Option<Pieced>,
+) -> Pieced {
+    let old = match old.filter(|old| old.key == key) {
+        Some(old) if old.version == version && old.index.size == size => {
+            return Pieced { bytes, ..old };
+        }
+        old => old,
+    };
+    let wanted = old.map_or(0, |old| old.piece.piece);
+    let index = index(blocks, size);
+    let piece = piece(blocks, &index, wanted);
+    Pieced {
+        key,
+        version,
+        index,
+        bytes,
+        piece,
+    }
 }
 
 /// Measures what changed and works out again which bodies the open turns
@@ -102,7 +151,7 @@ pub(super) fn replan(selection: &mut Selection) {
     let old = selection.plan.pieced.take();
     let pieced = fit
         .pieced
-        .and_then(|(key, bytes)| cut_piece(selection, (key, bytes), old));
+        .and_then(|wanted| cut_piece(selection, wanted, old));
     selection.plan = Plan {
         held_back: fit.held_back,
         pieced,
@@ -112,9 +161,19 @@ pub(super) fn replan(selection: &mut Selection) {
     forget_prepared(selection);
 }
 
-/// The version of the body of `entry`.
-fn version(entry: &ActivityEntry, loaded: Option<&Loaded>) -> Version {
-    (entry.base().seq, loaded.map_or(0, |loaded| loaded.version))
+/// The version of the body of `entry` in the snapshot of `epoch`.
+fn version(epoch: u64, entry: &ActivityEntry, loaded: Option<&Loaded>) -> Version {
+    (
+        epoch,
+        entry.base().seq,
+        loaded.map_or(0, |loaded| loaded.version),
+    )
+}
+
+/// The version of the body of an item read whole, in the snapshot of
+/// `epoch`.
+pub(super) fn read_version(epoch: u64, loaded: &Loaded) -> Version {
+    (epoch, 0, loaded.version)
 }
 
 /// Measures each body of the open turns whose version changed since it
@@ -124,24 +183,28 @@ fn measure(selection: &mut Selection) {
 }
 
 /// Each body of the open turns as measured: again only when its version
-/// changed.
+/// changed. An item read whole draws within its own reservation, so it
+/// is not measured here.
 fn measures(selection: &Selection) -> HashMap<Key, Measure> {
     open_entries(selection)
         .into_iter()
-        .map(|(key, entry)| {
+        .filter_map(|(key, entry)| {
             let loaded = selection.loaded.get(&key);
-            let version = version(entry, loaded);
+            if loaded.is_some_and(|loaded| matches!(loaded.held, Held::Whole(_))) {
+                return None;
+            }
+            let version = version(selection.epoch, entry, loaded);
             let bytes = match selection.measures.get(&key) {
                 Some(measure) if measure.version == version => measure.bytes,
                 _ => body_bytes(&entry_blocks(entry, loaded.map(|loaded| &loaded.held))),
             };
-            (key, Measure { version, bytes })
+            Some((key, Measure { version, bytes }))
         })
         .collect()
 }
 
-/// The items of the open turns, the most recently opened turn first, and
-/// its items in order.
+/// The items of the open turns, in the order they draw, and their items
+/// in order.
 fn open_entries(selection: &Selection) -> Vec<(Key, &ActivityEntry)> {
     let Some(activity) = selection.join.activity() else {
         return Vec::new();
@@ -156,14 +219,17 @@ fn open_entries(selection: &Selection) -> Vec<(Key, &ActivityEntry)> {
         .collect()
 }
 
-/// The open turns, the most recently opened first.
+/// The open turns in the order they draw: those opened by hand first, the
+/// most recently opened first; then those open by default, the newest
+/// first.
 fn open_turns<'a>(selection: &Selection, turns: &'a [ActivityTurn]) -> Vec<&'a ActivityTurn> {
     let mut open: Vec<&ActivityTurn> = turns
         .iter()
         .rev()
         .filter(|turn| is_open(selection, &turn.summary))
         .collect();
-    // Stable: turns open by default keep their order, newest first.
+    // Stable: turns open by default keep their order, newest first, after
+    // those opened by hand (`None` sorts last once reversed).
     open.sort_by_key(|turn| Reverse(selection.turn_opened.get(&turn.summary.id).copied()));
     open
 }
@@ -172,12 +238,9 @@ fn open_turns<'a>(selection: &Selection, turns: &'a [ActivityTurn]) -> Vec<&'a A
 fn bodies(selection: &Selection) -> Vec<(Key, u64)> {
     open_entries(selection)
         .into_iter()
-        .map(|(key, _)| {
-            let bytes = selection
-                .measures
-                .get(&key)
-                .map_or(0, |measure| measure.bytes);
-            (key, bytes)
+        .filter_map(|(key, _)| {
+            let bytes = selection.measures.get(&key)?.bytes;
+            Some((key, bytes))
         })
         .collect()
 }
@@ -186,16 +249,17 @@ fn bodies(selection: &Selection) -> Vec<(Key, u64)> {
 #[derive(Default)]
 struct Fit {
     held_back: HashMap<Key, u64>,
-    /// The body last asked for, drawn in parts, with the bytes it would
-    /// hold whole.
-    pieced: Option<(Key, u64)>,
+    /// The body last asked for, drawn in parts: with the bytes it would
+    /// hold whole, and the size of its parts.
+    pieced: Option<(Key, u64, usize)>,
     drawn: u64,
 }
 
 /// Draws the bodies asked for, the latest first, then the rest in order,
 /// each while it fits `room`. The body last asked for is never held back:
-/// past the room it is drawn in parts, or whole when it is no more than
-/// one part.
+/// past the room it is drawn in parts within what is left of it; with no
+/// room left at all, the floor, whole when it is no more than one part,
+/// otherwise in parts of one part each.
 fn fit(bodies: &[(Key, u64)], asked: &HashMap<Key, u64>, room: u64) -> Fit {
     let mut order: Vec<&(Key, u64)> = bodies.iter().collect();
     // Stable: the rest keep their order after the bodies asked for.
@@ -206,65 +270,75 @@ fn fit(bodies: &[(Key, u64)], asked: &HashMap<Key, u64>, room: u64) -> Fit {
         .map(|(key, _)| key.clone());
     let mut fit = Fit::default();
     for (key, bytes) in order.iter().copied() {
-        let floor = latest.as_ref() == Some(key);
-        if fit.drawn.saturating_add(*bytes) <= room || (floor && *bytes <= PART as u64) {
+        let left = room.saturating_sub(fit.drawn);
+        if *bytes <= left {
             fit.drawn = fit.drawn.saturating_add(*bytes);
-        } else if floor {
-            fit.drawn = fit.drawn.saturating_add(PIECED);
-            fit.pieced = Some((key.clone(), *bytes));
-        } else {
+            continue;
+        }
+        if latest.as_ref() != Some(key) {
             fit.held_back.insert(key.clone(), *bytes);
+            continue;
+        }
+        match piece_size(left) {
+            None if *bytes <= PART as u64 => fit.drawn = fit.drawn.saturating_add(*bytes),
+            size => {
+                let size = size.unwrap_or(PART);
+                fit.drawn = fit.drawn.saturating_add(2 * size as u64);
+                fit.pieced = Some((key.clone(), *bytes, size));
+            }
         }
     }
     fit
 }
 
-/// The body of `key` drawn in parts, the part asked for shown: the part
-/// drawn before when neither changed, so it is formatted only once.
+/// The size of the parts a body is drawn in within `left` bytes, a part
+/// and its drawn copy: at most one part. `None` when `left` holds no part
+/// at all, which is the floor.
+pub(super) fn piece_size(left: u64) -> Option<usize> {
+    let half = usize::try_from(left / 2).unwrap_or(usize::MAX);
+    (half >= MIN_PIECE).then(|| half.min(PART))
+}
+
+/// The body of `key` drawn in parts of `size`: the one drawn before when
+/// it is the same body cut the same way, so it is scanned only once.
 fn cut_piece(
     selection: &Selection,
-    (key, bytes): (Key, u64),
+    (key, bytes, size): (Key, u64, usize),
     old: Option<Pieced>,
 ) -> Option<Pieced> {
     let version = selection.measures.get(&key)?.version;
-    let asked = asked_piece(selection, &key);
-    old.filter(|old| old.key == key && old.version == version && old.asked == asked)
-        .map(|old| Pieced { bytes, ..old })
-        .or_else(|| new_piece(selection, (key, version), (asked, bytes)))
-}
-
-/// The part asked for of the body of `key`: the first unless one was.
-fn asked_piece(selection: &Selection, key: &Key) -> usize {
-    selection
-        .piece
-        .as_ref()
-        .filter(|(pieced, _)| pieced == key)
-        .map_or(0, |(_, piece)| *piece)
-}
-
-/// Cuts part `asked` out of the body of `key`, of `bytes` drawn whole.
-fn new_piece(
-    selection: &Selection,
-    (key, version): (Key, Version),
-    (asked, bytes): (usize, u64),
-) -> Option<Pieced> {
-    let entry = entry_of(selection, &key)?;
+    let entry = entry_of(&selection.join, &key)?;
     let held = selection.loaded.get(&key).map(|loaded| &loaded.held);
-    let piece = piece(&entry_blocks(entry, held), asked);
-    Some(Pieced {
-        key,
-        version,
-        asked,
-        bytes,
-        piece,
-    })
+    let blocks = entry_blocks(entry, held);
+    Some(cut(&blocks, (key, version), (size, bytes), old))
+}
+
+/// Shows part `wanted` of the body of `key` drawn in parts, in the plan
+/// or within its read's reservation: that part alone is written out.
+pub(super) fn show_piece(selection: &mut Selection, key: &Key, wanted: usize) {
+    let Selection {
+        join, loaded, plan, ..
+    } = selection;
+    if let Some(pieced) = plan.pieced.as_mut().filter(|pieced| pieced.key == *key) {
+        if let Some(entry) = entry_of(join, key) {
+            let held = loaded.get(key).map(|loaded| &loaded.held);
+            pieced.show(&entry_blocks(entry, held), wanted);
+        }
+        return;
+    }
+    if let Some(Loaded {
+        held: Held::Whole(read),
+        window: Window::Pieced(pieced),
+        ..
+    }) = loaded.get_mut(key)
+    {
+        pieced.show(&whole_blocks(read), wanted);
+    }
 }
 
 /// The entry `key` in the snapshot.
-fn entry_of<'a>(selection: &'a Selection, (turn, item): &Key) -> Option<&'a ActivityEntry> {
-    selection
-        .join
-        .activity()?
+fn entry_of<'a>(join: &'a ActivityJoin, (turn, item): &Key) -> Option<&'a ActivityEntry> {
+    join.activity()?
         .turns
         .iter()
         .find(|found| found.summary.id == *turn)?
@@ -273,26 +347,61 @@ fn entry_of<'a>(selection: &'a Selection, (turn, item): &Key) -> Option<&'a Acti
         .find(|entry| entry.base().id == *item)
 }
 
-/// Lets go of what is prepared for the bodies no longer drawn whole, or
-/// whose item changed.
-fn forget_prepared(selection: &mut Selection) {
-    let (measures, plan) = (&selection.measures, &selection.plan);
-    selection.prepared.get_mut().retain(|key, (version, _)| {
-        measures
+/// The version of the body of `key` as drawn: of what its read holds when
+/// it is read whole, otherwise as last measured.
+fn body_version(selection: &Selection, key: &Key) -> Version {
+    match selection.loaded.get(key) {
+        Some(loaded) if matches!(loaded.held, Held::Whole(_)) => {
+            read_version(selection.epoch, loaded)
+        }
+        _ => selection
+            .measures
             .get(key)
-            .is_some_and(|measure| measure.version == *version)
-            && !plan.held_back.contains_key(key)
-            && plan.pieced.as_ref().is_none_or(|pieced| pieced.key != *key)
-    });
+            .map_or((selection.epoch, 0, 0), |measure| measure.version),
+    }
+}
+
+/// Whether the body of `key` is drawn block by block, so what is prepared
+/// for it is kept: by the plan, or within its read's reservation.
+fn drawn_in_blocks(selection: &Selection, key: &Key) -> bool {
+    match selection
+        .loaded
+        .get(key)
+        .map(|loaded| (&loaded.held, &loaded.window))
+    {
+        Some((Held::Whole(_), window)) => !matches!(window, Window::Pieced(_)),
+        // A page read draws within its reservation, whatever the plan.
+        Some((Held::Parts(_), _)) => true,
+        _ => {
+            let plan = &selection.plan;
+            selection.measures.contains_key(key)
+                && !plan.held_back.contains_key(key)
+                && plan.pieced.as_ref().is_none_or(|pieced| pieced.key != *key)
+        }
+    }
+}
+
+/// Lets go of what is prepared for the bodies no longer drawn block by
+/// block, or whose version changed.
+fn forget_prepared(selection: &mut Selection) {
+    let keep: HashMap<Key, Version> = selection
+        .prepared
+        .borrow()
+        .keys()
+        .filter(|key| drawn_in_blocks(selection, key))
+        .map(|key| (key.clone(), body_version(selection, key)))
+        .collect();
+    selection
+        .prepared
+        .get_mut()
+        .retain(|key, (version, _)| keep.get(key) == Some(version));
 }
 
 /// What is prepared of the blocks of `key`'s body while it is drawn
-/// whole, kept between frames and counted in what the body holds.
+/// block by block, kept between frames and counted in what the body
+/// holds.
 pub(super) fn prepared(selection: &Selection, key: &Key) -> Rc<Prepare> {
-    let version = selection
-        .measures
-        .get(key)
-        .map_or((0, 0), |measure| measure.version);
+    let version = body_version(selection, key);
     let mut prepared = selection.prepared.borrow_mut();
     let entry = prepared
         .entry(key.clone())
@@ -362,7 +471,7 @@ fn make_room(selection: &mut Selection, key: &Key) {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{Key, PART, PIECED, fit};
+    use super::{Key, MIN_PIECE, PART, fit, piece_size};
 
     fn key(item: &str) -> Key {
         ("t".to_owned(), item.to_owned())
@@ -378,20 +487,38 @@ mod tests {
         assert_eq!(plan.held_back, HashMap::from([(key("b"), 50)]));
     }
 
-    /// The bodies asked for come first, the latest first; the latest is
-    /// never held back, and one of no more than a part draws whole even
-    /// past the room: the floor.
+    /// Round 5 thermo (P1/P3), SUB decision `33ccecf6` item 1: the bodies
+    /// asked for come first, the latest first; with room left, the latest
+    /// is drawn in parts within it, a part and its copy, never past it.
     #[test]
-    fn the_body_last_asked_for_is_drawn_first_and_whole_up_to_a_part() {
+    fn the_body_last_asked_for_is_drawn_first_and_within_any_room_left() {
         let bodies = [(key("a"), 40), (key("b"), 50), (key("c"), 100)];
         let asked = HashMap::from([(key("b"), 1), (key("c"), 2)]);
         let plan = fit(&bodies, &asked, 60);
-        assert_eq!(plan.drawn, 100);
-        assert!(plan.pieced.is_none());
+        assert_eq!(plan.pieced, Some((key("c"), 100, 30)));
+        assert_eq!(plan.drawn, 60);
         assert_eq!(
             plan.held_back,
             HashMap::from([(key("a"), 40), (key("b"), 50)])
         );
+    }
+
+    /// SUB decision `8357ec55` §2: with no room left, the floor: the body
+    /// last asked for draws whole up to one part, and one part at a time
+    /// past it; a body asked for earlier never passes the room.
+    #[test]
+    fn only_the_body_last_asked_for_passes_no_room_and_by_one_part() {
+        let bodies = [(key("a"), 40), (key("b"), 50)];
+        let asked = HashMap::from([(key("a"), 1), (key("b"), 2)]);
+        let plan = fit(&bodies, &asked, 0);
+        assert_eq!(plan.drawn, 50);
+        assert!(plan.pieced.is_none());
+        assert_eq!(plan.held_back, HashMap::from([(key("a"), 40)]));
+
+        let big = PART as u64 + 1;
+        let plan = fit(&[(key("b"), big)], &asked, 0);
+        assert_eq!(plan.pieced, Some((key("b"), big, PART)));
+        assert_eq!(plan.drawn, 2 * PART as u64);
     }
 
     /// Round 4 review (P3), SUB decision `0c13b784` §3: a body asked for
@@ -403,8 +530,19 @@ mod tests {
         let bodies = [(key("a"), 40), (key("b"), big)];
         let asked = HashMap::from([(key("b"), 1)]);
         let plan = fit(&bodies, &asked, 3 * PART as u64);
-        assert_eq!(plan.pieced, Some((key("b"), big)));
-        assert_eq!(plan.drawn, PIECED + 40);
+        assert_eq!(plan.pieced, Some((key("b"), big, PART)));
+        assert_eq!(plan.drawn, 2 * PART as u64 + 40);
         assert!(plan.held_back.is_empty());
+    }
+
+    /// A part and its copy fit what is left, at most one part each; less
+    /// than a character and its copy is the floor.
+    #[test]
+    fn parts_fit_what_is_left_up_to_one_part() {
+        assert_eq!(piece_size(0), None);
+        assert_eq!(piece_size(2 * MIN_PIECE as u64 - 1), None);
+        assert_eq!(piece_size(2 * MIN_PIECE as u64), Some(MIN_PIECE));
+        assert_eq!(piece_size(1001), Some(500));
+        assert_eq!(piece_size(u64::MAX), Some(PART));
     }
 }

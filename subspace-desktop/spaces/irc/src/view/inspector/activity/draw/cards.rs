@@ -8,7 +8,7 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
 use super::super::parts::{caption, card, part_controls, whole};
-use super::{Key, Pieced, ask, replan};
+use super::{Key, Pieced, ask};
 use crate::Irc;
 
 /// Shows the body of the item `key`, as **Show** asks.
@@ -22,8 +22,7 @@ fn show(board: &mut Irc, key: &Key, cx: &mut Context<Irc>) {
 /// Shows part `piece` of the body of `key` drawn in parts.
 fn show_piece(board: &mut Irc, key: &Key, piece: usize, cx: &mut Context<Irc>) {
     if let Some(selection) = board.inspector_activity.as_mut() {
-        selection.piece = Some((key.clone(), piece));
-        replan(selection);
+        super::show_piece(selection, key, piece);
         cx.notify();
     }
 }
@@ -59,27 +58,43 @@ pub(in super::super) fn pieced_parts(
     ]
 }
 
-/// An item drawn in parts: its label above its parts.
+/// An item drawn in parts: its heading, then what is drawn above its
+/// body whole or in parts alike ([`super::super::item::note`]), then its
+/// parts.
 pub(in super::super) fn pieced(
     id: &str,
     (entry, pieced): (&ActivityEntry, &Pieced),
     cx: &Context<Irc>,
 ) -> AnyElement {
-    card(
-        id,
-        &super::super::item::label(entry),
-        pieced_parts(id, pieced, cx),
-        cx,
-    )
+    let mut parts: Vec<AnyElement> = super::super::item::note(id, entry, cx)
+        .into_iter()
+        .collect();
+    parts.extend(pieced_parts(id, pieced, cx));
+    card(id, &super::super::item::heading(entry), parts, cx)
 }
 
-/// An item whose body is not drawn: its label, why, its size, and
-/// **Show**.
+/// An item whose body is not drawn: its heading alone, fixed words of
+/// bounded length (SUB decision `33ccecf6` item 2), then why, its size,
+/// and **Show**.
 pub(in super::super) fn held_back(
     id: &str,
     (key, entry, bytes): (&Key, &ActivityEntry, u64),
     cx: &Context<Irc>,
 ) -> AnyElement {
+    card(
+        id,
+        &super::super::item::heading(entry),
+        held_back_parts(id, (key, bytes), cx),
+        cx,
+    )
+}
+
+/// Why a body is not drawn, its size, and **Show**.
+pub(in super::super) fn held_back_parts(
+    id: &str,
+    (key, bytes): (&Key, u64),
+    cx: &Context<Irc>,
+) -> Vec<AnyElement> {
     let key = key.clone();
     let show = action_button(
         SharedString::from(format!("{id}:show")),
@@ -89,17 +104,12 @@ pub(in super::super) fn held_back(
     )
     .on_click(cx.listener(move |board, _, _, cx| self::show(board, &key, cx)))
     .into_any_element();
-    card(
-        id,
-        &super::super::item::label(entry),
-        vec![
-            caption(
-                &format!("{id}:held-back"),
-                &format!("Not drawn, to stay within the view's memory budget ({bytes} bytes)."),
-                cx,
-            ),
-            show,
-        ],
-        cx,
-    )
+    vec![
+        caption(
+            &format!("{id}:held-back"),
+            &format!("Not drawn, to stay within the view's memory budget ({bytes} bytes)."),
+            cx,
+        ),
+        show,
+    ]
 }

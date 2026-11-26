@@ -5,16 +5,13 @@
 //! [`super::blocks`] lists, so what is drawn is what was measured.
 
 use gpui_kit::{AnyElement, Context};
-use subspace_client_fleet::activity::{
-    ActivityEntry, ActivityItem, StepItem, TextItem, ToolItem, UnknownItem,
-};
+use subspace_client_fleet::activity::{ActivityEntry, ActivityItem, StepItem, TextItem};
 
-use super::blocks::whole_blocks;
+use super::blocks::{short_status, whole_blocks};
 use super::parts::{Draw, body_block, caption, card};
-use super::text::visible;
 use crate::Irc;
 
-/// An entry held whole: its label, a note on what it is, and its blocks.
+/// An entry held whole: its heading, a note on what it is, and its blocks.
 pub(super) fn whole(
     id: &str,
     entry: &ActivityEntry,
@@ -27,11 +24,12 @@ pub(super) fn whole(
             .iter()
             .map(|block| body_block(id, block, draw, cx)),
     );
-    card(id, &label(entry), parts, cx)
+    card(id, &heading(entry), parts, cx)
 }
 
-/// A step's tokens and cost, or why an unknown item shows as its JSON.
-fn note(id: &str, entry: &ActivityEntry, cx: &Context<Irc>) -> Option<AnyElement> {
+/// A step's tokens and cost, or why an unknown item shows as its JSON:
+/// drawn above its body, whole or in parts alike.
+pub(super) fn note(id: &str, entry: &ActivityEntry, cx: &Context<Irc>) -> Option<AnyElement> {
     match entry {
         ActivityEntry::Item(item) => match &**item {
             ActivityItem::Step(step) => Some(caption(&format!("{id}:use"), &step_use(step), cx)),
@@ -46,51 +44,36 @@ fn note(id: &str, entry: &ActivityEntry, cx: &Context<Irc>) -> Option<AnyElement
     }
 }
 
-/// The label of an item's card, as drawn above its body.
-pub(super) fn label(entry: &ActivityEntry) -> String {
+/// The heading of an item's card: fixed words and its status when that is
+/// a short word, never what was sent beyond that (SUB decision `33ccecf6`
+/// item 2). Its name, model and the rest are in its body.
+pub(super) fn heading(entry: &ActivityEntry) -> String {
     match entry {
         ActivityEntry::Item(item) => match &**item {
-            ActivityItem::Step(step) => step_label(step),
-            ActivityItem::Text(text) => words_label("Reply", text),
-            ActivityItem::Reasoning(text) => words_label("Reasoning", text),
-            ActivityItem::Tool(tool) => tool_label(tool),
+            ActivityItem::Step(step) => with_status("Step", &step.status),
+            ActivityItem::Text(text) => words_heading("Reply", text),
+            ActivityItem::Reasoning(text) => words_heading("Reasoning", text),
+            ActivityItem::Tool(tool) => with_status("Tool", &tool.status),
         },
-        ActivityEntry::Unknown(unknown) => unknown_label(unknown),
-        ActivityEntry::Paged(paged) => super::paged::label(paged),
+        ActivityEntry::Unknown(_) => "Item".to_owned(),
+        ActivityEntry::Paged(paged) => super::paged::heading(paged),
     }
 }
 
-fn unknown_label(unknown: &UnknownItem) -> String {
-    visible(&format!("Item · {}", unknown.kind))
+/// `kind · status`, or `kind` alone when the status is not a short word.
+pub(super) fn with_status(kind: &str, status: &str) -> String {
+    match short_status(status) {
+        Some(status) => format!("{kind} · {status}"),
+        None => kind.to_owned(),
+    }
 }
 
-fn words_label(label: &str, text: &TextItem) -> String {
+/// A reply or reasoning: its status only while it is not complete.
+fn words_heading(kind: &str, text: &TextItem) -> String {
     match text.status.as_str() {
-        "completed" => label.to_owned(),
-        status => format!("{label} · {}", visible(status)),
+        "completed" => kind.to_owned(),
+        status => with_status(kind, status),
     }
-}
-
-fn step_label(step: &StepItem) -> String {
-    let model = step.model.as_ref().map(|model| match &model.variant {
-        Some(variant) => format!("{}/{} ({variant})", model.provider, model.id),
-        None => format!("{}/{}", model.provider, model.id),
-    });
-    let label = [
-        Some(format!("Step · {}", step.status)),
-        model,
-        step.finish.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
-    visible(&label)
-}
-
-fn tool_label(tool: &ToolItem) -> String {
-    let name = tool.name.as_deref().unwrap_or("unnamed tool");
-    visible(&format!("Tool · {name} · {}", tool.status))
 }
 
 /// `10 in · 5 out · 2 reasoning · 1 cache read · 0 cache write · $0.2500`,

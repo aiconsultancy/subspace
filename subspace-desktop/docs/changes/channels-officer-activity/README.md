@@ -60,24 +60,41 @@ item too large to send inline is paged and loads on demand, never hidden.
   it shows in parts, plus the formatted text kept for it while drawn (an
   indented JSON value, an error); an item read on demand what it shows.
   Collapsed turns build no bodies and draw nothing. Each body is measured
-  once per version of its item, by turn, item and `seq`, and which bodies
+  once per version of its item, by turn, item, snapshot generation and
+  `seq` (a `seq` is compared only within one generation), and which bodies
   are drawn is worked out again only when the snapshot, the items read,
   the turns opened or the bodies asked for change, never for a frame.
-- **Draw order.** The bodies asked for with **Show** come first, the latest
-  first; then the open turns, the most recently opened first, and their
-  items in order. Each is drawn while it fits the room left; one that would
-  pass it shows its label, its size and that it is not drawn to stay
-  within the view's memory budget, with **Show**. **Show** first makes
-  room, letting go of the least recently opened items read, then of bodies
-  asked for earlier, the least recent first, until what is held and drawn
-  fits beside the body asked for. If the body still does not fit, it is
-  drawn one part of at most 64 KiB at a time, with **First part**,
-  **Previous part**, **Next part**, **Last part** and `Part k of N`: never
-  hidden and never cut. Only the part shown is formatted and kept.
-- **The floor.** Inline content is the snapshot itself and is never let
-  go. When it alone fills the budget, the view holds one part (at most
-  64 KiB) of the item last asked for and its drawn copy, and one page per
-  part read in flight.
+- **Draw order** (SUB decision `33ccecf6` item 6). The bodies asked for
+  with **Show** come first, the latest first. Then come the open turns:
+  those opened by hand first, the most recently opened first, then those
+  open by default because they are running, the newest first; within each
+  turn its items in order. Each is drawn while it fits the room left; one
+  that would pass it shows only its fixed heading (its kind and a short
+  status), its size and that it is not drawn to stay within the view's
+  memory budget, with **Show**. Tool names, argument keys and values are
+  its body, never its heading. **Show** first makes room, letting go of the
+  least recently opened items read, then of bodies asked for earlier, the
+  least recent first, until what is held and drawn fits beside the body
+  asked for. If the body still does not fit, it is drawn in parts within
+  the room left, each of at most 64 KiB, with **First part**, **Previous
+  part**, **Next part**, **Last part** and `Part k of N`: never hidden and
+  never cut. Only the part shown is written out, from one index of where
+  each part starts, made once per version of the body.
+- **The floor** (SUB decisions `8357ec55` §2 and `33ccecf6` item 1).
+  Inline content is the snapshot itself and is never let go. Only the item
+  last asked for may pass the room, and only when no room is left: the view
+  then holds the inline content, one part of that item at the pager's part
+  size (at most 64 KiB) and its drawn window. With any room left, every
+  request stays within it. While the reader moves between parts, the
+  outgoing part and its drawn window stay charged beside the page in flight
+  until the new part arrives. A snapshot refresh never lets go of the part
+  last asked for. The planner enforces both: each read holds one
+  reservation from admission until it is let go or replaced, covering what
+  it holds and what it draws, and draws within it, never in the plan of the
+  snapshot's bodies. When formatting makes an item read whole draw more
+  than its copy, it grows into room no read holds, letting nothing go, or
+  else draws in parts within its reservation. A snapshot of a new generation discards every measure,
+  formatted text, part index and item read of the old one.
 - **Larger than the budget.** An item that, with its drawn copy, does not
   fit the room left is read one page at a time: its JSON, one 64 KiB page
   per part, with **First part**, **Previous part**, **Next part**, **Last

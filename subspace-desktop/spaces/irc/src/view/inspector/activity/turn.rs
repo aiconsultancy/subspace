@@ -107,8 +107,9 @@ pub(super) fn total(tokens: &ActivityTokens) -> u64 {
     tokens.input + tokens.output + tokens.reasoning + tokens.cache_read + tokens.cache_write
 }
 
-/// One item: its body, or, when that would pass the room left, its label
-/// and **Show**, or the body last asked for in parts ([`super::draw`]).
+/// One item: its body, or, when that would pass the room left, its
+/// heading and **Show**, or the body last asked for in parts
+/// ([`super::draw`]).
 pub(super) fn entry(
     selection: &Selection,
     plan: &Plan,
@@ -118,20 +119,19 @@ pub(super) fn entry(
 ) -> AnyElement {
     let id = format!("irc-activity:{turn}:{}", entry.base().id);
     let key = (turn.to_owned(), entry.base().id.clone());
-    if let Some(bytes) = plan.held_back.get(&key) {
-        return super::draw::held_back(&id, (&key, entry, *bytes), cx);
-    }
+    let held_back = plan.held_back.get(&key).copied();
     let pieced = plan.pieced.as_ref().filter(|pieced| pieced.key == key);
     let prepared = super::draw::prepared(selection, &key);
     let draw = Draw {
         shown: &selection.parts,
         prepared: &prepared,
     };
-    match (entry, pieced) {
-        (ActivityEntry::Paged(paged), _) => {
-            super::paged::paged(selection, (turn, paged, pieced), &draw, cx)
+    match (entry, held_back, pieced) {
+        (ActivityEntry::Paged(paged), ..) => {
+            super::paged::paged(selection, (turn, paged, pieced, held_back), &draw, cx)
         }
-        (entry, Some(pieced)) => super::draw::pieced(&id, (entry, pieced), cx),
-        (entry, None) => super::item::whole(&id, entry, &draw, cx),
+        (entry, Some(bytes), _) => super::draw::held_back(&id, (&key, entry, bytes), cx),
+        (entry, None, Some(pieced)) => super::draw::pieced(&id, (entry, pieced), cx),
+        (entry, None, None) => super::item::whole(&id, entry, &draw, cx),
     }
 }

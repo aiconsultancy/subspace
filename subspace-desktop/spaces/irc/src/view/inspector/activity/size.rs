@@ -9,7 +9,7 @@ use std::io;
 
 use serde_json::Value;
 use subspace_client_fleet::activity::{
-    ActivityContent, ActivityEntry, ActivityError, ActivityItem, AgentActivity,
+    ActivityContent, ActivityEntry, ActivityError, ActivityItem, AgentActivity, ToolItem,
 };
 
 use super::blocks::{Block, Source, error_text};
@@ -40,34 +40,74 @@ fn entry_bytes(entry: &ActivityEntry) -> u64 {
     bytes.saturating_add(entry.base().id.len() as u64)
 }
 
+/// Every string a known item holds, its fields this version does not
+/// know too (SUB decision `33ccecf6` item 4).
 fn item_bytes(item: &ActivityItem) -> u64 {
-    let text = |text: &str| text.len() as u64;
-    let error = |error: Option<&ActivityError>| {
-        error.map_or(0, |error| {
-            text(&error.message) + error.response_body.as_deref().map_or(0, text)
-        })
-    };
     match item {
-        ActivityItem::Text(words) | ActivityItem::Reasoning(words) => text(&words.text),
-        ActivityItem::Step(step) => error(step.error.as_ref()),
-        ActivityItem::Tool(tool) => {
-            let content: u64 = tool
-                .content
-                .iter()
-                .flatten()
-                .map(|content| match content {
-                    ActivityContent::Text { text: words } => text(words),
-                    ActivityContent::File { uri, .. } => text(uri),
-                    ActivityContent::Other(raw) => value_bytes(raw),
-                })
-                .sum();
-            text(&tool.raw_input)
-                + tool.input.as_ref().map_or(0, value_bytes)
-                + tool.metadata.as_ref().map_or(0, value_bytes)
-                + content
-                + error(tool.error.as_ref())
+        ActivityItem::Text(words) | ActivityItem::Reasoning(words) => {
+            text(&words.status) + text(&words.text) + map_bytes(&words.extra)
         }
+        ActivityItem::Step(step) => {
+            let model = step.model.as_ref().map_or(0, |model| {
+                text(&model.provider)
+                    + text(&model.id)
+                    + model.variant.as_deref().map_or(0, text)
+                    + map_bytes(&model.extra)
+            });
+            text(&step.status)
+                + model
+                + step.finish.as_deref().map_or(0, text)
+                + error_bytes(step.error.as_ref())
+                + map_bytes(&step.extra)
+        }
+        ActivityItem::Tool(tool) => tool_bytes(tool),
     }
+}
+
+fn tool_bytes(tool: &ToolItem) -> u64 {
+    let content: u64 = tool.content.iter().flatten().map(content_bytes).sum();
+    text(&tool.call_id)
+        + tool.name.as_deref().map_or(0, text)
+        + text(&tool.status)
+        + text(&tool.raw_input)
+        + tool.input.as_ref().map_or(0, value_bytes)
+        + tool.metadata.as_ref().map_or(0, value_bytes)
+        + content
+        + error_bytes(tool.error.as_ref())
+        + map_bytes(&tool.extra)
+}
+
+fn content_bytes(content: &ActivityContent) -> u64 {
+    match content {
+        ActivityContent::Text { text: words, extra } => text(words) + map_bytes(extra),
+        ActivityContent::File {
+            uri,
+            mime,
+            name,
+            extra,
+        } => text(uri) + text(mime) + name.as_deref().map_or(0, text) + map_bytes(extra),
+        ActivityContent::Other(raw) => value_bytes(raw),
+    }
+}
+
+fn error_bytes(error: Option<&ActivityError>) -> u64 {
+    error.map_or(0, |error| {
+        text(&error.kind)
+            + text(&error.message)
+            + error.response_body.as_deref().map_or(0, text)
+            + map_bytes(&error.extra)
+    })
+}
+
+fn text(text: &str) -> u64 {
+    text.len() as u64
+}
+
+fn map_bytes(fields: &serde_json::Map<String, Value>) -> u64 {
+    fields
+        .iter()
+        .map(|(key, value)| text(key) + value_bytes(value))
+        .sum()
 }
 
 /// About how many bytes a JSON value holds: its strings and keys, and
@@ -76,10 +116,7 @@ fn value_bytes(value: &Value) -> u64 {
     match value {
         Value::String(text) => text.len() as u64,
         Value::Array(values) => values.iter().map(value_bytes).sum(),
-        Value::Object(fields) => fields
-            .iter()
-            .map(|(key, value)| key.len() as u64 + value_bytes(value))
-            .sum(),
+        Value::Object(fields) => map_bytes(fields),
         _ => SCALAR,
     }
 }
@@ -211,9 +248,28 @@ pub(crate) fn measured() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use subspace_client_fleet::activity::AgentActivity;
+    use subspace_client_fleet::activity::{ActivityEntry, AgentActivity};
 
-    use super::inline_bytes;
+    use super::super::blocks::whole_blocks;
+    use super::{body_bytes, inline_bytes};
+
+    /// Round 5 thermo (P1), SUB decision `33ccecf6` item 2: a tool's name
+    /// and an argument's key are its body, measured as they draw, each
+    /// marker twelve bytes; the fixed labels above them are not.
+    #[test]
+    fn names_and_keys_are_measured_in_the_body() {
+        let key = "\u{202E}".repeat(24);
+        let mut input = serde_json::Map::new();
+        input.insert(key, serde_json::json!("v"));
+        let entry: ActivityEntry = serde_json::from_value(serde_json::json!({
+            "id": "i2", "seq": 5, "startedAt": 1, "updatedAt": 2, "kind": "tool",
+            "callId": "call-1", "name": "N".repeat(100), "status": "completed",
+            "rawInput": "", "input": input, "executed": true, "metadata": null,
+            "content": [], "error": null
+        }))
+        .unwrap();
+        assert_eq!(body_bytes(&whole_blocks(&entry)), 100 + 24 * 12 + 1);
+    }
 
     /// Captain's ruling on round 3, point 3: inline text counts in UTF-8
     /// bytes, never characters, so text in other scripts is not undercounted.

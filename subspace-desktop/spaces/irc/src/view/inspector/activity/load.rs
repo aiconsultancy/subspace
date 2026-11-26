@@ -5,11 +5,24 @@
 //! turns draw ([`super::draw`]) too. No item is too large to read: one
 //! that fits the room left together with its drawn copy is read whole,
 //! page by page; a larger one is read and shown one page of its JSON at a
-//! time, never whole. Room is
-//! made before each read, the least recently opened item going first, and
-//! an item goes with its turn. A read is cancelled when its item goes, so
-//! no page is asked for after the view closes, and a reply that arrives
-//! after its read was let go or replaced is dropped.
+//! time, never whole. Room is made before each read, the least recently
+//! opened item going first, and an item goes with its turn. A read is
+//! cancelled when its item goes, so no page is asked for after the view
+//! closes, and a reply that arrives after its read was let go or replaced
+//! is dropped.
+//!
+//! Each read holds one reservation from the moment it is made until it is
+//! let go or replaced (SUB decisions `8357ec55` §3 and `33ccecf6` item 1):
+//! what it holds and the window it draws, together. A whole read reserves
+//! the item and its drawn copy; once read, it draws whole within that,
+//! or, when its markers and formatting draw more, whole within that and
+//! the room no read holds, letting nothing go, else in parts within it. A
+//! read in parts reserves a page and its drawn window; while the next part
+//! is read, the part shown and its window stay counted beside the page
+//! coming in. What a read draws is never planned beside the snapshot's
+//! bodies: it always draws, within its own reservation. A new snapshot
+//! never lets go of the read the floor keeps: the part of the item last
+//! asked for.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,23 +32,40 @@ use subspace_client_fleet::activity::{ActivityEntry, ItemPage, ItemRead};
 use subspace_client_fleet::{Error, FleetApi, FleetClient};
 
 use super::Selection;
+use super::draw::{Key, Pieced};
+use super::parts::PART;
 use crate::Irc;
 pub(super) use part::show_page;
+pub(super) use prune::prune;
+use window::{page_window, settle};
 
 mod part;
+mod prune;
+mod window;
 
 /// The most bytes of the captain's activity one view holds: the
 /// snapshot's inline content, the items read for it and what is drawn.
 pub(super) const MAX_LOADED: u64 = 64 * 1024 * 1024;
 /// The most bytes of item JSON one page carries, and so one part.
 const PAGE: u64 = 64 * 1024;
+/// What a read in parts reserves: a page, and the window it draws.
+const PAGE_READ: u64 = PAGE + PART as u64;
+/// The most the read the floor keeps holds: a part and its window, and
+/// while the next part is read, the page coming in.
+const FLOOR_READ: u64 = PAGE_READ + PAGE;
 
 /// An item read, or being read.
 pub(super) struct Loaded {
     pub(super) held: Held,
-    /// What it counts against the budget: the bytes held, or while it is
-    /// read, the bytes room was made for.
+    /// Its reservation, what it counts against the budget: while it is
+    /// read, the room made for it and its window; once read, what it holds
+    /// and the window it draws; while another part is read, those and the
+    /// page coming in.
     bytes: u64,
+    /// The bytes of item JSON held.
+    raw: u64,
+    /// What it draws within its reservation.
+    pub(super) window: Window,
     /// When it was last opened, by [`Selection::opened`].
     pub(super) opened: u64,
     /// Changes whenever what is held does, so its body is measured again
@@ -67,6 +97,27 @@ pub(super) enum Held {
     /// Too large to hold whole: one page of its JSON at a time.
     Parts(Parts),
     Failed(Error),
+}
+
+/// What a read draws within its reservation.
+pub(super) enum Window {
+    /// Nothing yet: it is read, or failed.
+    None,
+    /// Drawn block by block, holding these bytes drawn.
+    Whole(u64),
+    /// Too large to draw whole within its reservation: one part at a time.
+    Pieced(Pieced),
+}
+
+impl Window {
+    /// The bytes it holds drawn.
+    fn charge(&self) -> u64 {
+        match self {
+            Self::None => 0,
+            Self::Whole(bytes) => *bytes,
+            Self::Pieced(pieced) => pieced.charge(),
+        }
+    }
 }
 
 /// An item read part by part: the page shown, of the version every part
@@ -123,15 +174,18 @@ fn read_item(
     selection.loaded.remove(&key);
     let room = room(selection);
     // Room for the whole item and its drawn copy, and at least for its
-    // page 0.
+    // page 0; or for one page and its drawn window.
     let (reserve, drawn) = if fits_whole(selection, bytes) {
         (bytes.max(PAGE.min(room)), bytes)
     } else {
-        (PAGE, 0)
+        (PAGE, PART as u64)
     };
-    make_room(selection, reserve.saturating_add(drawn), None);
+    let reservation = reserve.saturating_add(drawn);
+    make_room(selection, reservation, None);
     selection.opened += 1;
     let read = selection.opened;
+    // The latest request from its admission: the one the floor keeps.
+    selection.asked.insert(key.clone(), read);
     let cancel = Arc::new(AtomicBool::new(false));
     let (agent, read_key, flag) = (selection.agent.clone(), key.clone(), cancel.clone());
     let task = cx.spawn(async move |board, cx| {
@@ -152,7 +206,9 @@ fn read_item(
         key,
         Loaded {
             held: Held::Loading,
-            bytes: reserve,
+            bytes: reservation,
+            raw: 0,
+            window: Window::None,
             opened: read,
             version: read,
             read,
@@ -206,7 +262,7 @@ fn publish(
     let Some(loaded) = current(board, (key, read)) else {
         return;
     };
-    (loaded.held, loaded.bytes) = match result {
+    (loaded.held, loaded.raw) = match result {
         Ok(ItemRead::Whole { entry, bytes }) => (Held::Whole(entry), bytes),
         Ok(ItemRead::Larger(first)) => {
             let bytes = first.data.len() as u64;
@@ -223,6 +279,7 @@ fn publish(
     };
     if let Some(selection) = board.inspector_activity.as_mut() {
         restamp(selection, key);
+        settle(selection, key);
         make_room(selection, 0, Some(key));
         // Read to be seen: its body is asked for, and room made for it.
         super::draw::ask(selection, key);
@@ -277,7 +334,7 @@ pub(super) fn held(selection: &Selection) -> u64 {
 /// `bytes` more fit in the budget beside the inline content. An item let
 /// go shows its load action again; a read under way is cancelled and its
 /// reply dropped. What is drawn is fitted afterwards ([`super::draw`]).
-fn make_room(selection: &mut Selection, bytes: u64, keep: Option<&(String, String)>) {
+fn make_room(selection: &mut Selection, bytes: u64, keep: Option<&Key>) {
     loop {
         if held(selection).saturating_add(bytes) <= room(selection) {
             return;
@@ -293,40 +350,4 @@ fn make_room(selection: &mut Selection, bytes: u64, keep: Option<&(String, Strin
         };
         selection.loaded.remove(&oldest);
     }
-}
-
-/// Counts the snapshot's inline content, lets go of the items whose turn
-/// is no longer in it, and of the parts shown of their texts, and keeps
-/// the rest within the budget.
-pub(super) fn prune(selection: &mut Selection) {
-    let Some(activity) = selection.join.activity() else {
-        return;
-    };
-    let inline = super::size::inline_bytes(activity);
-    let turns: std::collections::HashSet<&str> = activity
-        .turns
-        .iter()
-        .map(|turn| turn.summary.id.as_str())
-        .collect();
-    selection
-        .loaded
-        .retain(|(turn, _), _| turns.contains(turn.as_str()));
-    selection
-        .asked
-        .retain(|(turn, _), _| turns.contains(turn.as_str()));
-    selection
-        .turn_opened
-        .retain(|turn, _| turns.contains(turn.as_str()));
-    // By the whole `irc-activity:{turn}:` prefix: a turn ID may hold `:`.
-    let prefixes: Vec<String> = turns
-        .iter()
-        .map(|turn| format!("irc-activity:{turn}:"))
-        .collect();
-    selection.parts.retain(|block, _| {
-        !block.starts_with("irc-activity:")
-            || prefixes.iter().any(|prefix| block.starts_with(prefix))
-    });
-    selection.inline = inline;
-    make_room(selection, 0, None);
-    super::draw::replan(selection);
 }

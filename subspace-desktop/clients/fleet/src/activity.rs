@@ -6,12 +6,13 @@
 //! Stargate neither redacts nor truncates this route, and nor does this
 //! client: an item too large for one answer is read page by page and
 //! joined in full, whatever its size, when its reader can hold it, or
-//! else read part by part ([`crate::FleetClient::activity_item`]). The
-//! content is kept in memory only. Its types deliberately do not implement
+//! else read part by part ([`crate::FleetClient::activity_item`]). A known
+//! kind or shape keeps every field this version does not know (`extra`),
+//! so nothing sent is lost. The content is kept in memory only. Its types deliberately do not implement
 //! `Debug`, so no log line or panic message can carry what a tool printed.
 
 use serde::{Deserialize, Deserializer};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 mod join;
 mod read;
@@ -189,6 +190,9 @@ pub struct StepItem {
     /// Settled cost in USD; `None` while running or when unpriced.
     pub cost: Option<f64>,
     pub error: Option<ActivityError>,
+    /// Fields this version does not know, kept so they can still be shown.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Eq)]
@@ -197,6 +201,9 @@ pub struct StepModel {
     pub provider: String,
     pub id: String,
     pub variant: Option<String>,
+    /// Fields this version does not know, kept so they can still be shown.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// Reply text, or the model's reasoning text.
@@ -208,6 +215,9 @@ pub struct TextItem {
     /// `streaming` or `completed`.
     pub status: String,
     pub text: String,
+    /// Fields this version does not know, kept so they can still be shown.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// One tool call.
@@ -234,18 +244,25 @@ pub struct ToolItem {
     /// The result, or a failed call's partial output.
     pub content: Option<Vec<ActivityContent>>,
     pub error: Option<ActivityError>,
+    /// Fields this version does not know, kept so they can still be shown.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
+/// One part of a tool's output. A known type keeps the fields this version
+/// does not know in `extra`, so nothing sent is lost.
 #[derive(Clone, PartialEq, Eq)]
 pub enum ActivityContent {
     Text {
         text: String,
+        extra: Map<String, Value>,
     },
     /// `uri` is often a `data:` URI holding the whole file.
     File {
         uri: String,
         mime: String,
         name: Option<String>,
+        extra: Map<String, Value>,
     },
     /// A content type this version does not know, or a known one in a
     /// shape it does not know, kept whole so it can still be shown.
@@ -259,17 +276,31 @@ impl<'de> Deserialize<'de> for ActivityContent {
         enum Known {
             Text {
                 text: String,
+                #[serde(flatten)]
+                extra: Map<String, Value>,
             },
             File {
                 uri: String,
                 mime: String,
                 name: Option<String>,
+                #[serde(flatten)]
+                extra: Map<String, Value>,
             },
         }
         let raw = Value::deserialize(deserializer)?;
         Ok(match Known::deserialize(&raw) {
-            Ok(Known::Text { text }) => Self::Text { text },
-            Ok(Known::File { uri, mime, name }) => Self::File { uri, mime, name },
+            Ok(Known::Text { text, extra }) => Self::Text { text, extra },
+            Ok(Known::File {
+                uri,
+                mime,
+                name,
+                extra,
+            }) => Self::File {
+                uri,
+                mime,
+                name,
+                extra,
+            },
             Err(_) => Self::Other(raw),
         })
     }
@@ -286,6 +317,9 @@ pub struct ActivityError {
     pub status: Option<u16>,
     pub response_body: Option<String>,
     pub retry_after_ms: Option<u64>,
+    /// Fields this version does not know, kept so they can still be shown.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// An item whose JSON exceeds 64 KiB: its identity and how to read it.

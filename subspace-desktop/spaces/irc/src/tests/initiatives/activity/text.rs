@@ -25,7 +25,7 @@ fn a_tool_shows_its_input_as_parsed_and_as_streamed(cx: &mut TestAppContext) {
         ]))),
         cx,
     );
-    assert_eq!(drawn("irc-activity:t-now:i2:input:command", cx), "ls");
+    assert_eq!(drawn("irc-activity:t-now:i2:input:0", cx), "ls");
     assert!(
         drawn("irc-activity:t-now:i2:raw", cx).contains("STREAMED-ONLY"),
         "what only the stream carried shows too"
@@ -80,7 +80,7 @@ fn separators_and_the_byte_order_mark_show_as_code_points_in_replies_and_tool_in
     let shown = "line⟨U+2028⟩para⟨U+2029⟩⟨U+FEFF⟩end";
     assert_eq!(drawn("irc-activity:t-now:i1:text", cx), shown);
     assert_eq!(
-        drawn("irc-activity:t-now:i2:input:command", cx),
+        drawn("irc-activity:t-now:i2:input:0", cx),
         "a⟨U+2028⟩b⟨U+2029⟩c⟨U+FEFF⟩"
     );
     let raw = drawn("irc-activity:t-now:i2:raw", cx);

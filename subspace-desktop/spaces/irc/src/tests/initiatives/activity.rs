@@ -20,6 +20,7 @@ use crate::view::inspector::activity::retry_scheduled;
 mod close;
 mod draw;
 mod load;
+mod reach;
 mod text;
 
 /// The last line of the long tool output.
@@ -174,7 +175,7 @@ fn turns_show_newest_first_with_the_running_one_open(cx: &mut TestAppContext) {
         "Looking at\nthe logs"
     );
     assert_eq!(
-        drawn("irc-activity:t-now:i2:input:command", cx),
+        drawn("irc-activity:t-now:i2:input:0", cx),
         "cat example.log"
     );
     assert_eq!(

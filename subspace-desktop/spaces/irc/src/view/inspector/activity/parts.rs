@@ -40,7 +40,8 @@ fn selectable(id: impl Into<SharedString>, value: &str) -> PlainText {
     plain_text_with(id, value, MenuChat::Off)
 }
 
-/// An item: its label above its parts.
+/// An item: its heading, fixed words of this version's own and bounded
+/// ([`super::item::heading`]), above its parts.
 pub(super) fn card(id: &str, label: &str, parts: Vec<AnyElement>, cx: &Context<Irc>) -> AnyElement {
     let tokens = Tokens::current(cx);
     v_flex()
@@ -50,10 +51,12 @@ pub(super) fn card(id: &str, label: &str, parts: Vec<AnyElement>, cx: &Context<I
         .pl(tokens.indent)
         .child(
             div()
+                .id(SharedString::from(format!("{id}:heading")))
+                .test_support()
                 .text_size(tokens.secondary_size())
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(tokens.fg_strong)
-                .child(selectable(format!("{id}:label"), label)),
+                .child(selectable(format!("{id}:label"), label).test_text(label.to_owned())),
         )
         .children(parts)
         .into_any_element()
@@ -105,7 +108,7 @@ pub(super) fn body_block(
 ) -> AnyElement {
     let id = format!("{item}:{}", block.suffix);
     let drawn = self::block(&id, block, draw, cx);
-    let Some(label) = &block.label else {
+    let Some(label) = block.label else {
         return drawn;
     };
     let tokens = Tokens::current(cx);
@@ -117,7 +120,7 @@ pub(super) fn body_block(
             div()
                 .text_size(tokens.caption_size())
                 .text_color(tokens.muted)
-                .child(label.clone()),
+                .child(label),
         )
         .child(drawn)
         .into_any_element()

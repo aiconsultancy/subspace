@@ -107,8 +107,11 @@ pub(crate) struct Selection {
     /// What is prepared of each body drawn whole, by version: kept between
     /// frames, counted in what the body holds.
     prepared: RefCell<HashMap<Key, (Version, Rc<Prepare>)>>,
-    /// The part asked for of the body drawn in parts.
-    piece: Option<(Key, usize)>,
+    /// The generation of the snapshot the bodies below belong to.
+    generation: String,
+    /// Counts the generations seen, so a body's version names its own
+    /// ([`draw::Version`]): its `seq` is compared only within one.
+    epoch: u64,
     /// Counts each item opened and each read, for evicting the least
     /// recently opened and dropping late replies.
     opened: u64,
@@ -158,7 +161,8 @@ pub(super) fn open(
         measures: HashMap::new(),
         plan: Plan::default(),
         prepared: RefCell::default(),
-        piece: None,
+        generation: String::new(),
+        epoch: 0,
         opened: 0,
         budget: MAX_LOADED,
         inline: 0,
@@ -259,8 +263,9 @@ pub(super) fn show_part(board: &mut Irc, block: &str, part: usize, cx: &mut Cont
     }
 }
 
-/// Opens or closes a turn. A turn opened draws before those opened
-/// earlier.
+/// Opens or closes a turn. A turn opened by hand draws before those
+/// opened earlier and before those open by default ([`draw`]); a closed
+/// one draws nothing, whenever it was toggled.
 pub(super) fn toggle(board: &mut Irc, turn: &str, cx: &mut Context<Irc>) {
     if let Some(selection) = board.inspector_activity.as_mut() {
         if !selection.toggled.remove(turn) {
@@ -412,6 +417,14 @@ pub(crate) fn drawn_bytes(selection: &Selection) -> u64 {
 #[cfg(test)]
 pub(crate) fn measured() -> u64 {
     size::measured()
+}
+
+/// How many characters were written out for the parts of bodies drawn in
+/// parts on this thread so far: moving to a part writes out that part
+/// alone.
+#[cfg(test)]
+pub(crate) fn walked() -> u64 {
+    pieces::walked_chars()
 }
 
 /// The read under way or last made of item `item` of turn `turn`.
