@@ -44,7 +44,7 @@
 import { ChangingError, DEFAULT_ROOM_BYTES, PAGE_DATA_BYTES, PART_PAGES, readItemPart, readPagedItem, TooLargeError } from "./api.js";
 import { createBudget } from "./budget.js";
 import { coalesce } from "./coalesce.js";
-import { jsonBytes, shownBytes, WINDOW_BYTES } from "./document.js";
+import { jsonBytes, servedPart, servedUnit, shownBytes, WINDOW_BYTES } from "./document.js";
 import { createPager } from "./pager.js";
 import { utf8Length } from "./utf8.js";
 
@@ -291,7 +291,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    */
   const full = new Map();
   const budget = createBudget(maxLoadedBytes);
-  /** Where the view shows each item read whole: key -> {at, bytes}, `place` below. */
+  /** Where the view shows each item read whole: key -> {unit, bytes}, `place` below. */
   const positions = new Map();
   /** Keys waiting to be read; one item is read at a time. */
   let queue = [];
@@ -592,9 +592,9 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * at a time through a pager. Its parts are addressed by page number, so
    * any part can be read directly; each is pinned to the version shown.
    */
-  function partsEntry(turnId, itemId, known) {
+  function partsEntry(turnId, itemId, known, anchor) {
     const key = fullKey(turnId, itemId);
-    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null, replacing: known !== null };
+    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null, replacing: known !== null, anchor };
     entry.pager = createPager({
       known,
       budget,
@@ -630,24 +630,26 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   }
 
   /**
-   * Show an item too large to hold in parts, from its first part, or from
-   * part `at` of a version already `known` (an item read whole).
+   * Show an item too large to hold in parts, from its first part, or, of a
+   * version already `known` (an item read whole), from the part `anchor`
+   * names ({seq, part, unit}), opening at its window that holds `unit`.
    */
-  function openParts(turnId, itemId, known = null, at = 0) {
+  function openParts(turnId, itemId, known = null, anchor = null) {
     const key = fullKey(turnId, itemId);
     budget.release(key);
-    const entry = partsEntry(turnId, itemId, known);
+    const entry = partsEntry(turnId, itemId, known, anchor);
     full.set(key, entry);
-    const done = entry.pager.open(at);
+    const done = entry.pager.open(anchor?.part ?? 0);
     done.then(() => settle(key));
     return done;
   }
 
   /**
    * An item read whole that no longer fits reads in parts instead (SUB
-   * decision 533c2b29): of the version read, from the part at the place its
-   * window shows (`place`). That window stays on show, and charged, until
-   * the part arrives. Resolves once the part's read settles.
+   * decision 533c2b29): of the version read, from the part, and the window
+   * in it, that hold the start of the window on show (`place`), found in the
+   * item as served (SUB decision a5275d81). That window stays on show, and
+   * charged, until the part arrives. Resolves once the part's read settles.
    */
   function wholeToParts(key) {
     const entry = full.get(key);
@@ -661,7 +663,9 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (!entry.item || !entry.pages) return openParts(entry.turnId, entry.itemId);
     const count = Math.max(1, Math.ceil(entry.pages / PART_PAGES));
     const known = { version: { seq: entry.seq, bytes: entry.bytes, pages: entry.pages }, count, carried: shown?.bytes ?? 0 };
-    const done = openParts(entry.turnId, entry.itemId, known, Math.min(count - 1, Math.floor((shown?.at ?? 0) * count)));
+    const at = servedPart(entry.item, servedUnit(entry.item, shown?.unit ?? 0), { pageBytes: PAGE_DATA_BYTES, partPages: PART_PAGES });
+    const part = Math.min(count - 1, at.part);
+    const done = openParts(entry.turnId, entry.itemId, known, { seq: entry.seq, part, unit: part === at.part ? at.unit : 0 });
     pump();
     return done;
   }
@@ -784,7 +788,10 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       const shown = previous.pager.view;
       if (shown.state === "loading") return Promise.resolve();
       // Load the latest: from the first part of the newest version.
-      if (shown.data !== null && shown.version && shown.version.seq < item.seq) return previous.pager.restart();
+      if (shown.data !== null && shown.version && shown.version.seq < item.seq) {
+        previous.anchor = null;
+        return previous.pager.restart();
+      }
       if (shown.state === "failed") return previous.pager.open(shown.want);
       return Promise.resolve();
     }
@@ -814,6 +821,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     const entry = full.get(key);
     if (stopped || entry?.mode !== "parts") return Promise.resolve();
     budget.request(key);
+    entry.anchor = null;
     return entry.pager.open(to);
   }
 
@@ -825,7 +833,10 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     const error = pager.error === null ? null : pager.error instanceof ChangingError ? pager.error.message : readFailure(pager.error);
     // An item read whole whose window stays on show until its first part arrives.
     const replacing = entry.replacing && pager.data === null && pager.state !== "evicted";
-    return { turnId: entry.turnId, itemId: entry.itemId, mode: "parts", ...pager, seq: pager.version?.seq ?? null, error, replacing };
+    // The part read in place of an item read whole opens at the window that holds what that showed.
+    const anchor = entry.anchor;
+    const opensAt = anchor && pager.data !== null && pager.part === anchor.part && pager.version?.seq === anchor.seq ? anchor.unit : null;
+    return { turnId: entry.turnId, itemId: entry.itemId, mode: "parts", ...pager, seq: pager.version?.seq ?? null, error, replacing, opensAt };
   }
 
   function view() {
@@ -844,13 +855,14 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       waiting,
       full: (turnId, itemId) => shownFull(full.get(fullKey(turnId, itemId))),
       /**
-       * The view says where it shows an item read whole: `at`, the share of
-       * its text before the window on show (0 to 1), and `bytes`, the
-       * window's size as shown. Read in parts, it opens at that place.
+       * The view says where it shows an item read whole: `unit`, where the
+       * window on show starts in the item's document (UTF-16 units), and
+       * `bytes`, the window's size as shown. Read in parts, it opens at the
+       * part and window that hold that place in the item as served.
        */
-      place: (turnId, itemId, at, bytes) => {
+      place: (turnId, itemId, unit, bytes) => {
         const key = fullKey(turnId, itemId);
-        if (full.get(key)?.mode === "whole") positions.set(key, { at, bytes });
+        if (full.get(key)?.mode === "whole") positions.set(key, { unit, bytes });
       },
       drawWhole: (turnId, itemId, extra) => drawWhole(fullKey(turnId, itemId), extra),
       /** Bytes held for items read (whole or a part); the panel's share of the budget is not counted here. */

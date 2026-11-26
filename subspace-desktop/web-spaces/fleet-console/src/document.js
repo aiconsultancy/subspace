@@ -293,3 +293,164 @@ export function sliceOfPieces(pieces, from, to) {
 
 /** Text with each hidden character as its marker: the bytes this is, as shown. */
 export const shownBytes = (text) => measurePieces([String(text ?? "")], { maxBytes: Infinity, maxLines: Infinity }).bytes;
+
+/**
+ * Where unit `at` of an item's document (`documentPieces`) is in the item as
+ * served, its compact JSON (`JSON.stringify`, the item being parsed JSON):
+ * the UTF-16 offset there of the character shown at `at`, or of the start of
+ * the value a label or punctuation belongs to; the end of the JSON past the
+ * document's end. A text part's other fields map to the part's start. One
+ * pass over the item, stopping at `at`, building nothing whole.
+ */
+export function servedUnit(item, at) {
+  let doc = 0;
+  let raw = 0;
+  let found = null;
+  /** A stretch shown in `shown` units and served in `served`, with no finer match: a label, punctuation, a number. */
+  const span = (shown, served) => {
+    if (found === null && at < doc + shown) found = raw;
+    doc += shown;
+    raw += served;
+  };
+  /** A string's characters, shown as themselves (`plain`) or as `json()` writes them, and served as JSON.stringify writes them. */
+  const chars = (text, plain) => {
+    for (let i = 0; i < text.length && found === null; ) {
+      const u = text.charCodeAt(i);
+      const units = u >= 0xd800 && u <= 0xdbff && i + 1 < text.length && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00 ? 2 : 1;
+      let shown = units;
+      let served = units;
+      if (units === 1 && (u < 0x20 || u === 0x22 || u === 0x5c || (u >= 0xd800 && u <= 0xdfff))) {
+        served = COMPACT_SHORT[u]?.length ?? 6;
+        if (!plain) shown = u >= 0xd800 ? 6 : (SHOWN_SHORT[u]?.length ?? 1);
+      }
+      span(shown, served);
+      i += units;
+    }
+  };
+  /** A value as `shownJsonPieces` writes it at `depth`, served compact. */
+  const value = (v, depth) => {
+    if (found !== null) return;
+    if (typeof v === "string") {
+      span(1, 1);
+      chars(v, false);
+      span(1, 1);
+    } else if (v === null || typeof v !== "object") {
+      const units = (JSON.stringify(v) ?? "null").length;
+      span(units, units);
+    } else if (Array.isArray(v)) {
+      if (!v.length) return span(2, 2);
+      // `[` or `,`, a newline and the indent, against `[` or `,`.
+      for (let i = 0; i < v.length && found === null; i += 1) {
+        span(2 * depth + 4, 1);
+        value(skipped(v[i]) ? null : v[i], depth + 1);
+      }
+      span(2 * depth + 2, 1);
+    } else {
+      let first = true;
+      for (const key of Object.keys(v)) {
+        if (found !== null) return;
+        if (skipped(v[key])) continue;
+        first = false;
+        span(2 * depth + 5, 2);
+        chars(key, false);
+        span(3, 2);
+        value(v[key], depth + 1);
+      }
+      span(first ? 2 : 2 * depth + 2, first ? 2 : 1);
+    }
+  };
+  const compactUnits = (v) => {
+    let units = 0;
+    for (const piece of compactJsonPieces(v)) units += piece.length;
+    return units;
+  };
+  let first = true;
+  const label = (words) => {
+    span((first ? 0 : 2) + words.length + 1, 0);
+    first = false;
+  };
+  span(0, 1);
+  let fields = 0;
+  for (const [key, v] of Object.entries(item ?? {})) {
+    if (found !== null) break;
+    // `,"key":` as served, before the value.
+    span(0, (fields ? 1 : 0) + compactUnits(key) + 1);
+    fields += 1;
+    if (key === "content" && Array.isArray(v)) {
+      span(0, 1);
+      for (let index = 0; index < v.length && found === null; index += 1) {
+        if (index) span(0, 1);
+        const part = v[index];
+        if (part?.type !== "text" || typeof part.text !== "string") {
+          label(partBlocks(part, index)[0].label);
+          value(part, 0);
+          continue;
+        }
+        // The part as served, and where its text starts in it.
+        const start = raw;
+        let units = 1;
+        let textAt = 0;
+        for (const field of Object.keys(part)) {
+          if (skipped(part[field])) continue;
+          units += (units > 1 ? 1 : 0) + compactUnits(field) + 1;
+          if (field === "text") textAt = units;
+          units += compactUnits(part[field]);
+        }
+        for (const block of partBlocks(part, index)) {
+          if (block.text !== undefined) {
+            raw = start + textAt;
+            label(block.label);
+            span(0, 1);
+            chars(block.text, true);
+          } else {
+            label(block.label);
+            let shown = 0;
+            for (const piece of shownJsonPieces(block.json)) shown += piece.length;
+            span(shown, 0);
+          }
+        }
+        if (found === null) raw = start + units + 1;
+      }
+      span(0, 1);
+    } else {
+      label(key);
+      if (typeof v === "string") {
+        span(0, 1);
+        chars(v, true);
+        span(0, 1);
+      } else value(v, 0);
+    }
+  }
+  span(0, 1);
+  return found ?? raw;
+}
+
+/**
+ * Which part of an item as served holds unit `unit` of its compact JSON,
+ * when the gateway pages that JSON at `pageBytes` UTF-8 bytes, splitting
+ * only between code points, and a part is `partPages` pages: the part, and
+ * the offset of `unit` in the part's text (UTF-16 units). Streams the JSON.
+ */
+export function servedPart(item, unit, { pageBytes, partPages }) {
+  let page = 0;
+  let bytes = 0;
+  let pos = 0;
+  let partStart = 0;
+  for (const piece of compactJsonPieces(item)) {
+    for (let i = 0; i < piece.length; ) {
+      const u = piece.charCodeAt(i);
+      const pair = u >= 0xd800 && u <= 0xdbff && i + 1 < piece.length && (piece.charCodeAt(i + 1) & 0xfc00) === 0xdc00;
+      const size = u < 0x80 ? 1 : u < 0x800 ? 2 : pair ? 4 : 3;
+      if (bytes > 0 && bytes + size > pageBytes) {
+        page += 1;
+        bytes = 0;
+        if (page % partPages === 0) partStart = pos;
+      }
+      if (pos >= unit) return { part: Math.floor(page / partPages), unit: pos - partStart };
+      bytes += size;
+      pos += pair ? 2 : 1;
+      i += pair ? 2 : 1;
+    }
+  }
+  return { part: Math.floor(page / partPages), unit: pos - partStart };
+}

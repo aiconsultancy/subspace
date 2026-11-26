@@ -256,6 +256,13 @@ export function formatItem(item) {
 
 const clampIndex = (index, count) => Math.min(Math.max(0, index), Math.max(0, count - 1));
 
+/** The window of a measure that holds unit `unit` of its body. */
+function windowHolding(measure, unit) {
+  let index = 0;
+  while (index + 1 < windowCount(measure) && measure.bounds[index + 1] <= unit) index += 1;
+  return index;
+}
+
 /**
  * A body held back to keep the view within its budget: a caption with its
  * size as shown, and Show, which asks for it (SUB decision ed71a299).
@@ -808,6 +815,8 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
       if (!source) return { item, full, key, index, source: null, version: "", window: 0, measure: null, cost: 0 };
       const version = sourceVersion(source, item, full, view);
       const measure = measureFor(key, version, source);
+      // A part read in place of an item read whole opens at the window holding what that showed (SUB decision a5275d81).
+      if (Number.isInteger(full?.opensAt) && windows.get(key)?.version !== version) windows.set(key, { version, index: windowHolding(measure, full.opensAt) });
       const window = clampIndex(windowAt(key, version), windowCount(measure));
       return { item, full, key, index, source, version, window, measure, cost: drawCost(measure, window, allowanceOf(source, full)) };
     });
@@ -919,7 +928,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
       drawItems(turn, entry, bodies, plan.drawn);
       // Where each item read whole shows, so it reads in parts from there should it no longer fit.
       for (const { item, source, measure, window, key } of bodies) {
-        if (source?.kind === "whole") view.place?.(turn.id, item.id, window / windowCount(measure), plan.drawn.has(key) ? drawnBytes(measure, window) : 0);
+        if (source?.kind === "whole") view.place?.(turn.id, item.id, measure.bounds[window], plan.drawn.has(key) ? drawnBytes(measure, window) : 0);
       }
     }
     // Fitted to the room above, so it frees nothing and always fits.

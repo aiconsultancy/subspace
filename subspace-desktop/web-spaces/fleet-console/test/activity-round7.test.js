@@ -5,9 +5,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PART_MAX_BYTES } from "../src/activity.js";
+import { servedPart, servedUnit } from "../src/document.js";
 import { formatItem, itemDocument, itemTree, measureSource, mount } from "../src/activity-view.js";
 import { splitUtf8 } from "../src/utf8.js";
-import { activityEvent, GENERATION, textItem } from "./activity-fixtures.js";
+import { activityEvent, GENERATION, textItem, toolItem } from "./activity-fixtures.js";
 import { buttons, clickOn, fakeDoc, officer, pagedSnapshot, pagedWith, pagesOf, prepare, settle, usePaged, windowsIn } from "./activity-helpers.js";
 
 const KEY = "turn-b\u0000ia";
@@ -188,9 +189,8 @@ test("r7 2 (probe): a whole with uneven content changes to parts at the part tha
 });
 
 test("r7 2: a non-uniform item read in parts after the swap shows the window that holds the content on show before it", async () => {
-  let text = "";
   // Markers early (12 bytes shown, 3 served), then newlines (a line each shown, two bytes served) and plain text.
-  for (let i = 0; i < 160; i += 1) text += `#${i};` + (i < 60 ? "\u202e".repeat(1500) + "é".repeat(200) : i % 4 === 0 ? "\n".repeat(400) + "y".repeat(500) : "x".repeat(4000));
+  const text = unevenText();
   const w = 19;
   const place = servedPlace(pagedWith(text).item, text, w);
   const windows = formatItem(pagedWith(text).item).windows.length;
@@ -204,6 +204,62 @@ test("r7 2: a non-uniform item read in parts after the swap shows the window tha
   assert.equal(after, expected, "that window's content is what is drawn");
   assert.ok(after.includes(before.slice(0, 100)), "and it holds the content that was on show");
   watcher.stop();
+});
+
+/** The non-uniform text of the test above: markers early, then newlines and plain text. */
+function unevenText() {
+  let text = "";
+  for (let i = 0; i < 160; i += 1) text += `#${i};` + (i < 60 ? "\u202e".repeat(1500) + "é".repeat(200) : i % 4 === 0 ? "\n".repeat(400) + "y".repeat(500) : "x".repeat(4000));
+  return text;
+}
+
+test("r7 2: Show's fallback to parts opens the part, and the window in it, that hold the start of the window on show", async () => {
+  const text = unevenText();
+  const w = 19;
+  const { item, pages, snapshot } = pagedWith(text);
+  const place = servedPlace(item, text, w);
+  const { watcher, client } = await prepare(snapshot, 2 * pages[0].bytes + 20_000);
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  const unit = formatItem(item).windows.slice(0, w).reduce((sum, each) => sum + each.length, 0);
+  watcher.view.place("turn-b", "ia", unit, 30_000);
+  // Show asks for more than the whole and its window can keep beside the floor.
+  assert.equal(watcher.view.drawWhole("turn-b", "ia", 100_000), false);
+  await settle();
+  const part = watcher.view.full("turn-b", "ia");
+  assert.equal(part.mode, "parts");
+  assert.equal(part.part, place.part);
+  assert.equal(windowHoldingIn(part.data, part.opensAt), place.window, "it opens at the window that holds what was on show");
+  watcher.stop();
+});
+
+/** The window of part text `data` that holds unit `unit`. */
+function windowHoldingIn(data, unit) {
+  const { bounds } = measureSource({ kind: "part", data });
+  return bounds.findLastIndex((bound, i) => i < bounds.length - 1 && bound <= unit);
+}
+
+test("r7 2 (unit): servedUnit maps the document's characters to the item as served, and servedPart pages it as the gateway does", () => {
+  const item = toolItem("ia", 9, { input: { command: "ls\n-la", list: [1, "two\u0001\"", { deep: "é😀\u202e" }], empty: {}, none: [] }, metadata: { output: "line1\nline2\tend" }, content: [{ type: "text", text: "hello \"world\" \u202e😀 again", annotation: { a: 1 } }, { type: "image", url: "x" }] });
+  const doc = itemDocument(item);
+  const json = JSON.stringify(item);
+  for (const words of ["hello", "again", "line2", "deep", "-la", "two", "image", "bash"]) {
+    const at = doc.indexOf(words);
+    assert.ok(at >= 0, words);
+    assert.equal(json.slice(servedUnit(item, at), servedUnit(item, at) + words.length), words, `${words} is where it is served`);
+  }
+  assert.equal(servedUnit(item, doc.length), json.length, "past the end is the end");
+  const big = toolItem("ib", 9, { content: [{ type: "text", text: "é".repeat(40_000) + "😀".repeat(30_000) + "x".repeat(200_000) }] });
+  const served = JSON.stringify(big);
+  const pages = splitUtf8(served, 64 * 1024);
+  // Units at characters, as servedUnit gives: one inside the four-byte characters.
+  for (const unit of [0, 32_768, served.indexOf("😀") + 20_000, 130_000, served.length - 1]) {
+    let page = 0;
+    let start = 0;
+    while (start + pages[page].length <= unit) start += pages[page++].length;
+    const partStart = pages.slice(0, Math.floor(page / 4) * 4).reduce((sum, each) => sum + each.length, 0);
+    assert.deepEqual(servedPart(big, unit, { pageBytes: 64 * 1024, partPages: 4 }), { part: Math.floor(page / 4), unit: unit - partStart }, `unit ${unit}`);
+  }
 });
 
 // ---------- P2 3: a whole's reload in parts keeps its window ----------
