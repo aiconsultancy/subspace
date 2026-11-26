@@ -11,6 +11,61 @@ import { createPager } from "../src/pager.js";
 import { activityEvent, stepItem, textItem, tokens, toolItem } from "./activity-fixtures.js";
 import { buttons, clickOn, fakeDoc, officer, pagedWith, pagesOf, prepare, settle, windowsIn } from "./activity-helpers.js";
 
+// ---------- 1. Show always shows ----------
+
+/** A two-page item heavy in markers: its window, as shown, costs more than its read's allowance. */
+const markerHeavy = (id) => pagedWith("\u202e".repeat(21_744), id);
+
+test("1: Show on an item read whole draws its window within the floor, freeing another read", async () => {
+  const a = markerHeavy("ia");
+  const b = markerHeavy("ib");
+  a.snapshot.turns[1].items.push(b.snapshot.turns[1].items[0]);
+  assert.equal(a.pages.length, 2);
+  const { watcher, client, panel, inline } = await prepare(a.snapshot, 2 * a.pages[0].bytes + 2 * b.pages[0].bytes);
+  const budget = watcher.view.budget;
+  client.activityItemPage = async (agent, turn, id, page) => (id === "ia" ? a.pages : b.pages)[page];
+  await watcher.loadItem("turn-b", "ia");
+  await watcher.loadItem("turn-b", "ib");
+  panel.update(watcher.view, officer);
+  assert.equal(watcher.view.full("turn-b", "ia").mode, "whole");
+  assert.equal(watcher.view.full("turn-b", "ib").mode, "whole");
+  const shows = buttons(panel.root, "Show");
+  assert.ok(shows.length >= 1, "a whole body held back offers Show");
+  clickOn(panel, shows[0]);
+  const asked = budget.requested;
+  assert.ok(asked === "turn-b\u0000ia" || asked === "turn-b\u0000ib");
+  const [turnId, itemId] = asked.split("\u0000");
+  assert.equal(watcher.view.full(turnId, itemId).mode, "whole", "still whole");
+  assert.equal(panel.root.findAll((node) => node.attributes["data-activity-show"] === itemId).length, 0, "Show drew it");
+  assert.ok(windowsIn(panel.root).length >= 1);
+  assert.ok(budget.bytes(asked) > 2 * a.pages[0].bytes, "its window is in its read's charge");
+  assert.equal(watcher.view.full("turn-b", itemId === "ia" ? "ib" : "ia"), null, "the other read was freed for it");
+  assert.ok(budget.used - inline <= budget.limit - inline, `within the floor (${budget.used - inline} of ${budget.limit - inline})`);
+  watcher.stop();
+});
+
+test("1: Show on an item read whole that cannot be kept with its window reads it in parts, and its part draws", async () => {
+  const { pages, snapshot } = markerHeavy("ia");
+  const { watcher, client, panel } = await prepare(snapshot, 2 * pages[0].bytes);
+  const budget = watcher.view.budget;
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  panel.update(watcher.view, officer);
+  assert.equal(watcher.view.full("turn-b", "ia").mode, "whole", "admitted whole at exactly its allowance");
+  assert.equal(buttons(panel.root, "Show").length, 1, "its window does not fit beside it");
+  clickOn(panel, buttons(panel.root, "Show")[0]);
+  await settle();
+  panel.update(watcher.view, officer);
+  const part = watcher.view.full("turn-b", "ia");
+  assert.equal(part.mode, "parts", "read in parts instead");
+  assert.equal(part.state, "ready");
+  assert.equal(part.part, 0, "from where it showed");
+  assert.equal(buttons(panel.root, "Show").length, 0, "Show showed it");
+  assert.equal(windowsIn(panel.root).length, 1);
+  assert.equal(budget.requested, "turn-b\u0000ia");
+  watcher.stop();
+});
+
 // ---------- 2. A whole read is rechecked when the inline charge grows ----------
 
 test("2: an item read whole that no longer fits beside grown inline content reads in parts from where its window shows, the window kept until the part arrives", async () => {

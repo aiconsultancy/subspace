@@ -647,6 +647,26 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     return done;
   }
 
+  /**
+   * Show on an item read whole, at the floor (SUB decision 533c2b29): hold
+   * the window the panel draws, `extra` bytes beyond the read's allowance,
+   * in the read's own charge, freeing other entries for it; or, when the
+   * whole and its window cannot be kept beside the pinned content, read it
+   * in parts from where it shows. `extra` 0 gives the window's charge back.
+   * Returns whether the window is held; false also when the item is being
+   * read again, or not read whole.
+   */
+  function drawWhole(key, extra) {
+    const entry = full.get(key);
+    if (entry?.mode !== "whole" || !entry.item || reading?.key === key || queue.includes(key) || !budget.has(key)) return false;
+    const bytes = entry.bytes * FORMAT_FACTOR + extra;
+    if (budget.bytes(key) === bytes) return true;
+    if (budget.fits(key, bytes) && budget.reserve(key, bytes, evictor(key))) return true;
+    wholeToParts(key);
+    changed();
+    return false;
+  }
+
   /** Start the next queued whole read if none is running. */
   function pump() {
     while (!reading && !stopped && queue.length) {
@@ -813,6 +833,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
         const key = fullKey(turnId, itemId);
         if (full.get(key)?.mode === "whole") positions.set(key, { at, bytes });
       },
+      drawWhole: (turnId, itemId, extra) => drawWhole(fullKey(turnId, itemId), extra),
       /** Bytes held for items read (whole or a part); the panel's share of the budget is not counted here. */
       loadedBytes: [...full.keys()].reduce((total, key) => total + budget.bytes(key), 0),
       budget,

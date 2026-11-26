@@ -606,8 +606,8 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   const turnOpened = new Map();
   /** Ticks on each Show and each turn opened by hand: later is larger. */
   let opened = 0;
-  /** The key the floor body is charged under in the budget (the latest request, shown), or null. */
-  let floorKey = null;
+  /** The floor body charged (the latest request, shown): {key, turnId, itemId, whole}, or null. */
+  let floorHeld = null;
   let last = null;
   /** Set once the view closed: nothing draws again. */
   let disposed = false;
@@ -675,20 +675,39 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     redraw();
   }
 
+  /** Give back the floor body's charge: an inline body's key, or the window held in a whole read's. */
+  function giveBack(view, budget) {
+    if (floorHeld?.whole) view.drawWhole?.(floorHeld.turnId, floorHeld.itemId, 0);
+    else if (floorHeld) budget?.release(floorHeld.key);
+    floorHeld = null;
+  }
+
   /**
    * Charge the floor body: the body asked for with Show, while it is still
-   * the budget's latest request. Charged under its own key, which the budget
-   * holds even past its limit, freeing items read and the other bodies drawn
-   * first (SUB decisions 0c13b784 §3, 1c19f413). A body that is no longer the
-   * latest request gives up that charge and is planned with the rest.
+   * the budget's latest request. An inline body is charged under its own
+   * key, which the budget holds even past its limit, freeing items read and
+   * the other bodies drawn first (SUB decisions 0c13b784 §3, 1c19f413). An
+   * item read whole holds its window in its read's charge, within the floor,
+   * or else reads in parts from where it shows (`drawWhole`, SUB decision
+   * 533c2b29). A body that is no longer the latest request gives up that
+   * charge and is planned with the rest. Returns the floor body, and whether
+   * an item went to parts.
    */
-  function chargeFloor(budget, bodies) {
+  function chargeFloor(view, budget, bodies) {
     const key = budget?.requested ?? null;
-    const floor = key === null ? null : (bodies.find((body) => body.key === key && body.source?.kind === "inline") ?? null);
-    if (floorKey !== null && floorKey !== floor?.key) budget?.release(floorKey);
-    floorKey = floor ? floor.key : null;
-    if (floor) budget.reserve(floor.key, floor.cost, null);
-    return floor;
+    // An item read whole is the floor body once Show asked for it; its Load alone draws what its read reserved.
+    const body = key === null ? null : (bodies.find((each) => each.key === key && (each.source?.kind === "inline" || (each.source?.kind === "whole" && asked.has(key)))) ?? null);
+    if (floorHeld && floorHeld.key !== body?.key) giveBack(view, budget);
+    if (!body) return { floor: null, moved: false };
+    if (body.source.kind === "inline") {
+      floorHeld = { key, whole: false };
+      budget.reserve(key, body.cost, null);
+      return { floor: body, moved: false };
+    }
+    floorHeld = { key, turnId: body.full.turnId, itemId: body.item.id, whole: true };
+    if (view.drawWhole?.(floorHeld.turnId, floorHeld.itemId, body.cost)) return { floor: body, moved: false };
+    floorHeld = null;
+    return { floor: null, moved: view.full(body.full.turnId, body.item.id)?.mode === "parts" };
   }
 
   const redraw = () => last && update(last.view, last.officer);
@@ -824,7 +843,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
       // Each segment is rebuilt only when what it is drawn from changed. An
       // item read whole that now reads in parts keeps its window on show
       // until the part arrives (SUB decision 533c2b29).
-      const keepBody = full?.replacing === true && kid.body.key !== null;
+      const keepBody = full?.replacing === true && kid.body.drawn === true;
       let segments = null;
       for (const name of ["head", "body", "foot"]) {
         const segment = kid[name];
@@ -833,6 +852,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
         const tree = segments[name]();
         segment.element.replaceChildren(...h("div", {}, tree).children.map((node) => mount(node, doc)));
         segment.key = keys[name];
+        if (name === "body") segment.drawn = source !== null && !held;
       }
       place(entry.items, kid.element, index);
     }
@@ -875,12 +895,13 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     const budget = view.budget ?? null;
     // The floor body first, under its own key: the rest are fitted to the room it leaves.
     budget?.release(DRAW_KEY);
-    const floor = chargeFloor(
+    const { floor, moved } = chargeFloor(
+      view,
       budget,
       open.flatMap(({ bodies }) => bodies.filter((body) => body.measure)),
     );
-    // Charging it may have freed items read: plan from what is left.
-    if (floor) {
+    // Charging it may have freed items read, or sent one to parts: plan from what is left.
+    if (floor || moved) {
       forgetStale(shown, view);
       for (const each of open) each.bodies = bodiesOf(each.turn, each.entry, view);
     }
