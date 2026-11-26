@@ -117,14 +117,16 @@ export const compactJsonPieces = (value) => jsonPieces(value, false, false, 0);
 
 /**
  * The fields of `object` other than `keys`, or null when there are none:
- * what a friendly view of it leaves out, shown beside it as a block.
+ * what a friendly view of it leaves out, shown beside it as a block. A
+ * null-prototype record, so every own field stays a field: JSON may carry
+ * one named `__proto__`, which `{}` would take as its prototype.
  */
 export function restOf(object, keys) {
   if (object === null || typeof object !== "object" || Array.isArray(object)) return null;
   let rest = null;
   for (const [key, value] of Object.entries(object)) {
     if (keys.includes(key) || skipped(value)) continue;
-    rest ??= {};
+    rest ??= Object.create(null);
     rest[key] = value;
   }
   return rest;
