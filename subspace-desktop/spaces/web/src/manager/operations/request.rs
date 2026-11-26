@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use gpui_kit::App;
 use subspace_framework::core::settings::SettingsFile;
 use subspace_framework::dashboard::CurrentProduct;
+use subspace_framework::product::{BoardIdUse, ValidatedProduct};
 
 use super::super::model::{self, SourceKind};
 use super::{Manager, Preparation, config_path};
@@ -22,15 +23,8 @@ pub(super) fn from_editor(manager: &Manager, cx: &App) -> Result<Preparation, St
         }
         .into());
     }
-    if cx.try_global::<CurrentProduct>().is_some_and(|product| {
-        product
-            .0
-            .product
-            .boards
-            .iter()
-            .any(|board| board.id.as_str() == id)
-    }) {
-        return Err("A built-in board already uses this ID. Choose another ID.".into());
+    if let Some(product) = cx.try_global::<CurrentProduct>() {
+        built_in_free(&product.0.product, &id)?;
     }
     let request = source_request(editor, cx)?;
     Ok(Preparation {
@@ -40,6 +34,21 @@ pub(super) fn from_editor(manager: &Manager, cx: &App) -> Result<Preparation, St
         replacing: editor.replacing,
         file,
     })
+}
+
+/// Refuses `id` when one of the product's own boards uses it, as its ID or a
+/// former ID, as the shell would ignore the board.
+fn built_in_free(product: &ValidatedProduct, id: &str) -> Result<(), String> {
+    match product.board_id_use(id) {
+        None => Ok(()),
+        Some(BoardIdUse::Id) => {
+            Err("A built-in board already uses this ID. Choose another ID.".into())
+        }
+        Some(BoardIdUse::FormerId) => Err(
+            "A built-in board used this ID before, and its saved settings are read as that board's. Choose another ID."
+                .into(),
+        ),
+    }
 }
 
 fn source_request(
@@ -141,8 +150,26 @@ pub(super) fn is_github(request: &ImportRequest) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{reference, repository};
+    use subspace_framework::product::{fixture, validate_product};
+
+    use super::{built_in_free, reference, repository};
     use crate::install::RepositoryRef;
+
+    #[test]
+    fn a_board_id_or_former_id_of_the_product_is_refused() {
+        let mut descriptor = fixture::descriptor();
+        descriptor.boards[0].former_ids = vec!["example-old".into()];
+        let product = validate_product(&descriptor).unwrap();
+        let id = product.boards[0].id.as_str().to_owned();
+        assert!(
+            built_in_free(&product, &id)
+                .unwrap_err()
+                .contains("already uses")
+        );
+        let former = built_in_free(&product, "example-old").unwrap_err();
+        assert!(former.contains("used this ID before"), "{former}");
+        assert_eq!(built_in_free(&product, "example-weather"), Ok(()));
+    }
 
     #[test]
     fn ambiguous_tree_urls_and_external_destinations_are_not_guessed() {
