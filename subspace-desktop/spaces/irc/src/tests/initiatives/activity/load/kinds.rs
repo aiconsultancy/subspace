@@ -76,3 +76,21 @@ fn an_item_sent_inline_after_its_read_is_planned_and_its_read_let_go(cx: &mut Te
     assert_eq!(read, 0, "and its charge");
     assert!(drawn >= "INLINE-NOW".len() as u64, "planned: {drawn}");
 }
+
+/// Round 6 thermo (P2 3), SUB decisions `469f1320` and `4311830a` item 4:
+/// a step joined from pages shows the token counts this version does not
+/// know beside its settled use, as it does inline.
+#[gpui_kit::test]
+fn a_paged_step_shows_the_token_counts_this_version_does_not_know(cx: &mut TestAppContext) {
+    let finish = format!("{}FINISH-END", "f".repeat(100_000));
+    let item = json!({"id": "i3", "seq": 6, "startedAt": 1, "updatedAt": 2, "kind": "step",
+                      "status": "completed", "finish": finish,
+                      "tokens": {"input": 10, "output": 5, "reasoning": 0, "cacheRead": 0,
+                                 "cacheWrite": 0, "detail": {"image": "IMAGE-TOKENS"}}});
+    let (_board, served, cx) = served_as(cx, 6, item);
+    load(cx);
+    assert_eq!(served.asked().len(), 2, "both pages: {:?}", served.asked());
+    assert!(drawn(&on("use"), cx).starts_with("10 in · 5 out"));
+    assert_eq!(drawn(&on("tokens:0:key"), cx), "detail");
+    assert!(drawn(&on("tokens:0"), cx).contains("\"image\": \"IMAGE-TOKENS\""));
+}

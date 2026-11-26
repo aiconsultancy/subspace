@@ -77,9 +77,10 @@ fn words_heading(kind: &str, text: &TextItem) -> String {
 }
 
 /// `10 in · 5 out · 2 reasoning · 1 cache read · 0 cache write · $0.2500`,
-/// or that the step has not settled.
+/// or that the step has not settled. Token counts this version does not
+/// know follow in its body ([`super::blocks`]).
 pub(super) fn step_use(step: &StepItem) -> String {
-    let Some(tokens) = step.tokens else {
+    let Some(tokens) = &step.tokens else {
         return "Not settled yet".to_owned();
     };
     let cost = step

@@ -105,7 +105,7 @@ pub struct ActivityUsage {
     pub cost: f64,
 }
 
-#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct ActivityTokens {
@@ -114,6 +114,10 @@ pub struct ActivityTokens {
     pub reasoning: u64,
     pub cache_read: u64,
     pub cache_write: u64,
+    /// Token counts this version does not know, kept so they can still be
+    /// shown (SUB decisions `469f1320` and `4311830a` item 4).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// What every item carries.

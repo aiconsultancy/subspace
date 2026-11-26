@@ -13,8 +13,8 @@
 
 use serde_json::{Map, Value};
 use subspace_client_fleet::activity::{
-    ActivityContent, ActivityEntry, ActivityError, ActivityItem, PagedItem, StepItem, StepModel,
-    TextItem, ToolItem,
+    ActivityContent, ActivityEntry, ActivityError, ActivityItem, ActivityTokens, PagedItem,
+    StepItem, StepModel, TextItem, ToolItem,
 };
 
 use super::Held;
@@ -159,9 +159,11 @@ fn text_blocks(words: &TextItem) -> Vec<Block<'_>> {
     blocks
 }
 
-/// A model step: its model and how it finished, then its failure.
+/// A model step: the token counts this version does not know, beside its
+/// settled use, its model and how it finished, then its failure.
 fn step_blocks(step: &StepItem) -> Vec<Block<'_>> {
     let mut blocks: Vec<Block<'_>> = status_block(&step.status).into_iter().collect();
+    blocks.extend(step.tokens.iter().flat_map(token_blocks));
     blocks.extend(step.model.iter().flat_map(model_blocks));
     blocks.extend(
         step.finish
@@ -171,6 +173,13 @@ fn step_blocks(step: &StepItem) -> Vec<Block<'_>> {
     blocks.extend(error_blocks(step.error.as_ref()));
     blocks.extend(extra_blocks("", &step.extra));
     blocks
+}
+
+/// The token counts a step settled that this version does not know, each
+/// as its key and its JSON, drawn and measured like any other block (SUB
+/// decisions `469f1320` and `4311830a` item 4).
+fn token_blocks(tokens: &ActivityTokens) -> Vec<Block<'_>> {
+    field_blocks("tokens", "Token use", &tokens.extra)
 }
 
 /// The model a step ran on: its provider, ID and variant.

@@ -120,7 +120,10 @@ fn the_snapshot_decodes_every_item_kind_and_keeps_newlines() {
     let ActivityItem::Step(step) = &**step else {
         panic!("a step");
     };
-    assert_eq!(step.tokens.map(|tokens| tokens.cache_read), Some(1));
+    assert_eq!(
+        step.tokens.as_ref().map(|tokens| tokens.cache_read),
+        Some(1)
+    );
     assert_eq!(step.cost, Some(0.25));
     let ActivityEntry::Item(tool) = &now.items[1] else {
         panic!("an item");
@@ -174,6 +177,35 @@ fn a_known_shape_keeps_the_fields_it_does_not_know() {
     };
     check(serde_json::from_value(value.clone()).unwrap());
     check(decode_item(&value.to_string(), "i3", 6).ok().unwrap());
+}
+
+/// Round 6 thermo (P2 3), SUB decision `4311830a` item 4: a step keeps
+/// the token counts this version does not know, nested ones too, read
+/// inline or joined from pages alike.
+#[test]
+fn a_step_keeps_the_token_counts_it_does_not_know() {
+    let value = json!({
+        "id": "i4", "seq": 7, "startedAt": 1, "updatedAt": 2, "kind": "step",
+        "status": "completed",
+        "tokens": {"input": 10, "output": 5, "reasoning": 0, "cacheRead": 0, "cacheWrite": 0,
+                   "audio": 3, "detail": {"image": 2}}
+    });
+    let check = |entry: ActivityEntry| {
+        let ActivityEntry::Item(item) = entry else {
+            panic!("an item");
+        };
+        let ActivityItem::Step(step) = *item else {
+            panic!("a step");
+        };
+        let tokens = step.tokens.unwrap();
+        assert_eq!((tokens.input, tokens.output), (10, 5));
+        assert_eq!(tokens.extra.get("audio"), Some(&json!(3)));
+        assert_eq!(tokens.extra.get("detail"), Some(&json!({"image": 2})));
+        assert_eq!(tokens.extra.len(), 2);
+        assert!(step.extra.is_empty(), "{:?}", step.extra);
+    };
+    check(serde_json::from_value(value.clone()).unwrap());
+    check(decode_item(&value.to_string(), "i4", 7).ok().unwrap());
 }
 
 #[test]

@@ -154,3 +154,25 @@ fn a_step_in_parts_shows_its_use_and_writes_out_only_the_part_shown(cx: &mut Tes
     }
     assert_eq!(joined, body, "every byte in exactly one part");
 }
+
+/// Round 6 thermo (P2 3), SUB decisions `469f1320` and `4311830a` item 4:
+/// the token counts a step settled that this version does not know, nested
+/// ones too, show as blocks beside its settled use.
+#[gpui_kit::test]
+fn a_step_shows_the_token_counts_this_version_does_not_know(cx: &mut TestAppContext) {
+    let (board, cx) = opened(cx);
+    let step = json!({"id": "i2", "seq": 5, "startedAt": 1, "updatedAt": 2, "kind": "step",
+        "status": "completed",
+        "tokens": {"input": 10, "output": 5, "reasoning": 0, "cacheRead": 0, "cacheWrite": 0,
+                   "audio": 3, "detail": {"image": "IMAGE-TOKENS"}},
+        "cost": 0.25});
+    answer(&board, Ok(running(json!([step]))), cx);
+    assert_eq!(
+        drawn(&on("use"), cx),
+        "10 in · 5 out · 0 reasoning · 0 cache read · 0 cache write · $0.2500"
+    );
+    assert_eq!(drawn(&on("tokens:0:key"), cx), "audio");
+    assert_eq!(drawn(&on("tokens:0"), cx), "3");
+    assert_eq!(drawn(&on("tokens:1:key"), cx), "detail");
+    assert!(drawn(&on("tokens:1"), cx).contains("\"image\": \"IMAGE-TOKENS\""));
+}
