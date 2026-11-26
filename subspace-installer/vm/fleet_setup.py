@@ -31,6 +31,7 @@ import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+from ipaddress import ip_address
 import json
 import os
 from pathlib import Path
@@ -38,6 +39,7 @@ import pwd
 import re
 import secrets
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -281,6 +283,7 @@ def parse_args(argv):
                         "'' removes it")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
+    parser.add_argument("--shared-api-target", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
                         "PostgreSQL container here: absolute path to a root-only file (mode 0600) holding its "
                         "postgresql://user:password@host:5432/database?sslmode=verify-full URL. Kept on later runs")
@@ -548,6 +551,12 @@ def gather(args, saved):
     require(not args.irc_operator_account or args.irc_operator,
             "--irc-operator-account is the account the operator's connection signs in to: pass --irc-operator too.")
     hosted_api(args, answers, saved)
+    if args.shared_api_target:
+        require(not answers.get("apiUrl"), "--api-target cannot replace an explicit or saved hosted API (--api-url).")
+        hostname = answers.get("ircHost")
+        require(answers["irc"] == "remote" and hostname and not loopback_irc_host(hostname),
+                "--api-target needs remote IRC: use --irc-server NAME or --irc remote --irc-host HOST.")
+        args.api = False
     if args.vm_host == "":
         answers.pop("vmHost", None)
     elif args.vm_host is not None:
@@ -1860,6 +1869,19 @@ def compose(*args, capture=False, check=True, env=None, input_text=None):
                *args, capture=capture, check=check, env=env, input_text=input_text, keep_stdin=False)
 
 
+def loopback_irc_host(host):
+    if host.lower().rstrip(".").split(".")[-1] == "localhost":
+        return True
+    try:
+        address = ip_address(host.strip("[]"))
+    except ValueError:
+        try:
+            address = ip_address(socket.inet_aton(host))
+        except OSError:
+            return False
+    return (getattr(address, "ipv4_mapped", None) or address).is_loopback
+
+
 def hosted_api(args, answers, saved):
     """A Subspace API on another host (--api-url): kept on later runs, exclusive of an API on this VM, and never
     switched to from one without --switch-to-hosted-api."""
@@ -2964,8 +2986,9 @@ def register_fleet(registration):
         fleet_records.check(slug, records)
     except fleet_records.Refused as error:
         raise SetupError(f"{error} Set the fleet up again with this version of the installer.") from None
-    require(registration.get("ircHost") not in ("127.0.0.1", "localhost", "::1"),
-            "A further fleet needs a shared IRC server (--irc-server): IRC on its own VM is unreachable from here.")
+    hostname = registration.get("ircHost")
+    require(isinstance(hostname, str) and not loopback_irc_host(hostname),
+            "A further fleet needs a remote IRC server (--irc-server or --irc remote --irc-host).")
     port = registration.get("ircPort")
     require(isinstance(registration.get("ircHost"), str) and isinstance(port, int) and 1 <= port <= 65535,
             "The registration has an invalid IRC server.")

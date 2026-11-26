@@ -715,10 +715,10 @@ installer does not yet carry it across the private network (for example with
 an SSH forward from each further fleet VM to the first VM's port 3001, run
 as an operator-owned service). Further fleets need the shared IRC server,
 because IRC on their own VM is unreachable from the first fleet's API.
-`--api-target` works only with a shared server the installer manages
-(`--irc-server`); with one in a container, register further fleets as
-[Point the fleets and desktops at it](#point-the-fleets-and-desktops-at-it)
-shows. The desktop needs the first fleet's tunnel, which carries the API.
+Use `--irc-server NAME` for a managed shared server or
+`--irc remote --irc-host HOST` for a shared TLS server you run separately.
+The host installer remembers the fleet's IRC endpoint after a successful
+run. The desktop needs the first fleet's tunnel, which carries the API.
 Every fleet's tunnel uses the same local ports for its dashboard, AgentsView
 and Fleet API, so to look at another fleet's dashboard, stop the first fleet's
 tunnel and start that fleet's for a while. For the same reason the API records
@@ -873,10 +873,11 @@ accounts in Ergo.
    ssh azureuser@fleet-one.example.ts.net sudo -n subspace-setup irc-bundle > bundles/fleet-one.json
    ```
 
-2. **Further fleets.** `--api-target` refuses a server the installer does not
-   manage, so install each further fleet with `--no-api` and the same
-   `--irc remote` options and its own `--target`, then register it with the
-   first fleet's API. The registration holds no secrets: the fleet's IRC
+2. **Further fleets.** Pass `--api-target <first fleet's target>` with the
+   same `--irc remote` options and its own `--target`. Setup registers
+   the fleet with the first fleet's API. To register it separately instead,
+   install with `--no-api` and use the commands below. The registration
+   holds no secrets: the fleet's IRC
    server, its standard channels, each captain's ship and channel, each
    officer's name, IRC nick, model and account subject, and the fleet's
    Stargate Fleet API address if you gave it one with `--fleet-api-url` (its

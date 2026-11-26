@@ -748,12 +748,9 @@ do_install() {
         [ "$api_target" != "$target" ] || die "--api-target must name another fleet."
         grep -qs '^SUBSPACE_API=1$' "$home/targets/$api_target/summary.env" ||
             die "No fleet '$api_target' with a Subspace API. Install that fleet first, without --no-api."
-        if [ -z "$irc_target" ] && [ ! -f "$state/irc-target" ]; then
-            die "--api-target needs a shared IRC server (--irc-server NAME): IRC on this fleet's own VM is unreachable from the first fleet's API."
-        fi
         on_target "$api_target" vm sudo -n subspace-setup register-fleet --check ||
             die "The Subspace API on '$api_target' cannot register this fleet; nothing was changed."
-        passthrough+=(--no-api)
+        passthrough+=(--shared-api-target)
     fi
     # subspace-setup --dry-run changes nothing on the VM: the files it is given go to a scratch directory that
     # is removed afterwards, never over the inputs (such as the database URL) that the next real run uses.
@@ -775,17 +772,24 @@ do_install() {
     fi
     if [ -n "$irc_target" ]; then
         [ -f "$home/targets/$irc_target/summary.env" ] || die "No shared IRC server '$irc_target'. Run ./install.sh irc-server first."
-        local irc_host irc_port self_signed
+        local irc_host irc_port self_signed ca_source ca_digest ca_target
         irc_host=$(sed -n 's/^SUBSPACE_IRC_HOST=//p' "$home/targets/$irc_target/summary.env")
         irc_port=$(sed -n 's/^SUBSPACE_IRC_PORT=//p' "$home/targets/$irc_target/summary.env")
         self_signed=$(sed -n 's/^SUBSPACE_IRC_SELF_SIGNED=//p' "$home/targets/$irc_target/summary.env")
         # The shared server this installer runs seeds each officer's account with a password.
         passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port" --irc-auth password)
         if [ "$self_signed" = 1 ]; then
-            vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/irc-ca.pem'" < "$home/targets/$irc_target/ca.pem"
-            passthrough+=(--irc-ca "$inputs/irc-ca.pem")
+            ca_source=$home/targets/$irc_target/ca.pem
+            if [ "$os" = Darwin ]; then ca_digest=$(shasum -a 256 < "$ca_source"); else ca_digest=$(sha256sum < "$ca_source"); fi
+            ca_digest=${ca_digest%% *}
+            ca_target=$inputs/irc-ca-$ca_digest.pem
+            # A rejected setup must leave the previous IRC endpoint's trust anchor intact.
+            vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $ca_target.new && mv -f $ca_target.new $ca_target'" < "$ca_source" ||
+                die "Could not copy the IRC certificate to the VM."
+            passthrough+=(--irc-ca "$ca_target")
+        else
+            passthrough+=(--irc-ca '')
         fi
-        "$dry_run" || printf '%s\n' "$irc_target" > "$state/irc-target"
     fi
 
     if [ -n "$database_url_file" ]; then
@@ -862,6 +866,7 @@ do_install() {
         rm -f "$bundle"
         on_target "$irc_target" fetch_private "$home/targets/$irc_target/$SUBSPACE_ADMIN_ACCOUNT.password" \
             sudo -n subspace-setup irc-server secret "$SUBSPACE_ADMIN_ACCOUNT"
+        printf '%s\n' "$irc_target" > "$state/irc-target"
     fi
     if [ "$SUBSPACE_STARGATE_API" = 1 ]; then
         fetch_private "$state/stargate-api.token" sudo -n subspace-setup stargate-token

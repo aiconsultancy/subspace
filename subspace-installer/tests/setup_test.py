@@ -1771,9 +1771,9 @@ class ExternalDatabaseTests(unittest.TestCase):
             text = (root / name).read_text()
             with self.subTest(name):
                 self.assertIn(scratch, text)
-                for file in ("database-url", "database-ca.pem", "irc-ca.pem"):
-                    self.assertNotRegex(text, rf"/root/fleet/{re.escape(file)}\b")
-                    self.assertRegex(text, rf"\$inputs/{re.escape(file)}")
+                for file in ("database-url", "database-ca.pem", "irc-ca-"):
+                    self.assertNotIn(f"/root/fleet/{file}", text)
+                    self.assertIn(f"$inputs/{file}", text)
                 dry = text[text.index(branch):]
                 dry = dry[:dry.index("return") + len("return")]
                 self.assertNotIn("summary.env", dry)
@@ -3113,6 +3113,30 @@ class HostedApiSetupTests(unittest.TestCase):
         # The explicit option with --api-url is still refused.
         self.assertIn('[ -z "$api_target" ] || die "--api-url names the fleet\'s API, so --api-target does not apply."',
                       shell)
+
+    def test_shared_api_target_checks_the_vms_own_saved_settings(self):
+        root = Path(fleet_setup.HERE).parents[1]
+        self.assertIn("passthrough+=(--shared-api-target)", (root / "install.sh").read_text())
+        self.assertIn("$Passthrough.Add('--shared-api-target')", (root / "install.ps1").read_text())
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                "--non-interactive", "--shared-api-target"]
+        remote = {"irc": "remote", "ircHost": "irc.example.com"}
+        for flags, saved in ((["--irc", "remote", "--irc-host", "irc.example.com"], {}), ([], remote)):
+            answers = fleet_setup.gather(fleet_setup.parse_args(base + flags), saved)
+            self.assertFalse(answers["api"])
+            self.assertEqual(answers["ircHost"], "irc.example.com")
+
+        for flags, saved in (
+                ([], {"irc": "local", "ircHost": "irc.example.com"}),
+                (["--irc", "remote"], {"irc": "local"}),
+                (["--irc", "local"], remote),
+                *[([], {**remote, "ircHost": host}) for host in
+                  ("127.0.0.9", "127.1", "localhost.", "::ffff:127.0.0.1")]):
+            with self.subTest(flags=flags, saved=saved), \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "--api-target needs remote IRC"):
+                fleet_setup.gather(fleet_setup.parse_args(base + flags), saved)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "explicit or saved hosted API"):
+            fleet_setup.gather(fleet_setup.parse_args(base), {**remote, "apiUrl": "https://api.example.com"})
 
     def test_a_switch_without_a_token_changes_nothing(self):
         # A fleet whose API runs here, installed (so the fleet installer's extra-secrets.json exists), switches
