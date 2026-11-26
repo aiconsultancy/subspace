@@ -119,7 +119,7 @@ fn a_missing_member_gets_one_probe_when_it_returns() {
     assert_eq!(state.begin(), None);
 }
 
-fn read_with_queued_task_revision() -> (DetailState, u64) {
+fn read_with_queued_task_revision() -> (DetailState, super::super::state::CrewRead) {
     let mut state = DetailState::new(roster("first", "Working…", 1), 0);
     let flight = state.begin().unwrap();
     assert!(state.update(revised_task(), 0));

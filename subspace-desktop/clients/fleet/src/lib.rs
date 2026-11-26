@@ -24,7 +24,7 @@ mod stream;
 mod tokens;
 
 pub use address::FleetAddress;
-pub use client::FleetClient;
+pub use client::{FleetClient, crew_detail_json_limit};
 pub use crew::CrewDetail;
 pub use directory::{FleetRecord, FleetState, SharedFleet, fleets_of};
 pub use error::Error;

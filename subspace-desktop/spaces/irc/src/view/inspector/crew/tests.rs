@@ -4,6 +4,7 @@ use subspace_client_fleet::model::CrewMember;
 
 use super::{DetailState, Roster};
 
+mod budget;
 mod previews;
 mod record_identity;
 mod recovery;

@@ -3,8 +3,8 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use subspace_client_fleet::Error;
 use subspace_client_fleet::model::CrewMember;
+use subspace_client_fleet::{Error, crew_detail_json_limit};
 
 mod overlay;
 mod preview;
@@ -15,6 +15,12 @@ use retry::ReadWait;
 pub(super) use roster::Roster;
 use roster::current_in;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CrewRead {
+    generation: u64,
+    pub contexts: usize,
+}
+
 pub(super) struct DetailState {
     pub roster: Roster,
     connection: u64,
@@ -23,7 +29,7 @@ pub(super) struct DetailState {
     // Demand not yet covered by the active read, independent of its result.
     pending: bool,
     wait: Option<ReadWait>,
-    flight: Option<(u64, Box<CrewMember>)>,
+    flight: Option<(CrewRead, Box<CrewMember>)>,
     detail: Option<FullDetail>,
     error: Option<Error>,
     retries: u32,
@@ -133,7 +139,7 @@ impl DetailState {
         }
     }
 
-    pub fn begin(&mut self) -> Option<u64> {
+    pub fn begin(&mut self) -> Option<CrewRead> {
         let Roster::Present(roster) = &self.roster else {
             return None;
         };
@@ -142,15 +148,19 @@ impl DetailState {
         }
         self.pending = false;
         self.generation = self.generation.wrapping_add(1);
-        self.flight = Some((self.generation, roster.clone()));
-        Some(self.generation)
+        let read = CrewRead {
+            generation: self.generation,
+            contexts: roster.contexts.len(),
+        };
+        self.flight = Some((read, roster.clone()));
+        Some(read)
     }
 
-    pub fn finish(&mut self, generation: u64, result: Result<CrewMember, Error>) {
-        let Some((_, roster)) = self.flight.take_if(|(active, _)| *active == generation) else {
+    pub fn finish(&mut self, read: CrewRead, result: Result<CrewMember, Error>) {
+        let Some((_, roster)) = self.flight.take_if(|(active, _)| *active == read) else {
             return;
         };
-        if generation != self.generation {
+        if read.generation != self.generation {
             // An assignment change leaves the same route in flight. A probe
             // or connection change would already have cleared that flight.
             if let Err(Error::Busy(Some(seconds))) = result {
@@ -158,6 +168,10 @@ impl DetailState {
             }
             return;
         }
+        // A read cannot cover a bigger cap that arrived while it was in flight.
+        // This is new demand, not an automatic retry of InvalidResponse.
+        self.pending |= crew_detail_json_limit(self.roster.context_count())
+            > crew_detail_json_limit(read.contexts);
         match result {
             Ok(member) => {
                 self.detail = Some(FullDetail { member, roster });

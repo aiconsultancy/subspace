@@ -174,8 +174,8 @@ impl Selection {
         if let Ok(client) = client
             && self.retry_timer.is_none()
         {
-            if let Some(generation) = self.state.begin() {
-                self.request = Some(self.read(client, generation, api, cx));
+            if let Some(read) = self.state.begin() {
+                self.request = Some(self.read(client, read, api, cx));
             } else if let Some(delay) = self.state.retry_delay() {
                 self.retry_timer = Some(self.schedule_retry(delay, api, cx));
             }
@@ -215,12 +215,11 @@ impl Selection {
     fn read(
         &self,
         client: subspace_client_fleet::FleetClient,
-        generation: u64,
+        read: state::CrewRead,
         api: &Entity<FleetApi>,
         cx: &mut Context<Irc>,
     ) -> Task<()> {
         let (ship, member) = (self.ship.clone(), self.member.clone());
-        let roster_contexts = self.state.roster.context_count();
         let api = api.clone();
         // The Back control belongs to this selection, even if the same row
         // is closed and opened again before the background read returns.
@@ -229,7 +228,7 @@ impl Selection {
             let result = cx
                 .background_spawn(async move {
                     client
-                        .crew(&ship, &member, roster_contexts)
+                        .crew(&ship, &member, read.contexts)
                         .map(|detail| detail.member)
                 })
                 .await;
@@ -238,7 +237,7 @@ impl Selection {
                     && selection.back == selection_id
                 {
                     selection.update(api.read(cx));
-                    selection.state.finish(generation, result);
+                    selection.state.finish(read, result);
                     sync(board, api, cx);
                     cx.notify();
                 }

@@ -31,7 +31,8 @@ const CREW_CONTEXT_TEXT_BYTES: u64 = CREW_DETAIL_TASKS_PER_CONTEXT
     * JSON_BYTES_PER_CODE_POINT;
 pub(crate) const USER_AGENT: &str = concat!("Subspace/", env!("CARGO_PKG_VERSION"));
 
-fn crew_detail_json_limit(roster_contexts: usize) -> u64 {
+/// The crew route's JSON byte limit for a given roster context count.
+pub fn crew_detail_json_limit(roster_contexts: usize) -> u64 {
     // Round up to leave room for metadata and the JSON envelope.
     CREW_CONTEXT_TEXT_BYTES
         .saturating_mul(roster_contexts.max(1) as u64)
