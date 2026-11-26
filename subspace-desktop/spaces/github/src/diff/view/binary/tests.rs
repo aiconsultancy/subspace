@@ -14,6 +14,7 @@ const PATH: &str = "icon.png";
 const PNG_TAIL: &str =
     "Rw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgZGL+DwABFAEG1rmmRQAAAABJRU5ErkJggg==";
 
+mod late_hold;
 mod retries;
 
 #[gpui_kit::test]

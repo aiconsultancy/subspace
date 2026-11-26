@@ -64,9 +64,17 @@ impl BinaryHolds {
         // detached store for their captured mode and fingerprint.
         let deadlines = self.deadlines.clone();
         let executor = cx.background_executor().clone();
-        DiffRead::default().observing_busy(move |seconds| {
-            deadlines.record(&path, side, executor.now(), seconds);
-        })
+        let (recorded, clock, held_path) = (deadlines.clone(), executor.clone(), path.clone());
+        DiffRead::default()
+            .observing_busy(move |seconds| recorded.record(&held_path, side, clock.now(), seconds))
+            .respecting_hold(move || {
+                let deadline = deadlines.get(&path, side);
+                let now = executor.now();
+                (
+                    now,
+                    deadline.map_or(Duration::ZERO, |until| until.delay(now)),
+                )
+            })
     }
 }
 

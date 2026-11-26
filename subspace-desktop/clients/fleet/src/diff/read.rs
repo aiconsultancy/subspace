@@ -15,6 +15,7 @@ const CANCEL_CHECK_INTERVAL: Duration = Duration::from_millis(50);
 pub struct DiffRead {
     cancelled: Arc<AtomicBool>,
     on_busy: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    remaining_hold: Option<Arc<dyn Fn() -> (Instant, Duration) + Send + Sync>>,
 }
 
 impl DiffRead {
@@ -22,7 +23,7 @@ impl DiffRead {
         self.cancelled.store(true, Ordering::Release);
     }
 
-    /// Cancel outstanding clones, keeping the observer for future reads.
+    /// Cancel outstanding clones, keeping their hold hooks for future reads.
     pub fn cancel_and_reset(&mut self) {
         self.cancel();
         self.cancelled = Arc::default();
@@ -49,40 +50,62 @@ impl DiffRead {
         self
     }
 
+    /// Read the clock and remaining hold for this request's identity before
+    /// every send, so both the wait budget and the hold use the same clock.
+    pub fn respecting_hold(
+        mut self,
+        remaining: impl Fn() -> (Instant, Duration) + Send + Sync + 'static,
+    ) -> Self {
+        self.remaining_hold = Some(Arc::new(remaining));
+        self
+    }
+
     /// Retry the identical request, never a newer cursor or fingerprint.
     /// If the server asks for longer than the budget, return Busy instead
     /// of retrying before the server's requested time.
     pub fn retry<T>(&self, mut request: impl FnMut() -> Result<T, Error>) -> Result<T, Error> {
-        let mut attempt = || {
-            self.check()?;
-            request().inspect_err(|error| {
-                if let (Error::Busy(Some(seconds @ 1..)), Some(observe)) = (error, &self.on_busy) {
-                    observe(*seconds);
-                }
-            })
-        };
+        let mut attempt = || request().inspect_err(|error| self.observe_busy(error));
+        let mut wait = Duration::ZERO;
         for _ in 1..MAX_ATTEMPTS {
+            self.wait_before_send(wait)?;
             match attempt() {
-                Err(error @ Error::Busy(wait)) => {
-                    let seconds = wait.unwrap_or(DEFAULT_WAIT_SECONDS);
-                    if seconds > MAX_WAIT_SECONDS {
-                        return Err(error);
-                    }
-                    self.wait(Duration::from_secs(seconds))?;
+                Err(Error::Busy(seconds)) => {
+                    wait = Duration::from_secs(seconds.unwrap_or(DEFAULT_WAIT_SECONDS));
                 }
                 result => return result,
             }
         }
+        self.wait_before_send(wait)?;
         attempt()
     }
 
-    fn wait(&self, wait: Duration) -> Result<(), Error> {
-        let deadline = Instant::now() + wait;
+    fn observe_busy(&self, error: &Error) {
+        if let (Error::Busy(Some(seconds @ 1..)), Some(observe)) = (error, &self.on_busy) {
+            observe(*seconds);
+        }
+    }
+
+    fn wait_before_send(&self, reply_wait: Duration) -> Result<(), Error> {
+        let mut started = None;
+        let budget = Duration::from_secs(MAX_WAIT_SECONDS);
         loop {
             self.check()?;
-            let delay = deadline.saturating_duration_since(Instant::now());
+            let (now, hold) = self
+                .remaining_hold
+                .as_ref()
+                .map_or_else(|| (Instant::now(), Duration::ZERO), |read| read());
+            let elapsed = now.saturating_duration_since(*started.get_or_insert(now));
+            let delay = reply_wait.saturating_sub(elapsed).max(hold);
             if delay.is_zero() {
-                return Ok(());
+                return self.check();
+            }
+            // Compare the requested delay before sleeping; check again if a
+            // late response extends the shared hold while we are waiting.
+            if delay > budget.saturating_sub(elapsed) {
+                let seconds = delay
+                    .as_secs()
+                    .saturating_add(u64::from(delay.subsec_nanos() != 0));
+                return Err(Error::Busy(Some(seconds)));
             }
             std::thread::sleep(delay.min(CANCEL_CHECK_INTERVAL));
         }
@@ -91,7 +114,9 @@ impl DiffRead {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     use super::{DiffRead, Error};
 
@@ -119,6 +144,36 @@ mod tests {
         });
         assert_eq!(result, Err(Error::DiffReadCancelled));
         assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn returns_the_longer_shared_hold_without_sending() {
+        let held = Arc::new(Mutex::new(Duration::ZERO));
+        let store = held.clone();
+        let read =
+            DiffRead::default().respecting_hold(move || (Instant::now(), *store.lock().unwrap()));
+        let result: Result<(), _> = read.retry(|| {
+            *held.lock().unwrap() = Duration::from_millis(11_250);
+            Err(Error::Busy(Some(3)))
+        });
+        assert_eq!(result, Err(Error::Busy(Some(12))));
+        assert_eq!(read.retry(|| Ok(())), Err(Error::Busy(Some(12))));
+        *held.lock().unwrap() = Duration::ZERO;
+        assert_eq!(read.retry(|| Ok(())), Ok(()));
+    }
+
+    #[test]
+    fn a_late_extension_cannot_restart_the_wait_budget() {
+        let samples = AtomicUsize::new(0);
+        let read = DiffRead::default().respecting_hold(move || {
+            let hold = match samples.fetch_add(1, Ordering::Relaxed) {
+                0 => Duration::from_millis(1),
+                1 => Duration::from_secs(10),
+                _ => Duration::ZERO,
+            };
+            (Instant::now(), hold)
+        });
+        assert_eq!(read.retry(|| Ok(())), Err(Error::Busy(Some(10))));
     }
 
     #[test]
