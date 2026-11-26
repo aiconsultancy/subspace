@@ -232,9 +232,23 @@ closes it, as does moving to another tier; focus returns to the button.
   reachable. Text longer than 64 KiB or 1,000 lines shows one section at a
   time with First, Previous, Next and Last; a closed turn holds no items,
   and an open one shows 20 at a time with **Earlier items** and **Later
-  items**. A view holds at most 64 MiB in all, items read and what is
-  shown; past that the least recently opened is freed and offers **Load in
-  full** again, or its turn closes. A loaded item is not read again
+  items**. Each view has a 64 MiB memory budget. It is a cache budget
+  only: nothing is hidden or cut to keep within it. The snapshot's own
+  content is charged first and is never freed. Items read are charged twice
+  (the item and the copy drawn from it), and what is drawn is charged as it
+  shows, markers included. An item read whole must fit beside the rest
+  with both copies; otherwise it is read in parts. Past the budget, the
+  least recently opened item read is freed and offers **Load in full**
+  again. A body with no room left shows "Not drawn, to stay within the
+  view's memory budget" with its size and **Show**; its turn stays open.
+  Bodies are drawn in this order: those asked for with **Show** (the latest
+  first), then those of turns opened by hand (the turn opened last first),
+  then those of the running turn, which opens by default. **Show** makes
+  room by freeing items read (the least recently opened first, never its
+  own), then bodies asked for earlier; a body still larger than the room
+  draws one section at a time. The view can go past 64 MiB only by its
+  floor: the snapshot's content, plus one part or section of the item last
+  asked for and its drawn copy. A loaded item is not read again
   by itself when it changes, as a running tool changes often: it says a
   newer version is on the gateway and offers **Load the latest**. When a
   tool call has both parsed
@@ -243,7 +257,9 @@ closes it, as does moving to another tier; focus returns to the button.
 - **Content is text.** Every value is set as text, never parsed as HTML.
   Control characters (other than newline and tab) and bidi formatting
   characters show as `⟨U+XXXX⟩` markers, in JSON keys and values too, so
-  content cannot hide or reorder itself; a copy is exactly what shows. A
+  content cannot hide or reorder itself; a copy is exactly what shows.
+  Sizes and sections count the text as it shows: each marker is 12 bytes,
+  and no section splits one. A
   turn or item the console cannot read shows as the JSON it came as. Activity stays in memory only: it
   is never stored or logged, never reaches chat or an agent's context, and
   closing the view drops it. A change to the fleet's address or token drops

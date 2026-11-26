@@ -35,23 +35,56 @@ the desktop side are separate work.
   at a time instead (`readItemPart`: four pages, at most 256 KiB, pinned to
   one version; a newer version restarts once from its first part and says
   so). Any part can be reached directly by page number.
-- **Pager.** `src/pager.js` `createPager({budget, key, read, partBytes})`
-  shows one part of anything read part by part. `read({part, cursor,
-  version, signal})` answers `{data, next, version, count?, newer?}`. Room
-  for the part is reserved before each read, beside the part on show, and
-  only the part shown stays charged. Every read is fenced by a revision: a
+- **Pager.** `src/pager.js` `createPager({budget, key, read, partBytes,
+  drawn?})` shows one part of anything read part by part. `read({part,
+  cursor, version, signal})` answers `{data, next, version, count?,
+  newer?}`. Each part is charged with its drawn copy (`drawn(bytes)`, one
+  more copy by default; SUB decision `6f5e67dd`). Room for the part and its
+  drawn copy is reserved before each read, beside the part on show and its
+  copy, and only the part shown and its copy stay charged. These are forced
+  reservations: the part last asked for is the floor. Every read is fenced by a revision: a
   reply that arrives after an eviction, a restart, a drop or another read is
   dropped. An evicted pager reads again from its first part with no cursor,
   so the next read may have different page boundaries. A reply that holds
   more than `partBytes`, has no data, or does not advance is a failure.
   `splitBounded(text, {maxBytes, maxLines})` splits text into windows
   between code points.
-- **Budget.** `src/budget.js` is one view's byte budget (64 MiB), shared by
-  the items read, their formatted copies and what the panel mounts. Room is
-  made before each read by evicting the least recently opened; an evicted
-  item offers **Load in full** again, and a closed turn unmounts. An item
-  read whole is charged twice its length (the item and its formatted copy);
-  one that does not fit so is read in parts.
+- **Budget.** `src/budget.js` is one view's byte budget (64 MiB). It is a
+  cache budget only (SUB `20ce0349`): larger content is paged, never hidden
+  or cut. The budget is shared by the inline snapshot, the items read and
+  what the panel draws. The inline snapshot is charged first as `inline`,
+  the compact JSON of the turns held. It is pinned: never freed, counted
+  once per turn object. A reservation fits only beside the pinned entries.
+  Room is made before each read by evicting the least recently opened item
+  read; an evicted item offers **Load in full** again. An item read whole
+  is charged twice its length (the item and its drawn copy); one that does
+  not fit so beside the snapshot is read in parts. `freeOldest(skip)` frees
+  one entry for the panel's **Show**.
+- **Floor** (SUB decision `0c13b784` §4). The view goes past its budget
+  only by its floor: the inline content, plus one part or window (at most
+  256 KiB read, one 64 KiB window drawn) of the item last asked for, plus
+  its drawn copy. Pinned and forced reservations are the only ones that may
+  exceed the limit.
+- **Draw plan** (SUB decisions `ed71a299`, `6f5e67dd`, `0c13b784`). Each
+  frame, the panel measures every body of every open turn before building
+  any. A body is measured once per version (`sourceVersion`: generation and
+  seq; read seq and length; or part, version and pages), as numbers only,
+  from its pieces (`src/document.js`), so its text is never built whole.
+  Only the window drawn is built. Sizes are the visible UTF-8 bytes: each
+  hidden character is a 12-byte `⟨U+XXXX⟩` marker, and no window splits
+  one. `planBodies` fits bodies to the room the snapshot and items read
+  leave, in this order: asked for with **Show** (latest first), then turns
+  opened by hand (opened last first), then the running turn open by
+  default; within a turn, top to bottom. A body whose read already reserved
+  its drawn copy costs nothing more. The plan is charged as `draw`. A body
+  that does not fit shows "Not drawn, to stay within the view's memory
+  budget (N bytes)." and **Show**, and its turn stays open. **Show** frees
+  items read (least recently opened first, never its own), then forgets
+  bodies asked for earlier, until it fits. The latest asked for always
+  draws, a window at a time, with First, Previous, Next and Last. Closing a
+  turn forgets its asks. Measures and windows are forgotten when their
+  version is no longer shown: a new seq, an evicted or replaced read, or
+  another part.
 - **One stream.** The gateway allows eight event-stream viewers in total.
   `src/live.js` `setAgents(ids)` re-opens the fleet's one stream with
   `?agent=` (quietly, keeping `Last-Event-ID`) and `onOpen(agents)` runs
@@ -116,8 +149,8 @@ the desktop side are separate work.
   over one window (64 KiB or 1,000 lines) shows one window at a time with
   First, Previous, Next and Last and "Section k of N". An item read in parts
   has First part, Previous part, Next part and Last part, and "Part k of N",
-  and each part shows in windows the same way. Formats and mounted text are
-  charged to the view's budget. An unknown kind or content type, and a known kind that fails
+  and each part shows in windows the same way. What is drawn is planned
+  and charged to the view's budget first (see **Draw plan**). An unknown kind or content type, and a known kind that fails
   its checks, show as indented JSON: nothing is withheld (SUB-70). DOM is built with `createElement` and text nodes
   only, never `innerHTML`; attributes are an allow-list. Control and bidi
   characters other than newline and tab show as `⟨U+XXXX⟩`, each its own
@@ -199,7 +232,7 @@ The round 3 tests are in `test/pager.test.js` and
 `test/activity-round3.test.js`; each of the latter fails at `822c411d`
 except the multibyte-boundary case, which guards a valid page split. They
 read an item of 1,600 pages (100 MiB) in parts, its first and last part
-only; show a run of 10,000 hidden characters as one element; mount no items
+only; show a run of 5,000 hidden characters as one element; mount no items
 in a closed turn and a bounded window of items and text in an open one;
 hold a snapshot, queue a retry or an overflow refetch, then disconnect or
 reset, and see no read until the new stream answers and then one; refuse
@@ -214,3 +247,20 @@ eviction, A → B → A, a newer version and malformed replies. Every fake page
 reader stops itself after a few reads. The #118 tests stop at an
 unexpected second read of an oversized item, and refuse a page count that
 needs empty pages or an empty page in a multi-page item.
+
+The round 4 tests are in `test/activity-round4.test.js` (SUB-69 comment
+`5d0227f2`); each fails without its fix. They:
+
+- keep a turn whose `items` is not a list as unreadable;
+- measure and split a body by its bytes as shown, never splitting a marker;
+- check that the measured pieces join into exactly the text shown;
+- keep a window by version across a snapshot read again, measuring each
+  version once;
+- forget an evicted read's measure and window;
+- charge and pin the inline snapshot, reading in parts what does not fit
+  beside it;
+- show a caption and **Show** under pressure without closing the turn;
+- free the least recently opened item read on **Show**;
+- draw in the order asked, opened by hand, then running;
+- draw the latest body asked for a window at a time past the room;
+- reserve a part's drawn copy before it is read.
