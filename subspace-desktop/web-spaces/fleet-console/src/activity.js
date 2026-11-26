@@ -24,8 +24,9 @@
 // time, pinned to one version, so every byte stays reachable and memory
 // stays bounded. The budget is shared with the panel, which counts what it
 // draws against it too. The snapshot's inline content is charged first, as
-// the floor: it is never freed, and only it (with the one part last asked
-// for) may take the view past its budget.
+// the floor: it is never freed, and only it and the latest request (a Show,
+// a Load or another part, which the budget tracks) may take the view past
+// its budget (SUB decisions 8357ec55, 1c19f413).
 //
 // A failed read keeps the last snapshot on show, marked stale, and applies no
 // events until a read succeeds; it is tried again with backoff (1, 2, 4 … 30 s,
@@ -37,7 +38,7 @@
 import { ChangingError, DEFAULT_ROOM_BYTES, PAGE_DATA_BYTES, PART_PAGES, readItemPart, readPagedItem, TooLargeError } from "./api.js";
 import { createBudget } from "./budget.js";
 import { coalesce } from "./coalesce.js";
-import { jsonBytes } from "./document.js";
+import { jsonBytes, shownBytes, WINDOW_BYTES } from "./document.js";
 import { createPager } from "./pager.js";
 import { utf8Length } from "./utf8.js";
 
@@ -306,13 +307,13 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
 
   /**
    * Charge the turns held, as their compact JSON: the inline content, which
-   * is the floor and is never freed. Pinned and forced, so the snapshot
-   * always shows; loaded items are freed for it first.
+   * is the floor and is never freed. Pinned, so the snapshot always shows;
+   * loaded items are freed for it first.
    */
   function chargeInline() {
     let bytes = 0;
     for (const turn of state.turns) bytes += bytesOfTurn(turn);
-    if (bytes !== budget.bytes(INLINE_KEY) || !budget.has(INLINE_KEY)) budget.reserve(INLINE_KEY, bytes, null, { force: true, pinned: true });
+    if (bytes !== budget.bytes(INLINE_KEY) || !budget.has(INLINE_KEY)) budget.reserve(INLINE_KEY, bytes, null, { pinned: true });
   }
 
   const changed = () => {
@@ -500,6 +501,13 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     changed();
   };
 
+  /** Hold `bytes` for an item read whole, or, when the budget refuses (another request is the floor), forget it. */
+  function holdWhole(key, bytes) {
+    if (budget.reserve(key, bytes, evictor(key))) return true;
+    drop(key);
+    return false;
+  }
+
   /**
    * Drop items read whose turn left the snapshot or that are no longer
    * paged. A newer version is not read by itself, as a running tool changes
@@ -540,6 +548,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       budget,
       key,
       partBytes: PART_MAX_BYTES,
+      // A part draws one window at a time: at most WINDOW_BYTES as shown (SUB decision 8357ec55).
+      drawn: (data) => Math.min(WINDOW_BYTES, shownBytes(data)),
       cursorAt: (part) => ({ from: part * PART_PAGES, offset: null }),
       read: async ({ cursor, version, signal }) => {
         const at = cursor ?? { from: 0, offset: 0 };
@@ -591,7 +601,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       }
       // Room is made before the read starts; an item the budget cannot hold is read in parts.
       const held = entry.item ? entry.bytes * FORMAT_FACTOR : 0;
-      if (!budget.reserve(key, held + item.paged.bytes * FORMAT_FACTOR, evictor(key))) {
+      const need = held + item.paged.bytes * FORMAT_FACTOR;
+      if (!budget.fits(key, need) || !budget.reserve(key, need, evictor(key))) {
         openParts(entry.turnId, entry.itemId);
         changed();
         continue;
@@ -624,7 +635,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
         turn: entry.turnId,
         item: entry.itemId,
         // The version read may be larger than the snapshot said: make room for it before reading on.
-        room: (bytes) => budget.reserve(key, held + bytes * FORMAT_FACTOR, evictor(key)),
+        room: (bytes) => budget.fits(key, held + bytes * FORMAT_FACTOR) && budget.reserve(key, held + bytes * FORMAT_FACTOR, evictor(key)),
       });
     } catch (error) {
       failure = error;
@@ -633,7 +644,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     const current = full.get(key);
     if (result) {
       full.set(key, { ...current, seq: result.seq, state: "ready", item: result.item, bytes: result.bytes, error: null });
-      budget.reserve(key, result.bytes * FORMAT_FACTOR, evictor(key), { force: true });
+      holdWhole(key, result.bytes * FORMAT_FACTOR);
     } else if (failure instanceof TooLargeError) {
       // Larger than the budget: never read whole. Read its first part instead.
       openParts(current.turnId, current.itemId);
@@ -643,7 +654,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     } else {
       // A failed read of a newer version keeps the version already read on show.
       full.set(key, { ...current, state: "failed", error: failure instanceof ChangingError ? failure.message : readFailure(failure) });
-      if (current.item) budget.reserve(key, current.bytes * FORMAT_FACTOR, evictor(key), { force: true });
+      if (current.item) holdWhole(key, current.bytes * FORMAT_FACTOR);
       else budget.release(key);
     }
     settle(key);
@@ -664,7 +675,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (!item?.paged || stopped) return Promise.resolve();
     const key = fullKey(turnId, itemId);
     const previous = full.get(key);
-    budget.touch(key);
+    // The latest request: with the inline content, the floor.
+    budget.request(key);
     if (previous?.mode === "parts") {
       const shown = previous.pager.view;
       if (shown.state === "loading") return Promise.resolve();
@@ -695,8 +707,10 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * pinned to the version shown. Resolves once that read settles.
    */
   function loadPart(turnId, itemId, to) {
-    const entry = full.get(fullKey(turnId, itemId));
+    const key = fullKey(turnId, itemId);
+    const entry = full.get(key);
     if (stopped || entry?.mode !== "parts") return Promise.resolve();
+    budget.request(key);
     return entry.pager.open(to);
   }
 

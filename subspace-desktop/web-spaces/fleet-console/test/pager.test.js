@@ -122,15 +122,20 @@ test("pager: a late reply after an eviction is dropped, and the evicted source r
   const changes = { a: 0 };
   const pagerA = createPager({ budget, key: "a", read: a.read, partBytes: 100, onEvict: () => (changes.a += 1) });
   const pagerB = createPager({ budget, key: "b", read: b.read, partBytes: 100 });
-  await pagerA.open("first");
-  await pagerA.open("next");
+  // Each open is the budget's latest request, as the activity view makes it.
+  const open = (pager, key, to) => {
+    budget.request(key);
+    return pager.open(to);
+  };
+  await open(pagerA, "a", "first");
+  await open(pagerA, "a", "next");
   // Page 2 of A is held.
-  const late = pagerA.open("next");
+  const late = open(pagerA, "a", "next");
   await settle();
   assert.equal(release.length, 1);
   assert.equal(pagerA.view.state, "loading");
-  // Opening B makes room by evicting A, the least recently opened.
-  await pagerB.open("first");
+  // Opening B, the latest request, makes room by evicting A.
+  await open(pagerB, "b", "first");
   assert.equal(changes.a, 1);
   assert.equal(pagerA.view.state, "evicted");
   assert.equal(pagerA.view.data, null);
@@ -145,15 +150,16 @@ test("pager: a late reply after an eviction is dropped, and the evicted source r
   // A again: read from its start, in its new page size, in full and in order.
   sizeA = 70;
   const before = a.reads.length;
+  budget.request("a");
   assert.equal(await readAll(pagerA), textA);
   assert.equal(a.reads[before].cursor, null, "re-read from the start, with no cursor from before");
   assert.equal(pagerB.view.state, "evicted", "B made room for A in turn");
   assert.ok(budget.used <= budget.limit);
   // A → B → A: B's Next is never dead after it comes back.
-  await pagerB.open("next");
+  await open(pagerB, "b", "next");
   assert.equal(pagerB.view.part, 0, "an evicted pager starts from its first part");
   assert.equal(pagerB.view.hasNext, true);
-  await pagerB.open("next");
+  await open(pagerB, "b", "next");
   assert.equal(pagerB.view.part, 1);
 });
 
@@ -226,7 +232,7 @@ test("pager: room is made before the read starts, and drop discards a reply in f
   const pager = createPager({ budget, key: "p", partBytes: 100, read: () => new Promise((resolve) => release.push(() => resolve({ data: "late", next: null }))) });
   const done = pager.open("first");
   assert.equal(evicted, 1, "the other entry went before the read was sent");
-  assert.equal(budget.bytes("p"), 200, "the part and its drawn copy");
+  assert.equal(budget.bytes("p"), 100, "the part to read; its drawn copy is charged once it arrives");
   pager.drop();
   assert.equal(budget.bytes("p"), 0);
   release[0]();
@@ -236,7 +242,7 @@ test("pager: room is made before the read starts, and drop discards a reply in f
   assert.equal(budget.used, 0);
 });
 
-test("budget: least recently opened first out; a forced floor stays alone; evictions run after the reservation", () => {
+test("budget: least recently opened first out; the latest request is the floor; evictions run after the reservation", () => {
   const budget = createBudget(100);
   const out = [];
   budget.reserve("a", 40, (key) => out.push([key, budget.has("c")]));
@@ -247,7 +253,13 @@ test("budget: least recently opened first out; a forced floor stays alone; evict
   assert.equal(budget.reserve("d", 200, null), false);
   assert.equal(budget.has("d"), false);
   assert.equal(budget.used, 80, "nothing freed for a reservation that cannot fit");
-  assert.equal(budget.reserve("d", 200, null, { force: true }), false);
-  assert.equal(budget.used, 200, "a forced floor is held alone");
+  budget.request("d");
+  assert.equal(budget.reserve("d", 200, null), true);
+  assert.equal(budget.used, 200, "the latest request is the floor, held alone");
   assert.deepEqual(out.map(([key]) => key), ["b", "a"]);
+  assert.equal(budget.fits("e", 1), false, "nothing fits beside it");
+  assert.equal(budget.reserve("e", 1, null), false, "and the request is never freed for another");
+  budget.request("e");
+  assert.equal(budget.reserve("e", 10, null), true, "a new request ends the last one's claim");
+  assert.equal(budget.has("d"), false);
 });

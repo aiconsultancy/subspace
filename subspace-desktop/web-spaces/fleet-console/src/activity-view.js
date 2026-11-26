@@ -26,7 +26,11 @@
 // What draws is planned before anything is built and charged to the view's
 // budget beside the inline snapshot and the items read (`planBodies`, SUB
 // decisions ed71a299, 6f5e67dd, 0c13b784 §3–4). A body with no room shows
-// its size and Show; no turn is closed to make room.
+// its size and Show; no turn is closed to make room. The budget alone
+// decides what may pass its limit: the body last asked for with Show is the
+// floor only while it is the budget's latest request (SUB decision
+// 1c19f413), so a Load or another part asked for after it sends it back to
+// its caption when there is no room.
 
 import { ACTIVITY_MESSAGES, isWellFormedItem } from "./activity.js";
 import { documentPieces, HIDDEN, marker, measurePieces, sliceOfPieces, sourcePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
@@ -479,24 +483,22 @@ const drawCost = (measure, window, allowance) => Math.max(0, drawnBytes(measure,
  * default (the running turn), newest first; within a turn, top to bottom.
  * Each draws while its cost fits what is left of `room`; the rest are held
  * back, to show a caption and Show. A body whose read reserved its drawn
- * copy (an item read whole, a part) costs nothing more and always draws. The latest asked for (`latest`) always
- * draws: with the inline content it is the floor, the one thing that may
- * take the view past its budget.
+ * window (an item read whole, a part) costs nothing more and always draws.
+ * The floor body (the budget's latest request) is not planned here: it is
+ * charged on its own, under its key, and `room` is what it leaves.
  *
  * @param {Array<{key: string, cost: number, asked: number, group: number, turnRank: number, index: number}>} bodies
  * @param {number} room
- * @param {number} latest  the latest `asked` clock, or 0
  * @returns {{drawn: Set<string>, cost: number}}
  */
-export function planBodies(bodies, room, latest = 0) {
+export function planBodies(bodies, room) {
   const ranked = [...bodies].sort((a, b) => b.asked - a.asked || a.group - b.group || a.turnRank - b.turnRank || a.index - b.index);
   const drawn = new Set();
   let left = room;
   let cost = 0;
   for (const body of ranked) {
     // A body its read already reserved for costs nothing more, and draws.
-    const floor = body.cost === 0 || (latest > 0 && body.asked === latest);
-    if (!floor && body.cost > left) continue;
+    if (body.cost > 0 && body.cost > left) continue;
     drawn.add(body.key);
     left -= body.cost;
     cost += body.cost;
@@ -517,10 +519,11 @@ export const DRAW_KEY = "draw";
  * beside the inline snapshot and the items read, fitted each frame to the
  * room they leave (`planBodies`). A body that does not fit is not drawn:
  * it shows its size and Show, never closing its turn. Show asks for it:
- * room is made by freeing items read, the least recently opened first, then
- * bodies asked for earlier, and it draws, a window at a time, whatever room
- * is left. A read may free the panel's charge; the next frame fits it
- * again.
+ * it becomes the budget's latest request, charged under its own key, which
+ * frees items read, the least recently opened first, then the other bodies
+ * drawn; it draws, a window at a time, whatever room is left. A later
+ * request (another Show, a Load, another part) ends its claim. A read may
+ * free the panel's charge; the next frame fits it again.
  *
  * @param {{doc: Document, onClose?: () => void, onLoad?: (turn: string, item: string) => void, onPart?: (turn: string, item: string, to: string) => void, onRetry?: () => void}} options
  */
@@ -550,8 +553,8 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   const turnOpened = new Map();
   /** Ticks on each Show and each turn opened by hand: later is larger. */
   let opened = 0;
-  /** Each body's cost in the last plan: key -> bytes. */
-  let costs = new Map();
+  /** The key the floor body is charged under in the budget (the latest request, shown), or null. */
+  let floorKey = null;
   let last = null;
   const itemKey = (turn, item) => `${turn}\u0000${item}`;
   const budgetOf = () => last?.view.budget ?? null;
@@ -608,34 +611,29 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     redraw();
   }
 
-  /**
-   * Make room for a body asked for (SUB decision 0c13b784 §3): free items
-   * read, the least recently opened first and never this body's own, then
-   * forget bodies asked for earlier, until what is held, the other bodies
-   * asked for and this one fit. What still does not fit draws anyway, a
-   * window at a time: it is the floor.
-   */
-  function makeRoom(key) {
-    const budget = budgetOf();
-    if (!budget) return;
-    const wanted = costs.get(key) ?? 0;
-    const others = () => [...asked.keys()].reduce((sum, other) => sum + (other === key ? 0 : (costs.get(other) ?? 0)), 0);
-    while (budget.used - budget.bytes(DRAW_KEY) + others() + wanted > budget.limit) {
-      if (budget.freeOldest((other) => other === key || other === DRAW_KEY)) continue;
-      let earliest = null;
-      for (const [other, at] of asked) if (other !== key && (earliest === null || at < asked.get(earliest))) earliest = other;
-      if (earliest === null) break;
-      asked.delete(earliest);
-    }
-  }
-
-  /** Show: ask for a body held back. */
+  /** Show: ask for a body held back. It is the budget's latest request, so the next frame charges it as the floor. */
   function ask(turnId, itemId) {
     const key = itemKey(turnId, itemId);
     opened += 1;
     asked.set(key, opened);
-    makeRoom(key);
+    budgetOf()?.request(key);
     redraw();
+  }
+
+  /**
+   * Charge the floor body: the body asked for with Show, while it is still
+   * the budget's latest request. Charged under its own key, which the budget
+   * holds even past its limit, freeing items read and the other bodies drawn
+   * first (SUB decisions 0c13b784 §3, 1c19f413). A body that is no longer the
+   * latest request gives up that charge and is planned with the rest.
+   */
+  function chargeFloor(budget, bodies) {
+    const key = budget?.requested ?? null;
+    const floor = key === null ? null : (bodies.find((body) => body.key === key && body.source?.kind === "inline") ?? null);
+    if (floorKey !== null && floorKey !== floor?.key) budget?.release(floorKey);
+    floorKey = floor ? floor.key : null;
+    if (floor) budget.reserve(floor.key, floor.cost, null);
+    return floor;
   }
 
   const redraw = () => last && update(last.view, last.officer);
@@ -796,21 +794,31 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
       } else open.push({ turn, entry, index, bodies: bodiesOf(turn, entry, view) });
       place(list, entry.element, index);
     });
+    const budget = view.budget ?? null;
+    // The floor body first, under its own key: the rest are fitted to the room it leaves.
+    budget?.release(DRAW_KEY);
+    const floor = chargeFloor(
+      budget,
+      open.flatMap(({ bodies }) => bodies.filter((body) => body.measure)),
+    );
+    // Charging it may have freed items read: plan from what is left.
+    if (floor) {
+      forgetStale(shown, view);
+      for (const each of open) each.bodies = bodiesOf(each.turn, each.entry, view);
+    }
     const ranked = [];
     for (const { turn, index, bodies } of open) {
       const byHand = turnOpened.get(turn.id);
       for (const body of bodies) {
-        if (body.measure) ranked.push({ key: body.key, cost: body.cost, asked: asked.get(body.key) ?? 0, group: byHand === undefined ? 1 : 0, turnRank: byHand === undefined ? index : -byHand, index: body.index });
+        if (body.measure && body.key !== floor?.key) ranked.push({ key: body.key, cost: body.cost, asked: asked.get(body.key) ?? 0, group: byHand === undefined ? 1 : 0, turnRank: byHand === undefined ? index : -byHand, index: body.index });
       }
     }
-    const budget = view.budget ?? null;
-    const room = budget ? budget.limit - (budget.used - budget.bytes(DRAW_KEY)) : Infinity;
-    const latest = asked.size ? Math.max(...asked.values()) : 0;
-    const plan = planBodies(ranked, room, latest);
-    costs = new Map(ranked.map((body) => [body.key, body.cost]));
+    const room = budget ? budget.limit - budget.used : Infinity;
+    const plan = planBodies(ranked, room);
+    if (floor) plan.drawn.add(floor.key);
     for (const { turn, entry, bodies } of open) drawItems(turn, entry, bodies, plan.drawn);
-    // Fitted to the room above, so it frees nothing; only the floor may pass the limit.
-    budget?.reserve(DRAW_KEY, plan.cost, null, { force: true, makeRoom: false });
+    // Fitted to the room above, so it frees nothing and always fits.
+    if (plan.cost > 0) budget?.reserve(DRAW_KEY, plan.cost, null, { makeRoom: false });
   }
 
   return {

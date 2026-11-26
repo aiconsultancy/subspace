@@ -212,7 +212,9 @@ test("P1: the inline snapshot is charged first, pinned as the floor, and no read
   await watcher.loadItem("turn-b", "ia");
   assert.equal(watcher.view.full("turn-b", "ia").mode, "parts");
   assert.equal(budget.bytes(activity.INLINE_KEY), inline, "never freed for a read");
-  assert.equal(budget.freeOldest(() => false), true, "the read can be freed");
+  assert.equal(budget.freeOldest(() => false), false, "the read is the latest request: the floor too");
+  budget.request("another");
+  assert.equal(budget.freeOldest(() => false), true, "once another is asked for, the read can be freed");
   assert.equal(budget.freeOldest(() => false), false, "the floor cannot");
   assert.equal(budget.bytes(activity.INLINE_KEY), inline);
   watcher.stop();
@@ -336,9 +338,9 @@ test("P1: a body asked for that is larger than the room still draws, a window at
   watcher.stop();
 });
 
-// ---------- P3: a part read reserves the part and its drawn copy ----------
+// ---------- P3: a part read reserves the part, then keeps it with its drawn window ----------
 
-test("P3: a part read reserves the part held and its drawn copy before it reads, and keeps both", async () => {
+test("P3: a part read reserves the part before it reads, and keeps it with its drawn window", async () => {
   const a = toolItem("ia", 9, { name: "read", content: [{ type: "text", text: "a".repeat(600 * 1024) }] });
   const served = { ia: pagesOf(a) };
   const client = fakeActivityClient([snapshotOf([a], { ia: placeholder(served.ia) })]);
@@ -353,8 +355,8 @@ test("P3: a part read reserves the part held and its drawn copy before it reads,
   await watcher.loadItem("turn-b", "ia");
   const full = watcher.view.full("turn-b", "ia");
   assert.equal(full.mode, "parts", "1.2 MiB whole does not fit 1 MiB");
-  assert.equal(reserved, 2 * activity.PART_MAX_BYTES, "the part and its drawn copy, before the first page is read");
-  assert.equal(watcher.view.budget.bytes("turn-b\u0000ia"), 2 * full.size, "both kept once read");
+  assert.equal(reserved, activity.PART_MAX_BYTES, "the part, before the first page is read");
+  assert.equal(watcher.view.budget.bytes("turn-b\u0000ia"), full.size + view.WINDOW_BYTES, "the part and its drawn window once read (SUB 8357ec55)");
   assert.equal(full.size, utf8Length(full.data));
   watcher.stop();
 });

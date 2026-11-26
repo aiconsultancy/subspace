@@ -1,8 +1,12 @@
 // Content too large to hold, shown a part at a time (SUB decision a17870f4).
 // A pager holds one part of one source (an activity item's pages, a crew
 // diff's patch) and moves among its parts with First, Previous, Next and
-// Last. Every part read is charged to the view's budget before it starts,
-// and every reply is fenced: a reply that arrives after the pager was
+// Last. Every part read is charged to the view's budget before it starts:
+// the part on show and its drawn window, and the incoming part. Once the
+// part arrives only it and its drawn window stay charged. The pager never
+// decides what may pass the budget's limit; the budget does (its latest
+// request), and a reservation it refuses evicts the pager. Every reply is
+// fenced: a reply that arrives after the pager was
 // evicted, dropped, restarted or sent elsewhere is discarded, so it can
 // never append to or redirect a later read (the A3 race).
 //
@@ -88,15 +92,15 @@ export class PagerError extends Error {
  * @param {string} options.key            this pager's key in the budget
  * @param {(request: PartRequest) => Promise<PartReply>} options.read
  * @param {number} options.partBytes      the most one part holds; reserved before each read
- * @param {(bytes: number) => number} [options.drawn]  the bytes a part of `bytes` takes once drawn: its
- *   drawn copy, charged beside the part (SUB decision 6f5e67dd). One more copy by default.
+ * @param {(data: string) => number} [options.drawn]  the bytes a part takes once drawn, charged beside
+ *   the part (SUB decisions 6f5e67dd, 8357ec55): its drawn window, as shown. One more copy by default.
  * @param {((part: number, version: unknown) => unknown)|null} [options.cursorAt]  a cursor for any part, for sources paged by number
  * @param {() => void} [options.onChange] the pager's view changed
  * @param {() => void} [options.onEvict]  the budget freed it; it reads from the start when opened again
  */
-export function createPager({ budget, key, read, partBytes, drawn = (bytes) => bytes, cursorAt = null, onChange = () => {}, onEvict = () => {} }) {
-  /** A part's charge: the part held and its drawn copy. */
-  const charge = (bytes) => bytes + drawn(bytes);
+export function createPager({ budget, key, read, partBytes, drawn = (data) => utf8Length(data), cursorAt = null, onChange = () => {}, onEvict = () => {} }) {
+  /** A part's charge once it shows: the part held and what it draws. */
+  const charge = (part) => utf8Length(part) + drawn(part);
   /** Bumped by every read started, eviction, restart and drop: a reply from before is discarded. */
   let revision = 0;
   let controller = null;
@@ -124,6 +128,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (bytes) => b
   }
 
   function evicted() {
+    budget.release(key);
     forget();
     state = "evicted";
     error = null;
@@ -140,11 +145,18 @@ export function createPager({ budget, key, read, partBytes, drawn = (bytes) => b
     return undefined;
   };
 
+  /** Hold `bytes` for what shows, or, when the budget refuses, let it go as if evicted. */
+  function hold(bytes) {
+    if (budget.reserve(key, bytes, evicted)) return true;
+    evicted();
+    return false;
+  }
+
   function fail(failure) {
     state = "failed";
     error = failure;
-    // The part already shown stays, charged as it is, with its drawn copy.
-    if (data !== null) budget.reserve(key, charge(utf8Length(data)), evicted, { force: true });
+    // The part already shown stays, charged as it is, with its drawn window.
+    if (data !== null) hold(charge(data));
     else budget.release(key);
   }
 
@@ -174,7 +186,8 @@ export function createPager({ budget, key, read, partBytes, drawn = (bytes) => b
     data = reply.data;
     state = "ready";
     error = null;
-    budget.reserve(key, charge(size), evicted, { force: true });
+    // The part on show before it is let go: only this part and its window stay charged.
+    hold(charge(data));
   }
 
   /**
@@ -196,12 +209,15 @@ export function createPager({ budget, key, read, partBytes, drawn = (bytes) => b
     controller?.abort();
     const own = new AbortController();
     controller = own;
-    // Room for the part about to be read and its drawn copy, beside the one
-    // on show and its drawn copy, before the read starts. Forced: the part
-    // last asked for is the floor (with the inline snapshot), the one thing
-    // that may take the view past its budget.
-    const held = data === null ? 0 : utf8Length(data);
-    budget.reserve(key, (held ? charge(held) : 0) + charge(partBytes), evicted, { force: true });
+    // Room for the part about to be read, beside the one on show and its
+    // drawn window, before the read starts. Its own window is charged once
+    // it arrives, as the outgoing part goes. The budget decides whether this
+    // may pass its limit (its latest request); when it refuses, the pager
+    // lets go of what it held and reads from the start when opened again.
+    if (!budget.reserve(key, (data === null ? 0 : charge(data)) + partBytes, evicted)) {
+      evicted();
+      return;
+    }
     want = index;
     state = "loading";
     error = null;

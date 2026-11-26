@@ -7,9 +7,13 @@
 // each entry says how to free it. Shared by every view that pages content
 // (officer activity, crew diffs), through `createPager` or directly.
 //
-// A pinned entry is never freed to make room: it is the floor that must
-// show (the activity view's inline snapshot). Only a pinned or forced entry
-// may take the total past the limit.
+// The budget alone decides what may take the total past the limit (SUB
+// decision 1c19f413): the pinned entries (the activity view's inline
+// snapshot) and the latest request (`request`), the one thing the person
+// last asked for: a Show, a Load or another part. Neither is ever freed to
+// make room for another entry; every other reservation fits beside them or
+// is refused. A new request ends the last one's claim: it is freed like any
+// other entry from then on.
 
 /**
  * @param {number} limit  bytes the view may hold in all
@@ -19,13 +23,23 @@ export function createBudget(limit) {
   const entries = new Map();
   let clock = 0;
   let total = 0;
+  /** The key of the latest request, or null. */
+  let requested = null;
+  /** Whether `key` is never freed for another: pinned, or the latest request. */
+  const kept = (key) => key === requested || entries.get(key)?.pinned === true;
+  /** The bytes that can never be freed for `key`: the pinned entries and the latest request, other than `key` itself. */
+  function fixedBeside(key) {
+    let bytes = 0;
+    for (const [other, entry] of entries) if (other !== key && kept(other)) bytes += entry.bytes;
+    return bytes;
+  }
 
   /** The least recently used entry that may be freed and that `skip` does not name, or null. */
   function oldestKey(skip) {
     let oldest = null;
     let oldestUsed = Infinity;
     for (const [key, entry] of entries) {
-      if (!entry.pinned && !skip(key) && entry.used < oldestUsed) {
+      if (!kept(key) && !skip(key) && entry.used < oldestUsed) {
         oldest = key;
         oldestUsed = entry.used;
       }
@@ -41,7 +55,7 @@ export function createBudget(limit) {
     return () => entry.evict?.(key);
   }
 
-  /** Free least recently used unpinned entries other than `keep` until `bytes` more fit; returns their eviction calls. */
+  /** Free least recently used entries, never a kept one or `keep`, until `bytes` more fit; returns their eviction calls. */
   function makeRoom(bytes, keep) {
     const freed = [];
     while (total + bytes > limit) {
@@ -61,47 +75,62 @@ export function createBudget(limit) {
 
   return {
     limit,
-    /** Bytes held now. At most `limit`, unless pinned and forced entries (the floor) are larger. */
+    /** Bytes held now. At most `limit`, unless the pinned entries and the latest request (the floor) are larger. */
     get used() {
       return total;
+    },
+    /** The key of the latest request, or null. */
+    get requested() {
+      return requested;
     },
     has: (key) => entries.has(key),
     bytes: (key) => entries.get(key)?.bytes ?? 0,
     /**
+     * `key` is what the person asked for last (a Show, a Load, another
+     * part): with the pinned entries it is the floor, held even past the
+     * limit and never freed for another. The request before it loses that
+     * claim. Marks `key` as just used.
+     *
+     * @param {string} key
+     */
+    request(key) {
+      requested = key;
+      const entry = entries.get(key);
+      if (entry) entry.used = ++clock;
+    },
+    /** Whether `bytes` under `key` fit within `limit` beside what is never freed for it. */
+    fits: (key, bytes) => fixedBeside(key) + bytes <= limit,
+    /**
      * Hold `bytes` under `key`, replacing what it held, after freeing the
      * least recently used other entries until it fits. Each freed entry's
      * `evict(key)` is called once the reservation is in place, never in the
-     * middle of it. Returns whether it fits within `limit` beside the pinned
-     * entries, which are never freed. When it does not,
-     * nothing is held and nothing is freed, unless `force`: then it is held
-     * anyway, as a floor that must show (one part of an item). `pinned`
-     * holds it so it is never freed for another (the inline snapshot).
-     * `makeRoom: false` frees nothing: for a caller that fitted `bytes` to
-     * the room itself (the panel's drawn bodies), so only its floor can
-     * take the total past the limit.
+     * middle of it. It is held when it fits within `limit` beside the
+     * pinned entries and the latest request, or when it is one of them
+     * (`pinned`, or `key` is the latest request): the floor, held anyway.
+     * Otherwise nothing is held, nothing is freed, and what `key` held
+     * stays. Returns whether it is held. `makeRoom: false` frees nothing:
+     * for a caller that fitted `bytes` to the room itself (the panel's
+     * drawn bodies).
      *
      * @param {string} key
      * @param {number} bytes
      * @param {((key: string) => void)|null} evict
-     * @param {{force?: boolean, pinned?: boolean, makeRoom?: boolean}} [options]
+     * @param {{pinned?: boolean, makeRoom?: boolean}} [options]
      */
-    reserve(key, bytes, evict, { force = false, pinned = false, makeRoom: free = true } = {}) {
-      // It fits only beside what can never be freed: the pinned entries.
-      let floor = 0;
-      for (const [other, entry] of entries) if (entry.pinned && other !== key) floor += entry.bytes;
-      const fits = floor + bytes <= limit;
-      if (!fits && !force) return false;
+    reserve(key, bytes, evict, { pinned = false, makeRoom: free = true } = {}) {
+      if (!pinned && key !== requested && fixedBeside(key) + bytes > limit) return false;
       release(key);
       const freed = free ? makeRoom(bytes, key) : [];
       clock += 1;
       entries.set(key, { bytes, used: clock, evict, pinned });
       total += bytes;
       for (const call of freed) call();
-      return fits;
+      return true;
     },
     /**
-     * Free the least recently used unpinned entry that `skip(key)` does not
-     * protect, calling its `evict`. Returns whether one was freed.
+     * Free the least recently used entry, never a pinned one or the latest
+     * request, that `skip(key)` does not protect, calling its `evict`.
+     * Returns whether one was freed.
      *
      * @param {(key: string) => boolean} skip
      */
@@ -125,6 +154,7 @@ export function createBudget(limit) {
     clear() {
       entries.clear();
       total = 0;
+      requested = null;
     },
   };
 }
