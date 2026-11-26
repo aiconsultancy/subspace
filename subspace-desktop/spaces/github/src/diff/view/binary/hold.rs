@@ -3,18 +3,28 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use gpui_kit::{App, Context};
+use gpui_kit::base::async_util::{Receiver, Sender, unbounded};
+use gpui_kit::{App, Context, Task};
 use subspace_client_fleet::diff::{DiffMode, DiffRead, DiffSide};
 
 use super::{DiffView, Retry};
 use crate::diff::view::pages::{BusyUntil, countdown};
 
 #[derive(Default)]
-struct Deadlines(Mutex<Vec<(String, DiffSide, BusyUntil)>>);
+struct Deadlines {
+    sides: Mutex<Vec<(String, DiffSide, BusyUntil)>>,
+    visible: Mutex<Option<VisibleSide>>,
+}
+
+struct VisibleSide {
+    path: String,
+    side: DiffSide,
+    changed: Sender<()>,
+}
 
 impl Deadlines {
     fn get(&self, path: &str, side: DiffSide) -> Option<BusyUntil> {
-        self.0
+        self.sides
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
@@ -23,19 +33,41 @@ impl Deadlines {
     }
 
     fn record(&self, path: &str, side: DiffSide, now: Instant, seconds: u64) {
-        let mut sides = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.extend(path, side, now, seconds)
+            && let Some(visible) = &*self.visible.lock().unwrap_or_else(PoisonError::into_inner)
+            && visible.path == path
+            && visible.side == side
+        {
+            _ = visible.changed.try_send(());
+        }
+    }
+
+    fn extend(&self, path: &str, side: DiffSide, now: Instant, seconds: u64) -> bool {
+        let mut sides = self.sides.lock().unwrap_or_else(PoisonError::into_inner);
         sides.retain(|(_, _, until)| !until.delay(now).is_zero());
         let until = BusyUntil::new(now, seconds);
         if let Some((_, _, held)) = sides
             .iter_mut()
             .find(|(held_path, held_side, _)| held_path == path && *held_side == side)
         {
-            if held.delay(now) < until.delay(now) {
-                *held = until;
+            if held.delay(now) >= until.delay(now) {
+                return false;
             }
+            *held = until;
         } else {
             sides.push((path.to_owned(), side, until));
         }
+        true
+    }
+
+    fn watch(&self, path: String, side: DiffSide) -> Receiver<()> {
+        let (changed, receiver) = unbounded();
+        *self.visible.lock().unwrap_or_else(PoisonError::into_inner) = Some(VisibleSide {
+            path,
+            side,
+            changed,
+        });
+        receiver
     }
 }
 
@@ -76,9 +108,32 @@ impl BinaryHolds {
                 )
             })
     }
+
+    pub(super) fn watch(
+        &self,
+        path: String,
+        side: DiffSide,
+        cx: &mut Context<DiffView>,
+    ) -> Task<()> {
+        let changed = self.deadlines.watch(path, side);
+        cx.spawn(async move |view, cx| {
+            while changed.recv().await.is_ok() {
+                if view.update(cx, DiffView::binary_hold_changed).is_err() {
+                    break;
+                }
+            }
+        })
+    }
 }
 
 impl DiffView {
+    fn binary_hold_changed(&mut self, cx: &mut Context<Self>) {
+        if !self.fleet.changed() && self.binary_retry_remaining(cx) > 0 {
+            self.start_binary_clock(cx);
+            cx.notify();
+        }
+    }
+
     pub(super) fn binary_retry_remaining(&self, cx: &App) -> u64 {
         self.binary_deadline()
             .map_or(0, |until| until.remaining(cx.background_executor().now()))

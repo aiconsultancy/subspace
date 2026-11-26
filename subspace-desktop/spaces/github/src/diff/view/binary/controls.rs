@@ -2,7 +2,10 @@
 
 use gpui_kit::component::{Disableable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{AnyElement, Context, Div, IntoElement, ParentElement as _, Styled as _, div};
+use gpui_kit::{
+    AnyElement, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _,
+    Styled as _, TestSupportExt as _, div,
+};
 use subspace_client_fleet::diff::DiffSide;
 use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::Tokens;
@@ -91,20 +94,19 @@ fn paging_controls(
                 row.child(preview::bytes_button(cx))
             });
     }
-    if binary.read.is_some() {
-        return row
-            .when(binary.page.is_some(), |row| {
-                row.children(binary_actions(binary, true, cx))
-            })
-            .child(div().text_color(tokens.muted).child("Loading…"));
-    }
+    let remaining = view.binary_retry_remaining(cx);
+    let held = remaining > 0;
+    let loading = binary.read.is_some();
     if let Some(retry) = &binary.retry {
-        let remaining = view.binary_retry_remaining(cx);
         let bytes_busy = matches!(retry, Retry::Bytes(_));
         return row
             .when(!bytes_busy || binary.page.is_some(), |row| {
-                row.children(binary_actions(binary, bytes_busy || remaining > 0, cx))
+                row.children(binary_actions(binary, bytes_busy || held, cx))
             })
+            .when(
+                held && binary.page.is_some() && binary.preview.is_none(),
+                |row| row.children(preview_action(view, binary, true, cx)),
+            )
             .child(
                 action_button(
                     "crew-binary-retry-page",
@@ -112,19 +114,46 @@ fn paging_controls(
                     Some(IconName::RefreshCw),
                     "Retry page",
                 )
-                .disabled(remaining > 0)
+                .disabled(held)
                 .on_click(cx.listener(|view, _, _, cx| view.retry_binary(cx))),
             )
-            .text_color(tokens.muted)
-            .child(busy_message(remaining));
+            .child(hold_message(remaining, tokens));
     }
-    if binary.preview.is_some() {
-        return row.child(preview::bytes_button(cx));
-    }
-    row.children(binary_actions(binary, false, cx))
-        .when_some(preview::format(view.binary_path(binary)), |row, format| {
-            row.child(preview::open_button(format, cx))
+    let row = if binary.preview.is_some() {
+        row.child(preview::bytes_button(cx))
+    } else {
+        row.when(!loading || binary.page.is_some(), |row| {
+            row.children(binary_actions(binary, held || loading, cx))
         })
+        .when(!loading || (held && binary.page.is_some()), |row| {
+            row.children(preview_action(view, binary, held, cx))
+        })
+    };
+    if held {
+        row.child(hold_message(remaining, tokens))
+    } else if loading {
+        row.child(div().text_color(tokens.muted).child("Loading…"))
+    } else {
+        row
+    }
+}
+
+fn hold_message(remaining: u64, tokens: &Tokens) -> impl IntoElement {
+    div()
+        .id("crew-binary-hold")
+        .test_support()
+        .text_color(tokens.muted)
+        .child(busy_message(remaining))
+}
+
+fn preview_action(
+    view: &DiffView,
+    binary: &BinaryView,
+    disabled: bool,
+    cx: &Context<DiffView>,
+) -> Option<AnyElement> {
+    preview::format(view.binary_path(binary))
+        .map(|format| preview::open_button(format, disabled, cx))
 }
 
 fn binary_actions(binary: &BinaryView, disabled: bool, cx: &Context<DiffView>) -> Vec<AnyElement> {

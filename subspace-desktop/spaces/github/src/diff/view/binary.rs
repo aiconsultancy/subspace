@@ -53,6 +53,7 @@ pub(super) struct BinaryView {
     read: Option<Task<()>>,
     retry: Option<Retry>,
     clock: Option<Task<()>>,
+    hold_changes: Option<Task<()>>,
     preview: Option<Preview>,
     closed: DiffRead,
 }
@@ -76,6 +77,7 @@ impl BinaryView {
             read: None,
             retry: None,
             clock: None,
+            hold_changes: None,
             preview: None,
             closed,
         }
@@ -145,6 +147,7 @@ impl DiffView {
             binary.read = None;
             binary.retry = None;
             binary.clock = None;
+            binary.hold_changes = None;
         }
     }
 
@@ -187,8 +190,10 @@ impl DiffView {
     ) {
         self.close_binary(Some(window), cx);
         let path = self.files[file].file.path.clone();
-        let read = self.binary_holds.reader(path, side, cx);
-        self.binary = Some(BinaryView::new(file, side, read));
+        let read = self.binary_holds.reader(path.clone(), side, cx);
+        let mut binary = BinaryView::new(file, side, read);
+        binary.hold_changes = Some(self.binary_holds.watch(path, side, cx));
+        self.binary = Some(binary);
         self.read_binary(Move::Start, cx);
         cx.notify();
     }

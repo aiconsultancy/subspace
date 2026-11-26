@@ -28,10 +28,16 @@ binary or preview page without reloading the file list or discarding loaded
 pages. A positive `Retry-After` disables that control until the countdown
 ends. The pinned file side records the deadline before any automatic retry
 wait, so closing the reader or switching sides does not reset it, even if a
-byte or preview read was still retrying. Hidden sides keep only a deadline;
-the visible reader alone updates the countdown. A different fingerprint or
-diff mode starts a new read. A stale snapshot or a failed file-list load still
-uses **Refresh**.
+byte or preview read was still retrying. Before each binary request, including
+every automatic retry and preview continuation, the reader checks the same
+pinned deadline and waits for the longer of it and the reply's wait. If the
+wait would exceed the ten-second budget, the pending action stays on
+**Retry page**. A late reply
+can start or extend the visible side's countdown even after a replacement
+reader has loaded. **Preview image** and **Retry page** are unavailable until
+the countdown ends. Hidden sides keep only a deadline. A different fingerprint
+or diff mode starts a new read. A stale snapshot or a failed file-list load
+still uses **Refresh**.
 
 **View binary** opens a readonly hex and ASCII dump. Its pages are read on
 demand at the original fingerprint; modified binaries offer **Old** and

@@ -176,6 +176,7 @@ fn busy_once_after_open() -> Mock {
 
 #[gpui_kit::test]
 fn closing_during_automatic_backoff_keeps_the_pinned_side_held(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let mock = busy_once_after_open();
     let (view, window) = mount(cx, &mock);
     click(window, ("crew-diff-bytes", 0usize));

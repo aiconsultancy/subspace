@@ -1,8 +1,11 @@
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_client_fleet::{
     Error, FleetClient,
@@ -101,4 +104,75 @@ fn a_reopened_reader_does_not_retry_under_a_late_hold(cx: &mut TestAppContext) {
         "new reader retried during a recorded late hold"
     );
     assert_eq!(result, Err(Error::DiffReadCancelled));
+}
+
+#[gpui_kit::test]
+fn a_late_hold_reaches_the_loaded_replacement_reader(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (gate, waiting, release) = ReadGate::new();
+    let gate = Mutex::new(Some(gate));
+    let reads = AtomicUsize::new(0);
+    let mock = Mock::with_headers(move |request| {
+        if request.path.contains("/diff/file?") && reads.fetch_add(1, Ordering::Relaxed) == 1 {
+            gate.lock().unwrap().take().unwrap().pause();
+            return (
+                503,
+                vec![("Retry-After".into(), "10".into())],
+                String::new(),
+            );
+        }
+        let (status, body) = binary_response(request);
+        (status, vec![], body)
+    });
+    let (view, window) = mount(cx, &mock);
+    click(window, ("crew-diff-bytes", 0usize));
+    let first = worker(capture(&view, window), Position::default());
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    click(window, "crew-binary-close");
+    click(window, ("crew-diff-bytes", 0usize));
+    assert_page(&view, window, DiffSide::New, 0);
+    window.update(|window, _| assert!(window.find("crew-binary-preview").visible()));
+
+    let notified = Rc::new(Cell::new(0));
+    let count = notified.clone();
+    let _subscription =
+        window.update(|_, cx| cx.observe(&view, move |_, _| count.set(count.get() + 1)));
+    release.send(()).unwrap();
+    assert_eq!(first.join().unwrap(), Err(Error::DiffReadCancelled));
+    window.run_until_parked();
+    assert!(
+        notified.get() > 0,
+        "late hold did not reach the loaded reader"
+    );
+    window.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        assert!(window.find("crew-binary-hold").visible());
+        assert_eq!(window.find("crew-binary-preview").disabled(), Some(true));
+    });
+    view.read_with(window, |view, cx| {
+        assert_eq!(view.binary_retry_remaining(cx), 10)
+    });
+    let before = mock.requests().len();
+    click(window, "crew-binary-preview");
+    window.executor().advance_clock(Duration::from_secs(9));
+    window.run_until_parked();
+    click(window, "crew-binary-preview");
+    assert_eq!(mock.requests().len(), before, "preview sent before expiry");
+
+    window.executor().advance_clock(Duration::from_secs(1));
+    window.run_until_parked();
+    window.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        assert!(window.try_find("crew-binary-hold").is_none());
+        assert_ne!(window.find("crew-binary-preview").disabled(), Some(true));
+    });
+    click(window, "crew-binary-preview");
+    view.read_with(window, |view, _| {
+        assert!(view.binary.as_ref().unwrap().preview.is_some())
+    });
+    assert_eq!(
+        mock.requests().len() - before,
+        2,
+        "one preview, in two pages"
+    );
 }

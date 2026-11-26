@@ -4,6 +4,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
+use gpui_kit::component::Disableable as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, IntoElement as _, ParentElement as _, RenderImage,
     Styled as _, Window, div,
@@ -73,7 +74,14 @@ impl DiffView {
         ) else {
             return;
         };
-        if self.fleet.changed() || binary.read.is_some() || self.binary_retry_remaining(cx) > 0 {
+        if self.fleet.changed() || binary.read.is_some() {
+            return;
+        }
+        if self.binary_retry_remaining(cx) > 0 {
+            // A hold can arrive between taking Retry page's pending preview
+            // and reaching this guard. Keep its cursor and assembled prefix.
+            self.show_binary_retry(Retry::Preview(format, progress), cx);
+            cx.notify();
             return;
         }
         let client = match source.client(cx) {
@@ -159,13 +167,18 @@ pub(super) fn format(path: &str) -> Option<ImageFormat> {
     }
 }
 
-pub(super) fn open_button(format: ImageFormat, cx: &Context<DiffView>) -> AnyElement {
+pub(super) fn open_button(
+    format: ImageFormat,
+    disabled: bool,
+    cx: &Context<DiffView>,
+) -> AnyElement {
     action_button(
         "crew-binary-preview",
         Intent::Quiet,
         Some(IconName::Image),
         "Preview image",
     )
+    .disabled(disabled)
     .on_click(
         cx.listener(move |view, _, _, cx| view.preview_binary(format, PreviewRead::default(), cx)),
     )
