@@ -96,17 +96,6 @@ impl FullLine {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::FullLine;
-
-    #[gpui_kit::test]
-    fn full_line_renders_each_tab_and_carriage_return() {
-        let line = FullLine::new("\tfn main() {\t}\r");
-        assert_eq!(line.parts().0, "⇥fn main() {⇥}␍");
-    }
-}
-
 pub(super) fn read_line_button(
     file: usize,
     source: LineSource,
@@ -150,5 +139,16 @@ impl DiffView {
             self.full_line = Some(FullLine::new(text));
             cx.notify();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FullLine;
+
+    #[gpui_kit::test]
+    fn full_line_renders_each_tab_and_carriage_return() {
+        let line = FullLine::new("\tfn main() {\t}\r");
+        assert_eq!(line.parts().0, "⇥fn main() {⇥}␍");
     }
 }
