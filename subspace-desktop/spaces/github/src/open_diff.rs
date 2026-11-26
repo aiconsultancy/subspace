@@ -87,6 +87,7 @@ impl OpenDiffState {
     }
 }
 
+// qual:allow(coupling, oi) reason: "The board's open and close actions stay beside the diff state they own rather than in the board entry point."
 impl Github {
     pub(super) fn open_crew_diff(&mut self, target: OpenCrewDiff, cx: &mut Context<Self>) -> bool {
         if !FleetApi::current(cx).is_some_and(|api| api.read(cx).fleet(&target.fleet).is_some()) {

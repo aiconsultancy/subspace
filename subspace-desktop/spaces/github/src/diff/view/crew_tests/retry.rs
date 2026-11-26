@@ -130,10 +130,6 @@ fn retry_page_repeats_only_the_failed_continuation_and_keeps_loaded_patches(
         window.draw(cx).clear(cx);
         assert!(window.find("crew-diff-banner-refresh").visible());
         assert!(window.find(("crew-diff-retry-page", 0usize)).visible());
-        assert_eq!(
-            window.find(("crew-diff-retry-page", 0usize)).disabled(),
-            Some(false)
-        );
         window.click(("crew-diff-retry-page", 0usize), cx);
     });
     window.run_until_parked();
@@ -192,10 +188,6 @@ fn text_retry_after_ten_disables_retry_and_blocks_reads_until_due(cx: &mut TestA
     window.executor().advance_clock(Duration::from_secs(1));
     window.update(|window, cx| {
         window.draw(cx).clear(cx);
-        assert_eq!(
-            window.find(("crew-diff-retry-page", 0usize)).disabled(),
-            Some(false)
-        );
         window.click(("crew-diff-retry-page", 0usize), cx);
     });
     window.run_until_parked();

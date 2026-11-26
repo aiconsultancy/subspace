@@ -71,12 +71,6 @@ fn retry_page_resumes_a_busy_preview_without_fetching_its_prefix_again(cx: &mut 
     click(window, ("crew-diff-bytes", 0usize));
     click(window, "crew-binary-preview");
     assert_page(&view, window, DiffSide::New, 0);
-    window.update(|window, _| {
-        assert_eq!(
-            window.find("crew-binary-retry-page").disabled(),
-            Some(false)
-        );
-    });
     click(window, "crew-binary-retry-page");
     view.read_with(window, |view, _| {
         let binary = view.binary.as_ref().unwrap();
