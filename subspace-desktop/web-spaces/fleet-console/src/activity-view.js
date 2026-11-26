@@ -33,7 +33,7 @@
 // its caption when there is no room.
 
 import { ACTIVITY_MESSAGES, isWellFormedItem } from "./activity.js";
-import { documentPieces, HIDDEN, marker, measurePieces, sliceOfPieces, sourcePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
+import { documentPieces, HIDDEN, marker, measurePieces, partBlocks, restOf, sliceOfPieces, sourcePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
 import { formatBytes, formatClock, formatDuration } from "./format.js";
 
 export { marker, WINDOW_BYTES, WINDOW_LINES };
@@ -121,8 +121,17 @@ export function tokensText(tokens) {
   return `${count(tokens.input)} in · ${count(tokens.output)} out · ${count(tokens.reasoning)} reasoning · ${count(tokens.cacheRead)} cache read · ${count(tokens.cacheWrite)} cache write`;
 }
 
+/** The fields a friendly view left out of `object`, labelled: nothing an item carries is hidden (SUB-70). */
+function otherFields(object, keys, title = "Other fields") {
+  const rest = restOf(object, keys);
+  return rest ? [label(title), ...fields(rest)] : null;
+}
+
+const ERROR_FIELDS = ["type", "message", "status", "retryAfterMs", "responseBody"];
+
 function errorBlock(error) {
   if (!error) return null;
+  if (typeof error !== "object" || Array.isArray(error)) return [label("Error"), valueBlock(error)];
   return h(
     "div",
     { class: "act-error" },
@@ -130,7 +139,8 @@ function errorBlock(error) {
     pre(`${error.type ?? "Error"}: ${error.message ?? ""}`),
     Number.isFinite(error.status) ? h("p", { class: "act-note" }, `HTTP status ${error.status}`) : null,
     Number.isFinite(error.retryAfterMs) ? h("p", { class: "act-note" }, `Retry after ${formatDuration(error.retryAfterMs)}`) : null,
-    error.responseBody !== null && error.responseBody !== undefined ? [label("Response body"), pre(error.responseBody)] : null,
+    error.responseBody !== null && error.responseBody !== undefined ? [label("Response body"), typeof error.responseBody === "string" ? pre(error.responseBody) : valueBlock(error.responseBody)] : null,
+    otherFields(error, ERROR_FIELDS, "Other error fields"),
   );
 }
 
@@ -138,15 +148,19 @@ function contentBlock(content) {
   if (content === null || content === undefined) return null;
   if (!Array.isArray(content)) return [label("Output"), valueBlock(content)];
   if (!content.length) return [label("Output"), h("p", { class: "act-note" }, "(no output)")];
-  return [
-    label("Output"),
-    content.map((part) => {
-      if (part?.type === "text") return pre(part.text);
-      if (part?.type === "file") return h("div", { class: "act-file" }, h("p", { class: "act-note" }, "File ", txt(part.name ?? "(unnamed)"), " · ", txt(part.mime ?? "")), pre(part.uri ?? ""));
-      return valueBlock(part);
-    }),
-  ];
+  // The blocks the item's document has (`partBlocks`): a text part's text after its other fields; any other part as JSON.
+  return [label("Output"), content.map((part, index) => partBlocks(part, index).map((block) => (block.text !== undefined ? pre(block.text) : valueBlock(block.json))))];
 }
+
+/** The fields every item has, shown in its row rather than its body. */
+const ROW_FIELDS = ["id", "seq", "kind", "startedAt", "updatedAt"];
+/** The fields each kind's friendly view shows; the rest show as Other fields. */
+const SHOWN_FIELDS = {
+  step: [...ROW_FIELDS, "status", "model", "endedAt", "finish", "tokens", "cost", "error"],
+  text: [...ROW_FIELDS, "status", "text"],
+  reasoning: [...ROW_FIELDS, "status", "text"],
+  tool: [...ROW_FIELDS, "status", "name", "callId", "executed", "input", "rawInput", "metadata", "content", "error"],
+};
 
 function stepItem(item) {
   const model = item.model ? `${item.model.provider}/${item.model.id}${item.model.variant ? `#${item.model.variant}` : ""}` : "Model not reported";
@@ -156,6 +170,7 @@ function stepItem(item) {
     h("p", { class: "act-note" }, `Started ${formatClock(item.startedAt)}${took}${item.finish ? ` · finish: ` : ""}`, item.finish ? txt(item.finish) : null),
     item.tokens ? h("p", { class: "act-note mono" }, `${tokensText(item.tokens)} · ${formatCost(item.cost)}`) : h("p", { class: "act-note" }, item.status === "running" ? "Tokens settle when the step ends." : "No token use reported."),
     errorBlock(item.error),
+    otherFields(item, SHOWN_FIELDS.step),
   ];
 }
 
@@ -163,6 +178,7 @@ function textItem(item) {
   return [
     h("div", { class: "act-head" }, h("b", {}, item.kind === "reasoning" ? "Reasoning" : "Reply"), chip(item.status, TEXT_STATUS)),
     pre(item.text ?? "", item.kind === "reasoning" ? "reasoning" : "reply"),
+    otherFields(item, SHOWN_FIELDS[item.kind]),
   ];
 }
 
@@ -189,6 +205,7 @@ function toolItem(item) {
     present(item.metadata) ? [label("Progress"), ...objectFields(item.metadata)] : null,
     contentBlock(item.content),
     errorBlock(item.error),
+    otherFields(item, SHOWN_FIELDS.tool),
   ];
 }
 

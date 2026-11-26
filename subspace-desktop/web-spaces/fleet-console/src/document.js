@@ -115,7 +115,40 @@ export function* shownJsonPieces(value) {
 /** `JSON.stringify(value)` in pieces. */
 export const compactJsonPieces = (value) => jsonPieces(value, false, false, 0);
 
-/** An item's document in pieces: each field labelled, strings as text, the rest as shown JSON. */
+/**
+ * The fields of `object` other than `keys`, or null when there are none:
+ * what a friendly view of it leaves out, shown beside it as a block.
+ */
+export function restOf(object, keys) {
+  if (object === null || typeof object !== "object" || Array.isArray(object)) return null;
+  let rest = null;
+  for (const [key, value] of Object.entries(object)) {
+    if (keys.includes(key) || skipped(value)) continue;
+    rest ??= {};
+    rest[key] = value;
+  }
+  return rest;
+}
+
+/**
+ * A tool output's content part as blocks, the one projection the item's
+ * document (so its measure and windows) and its short view share (SUB
+ * decision 1c19f413 §5, SUB-70). A text part is its friendly text, after
+ * its other fields (an `annotation`, say) as JSON, so nothing it carries is
+ * left out and they show before a long text's windows. Any other part is
+ * its JSON, whole. Each block is `{text}` or `{json}`, with the label it
+ * has in the document.
+ *
+ * @returns {Array<{label: string, text?: string, json?: unknown}>}
+ */
+export function partBlocks(part, index) {
+  const text = part?.type === "text";
+  if (!text || typeof part.text !== "string") return [{ label: `content[${index}]${text ? " (text)" : ""}`, json: part }];
+  const rest = restOf(part, ["type", "text"]);
+  return [...(rest ? [{ label: `content[${index}] (other fields)`, json: rest }] : []), { label: `content[${index}] (text)`, text: part.text }];
+}
+
+/** An item's document in pieces: each field labelled, strings as text, the rest as shown JSON; content parts as `partBlocks`. */
 export function* documentPieces(item) {
   let first = true;
   const label = (words) => {
@@ -126,11 +159,11 @@ export function* documentPieces(item) {
   for (const [key, value] of Object.entries(item ?? {})) {
     if (key === "content" && Array.isArray(value)) {
       for (let index = 0; index < value.length; index += 1) {
-        const part = value[index];
-        const text = part?.type === "text";
-        yield label(`content[${index}]${text ? " (text)" : ""}`);
-        if (text && typeof part.text === "string") yield part.text;
-        else yield* shownJsonPieces(part);
+        for (const block of partBlocks(value[index], index)) {
+          yield label(block.label);
+          if (block.text !== undefined) yield block.text;
+          else yield* shownJsonPieces(block.json);
+        }
       }
     } else {
       yield label(key);

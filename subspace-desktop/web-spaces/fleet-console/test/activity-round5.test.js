@@ -6,10 +6,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createActivityWatcher, INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
-import { createActivityPanel, DRAW_KEY, WINDOW_BYTES } from "../src/activity-view.js";
+import { createActivityPanel, DRAW_KEY, formatItem, itemDocument, itemTree, mount, WINDOW_BYTES } from "../src/activity-view.js";
 import { createBudget } from "../src/budget.js";
 import { createPager } from "../src/pager.js";
-import { activityEvent, textItem, toolItem } from "./activity-fixtures.js";
+import { activityEvent, stepItem, textItem, toolItem } from "./activity-fixtures.js";
 import { buttons, clickOn, fakeActivityClient, fakeDoc, pagedSnapshot, pagesOf, settle } from "./activity-helpers.js";
 
 const officer = { name: "Example", role: "captain", live: true };
@@ -314,4 +314,39 @@ test("4: a snapshot of the same generation keeps what was read", async () => {
   await settle();
   assert.equal(watcher.view.full("turn-b", "ia")?.state, "ready");
   watcher.stop();
+});
+
+// ---------- 5. One lossless block model ----------
+
+const annotated = (repeat) => toolItem("ia", 9, { content: [{ type: "text", text: "a".repeat(repeat), annotation: "fixture-side-data" }] });
+
+test("5: a text output part's other fields show in the short view and in the first window (probe 4)", () => {
+  for (const repeat of [100, 70_000]) {
+    const shown = mount(itemTree("turn-b", annotated(repeat)), fakeDoc).textContent;
+    assert.match(shown, /fixture-side-data/, `at ${repeat} characters`);
+    assert.match(shown, /a{100}/, "beside the friendly text");
+  }
+  assert.equal(formatItem(annotated(70_000)).windows.length > 1, true, "the long one shows in windows");
+});
+
+test("5: the item's document, which the windows and the measure are made from, keeps them (probe 6)", () => {
+  const document = itemDocument(annotated(70_000));
+  assert.match(document, /content\[0\] \(other fields\)\n\{\n {2}"annotation": "fixture-side-data"\n\}\n\ncontent\[0\] \(text\)\na/);
+  assert.equal(formatItem(annotated(70_000)).windows.join(""), document, "the windows join into the document");
+});
+
+test("5: fields a friendly view leaves out of an item, its error or a file part still show", () => {
+  const tool = toolItem("t", 1, {
+    content: [{ type: "file", name: "f.txt", mime: "text/plain", uri: "file:///f.txt", size: 12 }],
+    error: { type: "Timeout", message: "late", code: "E-SIDE" },
+    origin: "TOOL-SIDE",
+  });
+  const shown = mount(itemTree("turn-a", tool), fakeDoc).textContent;
+  for (const text of ['"size": 12', "f.txt", "file:///f.txt", "E-SIDE", "TOOL-SIDE"]) assert.ok(shown.includes(text), text);
+  const reply = mount(itemTree("turn-a", textItem("r", 2, "hello", { citations: ["REPLY-SIDE"] })), fakeDoc).textContent;
+  assert.ok(reply.includes("REPLY-SIDE"));
+  const step = mount(itemTree("turn-a", stepItem("s", 3, { cache: "STEP-SIDE" })), fakeDoc).textContent;
+  assert.ok(step.includes("STEP-SIDE") && step.includes("firstTokenAt"));
+  const plain = mount(itemTree("turn-a", toolItem("p", 4, { content: [{ type: "text", text: "only" }] })), fakeDoc).textContent;
+  assert.ok(!plain.includes("Other fields"), "nothing extra when nothing is left out");
 });
