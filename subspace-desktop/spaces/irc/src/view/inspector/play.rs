@@ -90,7 +90,7 @@ fn status_word(status: PullRequestStatus) -> &'static str {
 pub(crate) fn lines(hub: &Hub, buffer: &BufferKey) -> Vec<PlayLine> {
     hub.tiles
         .get(buffer)
-        .in_play_first(MAX_IN_PLAY)
+        .in_play_first(MAX_IN_PLAY, |found| visible(hub, found))
         .into_iter()
         .map(|found| line(hub, found))
         .collect()
@@ -109,7 +109,11 @@ pub(crate) fn want(board: &Irc, cx: &mut gpui_kit::Context<Irc>) {
     if !shows(board, cx) {
         return;
     }
-    let found = hub.read(cx).tiles.get(&buffer).in_play_first(MAX_IN_PLAY);
+    let current = hub.read(cx);
+    let found = current
+        .tiles
+        .get(&buffer)
+        .in_play_first(MAX_IN_PLAY, |found| visible(current, found));
     let (issues, prs) = split(found);
     hub.update(cx, |hub, cx| {
         crate::issues::want(hub, issues, cx);
@@ -147,6 +151,13 @@ pub(super) fn standing<T>(answer: Option<&T>, known: bool, pending: bool) -> Ans
         (_, true, _) => Answer::Known,
         (None, _, _) | (Some(_), _, true) => Answer::Loading,
         _ => Answer::Unavailable,
+    }
+}
+
+fn visible(hub: &Hub, found: &TileRef) -> bool {
+    match found {
+        TileRef::Issue(identifier) => !hub.issues.is_unavailable(identifier),
+        TileRef::PullRequest(_) => true,
     }
 }
 

@@ -162,7 +162,7 @@ pub(crate) fn gather(
 /// The issues `tiles` shows, newest first.
 pub(crate) fn in_play(tiles: &Tiles) -> Vec<String> {
     let mut found: Vec<String> = tiles
-        .in_play_first(usize::MAX)
+        .in_play_first(usize::MAX, |_| true)
         .into_iter()
         .filter_map(|found| match found {
             TileRef::Issue(identifier) => Some(identifier),

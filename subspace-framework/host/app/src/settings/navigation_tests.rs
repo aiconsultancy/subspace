@@ -137,6 +137,7 @@ pub(super) fn registration() -> crate::registry::BoardRegistration {
         stop_background: |_| {},
         retain_when_disabled: false,
         configuration: None,
+        default_order: usize::MAX,
         artwork: subspace_dashboard::BoardArtwork::default(),
         connection: Default::default(),
         contracts: Default::default(),

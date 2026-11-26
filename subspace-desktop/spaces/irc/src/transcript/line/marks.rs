@@ -100,6 +100,9 @@ pub(super) fn handlers(context: &RowContext, styled: Option<Styled>) -> RefHandl
         }),
         open: claim,
         tooltip: Arc::new(move |found, window, cx| match found {
+            Ref::Decision(identifier) => {
+                Some(crate::decision_references::tooltip(identifier, window, cx))
+            }
             Ref::Issue(identifier) => Some(issues::tooltip(identifier, hub.clone(), window, cx)),
             Ref::PullRequest(found) => Some(pull_requests::tooltip(found, hub.clone(), window, cx)),
             _ => None,

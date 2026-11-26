@@ -11,8 +11,8 @@
 //! short summaries ([`ResolvePullRequests`]), with its own current account,
 //! from memory: a reference it has not read yet is
 //! [`ResolutionState::Pending`] and it publishes [`Changed`] when the read
-//! lands, and whenever the account changes or signs out. Subscribers keep
-//! nothing across a [`Changed`]. Summaries are pull request content, so these
+//! lands. When the viewing account or its access changes, the responder
+//! also publishes [`AccessChanged`] so subscribers can discard held summaries. Summaries are pull request content, so these
 //! types do not implement `Debug`.
 
 mod details;
@@ -45,13 +45,22 @@ impl Request for OpenPullRequest {
     type Response = ();
 }
 
-/// The account changed, it signed out, or pending summaries finished: ask again.
+/// Pull request summaries changed. Subscribers may ask for the latest answers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Changed;
 
 impl Event for Changed {
     type Contract = Github;
     const NAME: &'static str = "changed";
+}
+
+/// The viewing account changed or its access was reset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AccessChanged;
+
+impl Event for AccessChanged {
+    type Contract = Github;
+    const NAME: &'static str = "access-changed";
 }
 
 /// Asks for short summaries of pull requests by canonical

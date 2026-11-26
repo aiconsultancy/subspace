@@ -30,7 +30,13 @@ fn the_page_sits_beside_the_inspector_and_keys_reach_the_space_from_it(cx: &mut 
         );
         assert!(toolbar.right() <= inspector.left());
         assert!(window.try_find("gh-page-back").is_some());
-        assert!(window.try_find(("gh-approve", 4usize)).is_some(), "toolbar");
+        let approve = window.find(("gh-approve", 4usize)).bounds();
+        let files = window.find(("gh-diff", 4usize)).bounds();
+        let close = window.find(("gh-close", 4usize)).bounds();
+        assert!(approve.right() <= files.left());
+        assert!(files.right() <= close.left());
+        assert!(window.try_find(("gh-comment", 4usize)).is_none());
+        assert!(window.try_find(("gh-changes", 4usize)).is_none());
         assert!(window.try_find(("gh-approve", 3usize)).is_some(), "footer");
         assert!(
             window.try_find("gh-peek-open").is_none(),
@@ -60,6 +66,37 @@ fn the_page_sits_beside_the_inspector_and_keys_reach_the_space_from_it(cx: &mut 
     cx.update(|window, _| {
         assert!(window.try_find("github-page").is_none());
         assert!(window.try_find("gh-peek-open").is_some());
+    });
+}
+
+#[gpui_kit::test]
+fn review_composer_fits_the_inspector_and_keeps_its_width_when_sending(cx: &mut TestAppContext) {
+    let (board, cx) = setup(cx, 1100.);
+    board.update(cx, load_detail);
+    settle(cx);
+    cx.update(|window, cx| window.click(("gh-approve", 3usize), cx));
+    settle(cx);
+    let width = cx.update(|window, _| {
+        let inspector = window.find("github-inspector").bounds();
+        let composer = window.find("composer").bounds();
+        let submit = window.find("composer-submit").bounds();
+        assert!(composer.right() < inspector.right());
+        assert!(submit.right() <= composer.right());
+        composer.size.width
+    });
+    board.update(cx, |board, cx| {
+        board
+            .composer
+            .as_ref()
+            .unwrap()
+            .entity
+            .update(cx, |composer, cx| {
+                composer.set_busy(true, cx);
+            });
+    });
+    settle(cx);
+    cx.update(|window, _| {
+        assert_eq!(window.find("composer").bounds().size.width, width);
     });
 }
 

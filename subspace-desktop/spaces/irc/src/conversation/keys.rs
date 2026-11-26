@@ -363,6 +363,9 @@ fn move_to(
             window,
             cx,
         )),
+        Some(Opens::Ref(Ref::Decision(identifier))) => {
+            Some(crate::decision_references::tooltip(&identifier, window, cx))
+        }
         Some(Opens::Ref(Ref::PullRequest(found))) => Some(pull_requests::tooltip(
             &found,
             this.hub.downgrade(),

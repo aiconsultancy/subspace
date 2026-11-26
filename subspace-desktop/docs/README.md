@@ -222,6 +222,8 @@ record. [Change records](changes/README.md) explains the convention.
   listing every decision, built on the workspace shell.
 - [Decision authoring](changes/decision-authoring/README.md): create and review
   proposals, handle version conflicts and read immutable revisions.
+- [Decision references and workspace refinements](changes/desktop-decision-identifiers/README.md):
+  decision links, initiative selection, refresh controls, PR review and typography.
 - [Fleet roles in Channels](changes/channels-fleet-roles/README.md): rank
   marks for captains and the rear admiral, a ship channel's live status,
   connection commands in **More**, state dots on references and a counted

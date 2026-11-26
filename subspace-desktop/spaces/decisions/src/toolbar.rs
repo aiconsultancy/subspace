@@ -1,15 +1,16 @@
 //! The pane's tab strip and toolbar. The tab strip names what is open: the
 //! current view and, beside it, an opened decision. The toolbar leads with
 //! the view menu while the navigator is hidden, then the search and the Tag
-//! filter, and ends with the count. The dock switches are the status bar's
-//! (`Dashboard::docks`).
+//! filter. The count, New decision and Refresh trail. The dock switches are
+//! the status bar's (`Dashboard::docks`).
 
 use gpui_kit::component::Icon;
 use gpui_kit::{
     ClickEvent, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
     div, px,
 };
-use subspace_framework::dashboard::action::main_action;
+use subspace_framework::dashboard::Dashboard as _;
+use subspace_framework::dashboard::action::{Intent, icon_button, main_action};
 use subspace_framework::dashboard::fields;
 use subspace_framework::dashboard::tabs::{self, TabBar, TabSpec};
 use subspace_framework::dashboard::toolbar_label::{self, ToolbarLabel};
@@ -50,14 +51,8 @@ pub(crate) fn render(this: &Decisions, cx: &mut Context<Decisions>) -> workspace
     if let Some(tag) = menus::tag_button(this, cx) {
         toolbar = toolbar.leading(tag);
     }
-    if this.can_author() {
-        toolbar = toolbar.trailing(
-            main_action("decisions-new", IconName::Plus, "New decision")
-                .on_click(cx.listener(|this, _, window, cx| this.new_decision(false, window, cx))),
-        );
-    }
-    match state::count_line(&this.listing) {
-        Some(count) => toolbar.trailing(toolbar_label::label(
+    if let Some(count) = state::count_line(&this.listing) {
+        toolbar = toolbar.trailing(toolbar_label::label(
             "decisions-count",
             ToolbarLabel {
                 icon: Some(Icon::from(IconName::Scale)),
@@ -65,9 +60,23 @@ pub(crate) fn render(this: &Decisions, cx: &mut Context<Decisions>) -> workspace
                 text: count.into(),
             },
             cx,
-        )),
-        None => toolbar,
+        ));
     }
+    if this.can_author() {
+        toolbar = toolbar.trailing(
+            main_action("decisions-new", IconName::Plus, "New decision")
+                .on_click(cx.listener(|this, _, window, cx| this.new_decision(false, window, cx))),
+        );
+    }
+    toolbar.trailing(
+        icon_button(
+            "decisions-refresh",
+            Intent::Quiet,
+            IconName::RefreshCw,
+            "Refresh",
+        )
+        .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
+    )
 }
 
 /// Typing searches the titles and text after a short pause; Enter or Escape

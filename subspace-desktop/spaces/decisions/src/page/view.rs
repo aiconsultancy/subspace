@@ -11,7 +11,7 @@ use gpui_kit::{
 use subspace_api_client::model::DecisionDetail;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::row_menu::MenuChat;
-use subspace_framework::dashboard::{Tokens, feedback, rich, workspace};
+use subspace_framework::dashboard::{ReturnPoint, Tokens, feedback, rich, workspace};
 use subspace_framework::lucide::IconName;
 
 use super::{Page, PageState};
@@ -49,7 +49,26 @@ pub(crate) fn render(
                 .px(workspace::text_edge(tokens))
                 .py_4()
                 .gap_6()
+                .child(back(page, cx))
                 .children(body),
+        )
+        .into_any_element()
+}
+
+fn back(page: &Page, cx: &mut Context<Decisions>) -> AnyElement {
+    let label = page.origin.as_ref().map_or_else(
+        || SharedString::from("Back to decisions"),
+        ReturnPoint::back_label,
+    );
+    h_flex()
+        .child(
+            action_button(
+                "decisions-page-back",
+                Intent::Neutral,
+                Some(IconName::ArrowLeft),
+                label,
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.go_back(window, cx))),
         )
         .into_any_element()
 }
@@ -242,6 +261,14 @@ fn heading(detail: &DecisionDetail, tokens: &Tokens) -> AnyElement {
             h_flex()
                 .gap_2()
                 .text_size(tokens.secondary_size())
+                .children(detail.identifier.as_ref().map(|identifier| {
+                    div()
+                        .id("decisions-page-reference")
+                        .test_support()
+                        .aria_label(identifier.clone())
+                        .text_color(tokens.muted)
+                        .child(identifier.clone())
+                }))
                 .child(
                     h_flex()
                         .gap_1()

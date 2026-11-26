@@ -88,6 +88,31 @@ fn changed_forgets_every_detail_so_nothing_private_outlives_the_account() {
 }
 
 #[test]
+fn a_pending_refresh_keeps_the_summary_until_a_new_answer() {
+    let mut prs = PullRequestReferences::default();
+    let key = "octo-org/api#1";
+    prs.record(vec![Resolution::new(
+        key,
+        ResolutionState::Available(details(key)),
+    )]);
+
+    prs.refreshed();
+    assert!(prs.want([key.to_owned()]));
+    prs.take_requests();
+    assert!(!prs.record(vec![Resolution::new(key, ResolutionState::Pending)]));
+    assert!(matches!(
+        prs.state(key),
+        Some(ResolutionState::Available(_))
+    ));
+
+    prs.refreshed();
+    assert!(prs.want([key.to_owned()]));
+    prs.take_requests();
+    assert!(prs.record(vec![Resolution::new(key, ResolutionState::Unavailable)]));
+    assert!(matches!(prs.state(key), Some(ResolutionState::Unavailable)));
+}
+
+#[test]
 fn answers_are_recorded_by_canonical_identity() {
     let mut prs = PullRequestReferences::default();
     prs.record(vec![Resolution::new(

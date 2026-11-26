@@ -74,3 +74,18 @@ pub(crate) fn adjust_descriptor(descriptor: &mut ProductDescriptor) {
         update.exclusive = true;
     }
 }
+
+/// The built-in switcher order. Saved user order takes precedence.
+pub(crate) fn order(board: BoardRegistration) -> BoardRegistration {
+    const DEFAULT: [&str; 7] = [
+        "irc",
+        "issues",
+        "github",
+        "fleet-console",
+        "projects",
+        "decisions",
+        "actions",
+    ];
+    let rank = DEFAULT.iter().position(|id| *id == board.id);
+    board.with_default_order(rank.unwrap_or(usize::MAX))
+}

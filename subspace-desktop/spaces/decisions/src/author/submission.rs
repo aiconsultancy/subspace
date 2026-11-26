@@ -69,8 +69,10 @@ impl Decisions {
                 self._page_read = None;
                 self.page_reads = self.page_reads.wrapping_add(1);
                 self.history = Default::default();
+                let origin = self.shown_page().and_then(|page| page.origin.clone());
                 self.showing_page = true;
                 self.page = Some(Page {
+                    origin,
                     id: detail.id.clone(),
                     title: detail.title.clone(),
                     state: PageState::Loaded(Box::new(detail)),

@@ -57,7 +57,7 @@ fn allowed(url: &str, text: &str) -> bool {
     match parse_ref_url(url) {
         Some(Ref::Channel(name)) => text == name,
         Some(Ref::Nick(nick)) => text.trim_start_matches('@') == nick,
-        Some(Ref::Issue(identifier)) => text.contains(&identifier),
+        Some(Ref::Issue(identifier) | Ref::Decision(identifier)) => text.contains(&identifier),
         Some(Ref::PullRequest(found)) => text.to_ascii_lowercase().contains(found.label()),
         None => safe_url(url).is_some(),
     }

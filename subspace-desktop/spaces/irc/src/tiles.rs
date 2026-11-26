@@ -59,7 +59,7 @@ impl TileRef {
         match found {
             Ref::Issue(identifier) => Some(Self::Issue(identifier.clone())),
             Ref::PullRequest(found) => Some(Self::PullRequest(found.key.clone())),
-            Ref::Channel(_) | Ref::Nick(_) => None,
+            Ref::Channel(_) | Ref::Nick(_) | Ref::Decision(_) => None,
         }
     }
 }
@@ -129,14 +129,18 @@ impl TileOwners {
     /// them: what is in play in it, so a cap keeps the first named.
     #[cfg(test)]
     pub fn in_play(&self) -> Vec<TileRef> {
-        self.in_play_first(usize::MAX)
+        self.in_play_first(usize::MAX, |_| true)
     }
 
     /// The first `limit` of [`Self::in_play`], chosen before any is
     /// cloned or the rest are sorted.
-    pub fn in_play_first(&self, limit: usize) -> Vec<TileRef> {
-        let mut owned: Vec<(&(i64, usize), &TileRef)> =
-            self.0.iter().map(|(found, claim)| (claim, found)).collect();
+    pub fn in_play_first(&self, limit: usize, include: impl Fn(&TileRef) -> bool) -> Vec<TileRef> {
+        let mut owned: Vec<(&(i64, usize), &TileRef)> = self
+            .0
+            .iter()
+            .filter(|(found, _)| include(found))
+            .map(|(found, claim)| (claim, found))
+            .collect();
         if limit < owned.len() {
             owned.select_nth_unstable_by_key(limit, |(claim, _)| **claim);
             owned.truncate(limit);
@@ -164,8 +168,8 @@ impl Tiles {
 
     /// The first `limit` of what is in play in the conversation; see
     /// [`TileOwners::in_play_first`].
-    pub fn in_play_first(&self, limit: usize) -> Vec<TileRef> {
-        self.owners.in_play_first(limit)
+    pub fn in_play_first(&self, limit: usize, include: impl Fn(&TileRef) -> bool) -> Vec<TileRef> {
+        self.owners.in_play_first(limit, include)
     }
 
     /// Whether any issue is in play in the conversation, without listing

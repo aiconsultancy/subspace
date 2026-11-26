@@ -183,6 +183,7 @@ impl BoardRegistration {
             fields: None,
             settings_editor: D::settings_editor(),
             configuration: None,
+            default_order: usize::MAX,
             artwork: D::ARTWORK,
             connection: D::connection_settings(),
             // Every instance declares its type's roles under its own ID. A

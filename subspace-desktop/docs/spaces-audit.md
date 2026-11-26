@@ -129,8 +129,9 @@ what it already loaded; any other key is `Pending` while one background read
 fetches it, and `github@1/changed` announces the landing. A pull request the
 account cannot read, or an issue with that number, is `Unavailable`; with no
 account or after a sign-out the answer is `SignedOut`. An account switch,
-sign-in, sign-out or reload forgets every answer and publishes `changed`, so
-askers keep nothing across a `changed`. The PRs board creates its view at
+sign-in or sign-out publishes `access-changed` so Channels discards its
+summaries immediately. During a same-account refresh, Channels retains its
+existing summary until it receives a new answer. The PRs board creates its view at
 window start, so it answers before it is first opened. Summaries hold pull
 request content: they stay in memory and the types do not implement `Debug`.
 A summary's check counts (`PullRequestDetails::check_counts`, passed of
@@ -195,18 +196,22 @@ the registrations differ.
 | `irc` | requests | `issues@1/resolve` |
 | `irc` | requests | `issues@1/refresh` |
 | `irc` | subscribes | `github@1/changed` |
+| `irc` | subscribes | `github@1/access-changed` |
 | `irc` | requests | `github@1/resolve-pull-requests` |
 | `irc` | requests | `github@1/open-pull-request` |
+| `irc` | requests | `decisions@1/open` |
 | `issues` | responds | `issues@1/current-scope` |
 | `issues` | responds | `issues@1/resolve` |
 | `issues` | responds | `issues@1/refresh` |
 | `issues` | publishes | `issues@1/changed` |
 | `issues` | requests | `github@1/open-pull-request` |
 | `decisions` | requests | `issues@1/current-scope` |
+| `decisions` | responds | `decisions@1/open` |
 | `projects` | requests | `issues@1/current-scope` |
 | `github` | responds | `github@1/open-pull-request` |
 | `github` | responds | `github@1/resolve-pull-requests` |
 | `github` | publishes | `github@1/changed` |
+| `github` | publishes | `github@1/access-changed` |
 
 Configured web Spaces are not in the product registrations this test reads:
 each one declares the same three roles as `irc` under its own configured ID

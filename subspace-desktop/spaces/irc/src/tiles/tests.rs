@@ -282,7 +282,7 @@ fn a_new_recognition_never_gives_an_issue_and_a_kept_pull_request_one_place() {
         [issue.clone(), pr.clone()],
         "as the message names them"
     );
-    assert_eq!(owners.in_play_first(1), [issue]);
+    assert_eq!(owners.in_play_first(1, |_| true), [issue]);
 }
 
 #[test]

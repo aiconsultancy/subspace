@@ -13,6 +13,7 @@ pub(crate) mod tooltip;
 
 use std::collections::HashMap;
 
+use subspace_framework::contracts::decisions::OpenDecision;
 use subspace_framework::contracts::github;
 use subspace_framework::contracts::issues::{
     Changed, CurrentScope, IssueScope, MAX_RESOLVE, Refresh, Resolution, ResolutionState, Resolve,
@@ -34,8 +35,10 @@ pub(crate) const CONTRACTS: BoardContracts = BoardContracts::new(&[
     Declaration::requests::<Resolve>(),
     Declaration::requests::<Refresh>(),
     Declaration::subscribes::<github::Changed>(),
+    Declaration::subscribes::<github::AccessChanged>(),
     Declaration::requests::<github::ResolvePullRequests>(),
     Declaration::requests::<github::OpenPullRequest>(),
+    Declaration::requests::<OpenDecision>(),
 ]);
 
 /// One identifier's last answer and the round it was given in.
@@ -145,14 +148,29 @@ impl IssueReferences {
     pub fn record(&mut self, answers: Vec<Resolution>) -> bool {
         let mut changed = false;
         for resolution in answers {
-            let previous = self.answers.insert(
-                resolution.identifier,
-                Answer {
-                    state: resolution.state.clone(),
-                    round: self.round,
-                },
+            let answer = self
+                .answers
+                .entry(resolution.identifier)
+                .or_insert_with(|| {
+                    changed = true;
+                    Answer {
+                        state: resolution.state.clone(),
+                        round: self.round,
+                    }
+                });
+            answer.round = self.round;
+            let transient = matches!(
+                resolution.state,
+                ResolutionState::Pending | ResolutionState::Failed
             );
-            changed |= previous.is_none_or(|previous| previous.state != resolution.state);
+            let settled = matches!(
+                answer.state,
+                ResolutionState::Available(_) | ResolutionState::Unavailable
+            );
+            if answer.state != resolution.state && !(transient && settled) {
+                answer.state = resolution.state;
+                changed = true;
+            }
         }
         changed
     }

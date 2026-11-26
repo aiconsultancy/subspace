@@ -164,23 +164,31 @@ pub fn mode_switch(
         return None;
     }
     let on = std::rc::Rc::new(on);
-    Some(h_flex().gap_1().mb_2().children(modes.iter().map(|&mode| {
-        let on = on.clone();
-        div()
-            .id(("gh-mode", mode as usize))
-            .px_2()
-            .py(px(TAB_PAD_Y_PX))
-            .rounded(px(TAB_RADIUS_PX))
-            .cursor_pointer()
-            .text_color(if mode == current {
-                tokens.fg_strong
-            } else {
-                tokens.muted
-            })
-            .when(mode == current, |el| el.bg(tokens.select))
-            .child(mode.title())
-            .on_click(move |_, window, cx| on(mode, window, cx))
-    })))
+    Some(
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .flex_wrap()
+            .gap_1()
+            .mb_2()
+            .children(modes.iter().map(|&mode| {
+                let on = on.clone();
+                div()
+                    .id(("gh-mode", mode as usize))
+                    .px_2()
+                    .py(px(TAB_PAD_Y_PX))
+                    .rounded(px(TAB_RADIUS_PX))
+                    .cursor_pointer()
+                    .text_color(if mode == current {
+                        tokens.fg_strong
+                    } else {
+                        tokens.muted
+                    })
+                    .when(mode == current, |el| el.bg(tokens.select))
+                    .child(mode.title())
+                    .on_click(move |_, window, cx| on(mode, window, cx))
+            })),
+    )
 }
 
 /// The title's gap below it and its size, a property row's height and its

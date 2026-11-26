@@ -164,10 +164,18 @@ fn pane_toolbar(board: &mut Irc, cx: &mut Context<Irc>) -> workspace::Toolbar {
     if let Some(heading) = heading(board, navigator_open, cx) {
         bar = bar.leading(heading);
     }
-    match toolbar::render(board, cx) {
-        Some(actions) => bar.trailing(actions),
-        None => bar,
+    if let Some(actions) = toolbar::render(board, cx) {
+        bar = bar.trailing(actions);
     }
+    bar.trailing(
+        subspace_framework::dashboard::action::icon_button(
+            "irc-refresh",
+            subspace_framework::dashboard::action::Intent::Quiet,
+            subspace_framework::lucide::IconName::RefreshCw,
+            "Refresh",
+        )
+        .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
+    )
 }
 
 /// The conversation in front as the toolbar's heading: its name, unless a

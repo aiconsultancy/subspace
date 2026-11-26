@@ -142,18 +142,31 @@ impl Composer {
             .id("composer-hint")
             .test_support()
             .aria_label(note.clone())
-            .flex_1()
+            .w_full()
             .min_w_0()
+            .truncate()
             .text_color(colour)
-            .child(rich::plain_text("composer-note", &note))
+            .child(note)
             .into_any_element()
     }
 
     /// The hint and the Cancel and submit buttons under the text.
     fn footer(&self, tokens: &Tokens, cx: &mut Context<Self>) -> AnyElement {
-        h_flex()
+        v_flex()
+            .w_full()
+            .min_w_0()
             .gap_2()
             .child(self.note(tokens, cx.platform_info().is_mac()))
+            .child(self.footer_actions(cx))
+            .into_any_element()
+    }
+
+    fn footer_actions(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
+        h_flex()
+            .w_full()
+            .flex_wrap()
+            .justify_end()
+            .gap_2()
             .child(
                 action_button(
                     "composer-cancel",
@@ -190,7 +203,6 @@ impl Composer {
                     composer.submit(&ComposerSubmit, window, cx)
                 })),
             )
-            .into_any_element()
     }
 
     /// The key context: the composer's own keys, plus the modal context that
@@ -244,6 +256,9 @@ impl Render for Composer {
         let body = self.body(&tokens, &self.text(cx), cx);
         v_flex()
             .id("composer")
+            .test_support()
+            .w_full()
+            .min_w_0()
             .key_context(Self::key_context(cx.platform_info().os))
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::submit))

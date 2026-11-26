@@ -144,6 +144,13 @@ pub(crate) fn render(this: &Decisions, cx: &Context<Decisions>) -> workspace::Na
         items,
         more: this.listing.more,
     });
+    let scoped: Vec<_> = this
+        .session
+        .projects
+        .iter()
+        .filter(|project| crate::initiative::includes(project, this.initiative_id.as_deref()))
+        .cloned()
+        .collect();
     workspace::Navigator::new(Decisions::TITLE)
         .child(workspace::nav_section("Views", cx))
         .children(
@@ -159,10 +166,11 @@ pub(crate) fn render(this: &Decisions, cx: &Context<Decisions>) -> workspace::Na
         )
         .child(workspace::nav_section("Projects", cx))
         .children(
-            projects(&this.choice.project, &this.session.projects, loaded)
+            projects(&this.choice.project, &scoped, loaded)
                 .into_iter()
                 .map(|entry| project_row(entry, cx)),
         )
+        .children(crate::initiative::rows(this, cx))
         .footer(account_line(this))
 }
 

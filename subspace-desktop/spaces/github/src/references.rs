@@ -4,8 +4,8 @@
 //! summary. What the account already loaded and confirmed answers at once;
 //! anything else is `Pending` while one background read per request fetches
 //! it, and `github@1/changed` announces the landing, as it announces every
-//! list or detail this Space loads. An account switch, a sign-in, a sign-out
-//! or a reload forgets every answer and announces `changed`, so no summary
+//! list or detail this Space loads. An account switch, sign-in or sign-out
+//! forgets every answer and also announces `access-changed` so no summary
 //! outlives the account that could read it. A signed-out account answers
 //! `SignedOut` until it signs in again or a read with it succeeds; lists
 //! from before a reload or from the disk cache answer only once a refresh
@@ -49,7 +49,7 @@ use std::collections::{HashMap, HashSet};
 
 use gpui_kit::{Context, Subscription};
 use subspace_framework::contracts::github::{
-    Changed, Resolution, ResolutionState, ResolvePullRequests,
+    AccessChanged, Changed, Resolution, ResolutionState, ResolvePullRequests,
 };
 use subspace_framework::dashboard::Dashboard as _;
 use subspace_framework::dashboard::contracts;
@@ -187,8 +187,14 @@ pub(crate) fn announce(cx: &mut Context<Github>) {
 
 /// Forgets every answer and asks the other Spaces to ask again.
 pub(crate) fn forget(board: &mut Github, cx: &mut Context<Github>) {
-    forget_answers(&mut board.references);
+    reset_reads(board);
+    _ = contracts::publish(Github::ID, AccessChanged, cx);
     announce(cx);
+}
+
+/// Drops unconfirmed answers so a manual refresh can request them again.
+pub(crate) fn reset_reads(board: &mut Github) {
+    forget_answers(&mut board.references);
 }
 
 /// Forgets every answer and drops every read still running. The access

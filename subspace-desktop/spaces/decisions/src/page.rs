@@ -7,7 +7,8 @@ pub(crate) mod view;
 use gpui_kit::{AppContext as _, Context, Window};
 use subspace_api_client::Error;
 use subspace_api_client::model::DecisionDetail;
-use subspace_framework::dashboard::ReturnLocation;
+use subspace_framework::contracts::decisions;
+use subspace_framework::dashboard::{DashboardEvent, ReturnLocation, ReturnPoint};
 
 use crate::load::{self, Failure, Leased};
 use crate::{Decisions, peek};
@@ -25,6 +26,7 @@ pub(crate) struct Page {
     /// The row's title until the read lands, then the decision's own.
     pub(crate) title: String,
     pub(crate) state: PageState,
+    pub(crate) origin: Option<ReturnPoint>,
 }
 
 pub(crate) enum PageState {
@@ -86,16 +88,42 @@ impl Decisions {
             .is_some_and(|page| matches!(page.state, PageState::Loading))
     }
 
+    /// Opens a reference routed by the workspace, retaining the source view.
+    pub(crate) fn open_decision_link(&mut self, url: &str, cx: &mut Context<Self>) -> bool {
+        let arrival = self.arrival.take();
+        let Some(identifier) = decisions::from_link(url) else {
+            return false;
+        };
+        self.follow_account(cx);
+        self.open_page(identifier.to_owned(), identifier.to_owned(), cx);
+        if let Some(page) = self.page.as_mut() {
+            page.origin = arrival;
+        }
+        true
+    }
+
+    /// Back returns to the source Space when this page came from a link.
+    /// The existing list and selection form the fallback.
+    pub(crate) fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let origin = self.page.as_mut().and_then(|page| page.origin.take());
+        self.close_page(window, cx);
+        if let Some(origin) = origin {
+            cx.emit(DashboardEvent::Return(origin));
+        }
+    }
+
     /// Opens decision `id` as the page, in place of any other.
     pub(crate) fn open_page(&mut self, id: String, title: String, cx: &mut Context<Self>) {
         if self.follow_account(cx) {
             return;
         }
         self.history = Default::default();
+        let origin = self.shown_page().and_then(|page| page.origin.clone());
         self.page = Some(Page {
             id,
             title,
             state: PageState::Loading,
+            origin,
         });
         self.showing_page = true;
         self.read_page(cx);
@@ -107,7 +135,9 @@ impl Decisions {
         let Some(page) = self.page.as_mut() else {
             return;
         };
-        page.state = PageState::Loading;
+        if !matches!(page.state, PageState::Loaded(_)) {
+            page.state = PageState::Loading;
+        }
         let id = page.id.clone();
         self.page_reads = self.page_reads.wrapping_add(1);
         let number = self.page_reads;
@@ -135,8 +165,12 @@ impl Decisions {
         let Some(page) = self.page.as_mut() else {
             return;
         };
+        if matches!(result, Err(Error::Network)) && matches!(page.state, PageState::Loaded(_)) {
+            return;
+        }
         page.state = page_state(result);
         if let PageState::Loaded(detail) = &page.state {
+            page.id.clone_from(&detail.id);
             page.title.clone_from(&detail.title);
         }
         cx.notify();

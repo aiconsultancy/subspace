@@ -110,7 +110,11 @@ fn loaded<'a>(board: &'a Github, key: &str) -> Option<Loaded<'a>> {
     let detail = account
         .details
         .values()
-        .find(|detail| same(&detail.item) && is_pr(&detail.item))
+        .find(|detail| {
+            same(&detail.item)
+                && is_pr(&detail.item)
+                && !account.unconfirmed_details.contains(&detail.item.key)
+        })
         .map(|detail| Loaded::Opened(&detail.item, detail.check_runs.as_slice()));
     let listed = || {
         account

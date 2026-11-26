@@ -31,6 +31,7 @@ pub(crate) struct Folds {
 
 pub(crate) fn new(window: &mut Window, cx: &mut Context<Decisions>) -> Decisions {
     let (search, typing) = search::input(window, cx);
+    let (initiatives, initiative_id, initiative_changes) = crate::initiative::connect(cx);
     Decisions {
         weak: cx.entity().downgrade(),
         focus: cx.focus_handle(),
@@ -40,8 +41,11 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Decisions>) -> Decisions
         query: String::new(),
         docks: crate::docks::Docks::load(cx),
         session: Session::default(),
+        initiatives,
+        initiative_id,
         listing: Listing::default(),
         page: None,
+        arrival: None,
         author: None,
         history: Default::default(),
         #[cfg(test)]
@@ -63,7 +67,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Decisions>) -> Decisions
         _page_read: None,
         _search_task: None,
         _watch: crate::account::watch(window, cx),
-        _subscriptions: vec![typing],
+        _subscriptions: vec![typing, initiative_changes],
     }
 }
 
@@ -97,6 +101,8 @@ impl Decisions {
             query: model::query(&self.choice, &self.query),
             directory: directory || self.session.account.is_none(),
             stop: self.stop.clone(),
+            initiative: self.initiative_id.clone(),
+            projects: std::sync::Arc::clone(&self.session.projects),
         };
         let reader = self.reader.list.clone();
         self.listing.status = Status::Loading;
@@ -148,9 +154,33 @@ impl Decisions {
             return;
         };
         self.session.account = Some(directory.me);
-        self.session.projects = directory.projects;
+        self.session.projects = directory.projects.into();
+        self.keep_project_in_initiative();
         self.session.people = directory.people;
         self.session.human_makers = directory.human_makers;
+    }
+
+    fn keep_project_in_initiative(&mut self) {
+        if let Some(initiative) = self.initiative_id.as_deref()
+            && let Some(key) = self.choice.project.project_key()
+            && !self.session.projects.iter().any(|project| {
+                project.key == key && crate::initiative::includes(project, Some(initiative))
+            })
+        {
+            self.choice.project = ProjectChoice::All;
+        }
+    }
+
+    pub(crate) fn rescope_initiative(&mut self, cx: &mut Context<Self>) {
+        self.keep_project_in_initiative();
+        self.listing = Listing::default();
+        if self.active {
+            self.read(true, cx);
+        } else {
+            self.reads = self.reads.wrapping_add(1);
+            std::mem::take(&mut self.stop).stop();
+            self._read = None;
+        }
     }
 
     fn apply_found(&mut self, found: Found, now: Instant) {

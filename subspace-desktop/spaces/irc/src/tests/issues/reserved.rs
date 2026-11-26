@@ -85,10 +85,6 @@ fn an_unresolved_reference_keeps_its_slot_and_says_why(cx: &mut TestAppContext) 
     let pending = settle(cx);
     for (state, reason) in [
         (
-            ResolutionState::Unavailable,
-            "TST-13 isn't available with Subspace API.",
-        ),
-        (
             ResolutionState::SignedOut,
             "Sign in to Subspace API to see this issue.",
         ),
@@ -107,6 +103,18 @@ fn an_unresolved_reference_keeps_its_slot_and_says_why(cx: &mut TestAppContext) 
         });
         assert_eq!(answered.size.height, pending.size.height, "{reason}");
     }
+}
+
+#[gpui_kit::test]
+fn an_unavailable_issue_keeps_the_message_and_hides_the_tile(cx: &mut TestAppContext) {
+    let (_, _, tracker, cx) = open_board(cx, true, "TST-13 lands today");
+    let tracker = tracker.expect("a tracker");
+    settle(cx);
+    answer(&tracker, "TST-13", ResolutionState::Unavailable, cx);
+    settle(cx);
+
+    assert!(present(cx, "irc-line:2:row"));
+    assert!(!present(cx, "irc-line:2:issue-unavailable:TST-13:slot"));
 }
 
 #[gpui_kit::test]

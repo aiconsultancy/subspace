@@ -403,6 +403,21 @@ one, and existing ones are candidates to move to the store.
 - **Tests**: a round trip of the cache format and a corrupt or missing file
   reading as empty.
 
+### API-backed views
+
+- Keep the last usable result and the request status in separate fields.
+  Use a loading placeholder for a first read or a new scope. During a
+  same-scope refresh, keep the result visible and use a small status
+  indicator if feedback is needed.
+- Run the request in the background and capture its account, organisation,
+  record, filters and request generation. Apply the latest matching result
+  in place, keeping selection and scroll position where they still apply.
+- Keep the current result on transient errors and allow a retry. Clear
+  data when the account or organisation changes or access is lost.
+  Remove a record when the API confirms it is unavailable.
+- Test a delayed refresh with data already visible and a response that
+  arrives after the user switches scope.
+
 ### Automatic refresh and background updates
 
 - **What**: `background_refresh` is a data-only refresh the shell calls on its
@@ -669,6 +684,10 @@ origin, profile and organisation against the current issue scope.
 - **Tell or ask another board**: use a contract, below.
 
 ### Board-to-board contracts
+
+The `decisions@1/open` capability routes a decision reference to an answering
+Space. The requesting Space can give the shell a return location, and the
+answering Space reads the decision in its own account.
 
 **Contracts.** A contract is an interface that no board owns. Contracts live
 in `services/contracts` (`subspace-contracts`), which has no GPUI,

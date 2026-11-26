@@ -592,11 +592,13 @@ mod tests {
         assert_eq!(tokens.toolbar_height, px(36.));
         assert_eq!(tokens.chrome_height, px(38.));
         assert_eq!(tokens.control_radius, px(6.));
-        assert_eq!(tokens.mono_font, px(11.5));
+        assert_eq!(tokens.heading_font, px(16.));
+        assert_eq!(tokens.row_font, px(14.));
+        assert_eq!(tokens.mono_font, px(12.5));
         let toolbar = tokens.controls.toolbar_button;
         assert_eq!(toolbar.height, px(24.));
         assert_eq!(toolbar.radius, px(6.));
-        assert_eq!(toolbar.font, px(12.5));
+        assert_eq!(toolbar.font, px(13.5));
         assert_eq!(tokens.controls.nav_height, px(26.));
         assert!(!tokens.controls.liquid_glass);
     }

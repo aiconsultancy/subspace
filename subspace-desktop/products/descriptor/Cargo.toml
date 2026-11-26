@@ -15,6 +15,7 @@ subspace-framework = { workspace = true, default-features = false }
 # features of the same names, so the descriptor never lists a Space the
 # binary does not register. The metadata helper builds without them, as a
 # release does.
+copilot = []
 space-lab = []
 component-gallery = []
 

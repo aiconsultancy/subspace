@@ -130,6 +130,7 @@ fn github_declares_that_it_resolves_pull_requests_and_announces_changes(_: &mut 
         (Role::Responds, "github@1/open-pull-request"),
         (Role::Responds, "github@1/resolve-pull-requests"),
         (Role::Publishes, "github@1/changed"),
+        (Role::Publishes, "github@1/access-changed"),
     ] {
         assert!(
             names
@@ -299,7 +300,7 @@ fn signing_out_answers_signed_out_until_someone_signs_in(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
-fn reloading_forgets_answers_and_announces_changed(cx: &mut TestAppContext) {
+fn reloading_announces_changed(cx: &mut TestAppContext) {
     let mock = Mock::new(|_| (200, response("PullRequest", 421)));
     let (board, listener, cx) = routed(cx, Some(&mock));
     ask(KEY, cx);

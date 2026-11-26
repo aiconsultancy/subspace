@@ -67,7 +67,7 @@ fn a_row_marks_both_directions_of_supersession() {
 fn a_row_is_named_with_every_fact_its_lanes_show() {
     assert_eq!(
         row_label(&fixtures::item("d2"), &fixtures::people()),
-        "Read the relay position after the correction is applied, Accepted, NAV, \
+        "Read the relay position after the correction is applied, Accepted, D-00002-NAV, \
          made by aurora-lyra · captain, decided 19 November 2026, supersedes, \
          2 linked issues"
     );

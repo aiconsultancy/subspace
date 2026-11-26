@@ -50,8 +50,11 @@ refusal or a missing organisation clears what was read with that account. A
 network failure on reload keeps the decisions on screen under the shared
 list's banner.
 
-The page reads `GET /decisions/{id}` once, again on **Retry** and on reload.
-Not found shows that the decision is no longer available.
+The page reads `GET /decisions/{id}` by UUID from the list or by reference
+from Channels. It uses the returned UUID for later reads and writes. The
+`decisions@1/open` navigation capability delivers the reference and the
+conversation's return point through the shell. **Back** restores that
+conversation, or the kept list and selection for a page opened in Decisions.
 
 ### Following the account
 

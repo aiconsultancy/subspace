@@ -77,10 +77,11 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
         default_theme: Some(DEFAULT_THEME.into()),
         command_mount: Default::default(),
         boards: vec![
-            board("github", true),
-            board("github-copilot-agents", false),
             board("irc", true),
             board("issues", true),
+            board("github", true),
+            #[cfg(feature = "copilot")]
+            board("github-copilot-agents", false),
             board("projects", true),
             board("decisions", true),
             #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
@@ -338,10 +339,11 @@ mod tests {
         assert_eq!(
             board_ids,
             [
-                "github",
-                "github-copilot-agents",
                 "irc",
                 "issues",
+                "github",
+                #[cfg(feature = "copilot")]
+                "github-copilot-agents",
                 "projects",
                 "decisions",
                 #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
@@ -362,6 +364,7 @@ mod tests {
             ("projects", true),
             ("decisions", true),
             ("github", true),
+            #[cfg(feature = "copilot")]
             ("github-copilot-agents", false),
             ("actions", true),
         ] {

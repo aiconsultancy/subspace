@@ -12,6 +12,7 @@
 //! The broker that routes messages, and the declarations boards make at
 //! registration, live in board-kit (`subspace_dashboard::contracts`).
 
+pub mod decisions;
 pub mod github;
 pub mod issues;
 

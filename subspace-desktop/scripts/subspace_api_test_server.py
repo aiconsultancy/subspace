@@ -172,7 +172,15 @@ def activity(row, now, kind='issue.created', posted=None):
 
 
 def decision_summary(row):
-    return {key: row[key] for key in ('id', 'title', 'status')}
+    return {key: row[key] for key in ('id', 'identifier', 'title', 'status')}
+
+
+def decision_identifier(row, number):
+    return f"D-{number:05}-{row['projectKey']}"
+
+
+def next_decision_number(records, project_key):
+    return 1 + sum(row['projectKey'] == project_key for row, _ in records.values())
 
 
 def decision_record(key, title, status, at, decided, project_row, linked_issues, text, maker=ADA):
@@ -224,6 +232,8 @@ def seed_decisions(project_row, tracker, discussion, now):
     proposed = decision_record(
         'handover-note', 'Add a short handover note', 'proposed', minutes_ago(10), days_ago(1),
         project_row, [tracker], 'Write a short handover note when a fixture review closes.', maker=AGENT)
+    for number, (row, _) in enumerate((old, accepted, proposed), 1):
+        row['identifier'] = decision_identifier(row, number)
     old[0].update(supersededById=accepted[0]['id'], supersededBy=decision_summary(accepted[0]),
                   updatedAt=accepted[0]['createdAt'], revisionNumber=2, version=2)
     accepted[0].update(supersedesId=old[0]['id'], supersedes=decision_summary(old[0]))
@@ -232,7 +242,8 @@ def seed_decisions(project_row, tracker, discussion, now):
 
 def decision_references(records, events):
     ids = dict.fromkeys(event['data']['decisionId'] for event in events if event['kind'] == 'decision.logged')
-    return [decision_summary(records[decision_id][0]) for decision_id in ids if decision_id in records]
+    return [{key: records[decision_id][0][key] for key in ('id', 'title', 'status')}
+            for decision_id in ids if decision_id in records]
 
 
 def seed_issues(now):
@@ -579,6 +590,11 @@ def add_fleet_decisions(fixture, project_row, now):
         detail['why'] = why
         detail['provenance'] = dict(detail['provenance'], evidenceExcerpt=why)
         records[slug] = (row, detail, maker)
+    project_numbers = {key: next_decision_number(fixture.decisions, key) for key in project_row}
+    for row, _, _ in records.values():
+        key = row['projectKey']
+        row['identifier'] = decision_identifier(row, project_numbers[key])
+        project_numbers[key] += 1
     for old, new in FLEET_SUPERSESSIONS:
         old_row, new_row = records[old][0], records[new][0]
         old_row.update(supersededById=new_row['id'], supersededBy=decision_summary(new_row), revisionNumber=2, version=2)
@@ -803,6 +819,7 @@ def log_decision(fixture, payload):
     row.update(replacement(fixture, row, payload.get('supersedesId')))
     detail.update({key: payload.get(key, '') for key in DECISION_TEXT if key != 'decision'})
     detail['provenance'].update(evidence)
+    row['identifier'] = decision_identifier(row, next_decision_number(fixture.decisions, row['projectKey']))
     fixture.decisions[row['id']] = (row, detail)
     save_decision_revision(fixture, row, detail, ['created'])
     for link in linked:
@@ -1287,7 +1304,7 @@ def decision_list(fixture, query):
             continue
         if tag and tag not in row['tags']:
             continue
-        if search and not any(search in text.casefold() for text in (
+        if search and search != row['identifier'].casefold() and not any(search in text.casefold() for text in (
                 row['title'], *(detail[key] for key in ('decision', 'context', 'why', 'implications', 'alternatives')))):
             continue
         rows.append(row)
@@ -1643,9 +1660,13 @@ class Handler(BaseHTTPRequestHandler):
             raise Problem(404, 'Route not found.')
         ref, _, suffix = path.removeprefix(DECISIONS_PATH + '/').partition('/')
         decision_id = decision_uuid(ref)
-        if not decision_id:
-            raise Problem(400, 'Use a decision UUID.')
-        record = fixture.decisions.get(decision_id)
+        if decision_id:
+            record = fixture.decisions.get(decision_id)
+        elif re.fullmatch(r'D-[0-9]{5,10}-[A-Z][A-Z0-9]{1,9}', ref.upper()):
+            record = next((record for record in fixture.decisions.values()
+                           if record[0]['identifier'] == ref.upper()), None)
+        else:
+            raise Problem(400, 'Use a decision UUID or identifier.')
         # The list and activity can still refer to an older decision whose detail is missing.
         if record is None or (scenario == 'missing' and record[0]['status'] == 'superseded'):
             raise Problem(404, 'Decision not found.')

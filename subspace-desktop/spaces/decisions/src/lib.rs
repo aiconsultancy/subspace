@@ -6,6 +6,7 @@ mod author;
 mod board;
 mod docks;
 mod history;
+mod initiative;
 mod inspector;
 mod keys;
 mod lanes;
@@ -43,7 +44,7 @@ use subspace_framework::dashboard::settings::BoardSettings;
 use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{
     AgentContext, BoardArtwork, Dashboard, DashboardEvent, Detail, Group, KeyHelp, ListDashboard,
-    ListState, Modal, PaletteCommand, ReturnLocation, Row, RowMenu,
+    ListState, Modal, PaletteCommand, ReturnLocation, ReturnPoint, Row, RowMenu,
 };
 use subspace_framework::lucide::IconName;
 
@@ -63,9 +64,12 @@ pub struct Decisions {
     query: String,
     docks: docks::Docks,
     session: state::Session,
+    initiatives: Entity<subspace_api_client::initiatives::Catalog>,
+    initiative_id: Option<String>,
     listing: state::Listing,
     /// The decision opened as a page, which keeps its tab until closed.
     page: Option<page::Page>,
+    arrival: Option<ReturnPoint>,
     author: Option<author::Editor>,
     history: history::History,
     #[cfg(test)]
@@ -144,6 +148,9 @@ impl Dashboard for Decisions {
     /// old, or was read for another account.
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active = true;
+        #[cfg(not(test))]
+        self.initiatives
+            .update(cx, subspace_api_client::initiatives::Catalog::refresh);
         self.follow_account(cx);
         self.tidy(window, cx);
         self.read_if_stale(cx);
@@ -178,6 +185,14 @@ impl Dashboard for Decisions {
     /// Decision content stays out of the chat, as issue content does.
     fn agent_context(&self, _cx: &App) -> Option<AgentContext> {
         None
+    }
+
+    fn arrived_from(&mut self, from: Option<ReturnPoint>, _cx: &mut Context<Self>) {
+        self.arrival = from;
+    }
+
+    fn open_link(&mut self, url: &str, cx: &mut Context<Self>) -> bool {
+        self.open_decision_link(url, cx)
     }
 
     fn return_location(&self, _cx: &App) -> Option<ReturnLocation> {
@@ -258,11 +273,15 @@ impl ListDashboard for Decisions {
         self.row_label(row)
     }
 
-    /// The row menu opens the same page as Enter. A decision has no short
-    /// identifier, and its content stays out of the chat.
+    /// The row menu opens the same page as Enter and copies a reference
+    /// when the API supplies one.
     fn row_menu(&self, row: &Row) -> RowMenu {
+        let id = listing::decision_id(&row.key)
+            .and_then(|id| self.item(id))
+            .and_then(|item| item.identifier.as_deref())
+            .map(SharedString::from);
         RowMenu {
-            id: None,
+            id,
             chat: MenuChat::Off,
             ..RowMenu::from_row(row)
         }

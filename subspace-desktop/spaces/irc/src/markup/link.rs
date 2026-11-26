@@ -7,6 +7,7 @@ pub(super) const SCHEME: &str = "subspace-irc:";
 const CHANNEL_PATH: &str = "channel/";
 const NICK_PATH: &str = "nick/";
 const ISSUE_PATH: &str = "issue/";
+const DECISION_PATH: &str = "decision/";
 /// A pull request's link names the URL to open; its identity comes from it.
 const PR_PATH: &str = "pr/";
 /// A percent escape: `%` and two hex digits.
@@ -19,6 +20,7 @@ pub(crate) fn ref_url(found: &Ref) -> String {
         Ref::Channel(name) => (CHANNEL_PATH, name),
         Ref::Nick(name) => (NICK_PATH, name),
         Ref::Issue(identifier) => (ISSUE_PATH, identifier),
+        Ref::Decision(identifier) => (DECISION_PATH, identifier),
         Ref::PullRequest(found) => (PR_PATH, &found.url),
     };
     let encoded: String = name
@@ -40,6 +42,7 @@ pub(crate) fn parse_ref_url(url: &str) -> Option<Ref> {
         _ if path.starts_with(CHANNEL_PATH) => (Ref::Channel, &path[CHANNEL_PATH.len()..]),
         _ if path.starts_with(NICK_PATH) => (Ref::Nick, &path[NICK_PATH.len()..]),
         _ if path.starts_with(ISSUE_PATH) => (Ref::Issue, &path[ISSUE_PATH.len()..]),
+        _ if path.starts_with(DECISION_PATH) => (Ref::Decision, &path[DECISION_PATH.len()..]),
         _ if path.starts_with(PR_PATH) => (pull_request, &path[PR_PATH.len()..]),
         _ => return None,
     };
@@ -74,7 +77,13 @@ pub(crate) fn linked_pull_requests(source: &str) -> Vec<PrRef> {
 /// Whether a decoded reference names something: a pull request link must
 /// name a pull request URL.
 fn valid(found: &Ref) -> bool {
-    !matches!(found, Ref::PullRequest(found) if found.key.is_empty())
+    match found {
+        Ref::Decision(identifier) => {
+            subspace_framework::contracts::decisions::is_identifier(identifier)
+        }
+        Ref::PullRequest(found) => !found.key.is_empty(),
+        _ => true,
+    }
 }
 
 /// Percent-decoding of a reference name; `None` for malformed escapes or

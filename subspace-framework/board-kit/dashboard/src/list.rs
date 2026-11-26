@@ -498,6 +498,11 @@ pub trait ListDashboard: Dashboard {
         false
     }
 
+    /// Use the row font size for group names while keeping the theme's heading styling.
+    fn group_heading_matches_row(&self) -> bool {
+        false
+    }
+
     /// Comfortable rows: a step taller than the theme's row height, and group
     /// headers set apart by space and a hairline rather than a filled band.
     /// The theme's density still sets the base size.

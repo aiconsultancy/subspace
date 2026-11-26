@@ -26,6 +26,8 @@ pub(crate) struct Plan {
     pub(crate) query: DecisionQuery,
     pub(crate) directory: bool,
     pub(crate) stop: Stop,
+    pub(crate) initiative: Option<String>,
+    pub(crate) projects: Arc<[Project]>,
 }
 
 /// Set when a newer read, or another account, supersedes a list read: the
@@ -210,14 +212,53 @@ pub(crate) fn failure(error: Error) -> Failure {
 
 fn read_list(plan: &Plan) -> Leased<Answer> {
     leased(Client::new(), Client::account_changed, |client| {
-        let directory = plan.directory.then(|| read_directory(client));
+        let directory = plan
+            .directory
+            .then(|| read_directory(client, &plan.projects));
         if let Some(Err(error)) = &directory {
             return refused(plan, *error);
         }
-        Answer {
-            directory,
-            found: all_pages(&plan.stop, |page| client.decisions(&plan.query, page)),
-        }
+        let projects = directory
+            .as_ref()
+            .and_then(|directory| directory.as_ref().ok())
+            .map_or(plan.projects.as_ref(), |directory| &directory.projects);
+        let found = read_decisions(client, plan, projects);
+        Answer { directory, found }
+    })
+}
+
+fn read_decisions(client: &Client, plan: &Plan, projects: &[Project]) -> Result<Found, Error> {
+    let Some(initiative) = plan.initiative.as_deref() else {
+        return all_pages(&plan.stop, |page| client.decisions(&plan.query, page));
+    };
+    let keys: HashSet<_> = projects
+        .iter()
+        .filter(|project| crate::initiative::includes(project, Some(initiative)))
+        .map(|project| project.key.as_str())
+        .collect();
+    if keys.is_empty() {
+        return Ok(Found {
+            items: Vec::new(),
+            more: false,
+        });
+    }
+    let mut query = plan.query.clone();
+    if query
+        .project
+        .as_deref()
+        .is_some_and(|key| !keys.contains(key))
+    {
+        query.project = None;
+    }
+    if query.project.is_none() && keys.len() == 1 {
+        query.project = keys.iter().next().map(|key| (*key).to_owned());
+    }
+    all_pages(&plan.stop, |page| {
+        let mut reply = client.decisions(&query, page)?;
+        reply
+            .items
+            .retain(|item| keys.contains(item.project_key.as_str()));
+        Ok(reply)
     })
 }
 
@@ -229,9 +270,9 @@ fn refused(plan: &Plan, error: Error) -> Answer {
     }
 }
 
-/// The account first: without it nothing else is read. A project or people
-/// read that fails leaves those parts empty.
-fn read_directory(client: &Client) -> Result<Directory, Error> {
+/// The account first: without it nothing else is read. A temporary project
+/// read failure leaves the directory already read in this account available.
+fn read_directory(client: &Client, projects: &[Project]) -> Result<Directory, Error> {
     let me = client.me()?;
     let choices = client
         .issue_choices(&ChoiceSource::Assignees)
@@ -240,9 +281,14 @@ fn read_directory(client: &Client) -> Result<Directory, Error> {
         .iter()
         .filter_map(|choice| Some((choice.human_id()?.to_owned(), choice.name().to_owned())))
         .collect();
+    let projects = match client.all_projects() {
+        Ok(projects) => projects,
+        Err(Error::Network) => projects.to_vec(),
+        Err(error) => return Err(error),
+    };
     Ok(Directory {
         me,
-        projects: client.all_projects().unwrap_or_default(),
+        projects,
         people: choices
             .into_iter()
             .map(|choice| (choice.id().to_owned(), choice.name().to_owned()))

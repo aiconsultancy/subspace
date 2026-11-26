@@ -84,8 +84,12 @@ pub(crate) fn item_value(
     status: &str,
     decided: &str,
 ) -> Value {
+    let identifier = id.strip_prefix('d').and_then(|number| {
+        let number = number.parse::<u32>().ok()?;
+        Some(format!("D-{number:05}-{project}"))
+    });
     json!({
-        "id": id, "title": title, "status": status, "decidedOn": decided,
+        "id": id, "identifier": identifier, "title": title, "status": status, "decidedOn": decided,
         "projectId": format!("project-{project}"), "projectKey": project,
         "project": {"id": format!("project-{project}"), "name": project_name(project), "archived": false},
         "issues": {"items": [], "count": 0},
@@ -238,7 +242,12 @@ pub(crate) fn item(id: &str) -> DecisionListItem {
 
 /// The detail of fixture decision `id`; its Alternatives are empty.
 pub(crate) fn detail(id: &str) -> Option<DecisionDetail> {
-    let mut value = item_values().into_iter().find(|value| value["id"] == id)?;
+    let mut value = item_values().into_iter().find(|value| {
+        value["id"] == id
+            || value["identifier"]
+                .as_str()
+                .is_some_and(|key| key.eq_ignore_ascii_case(id))
+    })?;
     let accepted = value["status"] == "accepted";
     let fields = json!({
         "decision": "The preview reads the relay position **after** the correction is applied.",

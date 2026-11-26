@@ -45,10 +45,14 @@ once.
 The list groups decisions by status: **Proposed**, **Accepted**,
 **Superseded**, then **Rejected**. In **All decisions**, Superseded and
 Rejected start folded; a search opens every group. Within a group the most
-recently decided come first. A row shows the project key, the title, a
+recently decided come first. A row shows the decision reference, such as
+`D-00042-EXA`, the title, a
 **supersedes** or **superseded** mark, the number of linked issues, who made
 the decision (a person's name, or an agent's name and rank) and the date it
-was decided. Superseded and rejected titles read quietly.
+was decided. Superseded and rejected titles read quietly. The detail page
+also shows the reference. Paste it into a Channels message to share the
+decision. **Back** returns to the channel or direct message it came from, or
+to the Decisions list when opened there.
 
 The status bar shows **Subspace API**, the signed-in account, the number of
 decisions and when the list was read. A failed reload keeps the decisions

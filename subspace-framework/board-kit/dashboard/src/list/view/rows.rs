@@ -171,6 +171,9 @@ pub(super) fn group_row<D: ListDashboard>(
                 .when(this.group_count_after_name(), |name| name.flex_initial()),
                 cx,
             )
+            .when(this.group_heading_matches_row(), |name| {
+                name.text_size(tokens.row_font)
+            })
             .text_color(if capsule {
                 tokens.muted
             } else {

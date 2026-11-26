@@ -94,6 +94,7 @@ impl Decisions {
         self.history = Default::default();
         self.listing = Listing::default();
         self.page = None;
+        self.arrival = None;
         self.showing_page = false;
         self.choice.tag = None;
         self.query.clear();

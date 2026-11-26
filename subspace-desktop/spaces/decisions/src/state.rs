@@ -3,6 +3,7 @@
 //! bar and the list's states take from them. Pure.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Instant;
 
 use subspace_api_client::model::{DecisionListItem, Me, Project};
@@ -17,7 +18,7 @@ pub(crate) struct Session {
     /// The signed-in person's name, once the API answered.
     pub(crate) account: Option<Me>,
     /// Every project the account can see, archived ones included.
-    pub(crate) projects: Vec<Project>,
+    pub(crate) projects: Arc<[Project]>,
     pub(crate) people: People,
     pub(crate) human_makers: Vec<(String, String)>,
     /// Every tag the reads have shown, for the Tag menu.

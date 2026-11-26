@@ -216,6 +216,8 @@ struct Account {
     /// Sections shown from before a reload or from the disk cache. The list
     /// shows them; other Spaces get nothing from them until a refresh lands.
     unconfirmed: HashSet<&'static str>,
+    /// Displayed during a manual refresh, with broker answers waiting for a new read.
+    unconfirmed_details: HashSet<String>,
 }
 
 impl Account {
@@ -245,7 +247,6 @@ impl Account {
     }
 
     fn begin_reload(&mut self) -> bool {
-        self.details.clear();
         // Repeated Reload actions share the current manual refresh.
         if self.reloading_sections {
             return false;
@@ -253,6 +254,7 @@ impl Account {
         self.loaded_at = None;
         self.status.clear();
         self.unconfirm();
+        self.unconfirmed_details = self.details.keys().cloned().collect();
         true
     }
 
@@ -263,6 +265,7 @@ impl Account {
             started,
         );
         self.detail_errors.remove(&detail.item.key);
+        self.unconfirmed_details.remove(&detail.item.key);
         patch_sections(&mut self.sections, &detail.item);
         self.details.insert(detail.item.key.clone(), detail);
     }
@@ -700,6 +703,7 @@ impl Github {
             .is_none_or(Account::begin_reload)
         {
             self.advance_read_generation(account_key);
+            references::reset_reads(self);
         }
     }
 
@@ -1448,7 +1452,9 @@ impl Github {
             _ = weak.update(cx, |this, cx| this.set_mode(mode, window, cx));
         });
         Some(
-            div()
+            v_flex()
+                .w_full()
+                .min_w_0()
                 .children(switch)
                 .child(composer.entity.clone())
                 .into_any_element(),
@@ -1513,12 +1519,13 @@ impl Dashboard for Github {
 
     fn contracts() -> subspace_framework::dashboard::contracts::BoardContracts {
         use subspace_framework::contracts::github::OpenPullRequest;
-        use subspace_framework::contracts::github::{Changed, ResolvePullRequests};
+        use subspace_framework::contracts::github::{AccessChanged, Changed, ResolvePullRequests};
         use subspace_framework::dashboard::contracts::{BoardContracts, Declaration};
         const CONTRACTS: BoardContracts = BoardContracts::new(&[
             Declaration::responds::<OpenPullRequest>(),
             Declaration::responds::<ResolvePullRequests>(),
             Declaration::publishes::<Changed>(),
+            Declaration::publishes::<AccessChanged>(),
         ]);
         CONTRACTS
     }
@@ -1793,7 +1800,6 @@ impl Dashboard for Github {
         }
         self.invalidate_for_reload();
         self._detail_task = None;
-        references::forget(self, cx);
         if self.account.is_none() || self.accounts.is_empty() {
             self.load_accounts(cx);
             return;

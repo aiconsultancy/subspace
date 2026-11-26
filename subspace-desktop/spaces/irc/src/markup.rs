@@ -43,8 +43,18 @@ pub(crate) enum Ref {
     Nick(String),
     /// An issue identifier, such as `TST-827`, from plain text.
     Issue(String),
+    Decision(String),
     /// A GitHub pull request, from a `[PR:owner/repo#n]` marker or its URL.
     PullRequest(PrRef),
+}
+
+impl Ref {
+    pub(crate) fn is_record(&self) -> bool {
+        matches!(
+            self,
+            Self::Issue(_) | Self::PullRequest(_) | Self::Decision(_)
+        )
+    }
 }
 
 /// What a message's text may mention: the channel's members, lower-cased,
@@ -53,6 +63,7 @@ pub(crate) enum Ref {
 pub(crate) struct Mentions {
     nicks: Vec<String>,
     issues: IssueKeys,
+    decisions: bool,
 }
 
 impl Mentions {
@@ -60,6 +71,7 @@ impl Mentions {
         Self {
             nicks: nicks.into_iter().map(str::to_lowercase).collect(),
             issues: IssueKeys::default(),
+            decisions: false,
         }
     }
 
@@ -69,9 +81,14 @@ impl Mentions {
         self
     }
 
+    pub fn with_decisions(mut self, decisions: bool) -> Self {
+        self.decisions = decisions;
+        self
+    }
+
     /// Names whose recognition changed; issue-key changes need full invalidation.
     pub(crate) fn changed_nicks<'a>(&'a self, other: &'a Self) -> Option<Vec<&'a str>> {
-        if self.issues != other.issues {
+        if self.issues != other.issues || self.decisions != other.decisions {
             return None;
         }
         let a: std::collections::HashSet<_> = self.nicks.iter().map(String::as_str).collect();
@@ -116,6 +133,7 @@ pub(super) fn classify(word: &str, mentions: &Mentions, first: bool) -> Option<F
     pull_request(word, start, core)
         .or_else(|| linked(core, start))
         .or_else(|| named(core, start, mentions))
+        .or_else(|| decision(core, start, mentions))
         .or_else(|| issue(core, start, mentions))
         .or_else(|| addressed(word, mentions, first))
 }
@@ -150,6 +168,14 @@ fn named(core: &str, start: usize, mentions: &Mentions) -> Option<Found> {
     core.strip_prefix('@')
         .filter(|nick| is_nick(nick) && mentions.contains(nick))
         .map(|nick| Found::Ref(range, Ref::Nick(nick.to_owned())))
+}
+
+fn decision(core: &str, start: usize, mentions: &Mentions) -> Option<Found> {
+    let core_without_brackets = core.trim_start_matches('[');
+    let start = start + core.len() - core_without_brackets.len();
+    let core = core_without_brackets;
+    (mentions.decisions && subspace_framework::contracts::decisions::is_identifier(core))
+        .then(|| Found::Ref(start..start + core.len(), Ref::Decision(core.to_owned())))
 }
 
 /// The issue identifier `core` starts with.

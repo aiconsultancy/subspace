@@ -14,7 +14,7 @@ mod slot;
 mod tile;
 mod tooltip;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use subspace_framework::contracts::github::{
     MAX_RESOLVE, Resolution, ResolutionState, ResolvePullRequests,
@@ -30,6 +30,7 @@ pub(crate) use tooltip::tooltip;
 #[derive(Default)]
 pub(crate) struct PullRequestReferences {
     answers: HashMap<String, ResolutionState>,
+    stale: HashSet<String>,
     /// Shown keys to ask about, in the order they were shown.
     wanted: Vec<String>,
     /// Whether a request for `wanted` is already deferred.
@@ -45,14 +46,22 @@ impl PullRequestReferences {
     /// After `changed`: forget every answer, so each is asked again.
     pub fn changed(&mut self) {
         self.answers.clear();
+        self.stale.clear();
         self.wanted.clear();
+    }
+
+    /// Revalidate summaries without dropping the contents of existing tiles.
+    pub fn refreshed(&mut self) {
+        self.stale = self.answers.keys().cloned().collect();
     }
 
     /// Notes the keys a row shows. Those not yet answered are wanted; true
     /// when a request has to be scheduled for them.
     pub fn want(&mut self, keys: impl IntoIterator<Item = String>) -> bool {
         for key in keys {
-            if !self.answers.contains_key(&key) && !self.wanted.contains(&key) {
+            if (!self.answers.contains_key(&key) || self.stale.contains(&key))
+                && !self.wanted.contains(&key)
+            {
                 self.wanted.push(key);
             }
         }
@@ -75,6 +84,14 @@ impl PullRequestReferences {
         let mut changed = false;
         for resolution in answers {
             let key = resolution.key.to_ascii_lowercase();
+            self.stale.remove(&key);
+            if matches!(
+                resolution.state,
+                ResolutionState::Pending | ResolutionState::Failed
+            ) && matches!(self.answers.get(&key), Some(ResolutionState::Available(_)))
+            {
+                continue;
+            }
             let previous = self.answers.insert(key, resolution.state.clone());
             changed |= previous.is_none_or(|previous| previous != resolution.state);
         }

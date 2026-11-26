@@ -111,12 +111,10 @@ impl Github {
             .and_then(|account| account.details.get(&item.key));
         let on = self.panel_actions();
         let allowed = Allowed::of(item, detail);
-        let toolbar = peek::review_actions(allowed).into_iter().fold(
-            toolbar.leading(path(item, cx)),
-            |toolbar, action| {
+        let toolbar =
+            peek::page_actions(allowed).fold(toolbar.leading(path(item, cx)), |toolbar, action| {
                 toolbar.trailing(self.item_action_button(action, "page", allowed.approved, &on))
-            },
-        );
+            });
         match crate::merge_pull_request::button(self, item, allowed.merge_is_primary(), cx) {
             Some(button) => toolbar.trailing(button),
             None => toolbar,
