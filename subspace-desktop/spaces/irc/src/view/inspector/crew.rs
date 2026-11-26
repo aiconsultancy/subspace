@@ -324,3 +324,16 @@ pub(super) fn body(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn seed_roster_for_test(
+    board: &mut Irc,
+    member: subspace_client_fleet::model::CrewMember,
+    cx: &mut Context<Irc>,
+) {
+    let Some(selection) = &mut board.inspector_crew else {
+        return;
+    };
+    selection.state = DetailState::new(Roster::Present(Box::new(member)), 0);
+    cx.notify();
+}

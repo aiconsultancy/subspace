@@ -138,33 +138,30 @@ fn crew_task_progress_draws_only_the_selected_page(cx: &mut TestAppContext) {
     const LAST_PAGE: usize = 125;
     const TAIL: &str = "🌊\t\r\u{202e}\x1bfinish";
     const VISIBLE_TAIL: &str = "🌊⟨U+0009⟩⟨U+000D⟩⟨U+202E⟩⟨U+001B⟩finish";
-    let (_, hub, cx) = ship(cx);
+    let (board, hub, cx) = ship(cx);
     let first = "λ".repeat(512);
     let mut snapshot = crate::live::tests::snapshot();
-    let members = &mut snapshot.ships.get_mut("aurora-lyra").unwrap().crew_members;
-    let task = members
-        .iter_mut()
-        .find(|member| member.id == "wren")
+    let mut member = snapshot
+        .ships
+        .remove("aurora-lyra")
         .unwrap()
-        .contexts[0]
-        .current
-        .as_mut()
+        .crew_members
+        .into_iter()
+        .find(|member| member.id == "wren")
         .unwrap();
+    let task = member.contexts[0].current.as_mut().unwrap();
     task.progress = first.clone() + &"x".repeat(64_000 - 512 - TAIL.chars().count()) + TAIL;
     let summary = task.summary.clone();
-    hub.update(cx, |hub, cx| {
-        hub.fleets = [(
-            "aurora".to_owned(),
-            crate::live::FleetLive::new(live(), Some(&snapshot)),
-        )]
-        .into();
-        cx.notify();
-    });
-    settle(cx);
+    set_fleet(&hub, live(), cx);
     install_fleet_api(cx);
     cx.update(|window, cx| {
-        window.click(ROW, cx);
         window.render_frame(cx);
+        window.click(ROW, cx);
+        board.update(cx, |board, cx| {
+            view::inspector::crew::seed_roster_for_test(board, member, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.find(BACK).visible());
         let drawn = texts(window);
         assert!(!drawn.iter().any(|text| text.text().contains("finish")));
         assert_eq!(

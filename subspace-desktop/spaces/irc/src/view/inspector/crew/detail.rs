@@ -3,8 +3,8 @@
 use gpui_kit::base::TestTextExt as _;
 use gpui_kit::component::v_flex;
 use gpui_kit::{
-    AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, SharedString, Styled as _, div,
+    AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, Styled as _, div,
 };
 use subspace_client_fleet::model::{CrewContext, CrewMember};
 use subspace_client_irc::BufferKey;
