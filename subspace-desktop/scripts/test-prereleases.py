@@ -45,8 +45,9 @@ class PrereleaseTests(unittest.TestCase):
             "GIT_CONFIG_NOSYSTEM": "1",
             "PATH": f"{self.root / 'bin'}{os.pathsep}{os.environ['PATH']}",
             "FIXTURE": str(self.root),
-            # Fixture repositories resolve their own mise config, which the
-            # outer project's session variables must not override.
+            # Fixture repositories resolve their own mise config. They run
+            # in their own root, so every mise variable of the outer project
+            # and session is dropped above and only the fixture is trusted.
             "MISE_TRUSTED_CONFIG_PATHS": str(self.root),
             "GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main",
             "RELEASE_TYPE": "nightly", "RELEASE_FORCE": "false",
