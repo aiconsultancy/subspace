@@ -38,8 +38,8 @@ use super::parts::PART;
 use crate::Irc;
 pub(super) use part::show_page;
 pub(super) use prune::prune;
-pub(super) use window::refit;
-use window::settle;
+use window::place;
+pub(super) use window::{give_back, refit};
 
 mod part;
 mod prune;
@@ -362,10 +362,7 @@ fn publish(
     loaded.incoming = 0;
     if let Some(selection) = board.inspector_activity.as_mut() {
         restamp(selection, key);
-        settle(selection, key);
-        // An answer, not a request: priority stays as the person left it.
-        make_room(selection, 0, Some(key));
-        super::draw::replan(selection);
+        place(selection, key);
     }
     cx.notify();
 }

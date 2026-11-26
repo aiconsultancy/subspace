@@ -6,6 +6,7 @@
 //! turn, a late reply is dropped, and closing the view before the read
 //! starts asks for no page and shows nothing.
 
+use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -39,6 +40,8 @@ fn on(part: &str) -> String {
 struct Gateway {
     /// The item's `seq` and complete JSON.
     item: Mutex<(u64, String)>,
+    /// The `seq` and complete JSON of each other item, by its ID.
+    others: Mutex<HashMap<String, (u64, String)>>,
     asked: Mutex<Vec<String>>,
     /// Page 0 answers 503 while set.
     busy_first: Mutex<bool>,
@@ -102,16 +105,25 @@ fn gateway(gateway: &Arc<Gateway>) -> FleetClient {
     FleetClient::new(address, Secret::new("fixture-throwaway"))
 }
 
+/// The value of `name` in the query of `target`.
+fn query<'a>(target: &'a str, name: &str) -> Option<&'a str> {
+    let rest = target.split(&format!("{name}=")).nth(1)?;
+    rest.split('&').next()
+}
+
 /// The page `target` asks for; `None`, answered 404 as Stargate does, past
-/// the item's last page. The fixture's JSON is ASCII, so any byte is a
-/// character boundary.
+/// the item's last page. A fixture's JSON is ASCII, or fits one page, so
+/// no page splits a character.
 fn page(gateway: &Gateway, target: &str) -> Option<Value> {
-    let number: usize = target
-        .split("page=")
-        .nth(1)
-        .and_then(|rest| rest.split('&').next()?.parse().ok())
+    let number: usize = query(target, "page")
+        .and_then(|number| number.parse().ok())
         .unwrap_or(0);
-    let (seq, item) = gateway.item.lock().unwrap().clone();
+    let id = query(target, "item").unwrap_or("i3");
+    let (seq, item) = if id == "i3" {
+        gateway.item.lock().unwrap().clone()
+    } else {
+        gateway.others.lock().unwrap().get(id)?.clone()
+    };
     let pages: Vec<&str> = item
         .as_bytes()
         .chunks(PAGE)
@@ -119,7 +131,7 @@ fn page(gateway: &Gateway, target: &str) -> Option<Value> {
         .collect();
     let data = pages.get(number)?;
     Some(json!({
-        "agent": "aurora-lyra", "turn": "t-now", "item": "i3", "seq": seq,
+        "agent": "aurora-lyra", "turn": "t-now", "item": id, "seq": seq,
         "page": number, "pages": pages.len(), "bytes": item.len(),
         "data": data
     }))
@@ -290,6 +302,7 @@ fn an_item_goes_with_its_turn(cx: &mut TestAppContext) {
 
 mod budget;
 mod floor;
+mod growth;
 mod kinds;
 mod latest;
 mod leave;

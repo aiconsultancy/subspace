@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use super::Selection;
 use super::draw::{Key, MIN_WINDOW, measure};
-use super::load::{PAGE, PAGE_READ, refit};
+use super::load::{PAGE, PAGE_READ, give_back, refit};
 use super::parts::PART;
 
 /// The bytes the budget leaves for items once the inline content is
@@ -110,16 +110,24 @@ fn beside(
         .saturating_add(wanted)
 }
 
-/// Lets go of the lowest priority, other than `keep`, until what is held
-/// and drawn fits the room beside `wanted` more and `keep`'s read and
-/// body, or nothing else is left; then fits `keep`'s read into what is
-/// left, or the floor ([`fit_kept`]).
+/// Makes room for `wanted` more beside `keep`'s read and body: first by
+/// giving back every read's growth past its allowance (SUB decision
+/// `feb0d839`), then by letting go of the lowest priority, other than
+/// `keep`, until what is held and drawn fits the room, or nothing else is
+/// left; then fits `keep`'s read into what is left, or the floor
+/// ([`fit_kept`]).
 pub(super) fn make_room(selection: &mut Selection, wanted: u64, keep: Option<&Key>) {
     measure(selection);
     let wanted = wanted.saturating_add(body(selection, keep));
     let mut asked = asked_bodies(selection, keep);
     let room = room(selection);
-    while beside(selection, &asked, (keep, wanted)).saturating_add(kept(selection, keep)) > room {
+    let over = |selection: &Selection, asked: &HashMap<Key, u64>| {
+        beside(selection, asked, (keep, wanted)).saturating_add(kept(selection, keep)) > room
+    };
+    if over(selection, &asked) {
+        give_back(selection);
+    }
+    while over(selection, &asked) {
         let Some(lowest) = lowest(selection, &asked, keep) else {
             break;
         };
@@ -145,10 +153,18 @@ fn kept(selection: &Selection, keep: Option<&Key>) -> u64 {
 
 /// The room left beside everything other than `keep`'s read, the bodies
 /// asked for and `keep`'s own body included.
-pub(super) fn left(selection: &Selection, keep: &Key) -> u64 {
+fn left(selection: &Selection, keep: &Key) -> u64 {
     let asked = asked_bodies(selection, Some(keep));
     let wanted = body(selection, Some(keep));
     room(selection).saturating_sub(beside(selection, &asked, (Some(keep), wanted)))
+}
+
+/// The room `keep`'s read may hold and draw in beside everything else,
+/// the bodies asked for and its own body included, measured again: what
+/// its window may take without growing into room anything else holds.
+pub(super) fn room_beside(selection: &mut Selection, keep: &Key) -> u64 {
+    measure(selection);
+    left(selection, keep)
 }
 
 /// The room left for `keep`'s next read beside everything else, what its

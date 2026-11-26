@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gpui_kit::{AppContext as _, Context};
 use subspace_client_fleet::activity::{ItemPart, PartFailed};
 
-use super::{Held, PAGE, Reload, client, current, make_room, next_read, restamp, settle, stamp};
+use super::{Held, PAGE, Reload, client, current, make_room, next_read, place, restamp, stamp};
 use crate::Irc;
 
 /// Shows part `page` of an item read part by part, pinned to the version
@@ -112,10 +112,7 @@ fn publish_part(
     loaded.incoming = 0;
     if let Some(selection) = board.inspector_activity.as_mut() {
         restamp(selection, key);
-        settle(selection, key);
-        // An answer, not a request: priority stays as the person left it.
-        make_room(selection, 0, Some(key));
-        super::super::draw::replan(selection);
+        place(selection, key);
     }
     cx.notify();
 }
