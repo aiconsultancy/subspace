@@ -4,6 +4,7 @@
 import { formatBytes, formatDuration, formatLoad, formatPercent, formatUptime, plural } from "./format.js";
 import { allCrew, captainLine, crewView, featureRows, idleWatch, labelOf, lookup, shipCounts, shipState, taskTook } from "./model.js";
 import { avatar, BRANCH_ICON, chip, esc, goAttrs, issueTiles, since } from "./html.js";
+import { canViewDiff, diffsEnabled } from "./diff.js";
 
 const section = (title, body, count) =>
   body ? `<section class="sec"><h3>${esc(title)}${count !== undefined ? ` <span class="n">${esc(count)}</span>` : ""}</h3>${body}</section>` : "";
@@ -81,6 +82,15 @@ function systemSection(model) {
       <dt>Host</dt><dd class="mono">${esc(host.hostname)} · ${esc(host.platform)}/${esc(host.arch)}</dd>
     </dl>`,
   );
+}
+
+/**
+ * The button that opens a crew member's diff for one project. Only when the
+ * gateway serves diffs and the project's Git state was read without an error.
+ */
+export function diffButton(ship, member, context) {
+  const project = context.project ?? "";
+  return `<button class="btn diff-open" type="button" data-diff-ship="${esc(ship.id)}" data-diff-member="${esc(member.id)}" data-diff-project="${esc(project)}" aria-label="View diff of ${esc(context.project ?? "the default project")} for ${esc(member.name)}">View diff</button>`;
 }
 
 /** The button that opens an officer's Activity view; `id` is its registration ID. */
@@ -207,8 +217,9 @@ export function crewPanel(model, shipId, memberId) {
   const task = view.task
     ? `<p class="task">${esc(view.task.summary)}</p><p><span class="tag">${esc(view.task.phase || labelOf(view.task.status))}</span></p>${view.task.progress ? `<p class="prog">${esc(view.task.progress)}</p>` : ""}`
     : `<p class="prog">No current task.${view.lastOutcome ? ` Last outcome: ${esc(view.lastOutcome.summary)} (${esc(labelOf(view.lastOutcome.status).toLowerCase())}).` : ""}</p>`;
+  const diffs = diffsEnabled(model.fleet);
   const projects = view.contexts
-    .map((context) => `<li><span class="dot s-${esc(context.activity)}"></span><span class="grow"><b>${esc(context.project ?? "default project")}</b><span class="sub mono">${esc(context.git?.branch ?? "no worktree yet")}${context.queuedCount ? ` · ${context.queuedCount} queued` : ""}${context.provisioned !== "ready" ? ` · ${esc(context.provisioned)}` : ""}</span></span></li>`)
+    .map((context) => `<li><span class="dot s-${esc(context.activity)}"></span><span class="grow"><b>${esc(context.project ?? "default project")}</b><span class="sub mono">${esc(context.git?.branch ?? "no worktree yet")}${context.queuedCount ? ` · ${context.queuedCount} queued` : ""}${context.provisioned !== "ready" ? ` · ${esc(context.provisioned)}` : ""}</span></span>${canViewDiff(diffs, context) ? diffButton(ship, member, context) : ""}</li>`)
     .join("");
   const more = view.queuedCount - view.queued.length;
   const queued = view.queued.length

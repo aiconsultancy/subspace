@@ -63,7 +63,7 @@ export function h(tag, props = {}, ...children) {
 }
 
 /** Text with each run of hidden characters as one marker span. */
-function txt(value) {
+export function txt(value) {
   return visibleSegments(value).map((part) => (typeof part === "string" ? part : h("span", { class: "ctl", title: "Hidden character" }, part.ctl)));
 }
 

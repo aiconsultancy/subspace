@@ -61,7 +61,12 @@ function done(summary, minutesAgo, tookMinutes, now, status = "completed") {
 }
 
 function gitState(branch, head, ahead, behind, changed, repository, now) {
-  return { branch, head, base: "origin/main", ahead, behind, changedFiles: changed, repository, checkedAt: now };
+  return { branch, head, base: "origin/main", ahead, behind, changedFiles: changed, repository, checkedAt: now, fingerprint: sampleFingerprint(head, ahead, changed) };
+}
+
+/** A made-up diff fingerprint that moves when the sample checkout does. */
+export function sampleFingerprint(head, ahead, changed) {
+  return `sample-${head}-${ahead ?? 0}-${changed ?? 0}`;
 }
 
 function contextActivity(context) {
@@ -337,6 +342,7 @@ function gatewayFeatures() {
   return [
     feature("dashboard", "Dashboard socket", true, false),
     feature("api", "Fleet API", true, false),
+    feature("api.crewDiffs", "Crew diffs", true, true),
     feature("cron", "Scheduled jobs", true, true),
     feature("maintenance", "Maintenance drain", true, true),
     feature("quotaWatch", "Quota watch", false, true),
@@ -474,7 +480,9 @@ export function createSampleSim({ now = Date.now, random = Math.random, variant 
     const phase = PHASES[index + 1] ?? "Running tests";
     context.current = { ...context.current, phase, progress: PROGRESS[phase], updatedAt: now() };
     if (context.git) {
-      context.git = { ...context.git, ahead: (context.git.ahead ?? 0) + 1, changedFiles: phase === "Opening PR" ? 0 : (context.git.changedFiles ?? 0) + 1, checkedAt: now() };
+      const ahead = (context.git.ahead ?? 0) + 1;
+      const changedFiles = phase === "Opening PR" ? 0 : (context.git.changedFiles ?? 0) + 1;
+      context.git = { ...context.git, ahead, changedFiles, checkedAt: now(), fingerprint: sampleFingerprint(context.git.head, ahead, changedFiles) };
     }
     if (phase === "Opening PR" && !context.pullRequest && context.git?.branch) {
       prNumber += 1;

@@ -54,10 +54,19 @@ export function createFleetManager({ entries, createClient, createLive, onChange
   /** The open activity view, if any: {fleet, agent, onEvent, onOpen, onDown, onRefused, onReset, onEnded}. One stream carries it. */
   let watch = null;
 
+  /** The open diff view, if any: {fleet, onReset, onEnded}. Its reads go to the fleet's current client. */
+  let diffWatch = null;
+
   /** The fleet behind the open view lost its client or went: the view ends. */
   function endWatch() {
     const ended = watch;
     watch = null;
+    ended?.onEnded?.();
+  }
+
+  function endDiff() {
+    const ended = diffWatch;
+    diffWatch = null;
     ended?.onEnded?.();
   }
 
@@ -170,6 +179,7 @@ export function createFleetManager({ entries, createClient, createLive, onChange
       runtimes.delete(id);
       if (active === id) active = null;
       if (watch?.fleet === id) endWatch();
+      if (diffWatch?.fleet === id) endDiff();
     }
     for (const entry of next) {
       const existing = runtimes.get(entry.id);
@@ -186,6 +196,10 @@ export function createFleetManager({ entries, createClient, createLive, onChange
       if (existing && watch?.fleet === entry.id) {
         if (runtime.client) watch.onReset?.();
         else endWatch();
+      }
+      if (existing && diffWatch?.fleet === entry.id) {
+        if (runtime.client) diffWatch.onReset?.();
+        else endDiff();
       }
       if (wasActive) stream(entry.id);
     }
@@ -283,6 +297,34 @@ export function createFleetManager({ entries, createClient, createLive, onChange
         },
       };
     },
+    /**
+     * Read crew diffs on fleet `id`. Returns a client whose reads always use
+     * the fleet's current client, so none goes to an old address or with an
+     * old token, and `stop()`; or null when the fleet has no client.
+     * `onReset` runs when the fleet's address or token changes (the view
+     * drops what it read and reads again), `onEnded` when the fleet loses its
+     * token or goes.
+     */
+    openDiff(id, { onReset, onEnded } = {}) {
+      const runtime = runtimes.get(id);
+      if (!runtime?.client) return null;
+      const own = { fleet: id, onReset, onEnded };
+      diffWatch = own;
+      const current = () => {
+        const client = diffWatch === own ? runtimes.get(id)?.client : null;
+        if (!client) throw new Error("The diff view no longer has a fleet to read.");
+        return client;
+      };
+      return {
+        client: {
+          diff: async (...args) => current().diff(...args),
+          diffFile: async (...args) => current().diffFile(...args),
+        },
+        stop() {
+          if (diffWatch === own) diffWatch = null;
+        },
+      };
+    },
     /** New entries from the sources: keeps unchanged fleets, rebuilds changed ones, reads new ones once. */
     update(next) {
       reconcile(next);
@@ -303,7 +345,7 @@ export function createFleetManager({ entries, createClient, createLive, onChange
  * Sample mode's fleets: two simulations that keep changing and one fleet that
  * never answers, with the same interface as the live manager.
  */
-export function createSampleFleetManager({ createSource, createActivity, onChange, now = Date.now }) {
+export function createSampleFleetManager({ createSource, createActivity, createDiff, onChange, now = Date.now }) {
   const runtimes = new Map();
   const order = SAMPLE_FLEETS.map((fleet) => fleet.id);
   let active = order[0];
@@ -356,6 +398,17 @@ export function createSampleFleetManager({ createSource, createActivity, onChang
       const source = createActivity({ agent, role: officer.role, backend: officer.backend, onEvent, onOpen });
       source.start();
       return { client: source.client, stop: () => source.stop() };
+    },
+    /** The sample checkout's diff, at the fingerprint its `ship` events carry. */
+    openDiff(id) {
+      const runtime = runtimes.get(id);
+      if (!createDiff || !runtime?.source) return null;
+      const fingerprintFor = (ship, member, project) => {
+        const crew = runtime.state.ships?.[ship]?.crewMembers ?? [];
+        const context = crew.find((entry) => entry.id === member)?.contexts.find((entry) => (entry.project ?? null) === (project ?? null));
+        return context?.git?.fingerprint ?? null;
+      };
+      return { client: createDiff({ fingerprintFor }), stop() {} };
     },
     update() {},
     stop() {

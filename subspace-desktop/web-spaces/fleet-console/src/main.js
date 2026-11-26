@@ -8,6 +8,8 @@ import { createApiClient, normalizeEndpoint } from "./api.js";
 import { createLiveSource } from "./live.js";
 import { createSampleActivitySource, createSampleSource } from "./sample-source.js";
 import { createActivityController } from "./activity-controller.js";
+import { createDiffController } from "./diff-controller.js";
+import { createSampleDiffClient } from "./sample-diff.js";
 import { initialFleetState, livePackets } from "./reducer.js";
 import { describeConnection, initialConnection, tokenProblem } from "./connection.js";
 import { chain, createNavigator, fleetTier, LANDSCAPE, parentOf, sameSelection } from "./camera.js";
@@ -515,6 +517,7 @@ function onSelection() {
   app.manager?.setLandscape(sel.level === -1);
   if (form.isOpen) form.close();
   activity.close(false);
+  diff.close(false);
   app.confirmRemove = null;
   const focus = inspectorView.captureFocus();
   // Pulling out: land on the row for the tier just left.
@@ -622,6 +625,11 @@ document.addEventListener("keydown", (event) => {
     activity.close(true);
     return;
   }
+  if (diff.isOpen && (chrome.el.inspector.contains(event.target) || event.target === document.body)) {
+    event.preventDefault();
+    diff.close(true);
+    return;
+  }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
   const target = nav.target();
   const parent = parentOf(target, landscape());
@@ -635,6 +643,11 @@ document.addEventListener("click", (event) => {
   const officer = event.target.closest("[data-activity]");
   if (officer) {
     openActivity(officer.dataset.activity, officer.dataset.activityName, officer.dataset.activityRole);
+    return;
+  }
+  const member = event.target.closest("[data-diff-member]");
+  if (member) {
+    if (app.manager?.active) diff.open(member.dataset.diffShip, member.dataset.diffMember, member.dataset.diffProject || null);
     return;
   }
   const goTarget = event.target.closest("[data-go]");
@@ -710,6 +723,11 @@ function renderInspector(navigated, focus) {
     activity.draw();
     return;
   }
+  if (diff.isOpen) {
+    diff.observe();
+    diff.draw();
+    return;
+  }
   const sel = nav.state.sel;
   const key = `${sel.level}:${sel.fleet}:${sel.ship}:${sel.crew}:${app.confirmRemove}`;
   if (inspectorView.show(panelHtml(sel), key, navigated, focus)) chrome.tickTimes(serverNow());
@@ -738,6 +756,22 @@ const activity = createActivityController({
 function openActivity(agent, name, role) {
   if (app.manager?.active) activity.open(agent, name, role);
 }
+
+// ---------- crew diffs ----------
+
+// The diff view's lifecycle is the controller's (diff-controller.js); the
+// shell opens it for the fleet you are inside and redraws the inspector when
+// it closes.
+const diff = createDiffController({
+  inspector: chrome.el.inspector,
+  doc: document,
+  open: (hooks) => app.manager.openDiff?.(app.manager.active, hooks),
+  ships: () => app.state.ships,
+  toast: (words) => chrome.toast(words),
+  announce: (words) => chrome.announce(words),
+  onOpening: () => activity.close(false),
+  onClosed: (restore) => restore && renderInspector(true),
+});
 
 function markInspector() {
   if (!inspectorTimer) inspectorTimer = setTimeout(() => renderInspector(false), 180);
@@ -823,6 +857,7 @@ async function readConfig(retry = false) {
 
 async function startManager(mode, fleets) {
   activity.close(false);
+  diff.close(false);
   app.manager?.stop();
   app.mode = mode;
   app.sample = mode === "sample";
@@ -839,6 +874,7 @@ async function startManager(mode, fleets) {
       : createSampleFleetManager({
           createSource: ({ variant, onEvent }) => createSampleSource({ variant, onEvent }),
           createActivity: (options) => createSampleActivitySource(options),
+          createDiff: (options) => createSampleDiffClient(options),
           onChange: onFleetChange,
         });
   if (app.sample) {

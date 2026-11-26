@@ -74,6 +74,15 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
     ship: (id, signal) => getJson(`/ships/${encodeURIComponent(id)}`, signal),
     crew: (ship, member, signal) => getJson(`/ships/${encodeURIComponent(ship)}/crew/${encodeURIComponent(member)}`, signal),
     /**
+     * One page of a crew worktree's changed files (`V1Diff`). `project` null
+     * is the member's default project and is left out of the query. 404 when
+     * the gateway lacks the route or the member has no such checkout.
+     */
+    diff: (ship, member, { project = null, mode, cursor } = {}, signal) => getJson(diffPath(ship, member, false, { mode, project, cursor }), signal, MAX_DIFF_BODY_BYTES),
+    /** One page of one file (`{fingerprint, file, content?}`), pinned to the snapshot `at`. */
+    diffFile: (ship, member, { project = null, mode, path, page, at, side } = {}, signal) =>
+      getJson(diffPath(ship, member, true, { mode, project, path, page, at, side }), signal, MAX_DIFF_FILE_BODY_BYTES),
+    /**
      * Open the event stream; resolves to a Response with a readable body, or
      * throws HttpError. `agents` adds `agent-activity` events for those
      * registration IDs, one repeated `agent` parameter each.
@@ -99,6 +108,21 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
     },
   };
 }
+
+function diffPath(ship, member, file, query) {
+  const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== null).map(([key, value]) => [key, String(value)]));
+  return `/ships/${encodeURIComponent(ship)}/crew/${encodeURIComponent(member)}/diff${file ? "/file" : ""}?${params}`;
+}
+
+/**
+ * A diff list page's body: up to 1,000 files with inline patches of up to
+ * 64 KiB each, JSON-escaped (six bytes per input byte at worst), and their
+ * metadata. Desktop #110 uses the same cap, so no page the gateway may send
+ * is refused.
+ */
+export const MAX_DIFF_BODY_BYTES = 400 * 1024 * 1024;
+/** A file page's body: 1 MiB of patch text or base64 bytes, escaped, and its envelope (#110's cap). */
+export const MAX_DIFF_FILE_BODY_BYTES = 7 * 1024 * 1024;
 
 /** The most a snapshot body may be; Channels uses the same cap. */
 export const MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024;

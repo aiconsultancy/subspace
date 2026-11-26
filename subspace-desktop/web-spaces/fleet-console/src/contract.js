@@ -45,7 +45,9 @@ export function isGit(g) {
     isNumOrNull(g.changedFiles) &&
     isStrOrNull(g.repository) &&
     isNum(g.checkedAt) &&
-    (g.error === undefined || isStr(g.error))
+    (g.error === undefined || isStr(g.error)) &&
+    // STAR-5: the checkout's diff fingerprint; older gateways leave it out.
+    (g.fingerprint === undefined || g.fingerprint === null || isStr(g.fingerprint))
   );
 }
 

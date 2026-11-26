@@ -288,3 +288,33 @@ button.tile:hover { border-color: var(--accent); }
 .act-parts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .act-parts [aria-disabled="true"] { opacity: 0.5; cursor: default; }
 .ctl { color: var(--orange); background: color-mix(in srgb, var(--orange) 14%, transparent); border-radius: 3px; padding: 0 1px; font-style: normal; }
+
+/* Crew diffs: every file, line and byte reachable; long lines wrap, the hex view scrolls */
+.diff-open { margin-left: auto; align-self: center; flex: none; }
+.diff-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.diff-modes { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.diff-modes [aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--pane)); }
+.diff-banner { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.diff-files { display: grid; gap: 2px; min-width: 0; }
+.diff-file { all: unset; box-sizing: border-box; width: 100%; display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--fg); min-width: 0; }
+.diff-file > .act-sub { grid-column: 2; }
+.diff-file:hover, .diff-file[aria-current="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.diff-file:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.diff-path { font-family: var(--mono); overflow-wrap: anywhere; min-width: 0; }
+.diff-st { font: 600 11px var(--mono); padding: 0 4px; border-radius: 3px; align-self: start; color: var(--muted); border: 1px solid var(--hair); }
+.diff-st.st-added { color: var(--green); }
+.diff-st.st-removed { color: var(--red); }
+.diff-st.st-modified { color: var(--yellow); }
+.diff-st.st-renamed { color: var(--blue); }
+.diff-detail { display: grid; gap: 6px; min-width: 0; }
+.diff-patch { font: 400 11.5px/1.45 var(--mono); background: var(--bg); border: 1px solid var(--hair); border-radius: 6px; padding: 4px 0; user-select: text; tab-size: 4; min-width: 0; }
+.diff-patch .dl { display: grid; grid-template-columns: 4.5ch 4.5ch 1fr; gap: 0 6px; padding: 0 8px; }
+.diff-patch .ln { color: var(--muted); text-align: right; user-select: none; }
+.diff-patch .code { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.diff-patch .add { background: color-mix(in srgb, var(--green) 14%, transparent); }
+.diff-patch .del { background: color-mix(in srgb, var(--red) 14%, transparent); }
+.diff-patch .hunk { color: var(--cyan); }
+.diff-patch .note { color: var(--muted); font-style: italic; }
+.diff-binary { display: grid; gap: 6px; justify-items: start; min-width: 0; }
+.diff-hex { white-space: pre; overflow-wrap: normal; overflow-x: auto; max-width: 100%; max-height: none; }
+.diff-image img { max-width: 100%; height: auto; image-rendering: pixelated; border: 1px solid var(--hair); background: var(--bg); }

@@ -116,6 +116,8 @@ Fleet Console reads Stargate's read-only Fleet API v1 with a bearer token:
 | `GET /api/v1/ships/{id}/crew/{member}` | Fresh detail when you warp into a crew member |
 | `GET /api/v1/agents/{id}/activity` | An officer's recent turns when its Activity view opens, and again whenever the view must catch up |
 | `GET /api/v1/agents/{id}/activity?turn=&item=&page=` | The pages of a large item, read when you ask for it |
+| `GET /api/v1/ships/{id}/crew/{member}/diff?project=&mode=&cursor=` | A crew member's changed files for one project when its diff view opens, page by page |
+| `GET /api/v1/ships/{id}/crew/{member}/diff/file?project=&mode=&path=&page=&at=&side=` | The next page of a long patch, or a page of a binary file's bytes, when you ask for it |
 
 The event stream is read as a streamed `fetch` body, because `EventSource`
 cannot send an `Authorization` header. If it drops, Fleet Console reconnects
@@ -301,6 +303,35 @@ closes it, as does moving to another tier; focus returns to the button.
 The officer is identified by its registration ID: `fleet.admiral.id` for the
 rear admiral and `ship.captain.id` for a captain.
 
+## Crew diffs
+
+**View diff** on a project in a crew member's inspector card opens what that
+member has changed in its checkout: **All changes**, **Committed only** or
+**Uncommitted only**. It shows only when the gateway lists the
+`api.crewDiffs` feature as on and the project's Git state was read without
+an error. **Back** or Escape closes it, as does moving to another tier.
+
+- **Nothing is cut.** The whole file list is read before it shows, 200
+  files at a time on screen. A patch shows 1,000 lines at a time; a long
+  one continues with **Load next page**, and a failed page offers **Retry
+  page**. A binary file's **Old bytes** and **New bytes** open a hex and
+  ASCII view read a page (1 MiB) at a time, 4 KiB on screen. Images also
+  offer a preview of up to 10 MiB and 4,096 pixels a side. Long lines wrap.
+- **Content is text.** Every value is set as text, never parsed as HTML,
+  and control and bidi formatting characters show as `⟨U+XXXX⟩` markers.
+  Diffs stay in memory only, never reach chat, and closing the view drops
+  them.
+- **One snapshot.** Every page is read at the snapshot's fingerprint. When
+  the checkout moves on (the `ship` event's fingerprint changes, or the
+  gateway answers 409), the view says "Changed since loaded · Refresh" and
+  stops reading; a snapshot the gateway saw change while reading says
+  "Changed while loading · Refresh". Refresh, a mode change and closing the
+  view cancel what is still being read, including a read waiting to retry
+  while the gateway is busy.
+- **Messages.** "Diff not available" on a 404, as from a gateway older than
+  crew diffs or a member with no checkout; "No changes." for an empty
+  snapshot.
+
 ## Sample mode
 
 With no Subspace bridge (a plain browser), no address, or missing
@@ -313,7 +344,10 @@ invented turns: a long, paged test log, a failed tool call whose output
 holds markup, a terminal escape and a bidi override, and a running turn that
 streams its tool progress and reply, then ends and starts another. Officers
 on a backend other than OpenCode, such as the sample rear admiral, show the
-not-collected message.
+not-collected message. Each sample crew project's **View diff** shows an
+invented checkout: a patch in three pages, a rename, an untracked note with
+a bidi override and a long line, a PNG, a binary larger than one page with
+an empty old side, a submodule and a symbolic link.
 
 To look at it in a browser, serve this folder and open
 `http://127.0.0.1:8765/`:
@@ -361,8 +395,9 @@ connections and poll timing, the Fleets layout, navigation and breadcrumb
 through L0, officer activity (decoding, page joins, the snapshot and event
 join, refetches, join order, the one stream's `agent` parameters, paged
 and part reads within a bounded budget, bounded rendering that never parses
-HTML and marks hidden characters), the pager, and the
-package rules.
+HTML and marks hidden characters), the pager, crew diffs (the feature gate,
+status codes, cursor, patch and binary paging, the fingerprint banner,
+cancellation and source changes), and the package rules.
 
 | Path | Purpose |
 | --- | --- |
@@ -371,6 +406,7 @@ package rules.
 | `src/api.js`, `src/live.js`, `src/sse.js`, `src/connection.js` | Fleet API client, event stream, SSE parser, connection states |
 | `src/activity.js`, `src/activity-view.js`, `src/activity-controller.js` | Officer activity: snapshot and event join, paged items; the Activity view; its lifecycle in the inspector |
 | `src/pager.js`, `src/budget.js` | Reading and showing a part at a time, fenced by revision; a view's byte budget, least recently opened first |
+| `src/diff.js`, `src/diff-view.js`, `src/diff-controller.js`, `src/sample-diff.js` | Crew diffs: paged list, patch and binary reads; the diff view; its lifecycle in the inspector; the sample checkout |
 | `src/contract.js`, `src/reducer.js`, `src/model.js` | Payload checks, state reducer, derived views |
 | `src/sample.js`, `src/sample-source.js` | Sample fleets and their simulation |
 | `src/fleet-sources.js`, `src/fleet-store.js`, `src/fleet-manager.js` | Fleet sources and their merge, the page's fleet list, one connection per fleet |
