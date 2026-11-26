@@ -285,6 +285,8 @@ def github_officer_operations(cfg, person):
 def role_documents(cfg, person, references, home):
     """Instructions and skills for an officer, plus a system prompt per crew member it hosts."""
     role = person["role"].replace("_", "-")
+    api = cfg.get("api") or {}
+    has_tracker = api.get("agentMcpUrl") or api.get("enrolment")
     repositories = list(cfg["repositories"])
     values = {
         "agent": person["name"], "fleet": cfg["name"], "channel": person["channel"],
@@ -319,7 +321,7 @@ def role_documents(cfg, person, references, home):
     else:
         values["crew"] = "You have no crew in this fleet. Do the work yourself in your checkout."
     instructions = render(role, "AGENTS.md", values)
-    if (cfg.get("api") or {}).get("agentMcpUrl") or (cfg.get("api") or {}).get("enrolment"):
+    if has_tracker:
         instructions += (
             "\n## Preparing files\n\n"
             "Use the `prepare_file` tool on the `subspace_publish` server for an issue attachment, existing "
@@ -328,6 +330,19 @@ def role_documents(cfg, person, references, home):
             "Use `upload_file` on `subspace_files` for the existing IRC attachment workflow. "
             "For Markdown or plain text in Teams, request `preview: teams` and post the returned PNG marker.\n"
         )
+        if role == "captain":
+            instructions += (
+                "\n## Closing Subspace issues\n\n"
+                "You are responsible for closing each Subspace issue you finish, including work delegated to crew. "
+                "Once the work is complete, including any required pull request merges, to-dos and verification, "
+                "move the issue to Done (or the project's equivalent completed state) if it is still open. "
+                "Find that state with `subspace_list_issue_statuses` and set `stateId` with `subspace_update_issue` "
+                "using the issue's current version. Before reporting "
+                "completion, read each finished issue with `subspace_get_issue` and verify that its saved state "
+                "is Done or its equivalent. If you cannot confirm completion in the tracker, report "
+                "the issue key and what prevented you from confirming it. A tracker's state follows its direct "
+                "children, so verify that state after closing the last open child.\n"
+            )
     if github_ops and (not claude or person["role"] == "captain"):
         names = ", ".join(f"`{name}`" for name in github_ops)
         repository_option = "its `repo` field" if claude else "`--repo`"
@@ -367,7 +382,7 @@ def role_documents(cfg, person, references, home):
                 "model": worker["model"], "family": worker["family"].title(), "worktrees": worktrees,
                 "pullRequests": crew_prs,
             })
-    if (cfg.get("api") or {}).get("agentMcpUrl") or (cfg.get("api") or {}).get("enrolment"):
+    if has_tracker:
         # The officer reaches the API through its MCP server at the agent listener; its crew share the skill.
         skills[API_SKILL] = api_skill()
     procedure = skills[f"fleet-{role}"].partition("\n---\n")

@@ -561,6 +561,27 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(runtime.harness_permissions(cfg, person), person["harness"]["permissions"])
         self.assertIsNone(runtime.subspace_mcp_url(cfg))
 
+    def test_issue_closeout_guidance_reaches_only_captains_with_tracker_access(self):
+        local = {"url": "http://127.0.0.1:3000"}
+        config = example_config()
+        config["stargate"] = {"ref": runtime.SUBSPACE_AGENTS_COMMIT}
+        for api, secrets, has_tracker in (
+            (local, api_secrets(), False),
+            ({**local, "agentUrl": "http://127.0.0.1:3001"}, api_secrets(), True),
+            ({"url": "https://subspace.example.com", "enrolment": True}, officer_secrets(), True),
+        ):
+            with self.subTest(api=api):
+                cfg = validate({**config, "api": api}, secrets)
+                for person in cfg["members"]:
+                    documents = roles.role_documents(cfg, person, None, Path("/home"))
+                    expected = has_tracker and person["role"] == "captain"
+                    for prompt in (documents["instructions"], documents["claudePrompt"]):
+                        self.assertEqual("## Closing Subspace issues" in prompt, expected)
+                        if expected:
+                            self.assertIn("read each finished issue with `subspace_get_issue`", prompt)
+                    for prompt in documents["crew"].values():
+                        self.assertNotIn("## Closing Subspace issues", prompt)
+
     def test_a_missing_api_skill_is_named_before_anything_is_rendered(self):
         config = example_config()
         config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
