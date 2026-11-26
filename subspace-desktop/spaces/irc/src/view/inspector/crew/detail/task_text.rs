@@ -3,10 +3,21 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use gpui_kit::component::{Sizable as _, Size, pagination::Pagination, v_flex};
-use gpui_kit::{AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
+use gpui_kit::base::{Pagination, PaginationState};
+use gpui_kit::component::{
+    Disableable as _, Sizable as _, Size,
+    button::{Button, ButtonVariants as _},
+    menu::{PopupMenu, PopupMenuItem},
+    v_flex,
+};
+use gpui_kit::{AnyElement, Context, IntoElement, ParentElement as _, Styled as _, px};
 use subspace_client_fleet::model::{Task, TaskStatus};
-use subspace_framework::dashboard::workspace;
+use subspace_framework::dashboard::{
+    action::{Intent, icon_button},
+    anchored,
+    panel::IconName,
+    workspace,
+};
 
 use super::{Irc, fact_text, nonempty};
 use crate::live::ship::is_bidi_control;
@@ -154,16 +165,16 @@ pub(super) fn rows(
             let pager = (page.total > 1).then(|| {
                 let project = project.to_owned();
                 let task = task.id.clone();
-                Pagination::new(format!("irc-crew-task-pages:{project}:{key}"))
-                    .with_size(Size::XSmall)
-                    .current_page(page.current)
-                    .total_pages(page.total)
-                    .on_click(cx.listener(move |board, page, _, cx| {
-                        if let Some(selection) = &mut board.inspector_crew {
-                            selection.pages.set(&project, &task, field, *page);
-                            cx.notify();
-                        }
-                    }))
+                let id = format!("irc-crew-task-pages:{project}:{key}");
+                let change = cx.listener(move |board, page, _, cx| {
+                    if let Some(selection) = &mut board.inspector_crew {
+                        selection.pages.set(&project, &task, field, *page);
+                        cx.notify();
+                    }
+                });
+                let state = PaginationState::new(page.current, page.total)
+                    .on_change(move |page, window, cx| change(&page, window, cx));
+                pager(id, label, state)
             });
             Some(
                 v_flex()
@@ -175,6 +186,89 @@ pub(super) fn rows(
             )
         })
         .collect()
+}
+
+fn pager(id: String, label: &str, state: PaginationState) -> impl IntoElement {
+    Pagination::new(id, state.clone())
+        .accessibility_label(format!("{label} pages"))
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(page_step(&state, true))
+        .child(page_jump(state.clone()))
+        .child(page_step(&state, false))
+}
+
+fn page_step(state: &PaginationState, previous: bool) -> impl IntoElement {
+    let (id, icon, label, target) = if previous {
+        (
+            "prev",
+            IconName::ChevronLeft,
+            "Previous page",
+            state.previous_page(),
+        )
+    } else {
+        (
+            "next",
+            IconName::ChevronRight,
+            "Next page",
+            state.next_page(),
+        )
+    };
+    let state = state.clone();
+    icon_button(id, Intent::Quiet, icon, label)
+        .compact()
+        .disabled(target.is_none())
+        .on_click(move |_, window, cx| {
+            if let Some(page) = target {
+                state.request_page(page, window, cx);
+            }
+        })
+}
+
+fn page_jump(state: PaginationState) -> impl IntoElement {
+    let (current, total) = (state.current_page(), state.total_pages());
+    let button = Button::new("jump")
+        .ghost()
+        .compact()
+        .with_size(Size::XSmall)
+        .accessibility_label(format!("Jump to page, current page {current} of {total}"))
+        .label(format!("Page {current} of {total}"))
+        .tooltip("Jump to page")
+        .dropdown_caret(true);
+    anchored::dropdown_menu(button, move |menu, _, _| jump_menu(menu, &state))
+}
+
+fn jump_menu(menu: PopupMenu, state: &PaginationState) -> PopupMenu {
+    // Normal 64,000-code-point fields have at most 125 pages. Keep even a
+    // larger response cheap to open, while still offering both ends.
+    const MAX_MENU_PAGES: usize = 125;
+    const MENU_MAX_HEIGHT: f32 = 240.;
+    let total = state.total_pages();
+    let start = state
+        .current_page()
+        .saturating_sub(MAX_MENU_PAGES / 2)
+        .clamp(2, total.saturating_sub(MAX_MENU_PAGES).max(2));
+    let nearby = (start..total)
+        .take(MAX_MENU_PAGES)
+        .map(|page| (page, format!("Page {page}")));
+    [
+        (1, "First page (1)".into()),
+        (total, format!("Last page ({total})")),
+    ]
+    .into_iter()
+    .chain(nearby)
+    .fold(menu, |menu, (page, label)| {
+        let state = state.clone();
+        menu.item(
+            PopupMenuItem::new(label)
+                // A checked item would scroll the end jumps out of view on open.
+                .disabled(state.current_page() == page)
+                .on_click(move |_, window, cx| state.request_page(page, window, cx)),
+        )
+    })
+    .max_h(px(MENU_MAX_HEIGHT))
+    .scrollable(true)
 }
 
 #[cfg(test)]

@@ -165,6 +165,14 @@ class FleetFixtureTests(unittest.TestCase):
         self.assertEqual(ines['ship'], 'aurora-orion')
         self.assertEqual([context['project'] for context in ines['member']['contexts']], ['sector-atlas', 'relay-handover'])
 
+    def test_quills_paged_progress_is_only_full_on_the_crew_route(self):
+        lyra = self.get('/api/v1/ships/aurora-lyra')[1]
+        preview = next(member for member in lyra['crewMembers'] if member['id'] == 'quill')
+        full = self.get('/api/v1/ships/aurora-lyra/crew/quill')[1]['member']
+        progress = full['contexts'][0]['current']['progress']
+        self.assertGreater(len(progress), 512)
+        self.assertEqual(preview['contexts'][0]['current']['progress'], progress[:399] + '…')
+
     def test_only_subspace_origins_get_cors_headers(self):
         with self.open('/api/v1/fleet', token=None, method='OPTIONS', origin='subspace://fleet-console') as response:
             self.assertEqual(response.status, 204)

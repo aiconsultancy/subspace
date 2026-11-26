@@ -210,6 +210,17 @@ def derive_ship(detail, now):
     return detail
 
 
+QUILL_PROGRESS = (
+    'Focus order follows the navigation checklist; wiring the marker shortcut into the burn summary. '
+    'The chart and the summary now share the same selected marker, so returning to the chart restores '
+    'focus to the same place. I checked the route at full size and at the smallest supported window width. '
+    'At the narrow width, the summary still announces the manoeuvre and the time to the burn in that order. '
+    'The next check is to tab through the sequence with a screen reader and verify that the marker has the '
+    'same name before and after the route refreshes. Then I will record the keyboard walk-through for review.'
+)
+QUILL_PREVIEW = QUILL_PROGRESS[:399] + '…'
+
+
 def lyra(c):
     return ship('aurora-lyra', 'Lyra', captain(c, 'aurora-lyra', 'aurora-lyra', 'irc', 'opencode',
                 queue_counts(0, 0, 128, 2), 34, request_progress(c, 3811, [('completed', 41, 'done'), ('tool', 2, 'running')])),
@@ -230,7 +241,7 @@ def lyra(c):
         member('quill', 'Quill', 'Accessibility', [context(
             'navigation-console', observed=True,
             current=running(c, 'Tab from a chart marker to the burn summary (NAV-11)', 'Implementing',
-                            'Focus order follows the navigation checklist; wiring the marker shortcut into the burn summary.', 18),
+                            QUILL_PREVIEW, 18),
             recent=[done(c, 'Screen-reader labels for chart markers', 300, 38)],
             git_state=git(c, 'feat/nav-11-marker-focus-order', '7c90a1e', 2, 1, 4, NAVIGATION), known=True)],
             model='claude-sonnet-5-5'),
@@ -416,6 +427,10 @@ class Fleet:
     def crew(self, ship_id, member_id):
         detail = self.ship(ship_id)
         found = next((entry for entry in detail['crewMembers'] if entry['id'] == member_id), None) if detail else None
+        if found and member_id == 'quill':
+            current = found['contexts'][0]['current']
+            if current and current['progress'] == QUILL_PREVIEW:
+                current['progress'] = QUILL_PROGRESS
         return dict(ship=ship_id, member=found) if found else None
 
     def snapshot(self):

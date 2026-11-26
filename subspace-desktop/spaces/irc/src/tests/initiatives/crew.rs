@@ -10,6 +10,8 @@ use super::fleet::ship;
 use super::live::{live, set_fleet};
 use crate::{fixtures::channel, view};
 
+mod paging;
+
 const ROW: &str = "irc-inspector-crew:wren";
 const BACK: &str = "irc-crew-back";
 const SHIP: (&str, usize) = ("workspace-inspector-tab", 0);
@@ -127,53 +129,6 @@ fn crew_detail_explains_the_missing_token_even_without_a_roster(cx: &mut TestApp
         assert!(reason.starts_with("No token: "), "{reason}");
         assert!(reason.contains("Settings › Fleets"), "{reason}");
         assert!(!reason.contains("Showing the ship's roster"), "{reason}");
-    });
-}
-
-#[gpui_kit::test]
-fn crew_task_progress_draws_only_the_selected_page(cx: &mut TestAppContext) {
-    use gpui_kit::base::test_support::texts;
-
-    const PAGER: &str = "irc-crew-task-pages:named:nav:progress";
-    const LAST_PAGE: usize = 125;
-    const TAIL: &str = "🌊\t\r\u{202e}\x1bfinish";
-    const VISIBLE_TAIL: &str = "🌊⟨U+0009⟩⟨U+000D⟩⟨U+202E⟩⟨U+001B⟩finish";
-    let (board, hub, cx) = ship(cx);
-    let first = "λ".repeat(512);
-    let mut snapshot = crate::live::tests::snapshot();
-    let mut member = snapshot
-        .ships
-        .remove("aurora-lyra")
-        .unwrap()
-        .crew_members
-        .into_iter()
-        .find(|member| member.id == "wren")
-        .unwrap();
-    let task = member.contexts[0].current.as_mut().unwrap();
-    task.progress = first.clone() + &"x".repeat(64_000 - 512 - TAIL.chars().count()) + TAIL;
-    let summary = task.summary.clone();
-    set_fleet(&hub, live(), cx);
-    install_fleet_api(cx);
-    cx.update(|window, cx| {
-        window.render_frame(cx);
-        window.click(ROW, cx);
-        board.update(cx, |board, cx| {
-            view::inspector::crew::seed_roster_for_test(board, member, cx)
-        });
-        window.render_frame(cx);
-        assert!(window.find(BACK).visible());
-        let drawn = texts(window);
-        assert!(!drawn.iter().any(|text| text.text().contains("finish")));
-        assert_eq!(
-            drawn.iter().filter(|text| text.text() == summary).count(),
-            1
-        );
-        assert!(drawn.iter().any(|text| text.text() == first));
-        window.within(PAGER).click(LAST_PAGE, cx);
-        window.render_frame(cx);
-        let drawn = texts(window);
-        assert!(!drawn.iter().any(|text| text.text() == first));
-        assert!(drawn.iter().any(|text| text.text().ends_with(VISIBLE_TAIL)));
     });
 }
 
