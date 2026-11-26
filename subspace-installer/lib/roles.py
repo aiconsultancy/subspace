@@ -8,6 +8,7 @@ import sys
 
 from agent_files import MAX_BYTES, agent_directory, write_private
 from github_policy import officer_github_repositories
+import screenshots
 
 
 ROLES = Path(__file__).parent / "roles"
@@ -282,7 +283,7 @@ def github_officer_operations(cfg, person):
     return operations
 
 
-def role_documents(cfg, person, references, home):
+def role_documents(cfg, person, references, home, *, flint=False):
     """Instructions and skills for an officer, plus a system prompt per crew member it hosts."""
     role = person["role"].replace("_", "-")
     api = cfg.get("api") or {}
@@ -321,6 +322,20 @@ def role_documents(cfg, person, references, home):
     else:
         values["crew"] = "You have no crew in this fleet. Do the work yourself in your checkout."
     instructions = render(role, "AGENTS.md", values)
+    if flint:
+        instructions += (
+            "\n## Flint charts\n\n"
+            "Use the local `flint` MCP server for charts from data. Load the chart authoring skill "
+            "with `get_flint_skill` and use `validate_chart` before exporting. Include data as "
+            "inline `data.values`. For an IRC chart, send a PNG. Pass the same Flint JSON on "
+            "standard input to `flint-render /tmp/flint-chart.png`, using a fresh file name. "
+            "A shell heredoc can provide the JSON directly.\n"
+        )
+        if has_tracker:
+            instructions += (
+                "Upload the PNG with `subspace_files` tool `upload_file`, then put the returned UPL "
+                "reference in your IRC reply.\n"
+            )
     if has_tracker:
         instructions += (
             "\n## Preparing files\n\n"
@@ -398,6 +413,7 @@ def role_documents(cfg, person, references, home):
         "skills": skills,
         "crew": crew,
         "claudePrompt": claude_prompt,
+        **({"flint": True} if flint else {}),
     }
 
 
@@ -581,7 +597,9 @@ def provision_role(documents):
     skills = documents["skills"]
     if not set(skills) <= set(SKILLS):
         raise ValueError("Unknown fleet skill.")
-    for name in SKILLS:
+    if documents.get("flint"):
+        skills = {**skills, **{name: screenshots.flint_skill(name).read_text() for name in screenshots.FLINT_SKILLS}}
+    for name in (*SKILLS, *screenshots.FLINT_SKILLS):
         path = directory / "skills" / name / "SKILL.md"
         if name in skills:
             write_private(agent_directory(".config", "opencode", "skills", name) / "SKILL.md", skills[name].encode())

@@ -23,6 +23,7 @@ FILES = (
     "lib/agent_files.py", "lib/workspaces.py", "lib/network.py", "lib/roles.py", "lib/medical.py", "lib/sessions.py",
     "lib/standard_channels.py", "lib/fleet_records.py", "lib/toolchains.py", "lib/screenshots.py", "lib/memory.py",
     "lib/screenshots/package.json", "lib/screenshots/package-lock.json", "lib/screenshots/mermaid-render.cjs",
+    "lib/screenshots/flint-render.mjs",
     "lib/releases.tsv",
     *(f"lib/roles/{role}/{template}" for role in ("rear-admiral", "captain", "crew") for template in ("AGENTS.md", "SKILL.md")),
     "lib/roles/captain/CREW.md", "lib/roles/captain/WORKSPACE.md",

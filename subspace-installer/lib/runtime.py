@@ -2014,7 +2014,7 @@ def agent_socket_directories(cfg):
     return [agent_socket(person["id"]).parent for person in cfg["members"]]
 
 
-def harness_permissions(cfg, person, starter_grants=()):
+def harness_permissions(cfg, person, starter_grants=(), *, flint=False):
     """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener or a hosted API is
     configured, and with a hosted API the officer's REST command (SUBSPACE_REQUEST).
 
@@ -2025,6 +2025,11 @@ def harness_permissions(cfg, person, starter_grants=()):
     """
     permissions = person["harness"]["permissions"]
     commands = list(starter_grants)
+    if flint:
+        commands.extend((
+            {"action": "flint_*", "resource": "*", "effect": "allow"},
+            {"action": "shell", "resource": "flint-render *", "effect": "allow"},
+        ))
     if cfg.get("captainPeerMessages") and person["crew"]:
         commands.extend({"action": "fleet_peer_message", "resource": peer["id"], "effect": "allow"}
                         for peer in cfg["members"] if peer["crew"] and peer["id"] != person["id"])
@@ -2053,12 +2058,12 @@ def harness_permissions(cfg, person, starter_grants=()):
     return granted
 
 
-def captain_permissions(cfg, person):
+def captain_permissions(cfg, person, *, flint=False):
     """The captain root's stored grants: its harness policy plus the crew tools when it hosts crew, and the
     dispatch answer tool when agent dispatch is on."""
     if not person["crew"]:
-        return harness_permissions(cfg, person)
-    permissions = harness_permissions(cfg, person, CREW_EFFORT_GRANTS)
+        return harness_permissions(cfg, person, flint=flint)
+    permissions = harness_permissions(cfg, person, CREW_EFFORT_GRANTS, flint=flint)
     return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
 
 
@@ -2367,7 +2372,8 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         models = catalogue.setdefault(worker["family"], [])
         if worker["model"] not in models:
             models.append(worker["model"])
-    permissions = harness_permissions(cfg, person)
+    flint = documents.get("flint", False)
+    permissions = harness_permissions(cfg, person, flint=flint)
     engine = {
         "model": harness_model(harness), "permissions": permissions,
         "providers": {PROVIDERS[family]: model_provider(cfg, family, models) for family, models in catalogue.items()},
@@ -2385,6 +2391,10 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
     if "mcp" in engine:
         engine["mcp"]["servers"]["subspace_files"] = {"type": "local", "command": officer_upload_command(cfg, person), "timeout": 95_000}
         engine["mcp"]["servers"]["subspace_publish"] = {"type": "local", "command": officer_publish_command(cfg, person), "timeout": 95_000}
+    if flint:
+        engine.setdefault("mcp", {"servers": {}})["servers"]["flint"] = {
+            "type": "local", "command": [str(screenshots.FLINT_MCP)],
+        }
     if has_repository_refresh(cfg, person):
         servers = engine.setdefault("mcp", {"servers": {}})["servers"]
         servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(cfg), "timeout": 110000}
@@ -2427,7 +2437,8 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
                     "options": options,
                 })
             backend["sessionID"] = session_id
-        backend.update(agent=sessions.CAPTAIN_AGENT, permissions=captain_permissions(cfg, person), enforcePermissions=True)
+        backend.update(agent=sessions.CAPTAIN_AGENT, permissions=captain_permissions(cfg, person, flint=flint),
+                       enforcePermissions=True)
     elif person["role"] == "rear_admiral" and session_id:
         # Agent dispatch pins the rear admiral's IRC registration to one root, which captains name as their
         # rear admiral. Slack and Teams keep their own sessions (render passes them an unpinned copy).
@@ -2514,6 +2525,8 @@ def claude_backend(cfg, person, workspace, documents):
         backend["mcpServers"]["subspace_files"] = {"type": "stdio", "command": command, "args": args}
         command, *args = officer_publish_command(cfg, person)
         backend["mcpServers"]["subspace_publish"] = {"type": "stdio", "command": command, "args": args}
+    if documents.get("flint"):
+        backend.setdefault("mcpServers", {})["flint"] = {"type": "stdio", "command": str(screenshots.FLINT_MCP)}
     if person["role"] == "captain" and github_officer_operations(cfg, person):
         command, *args = github_officer_mcp_command(cfg)
         backend.setdefault("mcpServers", {})["github_officer"] = {"type": "stdio", "command": command, "args": args}
@@ -3065,7 +3078,7 @@ def policy_lines(cfg):
         if person["harness"]["type"] != "opencode":
             continue
         path = ETC / f"opencode-{person['id']}.json"
-        policy = [text(rule) for rule in harness_permissions(cfg, person)]
+        policy = [text(rule) for rule in harness_permissions(cfg, person, flint=cfg["screenshots"])]
         if not path.exists():
             new.append(f"{person['id']} ({len(policy)} rules)")
             continue
@@ -3485,6 +3498,8 @@ def render(cfg, extra, prune=False):
     # The root-owned parent makes the wildcard safe for active and retired
     # officer exports. systemd-tmpfiles ages contents without following links.
     write(OFFICER_EXPORT_TMPFILES, f"e {STATE}/file-exports/* - - - 30d -\n", 0o644)
+    install_screenshots(cfg)
+    flint = cfg["screenshots"] and screenshots.flint_ready(screenshots.pins())
     homes = {}
     documents = {}
     for person in cfg["members"]:
@@ -3498,7 +3513,7 @@ def render(cfg, extra, prune=False):
             directory(STATE / "file-exports", 0o711)
             directory(officer_file_exports(person), 0o2750, user, GATEWAY)
         references = STATE / "references" / agent_id if cfg["repositories"] else None
-        documents[agent_id] = role_documents(cfg, person, references, home)
+        documents[agent_id] = role_documents(cfg, person, references, home, flint=flint)
         if enrolled(cfg):
             add_request_guidance(documents[agent_id], [SUBSPACE_REQUEST.name])
         subprocess.run(
@@ -3667,7 +3682,6 @@ def render(cfg, extra, prune=False):
     units.insert(0, render_firewall(cfg))
     write(ETC / "toolchains.toml", toolchains.mise_config(cfg["toolchains"]), 0o644)
     install_toolchains(cfg, homes)
-    install_screenshots(cfg)
     units.extend(maintenance_units(cfg))
 
     path = ETC / "units"
@@ -3690,6 +3704,7 @@ def commission(prune, existing=False):
     reaches the session before the gateway restarts with it. That pass is best effort and renders nothing.
     """
     cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True))
+    flint = cfg["screenshots"] and screenshots.flint_ready(screenshots.pins())
     pinned, failed = [], []
     for person in cfg["members"]:
         # Captains with crew, and the rear admiral while agent dispatch is on (captains name its root).
@@ -3707,7 +3722,7 @@ def commission(prune, existing=False):
                 "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
                 "crew": [worker["id"] for worker in person["crew"]],
                 "model": session_model(harness),
-                "permissions": harness_permissions(cfg, person) if rear else captain_permissions(cfg, person),
+                "permissions": (harness_permissions if rear else captain_permissions)(cfg, person, flint=flint),
             }
             if person["crew"]:
                 # Stargate's crew state names the first repository's checkout as the default project, whether

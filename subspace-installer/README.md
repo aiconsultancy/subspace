@@ -736,9 +736,17 @@ every fleet VM gets the means in its base install, whatever its toolchains:
   file without Markdown fences. The command uses the installed browser
   offline so private diagrams stay on the VM. The rear admiral can also pass
   `-` as the input to author a diagram on standard input.
+- **Flint charts**: the local `flint` [MCP server](https://microsoft.github.io/flint-chart/#/mcp)
+  and bundled authoring skills are available to officers. The server
+  validates, compiles and renders chart specifications with inline
+  `data.values`. OpenCode also installs the five Flint skills in its skill
+  directory. From a shell, `flint-render chart.png < chart.json` writes a PNG
+  and `flint-render chart.svg < chart.json` writes an SVG. Captains on a fleet
+  with the Subspace API can upload the PNG using `subspace_files.upload_file`
+  and include the returned attachment reference in an IRC reply.
 
 Every version is pinned in one place,
-[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright and Mermaid
+[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright, Mermaid and Flint
 (with its `package-lock.json`, so `npm ci` checks each package's integrity
 hash and runs no package scripts), the Chromium revision that Playwright
 names, the Node that runs it, and the distribution packages for Ubuntu
@@ -750,7 +758,7 @@ apt does not offer, or a browser download that fails, is reported and does
 not stop the install; the next run tries again.
 
 After every install, the installer takes a screenshot of a local page under
-`xvfb-run` and renders a Mermaid PNG. It runs both with the tool environment
+`xvfb-run` and renders Mermaid and Flint PNGs. It runs all three with the tool environment
 of a captain with crew when one is available. It prints `Screenshot check ...
 PASS` or a warning identifying the failing command, and continues the install.
 
@@ -761,10 +769,12 @@ browsers with `PLAYWRIGHT_BROWSERS_PATH=/opt/subspace-fleet/browsers`.
 
 To do without them, set `"screenshots": false` in `fleet.json` (on a VM set
 up with `subspace-setup`, `/root/fleet/fleet.json`, which setup keeps) and run
-the installer or `sudo subspace-setup` again. Nothing is removed; to remove
+the installer or `sudo subspace-setup` again. This also turns off the Flint MCP
+registration and managed skills. To remove the installed binaries and packages, use
 what an earlier run installed, `sudo rm -rf /opt/subspace-fleet/playwright
 /opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright
-/opt/subspace-fleet/bin/mermaid-render` (the
+/opt/subspace-fleet/bin/mermaid-render /opt/subspace-fleet/bin/flint-chart-mcp
+/opt/subspace-fleet/bin/flint-render` (the
 distribution packages stay).
 
 ### Toolchains
@@ -2570,7 +2580,7 @@ whether at its cap or with the whole VM out of memory.
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
 | `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust`, `dotnet` and `yarn` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
 | `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
-| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots), including Xvfb with keyboard maps and fonts, Playwright with its Chromium, and offline Mermaid rendering. `false` installs nothing for them and leaves in place what an earlier run installed. |
+| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots), including Xvfb with keyboard maps and fonts, Playwright with its Chromium, Mermaid and Flint. `false` disables the managed Flint MCP registration and skills and skips visual tool installation. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap), or `auto` for the installer's own value. Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. `localApi: true` says the Subspace API and its PostgreSQL run on this VM, so the sizing leaves them their room; `subspace-setup` sets it whenever it runs the API here. |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |

@@ -582,6 +582,43 @@ class FleetPolicyTests(unittest.TestCase):
                     for prompt in documents["crew"].values():
                         self.assertNotIn("## Closing Subspace issues", prompt)
 
+    def test_flint_is_available_to_both_officer_harnesses_and_keeps_operator_denials(self):
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["harness"] = {**config["harness"], "captain": {"extraPermissions": [
+            {"action": "flint_render_chart", "resource": "*", "effect": "deny"},
+        ]}}
+        cfg = validate(config, officer_secrets())
+        captain = cfg["members"][1]
+        home = Path("/home")
+        documents = roles.role_documents(cfg, captain, None, home, flint=True)
+        self.assertIn("flint-render", documents["instructions"])
+        self.assertIn("get_flint_skill", documents["claudePrompt"])
+        saved = {}
+
+        def save(name, settings, _user):
+            saved[name] = settings
+            return Path(f"/etc/subspace-fleet/{name}.json")
+
+        with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
+                patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine.service"):
+            _, backend, _, _ = runtime.render_engine(cfg, captain, home, home / "workspace", 4097, b"seed",
+                                                     documents, "ses_fixture")
+        engine = saved["opencode-orion"]
+        self.assertEqual(engine["mcp"]["servers"], {"flint": {
+            "type": "local", "command": [str(runtime.screenshots.FLINT_MCP)],
+        }})
+        for permissions in (engine["permissions"], backend["permissions"]):
+            self.assertEqual(fixture.opencode_decision(permissions, "flint_get_flint_skill", ["*"]), "allow")
+            self.assertEqual(fixture.opencode_decision(permissions, "flint_render_chart", ["*"]), "deny")
+        claude = dict(captain, harness={**captain["harness"], "allowedTools": ["Read"]})
+        backend = runtime.claude_backend(cfg, claude, home / "workspace", documents)
+        self.assertEqual(backend["mcpServers"]["flint"], {
+            "type": "stdio", "command": str(runtime.screenshots.FLINT_MCP),
+        })
+        self.assertNotIn("mcpServers", runtime.claude_backend(cfg, claude, home / "workspace",
+                         roles.role_documents(cfg, captain, None, home)))
+
     def test_a_missing_api_skill_is_named_before_anything_is_rendered(self):
         config = example_config()
         config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}

@@ -412,7 +412,7 @@ for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.p
 done
 # The screenshot tools' pinned versions and renderer, which runtime.py render installs from.
 install -d -m 0755 "$app/lib/screenshots"
-for asset in package.json package-lock.json mermaid-render.cjs; do
+for asset in package.json package-lock.json mermaid-render.cjs flint-render.mjs; do
     install_file "$here/lib/screenshots/$asset" "$app/lib/screenshots/$asset" 0644
 done
 install -d -m 0755 "$app/lib/git-hooks"

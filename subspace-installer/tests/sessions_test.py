@@ -476,7 +476,8 @@ class InstalledFleet(unittest.TestCase):
 
     def test_the_dry_run_prints_each_officers_policy_changes_against_the_installed_one(self):
         config, secrets = crew_fleet("orion")
-        self.render(config, secrets)
+        with patch.object(runtime.screenshots, "flint_ready", return_value=True):
+            self.render(config, secrets)
         self.assertEqual(runtime.policy_lines(runtime.validate(config, secrets)),
                          ["Tool policy unchanged: atlas, orion."])
         # Delegate captains, a new captain and an extra rule for every officer.
@@ -502,7 +503,7 @@ class InstalledFleet(unittest.TestCase):
                       "matching rule wins):", lines)
         self.assertIn('  + shell "kubectl get *" allow', lines[lines.index(next(
             line for line in lines if line.startswith("Tool policy of atlas"))) + 1])
-        lyra = len(runtime.harness_permissions(cfg, cfg["members"][2]))
+        lyra = len(runtime.harness_permissions(cfg, cfg["members"][2], flint=True))
         self.assertEqual(lines[-1], f"Tool policy of officers with none installed yet: lyra ({lyra} rules).")
         # One whose installed policy this user cannot read is named.
         with patch.object(runtime.os, "access", side_effect=lambda path, mode: not str(path).endswith("orion.json")):

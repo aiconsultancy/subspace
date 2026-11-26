@@ -40,7 +40,8 @@ pids+=("$!")
 
 "$installer" --config "$config" --dry-run --no-systemd
 test ! -e "$etc"
-"$installer" --config "$config" --no-systemd
+"$installer" --config "$config" --no-systemd | tee "$work/first-install.log"
+grep -F 'Screenshot check, as ss-orion: PASS' "$work/first-install.log" | grep -Fq 'Flint PNG'
 zip -q -j "$work/check.zip" "$config"
 unzip -tq "$work/check.zip"
 mapfile -t units < "$etc/units"

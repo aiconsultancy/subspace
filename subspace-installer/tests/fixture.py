@@ -614,6 +614,14 @@ def check_shape(phase):
         assert engine["mcp"]["servers"]["subspace"]["url"] == "http://127.0.0.1:3001/mcp"
         assert {"action": "subspace_*", "resource": "*", "effect": "allow"} in permissions
         assert (opencode / "skills/subspace-tracker/SKILL.md").is_file()
+        assert engine["mcp"]["servers"]["flint"] == {
+            "type": "local", "command": ["/opt/subspace-fleet/bin/flint-chart-mcp"],
+        }
+        assert {"action": "flint_*", "resource": "*", "effect": "allow"} in permissions
+        assert "## Flint charts" in instructions
+        for kind in ("app", "board", "chart", "interaction", "theme"):
+            skill = opencode / "skills" / f"flint-{kind}-author" / "SKILL.md"
+            assert f"name: flint-{kind}-author" in skill.read_text()
         # The example's captains delegate: no edit tool, and an open shell that refuses Git's writes.
         delegate = role == "captain" and json.loads((etc / "fleet.json").read_text()).get("captainTools") == "delegate"
         assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role == "captain" and not delegate)
