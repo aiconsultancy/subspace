@@ -51,3 +51,40 @@ async fn filtered_search_and_related_items_keep_untrusted_bounded_results() {
     assert_eq!(related["untrusted"], true);
     assert!(serde_json::to_vec(&related).unwrap().len() <= crate::search::MAX_RESPONSE_BYTES);
 }
+
+#[tokio::test]
+async fn related_items_accept_a_registered_reference_kind() {
+    subspace_search::register_reference_kind("example-ref").unwrap();
+    let (_root, service, scope) = fixture();
+    service
+        .upsert(&scope, &[document("needle".into())])
+        .unwrap();
+    let reference = ReferenceIdentity::of_kind("example-ref", &["42"]).unwrap();
+    let metadata = IndexMetadata {
+        project: None,
+        references: vec![Reference {
+            identity: reference.clone(),
+            relation_type: "work-item".into(),
+            matched: ReferenceMatch::Exact,
+        }],
+    };
+    service
+        .index_metadata(&scope, "message", &metadata)
+        .unwrap();
+    let tools = catalog(service);
+    let related = call(
+        &tools,
+        "related_items",
+        json!({"reference": reference.as_str(), "boards":["irc"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(related["hits"].as_array().unwrap().len(), 1);
+    let refused = call(
+        &tools,
+        "related_items",
+        json!({"reference": "example-unknown:1"}),
+    )
+    .await;
+    assert!(refused.is_err());
+}

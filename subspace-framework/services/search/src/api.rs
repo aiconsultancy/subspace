@@ -148,6 +148,12 @@ impl ReferenceIdentity {
         canonical("github-copilot-agents", &[task])
     }
 
+    /// An identity of an app-registered kind; see `register_reference_kind`.
+    // qual:api - Apps build identities for their own registered kinds.
+    pub fn of_kind(kind: &str, parts: &[&str]) -> Result<Self, String> {
+        canonical(kind, parts)
+    }
+
     pub fn parse(value: &str) -> Result<Self, String> {
         let identity = Self(value.to_owned());
         validate_identity(&identity)?;
@@ -214,14 +220,10 @@ fn validate_identity(identity: &ReferenceIdentity) -> Result<(), String> {
     let Some((kind, value)) = identity.0.split_once(':') else {
         return Err("Invalid reference identity".into());
     };
-    let known = [
-        "repository",
-        "branch",
-        "commit",
-        "github",
-        "github-copilot-agents",
-    ];
-    if !known.contains(&kind) || value.is_empty() || identity.0.len() > MAX_REFERENCE_BYTES {
+    if !crate::reference_kinds::is_known(kind)
+        || value.is_empty()
+        || identity.0.len() > MAX_REFERENCE_BYTES
+    {
         return Err("Invalid reference identity".into());
     }
     Ok(())
