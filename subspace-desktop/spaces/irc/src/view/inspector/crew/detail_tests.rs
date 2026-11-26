@@ -18,7 +18,7 @@ fn project_keys_keep_default_rows_distinct_from_named_rows_and_each_other() {
 }
 
 #[test]
-fn project_keeps_full_progress_git_counts_and_pull_request_details() {
+fn project_keeps_git_counts_and_pull_request_details_outside_the_text_pager() {
     let summary = "Chart the coast and mark safe approaches. ".repeat(80);
     let progress = "Tests passed; reviewing the final changes. ".repeat(80);
     let context: CrewContext = serde_json::from_value(serde_json::json!({
@@ -30,8 +30,6 @@ fn project_keeps_full_progress_git_counts_and_pull_request_details() {
     let project = Project::of(&context);
     assert_eq!(project.name, "charts");
     for (label, expected) in [
-        ("Current task", summary.as_str()),
-        ("Progress", progress.as_str()),
         ("Branch", "feat/coast"),
         ("Base", "origin/main"),
         ("Ahead", "2"),
@@ -49,6 +47,12 @@ fn project_keeps_full_progress_git_counts_and_pull_request_details() {
             "{label}"
         );
     }
+    assert!(
+        !project
+            .facts
+            .iter()
+            .any(|(label, _)| matches!(*label, "Current task" | "Phase" | "Progress"))
+    );
     assert!(
         project.pull_request.is_none(),
         "no dead button for an unsupported PR URL"

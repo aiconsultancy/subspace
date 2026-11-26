@@ -53,7 +53,7 @@ fn reads_the_selected_member_and_its_projects() {
         r#"{"ship":"lyra","member":{"id":"wren","contexts":[{"project":null,"git":null},{"project":"maps","current":{"progress":"Two checks left"},"git":{"branch":"feat/maps","changedFiles":0},"pullRequest":{"number":3,"url":"https://example.com/maps/pull/3"}}]}}"#
     ));
     let detail = FleetClient::new(address, Secret::new(TOKEN))
-        .crew("lyra", "wren")
+        .crew("lyra", "wren", 2)
         .unwrap();
     let head = server.join().unwrap();
     assert_eq!(
@@ -92,7 +92,7 @@ fn a_crew_read_reports_missing_or_mismatched_members() {
     ] {
         let (address, server) = answer_once(reply);
         assert_eq!(
-            FleetClient::new(address, Secret::new(TOKEN)).crew("lyra", "wren"),
+            FleetClient::new(address, Secret::new(TOKEN)).crew("lyra", "wren", 0),
             Err(error)
         );
         server.join().unwrap();

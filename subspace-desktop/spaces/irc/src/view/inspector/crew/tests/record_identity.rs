@@ -3,6 +3,84 @@ use serde_json::json;
 use super::{DetailState, Roster, member};
 
 #[test]
+fn pull_requests_with_the_same_number_in_different_repositories_do_not_mix() {
+    let mut roster = member("first", "Checking…", 1);
+    roster.contexts[0].pull_request = Some(
+        serde_json::from_value(json!({
+            "number": 41, "url": "https://github.com/example/chart/pull/41",
+            "title": "Chart the coast", "state": "open", "checks": "passing"
+        }))
+        .unwrap(),
+    );
+    roster.contexts[0].pull_request_known = true;
+    let mut state = DetailState::new(Roster::Present(Box::new(roster.clone())), 0);
+    let read = state.begin().unwrap();
+    let mut full = roster.clone();
+    let pr = full.contexts[0].pull_request.as_mut().unwrap();
+    pr.url = "https://github.com/example/harbour/pull/41".into();
+    pr.title = "Mark the harbour".into();
+    pr.state = "draft".into();
+    full.contexts[0].pull_request_known = false;
+    state.finish(read, Ok(full));
+    roster.contexts[0].pull_request.as_mut().unwrap().checks = "running".into();
+    let expected = roster.contexts[0].clone();
+    assert!(state.update(Roster::Present(Box::new(roster)), 0));
+    let shown = state.shown(true).0.unwrap();
+    assert_eq!(shown.contexts[0].pull_request, expected.pull_request);
+    assert!(shown.contexts[0].pull_request_known);
+}
+
+#[test]
+fn a_new_base_keeps_the_counts_and_error_from_that_observation() {
+    let mut roster = member("first", "Checking…", 1);
+    let git = roster.contexts[0].git.as_mut().unwrap();
+    git.base = Some("origin/main".into());
+    git.ahead = Some(2);
+    git.behind = Some(3);
+    git.changed_files = Some(4);
+    let mut state = DetailState::new(Roster::Present(Box::new(roster.clone())), 0);
+    let read = state.begin().unwrap();
+    let mut full = roster.clone();
+    let git = full.contexts[0].git.as_mut().unwrap();
+    git.ahead = Some(8);
+    git.behind = Some(9);
+    git.changed_files = Some(10);
+    git.error = Some("Could not compare revisions.".into());
+    state.finish(read, Ok(full));
+    let git = roster.contexts[0].git.as_mut().unwrap();
+    git.base = Some("origin/stable".into());
+    git.checked_at = 2;
+    let expected = git.clone();
+    assert!(state.update(Roster::Present(Box::new(roster)), 0));
+    assert_eq!(
+        state.shown(true).0.unwrap().contexts[0].git.as_ref(),
+        Some(&expected)
+    );
+}
+
+#[test]
+fn a_checkout_change_discards_the_full_detail_pull_request_and_lookup() {
+    let mut roster = member("first", "Checking…", 1);
+    roster.contexts[0].git.as_mut().unwrap().branch = Some("chart".into());
+    let mut state = DetailState::new(Roster::Present(Box::new(roster.clone())), 0);
+    let read = state.begin().unwrap();
+    let mut full = roster.clone();
+    full.contexts[0].pull_request = Some(
+        serde_json::from_value(json!({
+            "number": 41, "url": "https://github.com/example/chart/pull/41"
+        }))
+        .unwrap(),
+    );
+    full.contexts[0].pull_request_known = true;
+    state.finish(read, Ok(full));
+    roster.contexts[0].git.as_mut().unwrap().branch = Some("harbour".into());
+    assert!(state.update(Roster::Present(Box::new(roster)), 0));
+    let shown = state.shown(true).0.unwrap();
+    assert!(shown.contexts[0].pull_request.is_none());
+    assert!(!shown.contexts[0].pull_request_known);
+}
+
+#[test]
 fn a_roster_update_keeps_pull_request_facts_together() {
     let mut roster = member("first", "Checking…", 1);
     roster.contexts[0].pull_request = Some(

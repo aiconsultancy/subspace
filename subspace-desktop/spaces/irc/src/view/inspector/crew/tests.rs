@@ -146,7 +146,7 @@ fn a_response_merges_task_text_changed_during_the_read() {
 }
 
 #[test]
-fn a_routine_git_change_keeps_unchanged_full_fields() {
+fn a_routine_git_change_uses_the_latest_git_record_without_a_new_read() {
     let mut bounded = member("first", "Checking…", 1);
     let git = bounded.contexts[0].git.as_mut().unwrap();
     git.branch = Some("chart-the-coast".into());
@@ -162,8 +162,9 @@ fn a_routine_git_change_keeps_unchanged_full_fields() {
     state.finish(read, Ok(full));
     let shown = state.shown(true).0.unwrap();
     let git = shown.contexts[0].git.as_ref().unwrap();
-    assert_eq!(git.base.as_deref(), Some("origin/main"));
+    assert_eq!(git.base.as_deref(), Some("main"));
     assert_eq!(git.ahead, Some(2));
+    assert_eq!(git.checked_at, 3);
     assert_eq!(state.begin(), None);
 }
 

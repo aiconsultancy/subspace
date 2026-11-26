@@ -31,17 +31,26 @@ or reconnecting to the fleet also rearms the read. Hidden crew views do
 not start reads; showing a retained view rearms the read and ignores any
 older response. A 404 falls back to the roster without polling. Showing the
 detail again, Reload, a reconnect or a returning member each probes the route.
-Task summaries and progress each carry up to 64,000 characters, the dispatch
-limit. The crew detail response allows up to 16 MiB of JSON; the fleet and
-ship reads still allow 8 MiB. Control and bidirectional formatting codes are
-written out as code points, except line breaks and tabs.
+Each project's current task text displays in 512-code-point pages with no
+truncation. The member header shows the primary task's ID and status without
+repeating its text. Control and bidirectional formatting codes are shown as
+code-point markers, including tabs and line breaks in task fields.
+
+The crew detail read budgets 15 tasks per project context, each with two
+64,000-code-point fields at up to six JSON bytes per code point. It multiplies
+that budget by the member's context count in the latest roster (at least one),
+then rounds it up to a power of two to allow for JSON metadata: 16 MiB for one
+context, 32 MiB for two, and 64 MiB for three. Fleet and ship reads still allow
+8 MiB.
 
 ## Verification
 
-- The Fleet client tests cover the read, missing route and response identity.
-- The Channels tests cover roster changes, missing Git state, no checkout,
-  and pull request display. Ship tab tests check accessible names, keyboard
-  focus into and out of the detail view, and clearing the view on a buffer change.
+- The Fleet client tests cover the read, missing route, response identity and
+  JSON budgets for different context counts.
+- The Channels tests cover roster changes, whole Git observations, checkout
+  changes and pull request identity. Ship tab tests check accessible names,
+  keyboard focus, clearing detail on a buffer change, and paging to the end
+  of a 64,000-code-point progress field without losing control markers.
 
 ### Captures
 

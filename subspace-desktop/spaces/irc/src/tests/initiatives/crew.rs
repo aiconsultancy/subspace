@@ -131,6 +131,56 @@ fn crew_detail_explains_the_missing_token_even_without_a_roster(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
+fn crew_task_progress_draws_only_the_selected_page(cx: &mut TestAppContext) {
+    use gpui_kit::base::test_support::texts;
+
+    const PAGER: &str = "irc-crew-task-pages:named:nav:progress";
+    const LAST_PAGE: usize = 125;
+    const TAIL: &str = "🌊\t\r\u{202e}\x1bfinish";
+    const VISIBLE_TAIL: &str = "🌊⟨U+0009⟩⟨U+000D⟩⟨U+202E⟩⟨U+001B⟩finish";
+    let (_, hub, cx) = ship(cx);
+    let first = "λ".repeat(512);
+    let mut snapshot = crate::live::tests::snapshot();
+    let members = &mut snapshot.ships.get_mut("aurora-lyra").unwrap().crew_members;
+    let task = members
+        .iter_mut()
+        .find(|member| member.id == "wren")
+        .unwrap()
+        .contexts[0]
+        .current
+        .as_mut()
+        .unwrap();
+    task.progress = first.clone() + &"x".repeat(64_000 - 512 - TAIL.chars().count()) + TAIL;
+    let summary = task.summary.clone();
+    hub.update(cx, |hub, cx| {
+        hub.fleets = [(
+            "aurora".to_owned(),
+            crate::live::FleetLive::new(live(), Some(&snapshot)),
+        )]
+        .into();
+        cx.notify();
+    });
+    settle(cx);
+    install_fleet_api(cx);
+    cx.update(|window, cx| {
+        window.click(ROW, cx);
+        window.render_frame(cx);
+        let drawn = texts(window);
+        assert!(!drawn.iter().any(|text| text.text().contains("finish")));
+        assert_eq!(
+            drawn.iter().filter(|text| text.text() == summary).count(),
+            1
+        );
+        assert!(drawn.iter().any(|text| text.text() == first));
+        window.within(PAGER).click(LAST_PAGE, cx);
+        window.render_frame(cx);
+        let drawn = texts(window);
+        assert!(!drawn.iter().any(|text| text.text() == first));
+        assert!(drawn.iter().any(|text| text.text().ends_with(VISIBLE_TAIL)));
+    });
+}
+
+#[gpui_kit::test]
 fn an_expanded_roster_opens_the_thirtieth_member(cx: &mut TestAppContext) {
     const LAST: &str = "irc-inspector-crew:member-30";
     const TOGGLE: &str = "irc-crew-toggle-roster";

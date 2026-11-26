@@ -19,21 +19,24 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A fleet with many ships and crew stays far below this.
 const MAX_JSON_BYTES: u64 = 8 * 1024 * 1024;
-// Gateway crew-detail bounds: current, last outcome, five queued and
-// eight recent tasks, each with a summary and progress. Round the maximum
-// escaped text size up to leave headroom for metadata and the JSON envelope.
-const CREW_DETAIL_TASKS: u64 = 1 + 1 + 5 + 8;
+// Per project context: current, last outcome, five queued and eight recent
+// tasks, each with a summary and progress.
+const CREW_DETAIL_TASKS_PER_CONTEXT: u64 = 1 + 1 + 5 + 8;
 const CREW_TASK_TEXT_FIELDS: u64 = 2;
 const CREW_TASK_TEXT_CODE_POINTS: u64 = 64_000;
 const JSON_BYTES_PER_CODE_POINT: u64 = 6;
-const CREW_DETAIL_TEXT_BYTES: u64 = CREW_DETAIL_TASKS
+const CREW_CONTEXT_TEXT_BYTES: u64 = CREW_DETAIL_TASKS_PER_CONTEXT
     * CREW_TASK_TEXT_FIELDS
     * CREW_TASK_TEXT_CODE_POINTS
     * JSON_BYTES_PER_CODE_POINT;
 pub(crate) const USER_AGENT: &str = concat!("Subspace/", env!("CARGO_PKG_VERSION"));
 
-const fn crew_detail_json_limit() -> u64 {
-    CREW_DETAIL_TEXT_BYTES.next_power_of_two()
+fn crew_detail_json_limit(roster_contexts: usize) -> u64 {
+    // Round up to leave room for metadata and the JSON envelope.
+    CREW_CONTEXT_TEXT_BYTES
+        .saturating_mul(roster_contexts.max(1) as u64)
+        .checked_next_power_of_two()
+        .unwrap_or(u64::MAX)
 }
 
 /// A fleet's address and the token saved for it. Deliberately has no
@@ -70,10 +73,19 @@ impl FleetClient {
     }
 
     /// `GET /api/v1/ships/{ship}/crew/{member}`. Run in the background.
-    /// `NotFound` can mean an absent member or a gateway without this route.
-    pub fn crew(&self, ship: &str, member: &str) -> Result<CrewDetail, Error> {
-        self.get::<CrewDetail>(&["ships", ship, "crew", member], crew_detail_json_limit())?
-            .matching(ship, member)
+    /// Give the member's context count from the most recent roster to size
+    /// the read. `NotFound` can mean an absent member or an older gateway.
+    pub fn crew(
+        &self,
+        ship: &str,
+        member: &str,
+        roster_contexts: usize,
+    ) -> Result<CrewDetail, Error> {
+        self.get::<CrewDetail>(
+            &["ships", ship, "crew", member],
+            crew_detail_json_limit(roster_contexts),
+        )?
+        .matching(ship, member)
     }
 
     fn get<T: DeserializeOwned>(&self, segments: &[&str], limit: u64) -> Result<T, Error> {
@@ -155,21 +167,26 @@ fn read_json<T: DeserializeOwned>(mut response: Response<Body>, limit: u64) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        CREW_DETAIL_TASKS, CREW_TASK_TEXT_CODE_POINTS, CREW_TASK_TEXT_FIELDS,
+        CREW_DETAIL_TASKS_PER_CONTEXT, CREW_TASK_TEXT_CODE_POINTS, CREW_TASK_TEXT_FIELDS,
         JSON_BYTES_PER_CODE_POINT, MAX_JSON_BYTES, crew_detail_json_limit, retry_after,
         status_error,
     };
     use crate::Error;
 
     #[test]
-    fn crew_detail_cap_covers_the_gateway_text_bound_with_headroom() {
-        let bound = CREW_DETAIL_TASKS
+    fn crew_detail_cap_covers_every_roster_context_with_headroom() {
+        let bound = CREW_DETAIL_TASKS_PER_CONTEXT
             * CREW_TASK_TEXT_FIELDS
             * CREW_TASK_TEXT_CODE_POINTS
             * JSON_BYTES_PER_CODE_POINT;
         assert_eq!(bound, 11_520_000);
-        assert_eq!(crew_detail_json_limit(), bound.next_power_of_two());
-        assert_eq!(crew_detail_json_limit(), 16 * 1024 * 1024);
+        for (contexts, mib) in [(0, 16), (1, 16), (2, 32), (3, 64), (8, 128)] {
+            assert_eq!(
+                crew_detail_json_limit(contexts),
+                (bound * contexts.max(1) as u64).next_power_of_two()
+            );
+            assert_eq!(crew_detail_json_limit(contexts), mib * 1024 * 1024);
+        }
         assert_eq!(MAX_JSON_BYTES, 8 * 1024 * 1024);
     }
 

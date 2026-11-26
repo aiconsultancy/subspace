@@ -4,13 +4,15 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use subspace_client_fleet::Error;
-use subspace_client_fleet::model::{CrewContext, CrewMember};
+use subspace_client_fleet::model::CrewMember;
 
+mod overlay;
 mod retry;
 mod roster;
+use overlay::overlay_facts;
 use retry::ReadWait;
 pub(super) use roster::Roster;
-use roster::{current_in, same_checkout, same_task_facts};
+use roster::current_in;
 
 pub(super) struct DetailState {
     pub roster: Roster,
@@ -254,77 +256,4 @@ impl FullDetail {
         }
         shown
     }
-}
-
-macro_rules! overlay {
-    ($shown:ident, $old:ident, $new:ident; $($field:ident),+ $(,)?) => {{$(
-        if $old.$field != $new.$field {
-            $shown.$field.clone_from(&$new.$field);
-        }
-    )+}};
-}
-
-fn overlay_facts(shown: &mut Cow<'_, CrewMember>, previous: &CrewContext, next: &CrewContext) {
-    let git_changed = match (&previous.git, &next.git) {
-        (Some(old), Some(new)) => {
-            let mut old = old.clone();
-            old.checked_at = new.checked_at;
-            &old != new
-        }
-        (old, new) => old != new,
-    };
-    let task_changed = !same_task_facts(previous.current.as_ref(), next.current.as_ref());
-    if !needs_overlay(previous, next, git_changed || task_changed) {
-        return;
-    }
-    let Some(context) = shown
-        .to_mut()
-        .contexts
-        .iter_mut()
-        .find(|ctx| ctx.project == next.project)
-    else {
-        shown.to_mut().contexts.push(next.clone());
-        return;
-    };
-    if git_changed {
-        match (&mut context.git, &previous.git, &next.git) {
-            (Some(shown), Some(old), Some(new))
-                if same_checkout(shown, new) && same_checkout(old, new) =>
-            {
-                overlay!(shown, old, new; base, ahead, behind, changed_files, error)
-            }
-            (shown, _, new) => shown.clone_from(new),
-        }
-    }
-    if previous.pull_request != next.pull_request {
-        match (
-            &mut context.pull_request,
-            &previous.pull_request,
-            &next.pull_request,
-        ) {
-            (Some(shown), Some(old), Some(new))
-                if shown.number == new.number && old.number == new.number =>
-            {
-                overlay!(shown, old, new; title, url, state, checks)
-            }
-            (shown, _, new) => shown.clone_from(new),
-        }
-    }
-    if task_changed {
-        match (&mut context.current, &previous.current, &next.current) {
-            (Some(shown), Some(old), Some(new)) if shown.id == new.id => {
-                overlay!(shown, old, new; status, updated_at, summary, phase, progress)
-            }
-            (shown, _, new) => shown.clone_from(new),
-        }
-    }
-    overlay!(context, previous, next; activity, provisioned, pull_request_known);
-}
-
-fn needs_overlay(previous: &CrewContext, next: &CrewContext, details_changed: bool) -> bool {
-    details_changed
-        || previous.activity != next.activity
-        || previous.provisioned != next.provisioned
-        || previous.pull_request != next.pull_request
-        || previous.pull_request_known != next.pull_request_known
 }

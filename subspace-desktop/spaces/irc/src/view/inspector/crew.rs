@@ -48,6 +48,7 @@ pub(crate) struct Selection {
     ship: String,
     member: String,
     state: DetailState,
+    pages: detail::TaskPages,
     back: FocusHandle,
     client_state: Option<FleetState>,
     live: bool,
@@ -79,6 +80,7 @@ pub(super) fn open(
         ship: ship.clone(),
         member: member.clone(),
         state,
+        pages: detail::TaskPages::default(),
         back,
         client_state: None,
         live,
@@ -218,15 +220,18 @@ impl Selection {
         cx: &mut Context<Irc>,
     ) -> Task<()> {
         let (ship, member) = (self.ship.clone(), self.member.clone());
+        let roster_contexts = self.state.roster.context_count();
         let api = api.clone();
         // The Back control belongs to this selection, even if the same row
         // is closed and opened again before the background read returns.
         let selection_id = self.back.clone();
         cx.spawn(async move |board, cx| {
             let result = cx
-                .background_spawn(
-                    async move { client.crew(&ship, &member).map(|detail| detail.member) },
-                )
+                .background_spawn(async move {
+                    client
+                        .crew(&ship, &member, roster_contexts)
+                        .map(|detail| detail.member)
+                })
                 .await;
             _ = board.update(cx, |board, cx| {
                 if let Some(selection) = &mut board.inspector_crew
@@ -303,7 +308,7 @@ pub(super) fn body(
     });
     let detail = member
         .zip(board.dock.focused.as_ref())
-        .map(|(member, buffer)| detail::view(&member, member.current_task(), buffer, cx));
+        .map(|(member, buffer)| detail::view(&member, &selection.pages, buffer, cx));
     Some(
         v_flex()
             .w_full()

@@ -10,6 +10,13 @@ pub(in super::super) enum Roster {
 }
 
 impl Roster {
+    pub(in super::super) fn context_count(&self) -> usize {
+        match self {
+            Self::Present(member) => member.contexts.len(),
+            _ => 0,
+        }
+    }
+
     pub(in super::super) fn find(detail: Option<ShipDetail>, member: &str) -> Self {
         let Some(detail) = detail.filter(|detail| detail.ship.available && !detail.detail_stale)
         else {
@@ -67,9 +74,15 @@ fn task_revision(task: Option<&Task>) -> Option<(&str, TaskStatus, Option<i64>)>
     task.map(|task| (task.id.as_str(), task.status, task.updated_at))
 }
 
-pub(super) fn same_checkout(left: &Git, right: &Git) -> bool {
-    // Do not infer identity from a prefix of a branch name or head.
-    left.repository == right.repository && left.branch == right.branch && left.head == right.head
+pub(super) fn same_checkout(left: Option<&Git>, right: Option<&Git>) -> bool {
+    fn identity(git: &Git) -> (Option<&str>, Option<&str>, Option<&str>) {
+        (
+            git.repository.as_deref(),
+            git.branch.as_deref(),
+            git.head.as_deref(),
+        )
+    }
+    left.map(identity) == right.map(identity)
 }
 
 pub(super) fn same_task_facts(old: Option<&Task>, new: Option<&Task>) -> bool {
