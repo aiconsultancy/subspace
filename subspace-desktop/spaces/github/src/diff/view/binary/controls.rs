@@ -27,13 +27,7 @@ impl DiffView {
             .gap_2()
             .flex_wrap()
             .child(side_control(binary, status, changed, tokens, cx))
-            .child(paging_controls(
-                binary,
-                changed,
-                self.binary_path(binary),
-                tokens,
-                cx,
-            ))
+            .child(paging_controls(self, binary, tokens, cx))
     }
 }
 
@@ -76,14 +70,13 @@ fn side_selector(binary: &BinaryView, tokens: &Tokens, cx: &Context<DiffView>) -
 }
 
 fn paging_controls(
+    view: &DiffView,
     binary: &BinaryView,
-    changed: bool,
-    path: &str,
     tokens: &Tokens,
     cx: &Context<DiffView>,
 ) -> Div {
     let row = h_flex().gap_2().flex_wrap();
-    if changed {
+    if view.fleet.changed() {
         return row
             .child(
                 action_button(
@@ -105,8 +98,8 @@ fn paging_controls(
             })
             .child(div().text_color(tokens.muted).child("Loading…"));
     }
-    if let Some((retry, busy)) = &binary.retry {
-        let remaining = busy.remaining(cx);
+    if let Some(retry) = &binary.retry {
+        let remaining = view.binary_retry_remaining(cx);
         let bytes_busy = matches!(retry, Retry::Bytes(_));
         return row
             .when(!bytes_busy || binary.page.is_some(), |row| {
@@ -129,7 +122,7 @@ fn paging_controls(
         return row.child(preview::bytes_button(cx));
     }
     row.children(binary_actions(binary, false, cx))
-        .when_some(preview::format(path), |row, format| {
+        .when_some(preview::format(view.binary_path(binary)), |row, format| {
             row.child(preview::open_button(format, cx))
         })
 }

@@ -8,13 +8,11 @@ use subspace_client_fleet::{
 use subspace_framework::dashboard::Toast;
 
 use super::{DiffView, Move, Position, Retry};
-use crate::diff::view::{
-    DiffEvent, DiffSource,
-    pages::{PageBusy, validate_page},
-};
+use crate::diff::view::{DiffEvent, DiffSource, pages::validate_page};
 
 impl DiffView {
     pub(super) fn read_binary(&mut self, direction: Move, cx: &mut Context<Self>) {
+        let held = self.binary_retry_remaining(cx) > 0;
         let (DiffSource::Fleet(source), Some(at), Some(binary)) = (
             self.source.clone(),
             self.fleet.fingerprint.clone(),
@@ -22,7 +20,14 @@ impl DiffView {
         ) else {
             return;
         };
-        if self.fleet.changed() || binary.read.is_some() || binary.retry_held(cx) {
+        if self.fleet.changed() || binary.read.is_some() {
+            return;
+        }
+        if held {
+            // A reopened reader has no bytes or cursor. Its retry is Start,
+            // but an existing reader keeps the action that was refused.
+            binary.retry.get_or_insert(Retry::Bytes(direction));
+            cx.notify();
             return;
         }
         let Some(position) = binary.destination(&direction) else {
@@ -78,7 +83,7 @@ impl DiffView {
                 self.fleet.unstable |= unstable;
             }
             Err(Error::Busy(wait)) => {
-                binary.retry = Some((Retry::Bytes(direction), PageBusy::new(wait, cx)));
+                self.hold_binary_retry(Retry::Bytes(direction), wait, cx);
             }
             Err(error) => self.fleet_page_error(error, cx),
         }

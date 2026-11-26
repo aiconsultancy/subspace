@@ -105,6 +105,57 @@ fn binary_retry_after_ten_keeps_the_current_bytes_until_due(cx: &mut TestAppCont
     assert_page(&view, window, DiffSide::New, 0);
 }
 
+#[gpui_kit::test]
+fn reopening_binary_keeps_retry_after_for_the_pinned_side(cx: &mut TestAppContext) {
+    let reads = AtomicUsize::new(0);
+    let mock = Mock::with_headers(move |request| {
+        if request.path.contains("/diff/file?")
+            && request.path.contains("&side=new")
+            && reads.fetch_add(1, Ordering::Relaxed) == 0
+        {
+            // Longer than the client's automatic retry budget.
+            return (
+                503,
+                vec![("Retry-After".into(), "11".into())],
+                String::new(),
+            );
+        }
+        let (status, body) = binary_response(request);
+        (status, vec![], body)
+    });
+    let new_side_reads = || {
+        mock.requests()
+            .iter()
+            .filter(|req| req.path.contains("/diff/file?") && req.path.contains("&side=new"))
+            .count()
+    };
+    let (view, window) = mount(cx, &mock);
+    click(window, ("crew-diff-bytes", 0usize));
+    assert_eq!(new_side_reads(), 1);
+    click(window, "crew-binary-close");
+    click(window, ("crew-diff-bytes", 0usize));
+    assert_eq!(
+        new_side_reads(),
+        1,
+        "reopening sent a read during Retry-After"
+    );
+    window.update(|window, _| {
+        assert_eq!(window.find("crew-binary-retry-page").disabled(), Some(true));
+    });
+
+    click(window, ("crew-binary-side", 0usize));
+    assert_page(&view, window, DiffSide::Old, 0);
+    click(window, ("crew-binary-side", 1usize));
+    window.executor().advance_clock(Duration::from_secs(10));
+    view.update(window, |view, cx| view.retry_binary(cx));
+    window.run_until_parked();
+    assert_eq!(new_side_reads(), 1);
+    window.executor().advance_clock(Duration::from_secs(1));
+    click(window, "crew-binary-retry-page");
+    assert_page(&view, window, DiffSide::New, 0);
+    assert_eq!(new_side_reads(), 2);
+}
+
 fn busy_tail(last_wait: &'static str) -> Mock {
     let tail = AtomicUsize::new(0);
     Mock::with_headers(move |request| {

@@ -16,7 +16,7 @@ use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Toast, Tokens};
 
 use super::{DiffView, Position, Retry, read::Blob};
-use crate::diff::view::{DiffEvent, DiffSource, image::ready_image, pages::PageBusy};
+use crate::diff::view::{DiffEvent, DiffSource, image::ready_image};
 
 const MAX_PREVIEW_BYTES: usize = 10 * 1024 * 1024;
 const MAX_PREVIEW_PAGES: usize = 16;
@@ -73,7 +73,7 @@ impl DiffView {
         ) else {
             return;
         };
-        if self.fleet.changed() || binary.read.is_some() || binary.retry_held(cx) {
+        if self.fleet.changed() || binary.read.is_some() || self.binary_retry_remaining(cx) > 0 {
             return;
         }
         let client = match source.client(cx) {
@@ -137,7 +137,7 @@ impl DiffView {
                 binary.replace_preview(Some(preview), None, cx);
             }
             Err(PreviewError::Fleet(Error::Busy(wait))) => {
-                binary.retry = Some((Retry::Preview(format, progress), PageBusy::new(wait, cx)));
+                self.hold_binary_retry(Retry::Preview(format, progress), wait, cx);
             }
             Err(PreviewError::Fleet(error)) => self.fleet_page_error(error, cx),
             Err(PreviewError::NotRenderable) => cx.emit(DiffEvent::Toast(Toast::error(

@@ -119,6 +119,7 @@ impl DiffView {
     ) {
         if self.fleet.mode != mode {
             self.close_binary(window, cx);
+            self.binary_holds = Default::default();
             self.fleet.mode = mode;
             self.load(cx);
         }

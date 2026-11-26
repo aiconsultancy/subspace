@@ -118,6 +118,7 @@ impl DiffView {
                 diff.files.into_iter().map(FileView::new).collect()
             }
             Loaded::Fleet(diff) => {
+                self.binary_holds.pin_to(self.fleet.mode, &diff.fingerprint);
                 self.fleet.accept_fingerprint(diff.fingerprint, baseline);
                 self.fleet.unstable = diff.unstable;
                 self.total = diff.total;
