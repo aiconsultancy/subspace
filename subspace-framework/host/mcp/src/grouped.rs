@@ -16,10 +16,21 @@ pub struct GroupTool {
     pub served: bool,
 }
 
+/// Who provides a group's tools: one board, or the Application, which
+/// shares its tools with every board. Read this, not the id, to tell them
+/// apart: a board may have any valid id, `application` included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GroupKind {
+    Board,
+    Application,
+}
+
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ToolGroup {
     pub id: &'static str,
+    pub kind: GroupKind,
     pub title: &'static str,
     /// The board's one-line purpose; empty for the Application group.
     pub description: &'static str,
@@ -119,13 +130,18 @@ fn build(
     let mut served = Vec::new();
     for (board, tools) in board_tools {
         let on = settings.group_enabled(board.id);
-        groups.push(group(board_identity(board), &tools, on));
+        groups.push(group(board_identity(board), GroupKind::Board, &tools, on));
         if on {
             served.extend(tools);
         }
     }
     let on = settings.group_enabled(APPLICATION);
-    groups.push(group((APPLICATION, "Application", ""), &application, on));
+    groups.push(group(
+        (APPLICATION, "Application", ""),
+        GroupKind::Application,
+        &application,
+        on,
+    ));
     if groups.iter().all(|group| group.tools.is_empty()) {
         return Err("The selected boards advertise no agent tools.".into());
     }
@@ -152,11 +168,13 @@ fn board_identity(board: &Board) -> (&'static str, &'static str, &'static str) {
 
 fn group(
     (id, title, description): (&'static str, &'static str, &'static str),
+    kind: GroupKind,
     tools: &[Arc<dyn AgentTool>],
     served: bool,
 ) -> ToolGroup {
     ToolGroup {
         id,
+        kind,
         title,
         description,
         served,

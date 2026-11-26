@@ -2,8 +2,8 @@ use super::choices::model_choice;
 use super::names::session_summaries;
 use super::transcript::{Transcript, UNFINISHED};
 use super::{
-    ChatEvent, ChatId, Choice, Client, ContextRef, Entry, EntryKind, Event, EventQueue, HashSet,
-    PROMPT_LIMIT, Session, ToolStatus, TranscriptEntry, Usage, Value, contains_secret,
+    ChatEvent, ChatId, Choice, Client, Entry, EntryKind, Event, EventQueue, Session, ToolStatus,
+    TranscriptEntry, Usage, Value,
 };
 
 /// A non-negative token counter the SDK reported, if it reported one.
@@ -238,34 +238,6 @@ pub(super) async fn bridge_event(
             }
         }
     }
-}
-
-pub(super) fn prompt(text: &str, context: &[ContextRef]) -> Result<String, String> {
-    if text.trim().is_empty() {
-        return Err("Enter a message before sending.".into());
-    }
-    let mut prompt = text.to_owned();
-    let mut seen = HashSet::new();
-    for item in context {
-        if seen.insert(&item.key) {
-            if contains_secret(&item.content) {
-                return Err(
-                    "Context contains credential-like data. Remove it before sending.".into(),
-                );
-            }
-            prompt.push_str(crate::ATTACHMENT_MARKER);
-            prompt.push_str(&item.label);
-            prompt.push('\n');
-            prompt.push_str(&item.content);
-        }
-        if prompt.len() > PROMPT_LIMIT {
-            return Err("Message and context exceed 256 KiB.".into());
-        }
-    }
-    if prompt.len() > PROMPT_LIMIT {
-        return Err("Message and context exceed 256 KiB.".into());
-    }
-    Ok(prompt)
 }
 
 #[cfg(test)]

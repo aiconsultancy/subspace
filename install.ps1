@@ -34,7 +34,8 @@ for a server that admits only signed-in connections (require-sasl).
 host), gives the fleet's enrolment token; it too is removed from the VM after
 the run.
 Every other option goes to subspace-setup on the VM, for example
-  --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega --admin admiral --demo
+  --name "Example Fleet" --rear-admiral Atlas --captains 'Orion,Vega' --admin admiral --demo
+Quote comma-separated lists, such as --toolchains 'node@24,pnpm@9.12.3'.
 #>
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3
@@ -61,7 +62,9 @@ function Confirm-Step([string]$Question) {
 
 # Arguments ------------------------------------------------------------------
 
-$list = @($args)
+# PowerShell passes an unquoted comma-separated value (--toolchains node@24,pnpm@9.12.3) to a script as an array,
+# which [string] would join with spaces; setup on the VM wants the commas back.
+$list = @(foreach ($value in $args) { if ($value -is [array]) { ($value | ForEach-Object { [string]$_ }) -join ',' } else { $value } })
 $i = 0
 if ($list.Count -gt 0 -and $list[0] -in @('install', 'irc-server', 'tunnel', 'providers', 'skills', 'desktop', 'ssh', 'status', 'audit', 'stop', 'start', 'destroy')) {
     $Command = $list[0]; $i = 1
@@ -632,15 +635,12 @@ function Invoke-Install {
         if ($ApiTarget -ceq $Target) { Die '--api-target must name another fleet, the one whose Subspace API this fleet shares.' }
         $api = Read-Env (Join-Path (Join-Path (Join-Path $SubspaceHome 'targets') $ApiTarget) 'summary.env')
         if ($api['SUBSPACE_API'] -ne '1') { Die "No fleet '$ApiTarget' with a Subspace API. Install that fleet first, without --no-api." }
-        if (-not $IrcTarget -and -not (Test-Path (Join-Path $State 'irc-target'))) {
-            Die "--api-target needs a shared IRC server (--irc-server NAME): IRC on this fleet's own VM is unreachable from the first fleet's API."
-        }
         Invoke-OnTarget $ApiTarget {
             if ((Invoke-Vm @('sudo', '-n', 'subspace-setup', 'register-fleet', '--check')) -ne 0) {
                 Die "The Subspace API on '$ApiTarget' cannot register this fleet; nothing was changed."
             }
         }
-        if ($Passthrough -notcontains '--no-api') { $Passthrough.Add('--no-api') }
+        $Passthrough.Add('--shared-api-target')
     }
     if (-not $Mode) {
         if (Test-Path (Join-Path $State 'target.env')) {
@@ -678,14 +678,22 @@ function Invoke-Install {
             $ircState = Join-Path (Join-Path $SubspaceHome 'targets') $IrcTarget
             $irc = Read-Env (Join-Path $ircState 'summary.env')
             if (-not $irc.SUBSPACE_IRC_HOST) { Die "No shared IRC server '$IrcTarget'. Run .\install.ps1 irc-server first." }
-            # The shared server this installer runs seeds each officer's account with a password.
-            $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT, '--irc-auth', 'password'))
-            if ($irc.SUBSPACE_IRC_SELF_SIGNED -eq '1') {
-                $caScript = "umask 077 && mkdir -p $inputs && cat > $inputs/irc-ca.pem.new && mv -f $inputs/irc-ca.pem.new $inputs/irc-ca.pem"
-                if ((Send-VmInput (Join-Path $ircState 'ca.pem') @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the IRC certificate to the VM.' }
-                $Passthrough.AddRange([string[]]@('--irc-ca', "$inputs/irc-ca.pem"))
+            $Passthrough.AddRange([string[]]@('--irc', 'remote', '--irc-host', $irc.SUBSPACE_IRC_HOST, '--irc-port', $irc.SUBSPACE_IRC_PORT))
+            if ($irc.SUBSPACE_IRC_CERTIFICATE_SEEDS -eq '1') {
+                $Passthrough.Add('--managed-shared-irc')
+            } else {
+                $Passthrough.AddRange([string[]]@('--irc-auth', 'password'))
             }
-            if (-not $dryRun) { Write-Private (Join-Path $State 'irc-target') "$IrcTarget`n" }
+            if ($irc.SUBSPACE_IRC_SELF_SIGNED -eq '1') {
+                $caSource = Join-Path $ircState 'ca.pem'
+                $caDigest = (Get-FileHash -LiteralPath $caSource -Algorithm SHA256).Hash.ToLowerInvariant()
+                $caTarget = "$inputs/irc-ca-$caDigest.pem"
+                $caScript = "umask 077 && mkdir -p $inputs && cat > $caTarget.new && mv -f $caTarget.new $caTarget"
+                if ((Send-VmInput $caSource @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the IRC certificate to the VM.' }
+                $Passthrough.AddRange([string[]]@('--irc-ca', $caTarget))
+            } else {
+                $Passthrough.Add('--irc-ca=')
+            }
         }
 
         if ($DatabaseUrlFile) {
@@ -760,6 +768,7 @@ function Invoke-Install {
                 }
                 Save-Private (Join-Path $State "$($s.SUBSPACE_ADMIN_ACCOUNT).password") @('sudo', '-n', 'subspace-setup', 'irc-server', 'secret', $s.SUBSPACE_ADMIN_ACCOUNT)
             }
+            Write-Private (Join-Path $State 'irc-target') "$IrcTarget`n"
         } finally { Remove-Item -Force $bundle -ErrorAction SilentlyContinue }
     }
     if ($s.SUBSPACE_STARGATE_API -eq '1') {

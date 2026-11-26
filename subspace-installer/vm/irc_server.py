@@ -179,17 +179,17 @@ def render(answers, db=None):
     fleets = {path.stem: read_json(path) for path in sorted((STATE / "fleets").glob("*.json"))}
     accounts, owners, channels = {}, {}, {}
     for human in answers["humans"]:
-        accounts[human] = password(f"irc-{human}")
+        accounts[human] = {"name": human, "password": password(f"irc-{human}")}
         owners[human] = "humans"
     for slug, bundle in fleets.items():
         for row in bundle["accounts"]:
             name = row["name"]
             require(name not in owners or owners[name] == slug,
                     f"IRC account {name} is claimed by both {owners.get(name)} and {slug}.")
-            accounts[name], owners[name] = row["password"], slug
+            accounts[name], owners[name] = row, slug
         for row in bundle["channels"]:
             channels.setdefault(row["name"], row.get("topic", ""))
-    ergo_file(ETC / "accounts.json", json.dumps([{"name": k, "password": v} for k, v in sorted(accounts.items())], indent=2))
+    ergo_file(ETC / "accounts.json", json.dumps([accounts[name] for name in sorted(accounts)], indent=2))
     ergo_file(ETC / "channels.json", json.dumps(
         [{"name": name, **({"topic": topic} if topic else {})} for name, topic in sorted(channels.items())], indent=2))
     ergo_file(ETC / "operator-password", password("irc-operator") + "\n")
@@ -261,6 +261,7 @@ def setup(args):
     write_private(STATE / "summary.env", "".join(f"{key}={value}\n" for key, value in {
         "SUBSPACE_IRC_HOST": answers["serverName"], "SUBSPACE_IRC_PORT": answers["port"], "SUBSPACE_IRC_TLS": 1,
         "SUBSPACE_IRC_SELF_SIGNED": 0 if "tlsCert" in answers else 1,
+        "SUBSPACE_IRC_CERTIFICATE_SEEDS": 1,
         "SUBSPACE_IRC_HUMANS": " ".join(answers["humans"]), "SUBSPACE_OPERATOR": answers["operator"],
         "SUBSPACE_LOCKDOWN": 1 if answers["lockdown"] else 0, "SUBSPACE_LOCKDOWN_ID": lockdown_id,
     }.items()))
@@ -280,8 +281,13 @@ def add(source):
     for row in bundle.get("accounts", []):
         require(ACCOUNT.fullmatch(row.get("name", "")) and row["name"] not in answers["humans"] and row["name"] != OPERATOR,
                 f"Invalid or reserved fleet account {row.get('name')}.")
-        require(isinstance(row.get("password"), str) and 1 <= len(row["password"].encode()) <= 72
-                and not re.search(r"\s", row["password"]), f"Invalid password for {row['name']}.")
+        if "fingerprint" in row:
+            require(row.keys() == {"name", "fingerprint"} and isinstance(row["fingerprint"], str)
+                    and re.fullmatch(r"[0-9a-f]{64}", row["fingerprint"]), f"Invalid fingerprint for {row['name']}.")
+        else:
+            require(row.keys() == {"name", "password"} and isinstance(row["password"], str)
+                    and 1 <= len(row["password"].encode()) <= 72 and not re.search(r"\s", row["password"]),
+                    f"Invalid password for {row['name']}.")
     for row in bundle.get("channels", []):
         require(CHANNEL.fullmatch(row.get("name", "")), f"Invalid channel {row.get('name')}.")
     names = {row["name"] for row in bundle.get("channels", [])}
@@ -321,7 +327,7 @@ def add(source):
 
 
 def conflicts(slug, bundle):
-    """Refuse a bundle that would take another fleet's accounts or change this fleet's passwords."""
+    """Refuse a bundle that would take another fleet's accounts or change this fleet's credentials."""
     accounts = {row["name"] for row in bundle["accounts"]}
     for path in sorted((STATE / "fleets").glob("*.json")):
         accounts |= {row["name"] for row in read_json(path).get("accounts", []) if path.stem != slug}
@@ -329,13 +335,13 @@ def conflicts(slug, bundle):
         require(human not in accounts, f"Human account {human} would clash with a fleet agent's account.")
     for path in sorted((STATE / "fleets").glob("*.json")):
         other = read_json(path)
-        saved = {row["name"]: row["password"] for row in other.get("accounts", [])}
+        saved = {row["name"]: row for row in other.get("accounts", [])}
         for row in bundle["accounts"]:
             if row["name"] not in saved:
                 continue
             require(path.stem == slug, f"IRC account {row['name']} already belongs to fleet {path.stem}.")
-            require(saved[row["name"]] == row["password"],
-                    f"Fleet {slug} is already on this server with other passwords, so a VM with the same fleet "
+            require(saved[row["name"]] == row,
+                    f"Fleet {slug} is already on this server with other credentials, so a VM with the same fleet "
                     "ID was set up again. Give the new fleet a different ID, or remove the old fleet "
                     f"('subspace-setup irc-server remove {slug}') and drop its accounts in Ergo first.")
 

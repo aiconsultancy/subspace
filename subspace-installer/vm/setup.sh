@@ -4,7 +4,7 @@
 #   subspace-setup [setup] [options]   set up or update this fleet (see --help)
 #   subspace-setup irc-server ...      run a shared IRC server on this host instead
 #   subspace-setup providers [login P] model provider accounts (agents need one)
-#   subspace-setup status              summary and service state
+#   subspace-setup status              summary, service state and memory
 #   subspace-setup audit               check that the VM is private
 #   subspace-setup lockdown apply|confirm|rollback|status
 #   subspace-setup secret irc-admin    print your IRC password (local IRC)
@@ -14,6 +14,7 @@
 #   subspace-setup fleet-registration  print this fleet's details for another fleet's API
 #   subspace-setup register-fleet -    register a further fleet (from stdin) with this VM's API
 #   subspace-setup rename-officers     give an installed fleet's officers plain names (--help)
+#   subspace-setup toolchains [detect] the recorded toolchains, or a proposal from the repositories
 #   subspace-setup demo                seed the fictional demo data again
 #
 # The host installer (install.sh or install.ps1 at the repository root) copies
@@ -37,6 +38,7 @@ esac
 need=()
 command -v python3 >/dev/null || need+=(python3)
 command -v git >/dev/null || need+=(git)
+command -v openssl >/dev/null || need+=(openssl)
 command -v curl >/dev/null || need+=(curl ca-certificates)
 command -v nft >/dev/null || need+=(nftables)
 dry_run=false
@@ -63,8 +65,10 @@ case $command in
         if [[ -f /root/fleet/summary.env ]]; then cat /root/fleet/summary.env; fi
         if [[ -f /root/irc/summary.env ]]; then cat /root/irc/summary.env; fi
         systemctl --no-pager --plain list-units 'subspace-*' || true
+        # Each engine's live memory limits and use, swap, and fleet processes killed for memory since boot.
+        if [[ -x /usr/local/bin/subspace-fleetctl ]]; then /usr/local/bin/subspace-fleetctl memory || true; fi
         "$here/lockdown.sh" status || true
         ;;
-    -h|--help|help) sed -n '2,19p' "${BASH_SOURCE[0]}"; exec python3 -B "$here/fleet_setup.py" --help ;;
+    -h|--help|help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exec python3 -B "$here/fleet_setup.py" --help ;;
     *) exec python3 -B "$here/fleet_setup.py" "$@" ;;
 esac

@@ -442,7 +442,11 @@ Existing connections keep their IDs, names and other settings such as
 auto-connect, channels and highlights. TLS on the loopback listener accepts
 Ergo's self-signed certificate.
 
-Use `SUBSPACE_STACK_DESKTOP_CONFIG=0 make stack-up` to skip the config write.
+For a desktop with no local IRC settings, run
+`SUBSPACE_STACK_DESKTOP_CONFIG=0 make stack-up` and sign in as
+`developer@example.com` in the `local` organisation. Channels obtains a
+short-lived IRC credential from the API, and Ergo checks it through the
+private Compose network. Existing desktop configuration files stay in place.
 Run `make stack-desktop-config` to apply it using the existing credentials.
 `SUBSPACE_STACK_DESKTOP_CONFIG_FILE` selects a different output file.
 `make stack-reset` keeps the desktop settings and removes the password files.
@@ -505,13 +509,13 @@ configurable.
   projects for unresolved errors and fatal issues and posts links to fleet
   IRC. It can address a captain or the rear admiral for read-only triage.
   Operators can opt in to an HTTP 5xx filter for a server-side status tag.
-- **Usage-aware wind-down.** Stargate posts quota notices through the rear
-  admiral's Slack bot. An admiral relays them to the rear admiral in Slack or
-  Starbase. At 25% remaining, the rear admiral asks captains to keep at most
-  one worker from the affected family per captain and hold extra work. At 15%,
-  captains pause launches and resumes, checkpoint active work at its next
-  safe point and keep task claims. When Stargate posts “Quota restored.” above
-  25%, the rear admiral tells captains to resume normal staffing.
+- **Usage-aware wind-down.** The rear admiral's
+  [usage guard](subspace-installer/README.md#usage-guard) asks captains to keep
+  at most one worker of the affected provider at 20% remaining. At 10%,
+  Stargate blocks new starts and resumptions of that kind. Active crew can
+  finish or checkpoint and push. Verified recovery lifts the cutoff. The
+  [legacy Slack quota watcher](subspace-installer/README.md#crew-quota)
+  also supports fleets that relay notices through an admiral.
 
 ### The fleet at work
 

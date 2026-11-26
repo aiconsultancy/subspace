@@ -1,6 +1,7 @@
 import { Effect, Result, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+import { MediaImage } from "./media";
 import { CurrentMember } from "./identity";
 import { mcpInstructions, mcpTools, ToolName } from "./mcp-tools";
 import { BearerAuth } from "./middleware";
@@ -20,13 +21,16 @@ const jsonResponse = (id: string | number, result: unknown) =>
   HttpServerResponse.jsonUnsafe({ jsonrpc: "2.0", id, result });
 const rpcError = (id: string | number | null, code: number, message: string, status = 200) =>
   HttpServerResponse.jsonUnsafe({ jsonrpc: "2.0", id, error: { code, message } }, { status });
-const toolResult = (data: unknown, isError = false) => ({
-  content: [{ type: "text", text: JSON.stringify(data) }],
-  ...(typeof data === "object" && data !== null && !Array.isArray(data)
-    ? { structuredContent: data }
-    : {}),
-  isError,
-});
+const toolResult = (data: unknown, isError = false) =>
+  data instanceof MediaImage
+    ? { content: [{ type: "image", mimeType: data.mimeType, data: data.data }], isError: false }
+    : {
+        content: [{ type: "text", text: JSON.stringify(data) }],
+        ...(typeof data === "object" && data !== null && !Array.isArray(data)
+          ? { structuredContent: data }
+          : {}),
+        isError,
+      };
 const call = Schema.decodeUnknownResult(
   Schema.Struct({
     name: ToolName,

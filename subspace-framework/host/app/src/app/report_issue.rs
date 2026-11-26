@@ -93,6 +93,7 @@ impl SubspaceApp {
             self.dashboard().map(|board| board.id),
             cx.theme().theme_name(),
             IconButtonSize::current(cx).key(),
+            crate::theme::product_themes(cx),
         );
         let paths = self.report_path_diagnostics(cx);
         if let Some(form) = &self.report_issue {

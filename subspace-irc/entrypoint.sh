@@ -200,21 +200,27 @@ esac
 unset IRC_ACCOUNTS_JSON IRC_CHANNELS_JSON IRC_OPER_PASSWORD
 
 # Check the complete seed before making any changes. Normalised names make
-# duplicate detection agree with Ergo's ASCII case mapping. Passwords follow
-# Ergo's passphrase rules (no whitespace, no leading colon, not "*"), so a bad
-# entry cannot stop provisioning part-way through.
+# duplicate detection agree with Ergo's ASCII case mapping. Each account has a
+# password accepted by Ergo or a TLS certificate fingerprint.
 if ! jq -sec '
     if length != 2 or any(.[]; type != "array") then error("expected arrays") else add end
     | if all(.[];
-        type == "object" and keys == ["name", "password"] and
+        type == "object" and
         (.name | type == "string" and test("\\A[a-z][a-z0-9_-]{0,31}\\z")) and
-        (.password | type == "string" and utf8bytelength >= 1 and utf8bytelength <= 72
+        ((keys == ["name", "password"] and
+         (.password | type == "string" and utf8bytelength >= 1 and utf8bytelength <= 72
             and (explode | all(. >= 32 and . != 127))
-            and (test("\\A:|\\s") | not) and . != "*")
+            and (test("\\A:|\\s") | not) and . != "*")) or
+         (keys == ["fingerprint", "name"] and
+          (.fingerprint | type == "string" and test("\\A[0-9a-f]{64}\\z"))))
       ) and (map(.name) | length == (unique | length))
+        and (map(.fingerprint | select(. != null)) | length == (unique | length))
       then . else error("invalid account definition") end
 ' "$temporary/accounts" "$temporary/operator" > "$temporary/seed" 2>/dev/null; then
-    die 'Expected distinct lower-case account names and passwords of 1–72 bytes without whitespace, control characters, a leading colon or the single value *'
+    die 'Expected distinct lower-case account names with passwords of 1–72 bytes or distinct SHA-256 fingerprints'
+fi
+if [ -z "$oper" ] && jq -e 'any(.[]; has("fingerprint"))' "$temporary/seed" >/dev/null; then
+    die 'Certificate account seeds need IRC_OPER_NAME and its password'
 fi
 
 # Reserved nicks in Ergo v2.19.1 (irc/services.go and irc/nickname.go),
@@ -234,7 +240,7 @@ fi
 
 if [ -n "$auth_url" ]; then
     # A seeded password with the credential prefix would be sent to the API.
-    if jq -e --arg prefix "$auth_prefix" 'any(.[]; .password | startswith($prefix))' \
+    if jq -e --arg prefix "$auth_prefix" 'any(.[]; (.password // "") | startswith($prefix))' \
         "$temporary/seed" >/dev/null; then
         die 'Seeded passwords must not start with IRC_AUTH_PASSPHRASE_PREFIX'
     fi
@@ -354,23 +360,41 @@ provision() {
     printf '%s' "$inventory" | jq -e '.success and (.accounts | type == "array")' >/dev/null ||
         die 'Ergo returned an invalid account inventory'
     printf '%s' "$inventory" | jq -r '.accounts[].accountName | ascii_downcase' > "$temporary/existing"
-    jq -c '.[] | {accountName: .name, passphrase: .password}' "$temporary/seed" > "$temporary/requests"
+    jq -c 'sort_by(has("fingerprint")) | .[] | if .fingerprint then {accountName: .name, certfp: .fingerprint}
+                else {accountName: .name, passphrase: .password} end' "$temporary/seed" > "$temporary/requests"
 
     # Verify pre-existing credentials before creating any missing accounts.
     while IFS= read -r request; do
         name=$(printf '%s' "$request" | jq -r .accountName)
         if grep -Fxq "$name" "$temporary/existing"; then
+            fingerprint=$(printf '%s' "$request" | jq -r '.certfp // empty')
+            pending="/ircd/.seed-certificate-$name"
             check_credential "$request" "$name" ||
+                { [ -n "$fingerprint" ] && [ -f "$pending" ] && [ "$(cat "$pending")" = "$fingerprint" ]; } ||
                 die "Seed credential for $name does not match the existing account"
         fi
     done < "$temporary/requests"
     while IFS= read -r request; do
         name=$(printf '%s' "$request" | jq -r .accountName)
+        fingerprint=$(printf '%s' "$request" | jq -r '.certfp // empty')
+        pending="/ircd/.seed-certificate-$name"
         if ! grep -Fxq "$name" "$temporary/existing"; then
-            printf '%s' "$request" | bootstrap_request ns/saregister |
+            if [ -n "$fingerprint" ]; then
+                # Keep the exact seed across an interrupted creation. An unrelated
+                # account already in Ergo may only be used with its own credential.
+                printf '%s\n' "$fingerprint" > "$pending"
+            fi
+            printf '%s' "$request" | jq -c '{accountName, passphrase: (.passphrase // "")}' |
+                bootstrap_request ns/saregister |
                 jq -e '.success == true' >/dev/null || die "Could not provision account $name"
-            check_credential "$request" "$name" || die "Could not verify provisioned account $name"
         fi
+        if [ -n "$fingerprint" ] && [ -f "$pending" ] && [ "$(cat "$pending")" = "$fingerprint" ]; then
+            if ! check_credential "$request" "$name"; then
+                python3 -I /ircd-bin/seed-channels.py certificate "$temporary/seed" "$oper" "$name" "$fingerprint"
+            fi
+        fi
+        check_credential "$request" "$name" || die "Could not verify provisioned account $name"
+        rm -f "$pending"
     done < "$temporary/requests"
 
     if [ -f "$temporary/channels" ]; then

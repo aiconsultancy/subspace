@@ -1,4 +1,4 @@
-use super::{Notes, catalog, context, strings};
+use super::{Notes, catalog, context, served, strings};
 use crate::cli::{commands, run_catalog};
 use crate::input;
 use crate::root::complete_word;
@@ -45,7 +45,7 @@ fn canonical_actions_have_clean_help_and_hidden_compatible_aliases() {
     assert!(complete_word(&commands.spec, &strings(&["actions", "actions_"])).is_empty());
 }
 
-fn tool(name: &'static str, actions: &[schema::Action]) -> Arc<dyn AgentTool> {
+pub(super) fn tool(name: &'static str, actions: &[schema::Action]) -> Arc<dyn AgentTool> {
     Arc::new(WriteTool::new(
         ToolSpec {
             name,
@@ -61,26 +61,28 @@ fn tool(name: &'static str, actions: &[schema::Action]) -> Arc<dyn AgentTool> {
 
 #[test]
 fn command_names_use_kebab_case_and_reject_normalization_collisions() {
-    let catalog = Catalog::new(vec![tool(
-        "component_gallery_write",
-        &[
-            schema::action("component_gallery_save_chart", "Save chart.", vec![]),
-            schema::action("component-gallery_export_chart", "Export chart.", vec![]),
-            schema::action("move_to_group", "Move group.", vec![]),
-        ],
-    )])
-    .unwrap();
+    let catalog = served(
+        Catalog::new(vec![tool(
+            "component_gallery_write",
+            &[
+                schema::action("component_gallery_save_chart", "Save chart.", vec![]),
+                schema::action("component-gallery_export_chart", "Export chart.", vec![]),
+                schema::action("move_to_group", "Move group.", vec![]),
+            ],
+        )])
+        .unwrap(),
+    );
     let generated = commands(&context(), &catalog).unwrap();
     assert_eq!(
         complete_word(&generated.spec, &strings(&["component-gallery", ""])),
         ["export-chart", "move-to-group", "save-chart"]
     );
-    let mut tools = catalog.tools().to_vec();
+    let mut tools = catalog.catalog.tools().to_vec();
     tools.push(tool(
         "component_gallery_other",
         &[schema::action("save_chart", "Collision.", vec![])],
     ));
-    let error = commands(&context(), &Catalog::new(tools).unwrap())
+    let error = commands(&context(), &served(Catalog::new(tools).unwrap()))
         .err()
         .unwrap();
     assert!(error.contains("component-gallery save-chart"), "{error}");
@@ -142,7 +144,7 @@ fn mixed_context() -> ProductContext {
 
 #[test]
 fn colliding_single_tools_keep_distinct_roots_and_board_actions() {
-    let commands = commands(&mixed_context(), &mixed_catalog()).unwrap();
+    let commands = commands(&mixed_context(), &served(mixed_catalog())).unwrap();
     assert!(commands.spec.cmd.subcommands.contains_key("irc"));
     assert!(
         commands
@@ -176,7 +178,7 @@ fn colliding_single_tools_keep_distinct_roots_and_board_actions() {
 
 #[test]
 fn mixed_tools_preserve_existing_action_paths_and_aliases() {
-    let commands = commands(&mixed_context(), &mixed_catalog()).unwrap();
+    let commands = commands(&mixed_context(), &served(mixed_catalog())).unwrap();
     for (root, action) in [
         ("space-lab", "list"),
         ("space-lab", "save"),
@@ -212,17 +214,19 @@ fn a_tool_belongs_to_the_longest_board_id_prefix() {
         .collect();
     let product = validate_product(&descriptor).unwrap();
     let context = ProductContext::new(product, context().env);
-    let catalog = Catalog::new(vec![
-        tool(
-            "github_copilot_agents_write",
-            &[schema::action("github_agent_task", "Start a task.", vec![])],
-        ),
-        tool(
-            "github_write",
-            &[schema::action("github_comment", "Comment.", vec![])],
-        ),
-    ])
-    .unwrap();
+    let catalog = served(
+        Catalog::new(vec![
+            tool(
+                "github_copilot_agents_write",
+                &[schema::action("github_agent_task", "Start a task.", vec![])],
+            ),
+            tool(
+                "github_write",
+                &[schema::action("github_comment", "Comment.", vec![])],
+            ),
+        ])
+        .unwrap(),
+    );
     let commands = commands(&context, &catalog).unwrap();
     let roots = &commands.spec.cmd.subcommands;
     assert!(

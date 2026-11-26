@@ -43,6 +43,17 @@ def repository_name(path):
     raise PolicyError("Expected a GitHub owner/repository path.")
 
 
+def merge_repository(args, policy, checkout):
+    """Resolve a squash merge to the repository assigned to this captain checkout."""
+    repository = policy.get("captainMergeCheckouts", {}).get(str(checkout))
+    if policy["contents"] != "write" or not repository:
+        raise PolicyError("Pull request merging is unavailable here. Use a captain checkout with merging enabled.")
+    if (len(args) != 6 or not re.fullmatch(r"[1-9][0-9]*", args[2])
+            or args[3:5] != ["--squash", "--match-head-commit"] or not re.fullmatch(r"[0-9a-fA-F]{40}", args[5])):
+        raise PolicyError("Use gh pr merge NUMBER --squash --match-head-commit FULL_SHA from the captain checkout.")
+    return repository
+
+
 def cli_permissions(args):
     if not args:
         raise PolicyError("Specify an allowed GitHub CLI command.")

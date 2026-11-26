@@ -23,7 +23,7 @@ fn product_files(root: &Path) -> ProductFiles {
 }
 
 fn record(root: &Path, theme: &str) -> Result<bool, String> {
-    record_new_install_theme(&product_context(root), theme)
+    record_new_install_theme(&product_context(root), theme, &[])
 }
 
 fn write(file: &Path, text: &str) {
@@ -128,6 +128,21 @@ fn a_theme_outside_the_catalogue_is_refused_and_nothing_is_written() {
     assert!(error.contains("new install theme"), "{error}");
     assert!(error.contains("Missing Theme"), "{error}");
     assert!(!product_files(root.path()).state.exists());
+}
+
+/// Product documents that startup refuses record nothing, even when the
+/// theme itself is in the catalogue, so a corrected build still records it.
+#[test]
+fn product_documents_startup_refuses_record_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let reused = crate::theme::THEME_JSON.replace(crate::theme::THEME_NAME, "cupertino dark");
+    let reused: &'static str = Box::leak(reused.into_boxed_str());
+    let documents: crate::ProductThemes = Box::leak(Box::new([("example-dark", reused)]));
+    let context = product_context(root.path());
+    let error = record_new_install_theme(&context, NEW_INSTALL, documents).unwrap_err();
+    assert!(error.contains("example-dark"), "{error}");
+    assert!(!product_files(root.path()).state.exists());
+    assert_eq!(record(root.path(), NEW_INSTALL), Ok(true));
 }
 
 /// The app never follows the system appearance: a new install on a

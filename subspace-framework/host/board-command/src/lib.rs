@@ -2,6 +2,8 @@
 
 mod approval;
 mod cli;
+mod collision;
+mod composition;
 mod input;
 mod root;
 #[cfg(test)]
@@ -12,6 +14,11 @@ use std::{process::ExitCode, sync::Arc};
 use subspace_agent_tools::{Invocation, Unmonitored};
 
 pub use cli::run;
+pub use composition::Composition;
+pub use root::{complete_word, tree as root_tree};
+/// The pinned usage-lib the tree and completion callbacks use, so a product
+/// needs no matching dependency of its own.
+pub use usage;
 
 fn execute(route: &tree::Route, output: &usage::parse::ParseOutput) -> ExitCode {
     let arguments = match input::arguments(route, output) {

@@ -2,8 +2,9 @@
 //! one; a composed one asks for sign-in, opens its browser target, shows a
 //! failure, treats Reload as Retry, drops a grant for a stale account,
 //! resumes only at a page in its scope, ends a session whose view is gone
-//! when it goes live, and revokes live sessions when the app quits. No
-//! test opens a real web view.
+//! when it goes live, ignores events left from a page that closed, and
+//! revokes live sessions when the app quits. No test opens a real web
+//! view.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -62,7 +63,7 @@ fn account(signed_in: &Rc<Cell<u64>>) -> impl Fn(&gpui_kit::App) -> Option<Accou
 }
 
 /// A session whose adapter fails, counting its attempts.
-fn refusing(signed_in: &Rc<Cell<u64>>, attempts: &Arc<AtomicUsize>) -> NativeSession {
+pub(super) fn refusing(signed_in: &Rc<Cell<u64>>, attempts: &Arc<AtomicUsize>) -> NativeSession {
     let attempts = attempts.clone();
     NativeSession::new(scope(), account(signed_in), move |_: &Account| {
         attempts.fetch_add(1, Ordering::SeqCst);
@@ -83,7 +84,7 @@ fn activated(
 }
 
 /// The board with `session`, shown, once its first attempt has settled.
-fn shown(
+pub(super) fn shown(
     cx: &mut TestAppContext,
     session: NativeSession,
 ) -> (Entity<WebBoard>, &mut VisualTestContext) {
@@ -239,6 +240,30 @@ fn a_view_gone_when_its_session_goes_live_ends_it_and_retry_resumes_there(cx: &m
         });
     });
     assert_eq!(revoked_within(&received), Some("unshown"));
+}
+
+#[gpui_kit::test]
+fn events_left_from_a_page_that_closed_change_nothing(cx: &mut TestAppContext) {
+    let signed_in = Rc::new(Cell::new(1));
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let (board, cx) = shown(cx, refusing(&signed_in, &attempts));
+    cx.update(|_, cx| {
+        board.update(cx, |board, cx| {
+            assert!(board.page.is_none(), "the session ended and closed it");
+            let before = board.state.clone();
+            board.page_events(
+                vec![
+                    PageEvent::Title("The page that closed".into()),
+                    PageEvent::Blocked("https://sign-in.example.net/".into()),
+                    PageEvent::Loaded(PAGE.into()),
+                ],
+                cx,
+            );
+            assert_eq!(board.state, before);
+            assert_eq!(board.window_title(cx), None);
+            assert_eq!(board.status(cx), None);
+        });
+    });
 }
 
 #[gpui_kit::test]

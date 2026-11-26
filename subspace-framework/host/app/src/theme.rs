@@ -22,9 +22,12 @@ use subspace_dashboard::typography::{GroupHeading, Typography};
 
 pub(crate) use document::{FontChoices, GroupHeadingChoices, KIT_RADII, ThemeDocument};
 
+pub use loader::ProductThemes;
 pub(crate) use loader::bundled_theme_id;
 pub(crate) use loader::validate_custom_theme;
-pub(crate) use loader::validate_product_themes;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use loader::validate_product_theme_documents;
+pub(crate) use loader::{install_product_themes, product_themes, validate_product_themes};
 pub use new_install::record_new_install_theme;
 
 pub const THEME_JSON: &str = include_str!("../themes/one-dark.json");
@@ -222,7 +225,7 @@ pub(crate) fn apply_document(
         theme.font_family = resolved.body.into();
         theme.mono_font_family = resolved.mono.into();
     });
-    let id = bundled_theme_id(Theme::global(cx).theme_name());
+    let id = bundled_theme_id(Theme::global(cx).theme_name(), product_themes(cx));
     cx.set_global(ThemeId(id.to_owned()));
     sync_font_sizes(cx);
     Ok(resolved.warnings)
@@ -866,8 +869,8 @@ mod tests {
 
     #[test]
     fn custom_themes_cannot_replace_the_bundled_name() {
-        assert!(validate_custom_theme(THEME_JSON).is_err());
-        assert!(validate_custom_theme(&THEME_JSON.replace(THEME_NAME, "Custom")).is_ok());
+        assert!(validate_custom_theme(THEME_JSON, &[]).is_err());
+        assert!(validate_custom_theme(&THEME_JSON.replace(THEME_NAME, "Custom"), &[]).is_ok());
     }
 
     #[test]

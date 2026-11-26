@@ -10,7 +10,7 @@ viewer reads. Nothing in the workspace uses `tracing` or `log`; the module is
 
 | Item | Value |
 | --- | --- |
-| Directory | `logs/` beside `state.json` in the platform state directory (`~/Library/Application Support/subspace/logs` on macOS, `$XDG_STATE_HOME/subspace/logs` on Linux, `%LOCALAPPDATA%\subspace\logs` on Windows) |
+| Directory | `logs/` beside `state.json` in the app's data directory, named by its [data name](glossary.md) (`~/Library/Application Support/subspace/logs` on macOS, `$XDG_STATE_HOME/subspace/logs` on Linux, `%LOCALAPPDATA%\subspace\logs` on Windows for the Subspace App) |
 | File | `<binary>.log`: `subspace.log` for the Subspace App |
 | Format | JSON Lines, one record per line: `{"seq":1,"at":"…","level":"info","target":"app","message":"…","fields":[["key","value"]]}` |
 | Rotation | At 5 MiB the file becomes `<binary>.log.1`; older files shift to `.2` … `.5`, and the sixth is removed |

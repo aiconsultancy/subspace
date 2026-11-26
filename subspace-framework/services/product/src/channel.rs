@@ -1,7 +1,49 @@
 //! The release channel a build belongs to: stable, or one pre-release type.
-//! The build sets it once with `SUBSPACE_RELEASE_CHANNEL`; every crate reads it
-//! through [`Channel::current`]. Each pre-release type gets its own display
-//! name, bundle id and data locations, so it can run beside stable.
+//! The build sets it once with `SUBSPACE_RELEASE_CHANNEL`, or the app reads
+//! its own variable with [`release_channel!`](crate::release_channel) and
+//! passes the result to [`configure_channel`] before anything reads it;
+//! every crate reads it through [`Channel::current`]. Each pre-release type
+//! gets its own display name, bundle id and data locations, so it can run
+//! beside stable.
+
+use std::sync::OnceLock;
+
+/// The channel of this process, fixed by the first [`configure_channel`]
+/// or, failing that, by the first [`Channel::current`].
+static CURRENT_CHANNEL: OnceLock<Channel> = OnceLock::new();
+
+/// Sets the channel [`Channel::current`] returns. Call it before anything
+/// reads the channel or a data path. Returns whether the channel is now
+/// `channel`: `false` when an earlier call or an earlier read fixed another
+/// one, which stays.
+// qual:api
+#[must_use]
+pub fn configure_channel(channel: Channel) -> bool {
+    *CURRENT_CHANNEL.get_or_init(|| channel) == channel
+}
+
+/// The [`Channel`] an app's own release-channel variable selects, read when
+/// the app is compiled. An unknown value stops compilation. Pass the result
+/// to [`configure_channel`]:
+///
+/// ```
+/// let channel = subspace_product::release_channel!("EXAMPLE_RELEASE_CHANNEL");
+/// assert_eq!(channel, subspace_product::Channel::Stable);
+/// ```
+#[macro_export]
+macro_rules! release_channel {
+    ($variable:literal) => {{
+        const CHANNEL: $crate::Channel =
+            match $crate::Channel::parse(::core::option_env!($variable)) {
+                ::core::option::Option::Some(channel) => channel,
+                ::core::option::Option::None => ::core::panic!(::core::concat!(
+                    $variable,
+                    " must be unset, empty, `stable`, `nightly`, `alpha` or `beta`"
+                )),
+            };
+        CHANNEL
+    }};
+}
 
 /// Stable, or a pre-release type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,9 +67,10 @@ impl Channel {
     /// Every channel, stable first.
     pub const ALL: [Self; 4] = [Self::Stable, Self::Nightly, Self::Alpha, Self::Beta];
 
-    /// The channel this binary was built for.
-    pub const fn current() -> Self {
-        BUILD_CHANNEL
+    /// The channel the app configured, else the one this binary was built
+    /// for. The first read fixes it for the rest of the process.
+    pub fn current() -> Self {
+        *CURRENT_CHANNEL.get_or_init(|| BUILD_CHANNEL)
     }
 
     /// The channel for a `SUBSPACE_RELEASE_CHANNEL` value, or `None` when the
@@ -163,6 +206,12 @@ mod tests {
                 format!("Subspace-{title}")
             );
         }
+    }
+
+    #[test]
+    fn an_app_variable_that_is_unset_means_stable() {
+        let channel = crate::release_channel!("EXAMPLE_RELEASE_CHANNEL_UNSET_IN_TESTS");
+        assert_eq!(channel, Channel::Stable);
     }
 
     #[test]

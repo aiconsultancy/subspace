@@ -3,7 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Path, SessionId, fs, parse_session_id, state};
+use super::{Path, fs, state};
+#[cfg(feature = "copilot")]
+use super::{SessionId, parse_session_id};
 
 /// The ordered sessions of the open tabs, and the active one.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,6 +16,8 @@ pub(super) struct SavedTabs {
     pub(super) active: Option<String>,
 }
 
+/// Copilot reopens its tabs by SDK session id.
+#[cfg(feature = "copilot")]
 impl SavedTabs {
     /// The saved sessions Subspace will act on, in order, without duplicates.
     pub(super) fn session_ids(&self) -> Vec<SessionId> {
@@ -40,6 +44,7 @@ impl SavedTabs {
     }
 }
 
+#[cfg(feature = "copilot")]
 pub(super) fn tabs_file_name(login: &str) -> String {
     format!("copilot-tabs-{}.json", login.to_ascii_lowercase())
 }
@@ -59,6 +64,7 @@ pub(super) fn save_tabs(path: &Path, tabs: &SavedTabs) -> Result<(), String> {
 
 /// Before tabs, one file held the single open chat. It becomes the one saved
 /// tab, and is then removed so the migration runs once.
+#[cfg(feature = "copilot")]
 pub(super) fn migrate_single_chat(tabs: SavedTabs, previous: &Path) -> SavedTabs {
     if !tabs.sessions.is_empty() {
         return tabs;
@@ -78,14 +84,18 @@ pub(super) fn migrate_single_chat(tabs: SavedTabs, previous: &Path) -> SavedTabs
 
 #[cfg(test)]
 mod tests {
-    use super::{SavedTabs, migrate_single_chat, read_tabs, save_tabs, tabs_file_name};
+    use super::{SavedTabs, read_tabs, save_tabs};
+    #[cfg(feature = "copilot")]
+    use super::{migrate_single_chat, tabs_file_name};
     use std::fs;
 
+    #[cfg(feature = "copilot")]
     #[test]
     fn each_account_keeps_its_own_open_tabs() {
         assert_eq!(tabs_file_name("Work_corp"), "copilot-tabs-work_corp.json");
     }
 
+    #[cfg(feature = "copilot")]
     #[test]
     fn only_well_formed_session_ids_are_reopened_and_each_only_once() {
         let tabs = SavedTabs {
@@ -106,6 +116,7 @@ mod tests {
         assert_eq!(tabs.active_index(), 1);
     }
 
+    #[cfg(feature = "copilot")]
     #[test]
     fn an_unknown_active_tab_falls_back_to_the_first() {
         let tabs = SavedTabs {
@@ -131,6 +142,7 @@ mod tests {
         assert_eq!(read_tabs(&file), SavedTabs::default());
     }
 
+    #[cfg(feature = "copilot")]
     #[test]
     fn the_previous_single_chat_becomes_the_one_tab_and_is_migrated_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -146,6 +158,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "copilot")]
     #[test]
     fn saved_tabs_are_not_replaced_by_the_old_file() {
         let dir = tempfile::tempdir().unwrap();

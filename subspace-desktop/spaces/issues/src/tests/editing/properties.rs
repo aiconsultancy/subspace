@@ -76,19 +76,42 @@ fn description_due_and_parent_edits_send_sparse_fields_and_keep_mentions(cx: &mu
     });
     let (board, cx) = open_editor(&fixture, cx);
     let description =
-        "Keep @[Ada Fixture](member:12345678-1234-1234-1234-123456789abc) in Markdown";
+        "## Outcome\n\nKeep @[Ada Fixture](member:12345678-1234-1234-1234-123456789abc)";
+    cx.update(|w, cx| w.click(("issue-description-mode", 1_usize), cx));
+    render(cx);
+    assert!(!cx.update(|_, cx| board.read(cx).issue_editor_dirty(cx)));
+    cx.update(|w, cx| {
+        assert_eq!(
+            w.find(("issue-description-mode", 1_usize)).checked(),
+            Some(true)
+        );
+        w.within("issue-edit-description").click("input-state", cx);
+        w.press(subspace_framework::dashboard::secondary!("a"), cx);
+        w.input(description, cx);
+        w.input("[", cx);
+        w.press("tab", cx);
+        assert_eq!(
+            w.within("issue-edit-description")
+                .find("input-state")
+                .focused(),
+            Some(false)
+        );
+    });
+    render(cx);
+    cx.update(|w, cx| w.click(("issue-description-mode", 0_usize), cx));
+    render(cx);
+    cx.update(|w, _| {
+        assert_eq!(
+            w.find(("issue-description-mode", 0_usize)).checked(),
+            Some(true)
+        )
+    });
     for (id, text) in [
-        ("issue-edit-description", description),
         ("issue-edit-due", "2026-12-01"),
         ("issue-edit-parent", "SUB-1"),
     ] {
+        tab_to_visible_field(cx, id);
         cx.update(|w, cx| {
-            if id == "issue-edit-description" {
-                w.press("tab", cx);
-                w.press("tab", cx);
-            } else {
-                w.click(id, cx);
-            }
             w.press(subspace_framework::dashboard::secondary!("a"), cx);
             w.input(text, cx);
         });
@@ -98,6 +121,23 @@ fn description_due_and_parent_edits_send_sparse_fields_and_keep_mentions(cx: &mu
     settle_board(&board, cx, |b| b.editor.is_none());
     assert_eq!(
         patch_bodies(&fixture),
-        [json!({"version":1,"description":description,"dueDate":"2026-12-01","parentId":"SUB-1"})]
+        [
+            json!({"version":1,"description":format!("{description}["),"dueDate":"2026-12-01","parentId":"SUB-1"})
+        ]
     );
+}
+
+fn tab_to_visible_field(cx: &mut VisualTestContext, id: &'static str) {
+    for _ in 0..16 {
+        if cx.update(|window, _| window.find(id).focused() == Some(true)) {
+            render(cx);
+            cx.update(|window, _| {
+                assert!(window.find(id).visible(), "focused field {id} is hidden")
+            });
+            return;
+        }
+        cx.update(|window, cx| window.press("tab", cx));
+        cx.run_until_parked();
+    }
+    panic!("Tab did not reach {id}");
 }

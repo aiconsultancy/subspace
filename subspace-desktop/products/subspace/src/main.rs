@@ -67,6 +67,7 @@ fn main() -> ExitCode {
     subspace_framework::shell::launch(
         subspace_framework::shell::ProductBuild {
             descriptor,
+            pre_startup: None,
             display_name_prefix: Some(env!("SUBSPACE_BUILD_TITLE_PREFIX")),
             default_theme_override: option_env!("SUBSPACE_DEFAULT_THEME"),
             version: env!("CARGO_PKG_VERSION"),
@@ -86,6 +87,7 @@ fn main() -> ExitCode {
             dock_panel: None,
             github_oauth: github_oauth(),
             fonts: fonts::bundled(),
+            product_themes: &[],
             #[cfg(feature = "report-issue")]
             report_issue_repository: Some(env!("SUBSPACE_BUILD_REPORT_ISSUE_REPOSITORY")),
         },
@@ -189,6 +191,7 @@ fn all_board_registrations() -> Vec<BoardRegistration> {
             .description("IRC networks, channels and private messages"),
         BoardRegistration::new::<subspace_issues_board::Issues>()
             .description("Subspace API issues and comments"),
+        BoardRegistration::new::<subspace_projects_board::Projects>(),
         BoardRegistration::new::<subspace_decisions_board::Decisions>()
             .description("Search, propose and review Subspace API decisions"),
         #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
@@ -556,7 +559,7 @@ mod tests {
         let expected: Vec<_> = all
             .iter()
             .copied()
-            .filter(|id| !["issues", "decisions"].contains(id))
+            .filter(|id| !["issues", "projects", "decisions"].contains(id))
             .collect();
         assert_eq!(none, expected);
         for kept in ["github", "github-copilot-agents", "irc", "actions"] {

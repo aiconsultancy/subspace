@@ -139,15 +139,13 @@ export async function startApi(
   databaseUrl: string,
   env: Record<string, string>,
   fetchRemote?: RemoteFetch,
+  store = {} as (typeof Storage)["Service"],
 ) {
   const port = freePort();
   const options = config({ ...env, DATABASE_URL: databaseUrl, PORT: String(port) });
   const scope = await Effect.runPromise(Scope.make());
   await Effect.runPromise(
-    Layer.buildWithScope(
-      server(options, null, { store: {} as (typeof Storage)["Service"], fetchRemote }),
-      scope,
-    ),
+    Layer.buildWithScope(server(options, null, { store, fetchRemote }), scope),
   );
   const origin = `http://127.0.0.1:${port}`;
   return {

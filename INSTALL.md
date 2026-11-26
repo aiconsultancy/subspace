@@ -31,7 +31,10 @@ your own computer is the quickest way, and it stays fully supported.
 >    user through you. Do not stop to ask again. If something the plan did
 >    not cover comes up, take the safe default named in
 >    [Decide with the user](#decide-with-the-user), or stop with a clear
->    message that says what is needed and which command to run next.
+>    message that says what is needed and which command to run next. The one
+>    exception is planned: if the user chose to derive the toolchains
+>    (question 21), show them the proposal the run ends with and ask which
+>    items to install.
 > 4. **The fleet VM must stay private.** Never open its services to the
 >    internet, never bind them to `0.0.0.0`, and never pass `--no-lockdown`
 >    unless the user asks for it after you have explained the risk. Agents'
@@ -40,9 +43,10 @@ your own computer is the quickest way, and it stays fully supported.
 > 5. Never print, paste or log passwords, tokens or private keys. The
 >    installer saves them as owner-only files and tells you where.
 > 6. Finish by running the [privacy audit](#check-that-the-fleet-is-private)
->    and reporting its result. Then tell the user that **the agents stay
->    offline until CLIProxyAPI is signed in to at least one of their provider
->    accounts**. That sign-in needs the user's browser and comes after the
+>    and reporting its result, and the memory limits and swap the install
+>    chose ([question 22](#decide-with-the-user)). Then tell the user that
+>    **the agents stay offline until CLIProxyAPI is signed in to at least
+>    one of their provider accounts**. That sign-in needs the user's browser and comes after the
 >    install, so you cannot do it unattended: walk them through
 >    [bringing the agents online](#bring-the-agents-online) if they are there,
 >    or leave them the exact commands.
@@ -137,7 +141,7 @@ answer it now.
      its cost is theirs to accept. Ask whether you may use that CLI; if it is
      missing or not signed in, they install it and sign in themselves, or let
      you install it as part of the plan. Settle the private network in
-     question 10.
+     question 11.
    - **A new local VM on this computer (the quickest way to try it).** On
      macOS it uses Apple's Virtualization framework through
      [Lima](https://lima-vm.io); on Linux,
@@ -145,7 +149,8 @@ answer it now.
      with Hyper-V (Windows Pro, Enterprise or Education; Windows Home has no
      Hyper-V, so use an existing VM instead). All are free. The VM needs
      about 4 CPUs, 8 GiB of memory and 40 to 60 GiB of disk; use 16 GiB of
-     memory for two or more captains. Ask whether you may install the VM
+     memory for two or more captains, or for real builds (with less, the
+     installer warns that builds may be killed for memory; question 22). Ask whether you may install the VM
      tool if it is missing (`--install-deps`); without that, the installer
      stops and says what to install.
    - **An existing VM**, in their cloud or elsewhere. Ubuntu 24.04 or
@@ -256,7 +261,8 @@ answer it now.
    without credentials, before cloning anything, until it is marked
    `"private": true` with the Apps in place, or left out for now (see
    [Add private repositories later](subspace-installer/README.md#add-private-repositories-later)).
-   **Default: no repositories, so no crew yet.**
+   **Default: no repositories, so no crew yet.** With repositories, also ask
+   question 21, about the toolchains they need.
 5. **Crew per captain** (**2 Claude, 2 Codex**; 0 to 10 each,
    `--crew-claude`, `--crew-codex`). Explain that crew run inside their
    captain's OpenCode server as the captain's Linux user: they share the
@@ -288,7 +294,15 @@ answer it now.
    install, in their browser; see [Bring the agents online](#bring-the-agents-online).
    Ask whether they will be there at the end to do it. If not, finish the
    install and leave them the sign-in commands.
-10. **How they reach the VM.** For a cloud VM a private network is required:
+10. **Which limits should the usage guard use?** (**On, 20% warning and
+    10% cutoff** for Claude and Codex, or **off**.) At the warning, the
+    rear admiral asks captains in their own ship channels to stand down
+    extra crew of the affected provider. At the cutoff, Stargate blocks
+    new starts and resumptions for that provider. Active crew can finish,
+    checkpoint and push. Use `--usage-guard-warning PERCENT`,
+    `--usage-guard-cutoff PERCENT`, or `--no-usage-guard`. Prefix a value
+    with `claude=` or `codex=` to change only that provider.
+11. **How they reach the VM.** For a cloud VM a private network is required:
     we recommend **Tailscale** or Cloudflare Zero Trust (free for up to 50
     users), which you set up for them as in
     [Set up the private network](#set-up-the-private-network), with
@@ -310,19 +324,19 @@ answer it now.
     `cloudflared` installed on this computer first. If they cannot, do not
     create the cloud VM: offer the local VM instead, or stop and leave them
     the steps.
-11. **Secrets.** (**On the VM**, as root-only and per-agent files.) On Azure,
+12. **Secrets.** (**On the VM**, as root-only and per-agent files.) On Azure,
     they can also keep the generated secrets in Key Vault (`--key-vault`), so
     a rebuilt VM gets the same ones. That needs the VM's managed identity to
     have access to the vault, which they set up or allow you to set up in
     their cloud account; if neither, keep the secrets on the VM.
-12. **Local agent skills.** Should their own coding agents (Claude Code,
+13. **Local agent skills.** Should their own coding agents (Claude Code,
     Codex, OpenCode) get Subspace skills in their user profile, so they can
     use the tracker and talk to the fleet? Which agents, and what name should
     those agents use for them? You install them at the end. See
     [Use your local agents with the fleet](#use-your-local-agents-with-the-fleet).
-    A deployment repository (question 19) carries the skills for its own
+    A deployment repository (question 20) carries the skills for its own
     folder; these are for working from any folder. **Default: no.**
-13. **Slack or Teams** (optional). Should stakeholders reach the rear admiral
+14. **Slack or Teams** (optional). Should stakeholders reach the rear admiral
     in Slack or Microsoft Teams? Slack works with a private VM as is
     ([Slack](docs/slack.md)). Teams needs an Azure VM and one public callback
     path ([Teams](docs/teams.md)). Teams bots cannot talk to each other, so
@@ -330,7 +344,7 @@ answer it now.
     admiral to Teams. Both need an app the user creates and its tokens, so
     they follow those guides with the user after the fleet runs. **Default:
     neither.**
-14. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on) With it
+15. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on) With it
     on, issues flagged *Ready for agents* are offered to the captains in
     fleet command, and issues assigned to a captain are announced to it
     there (see [Agent dispatch](README.md#agent-dispatch)). It needs the
@@ -341,7 +355,7 @@ answer it now.
     to renew it, or see
     [Agent dispatch](subspace-installer/README.md#agent-dispatch) for a
     long-lived token. An unattended run leaves it off.
-15. **An existing PostgreSQL for the tracker?** (**no**: the API keeps its
+16. **An existing PostgreSQL for the tracker?** (**no**: the API keeps its
     own PostgreSQL on the fleet VM.) If they already run one, for example a
     managed server, the fleet's API can use it instead, with no database on
     the VM. Ask for a file on this computer holding its
@@ -357,7 +371,7 @@ answer it now.
     is no demo data in a database the installer did not create, and no way
     back to a database on the VM. See
     [An existing PostgreSQL](subspace-installer/README.md#an-existing-postgresql).
-16. **A Subspace API on another host?** (**no**: the API runs on the fleet
+17. **A Subspace API on another host?** (**no**: the API runs on the fleet
     VM.) If their organisation already runs one for several fleets, the
     fleet can use it instead, with no API or database on the VM and no
     administrator token there. Ask for its HTTPS origin (for example
@@ -365,14 +379,13 @@ answer it now.
     the fleet's enrolment token (`senr1.…`, `chmod 600`; never paste it into
     the chat), which one of that API's administrators issues for this fleet
     after creating it there. Pass `--api-url URL --api-enrolment-token-file
-    FILE`. It excludes question 15 and agent dispatch, and needs a Stargate
-    commit with its `subspaceAgents` section, at or after `5630a5c`, which no
-    release has yet: add `--stargate-ref <that commit or later>`. The VM must
+    FILE`. It excludes question 16 and agent dispatch. The default Stargate
+    release supports both `subspaceAgents` and the usage guard. The VM must
     reach the API over HTTPS. On a VM whose API already keeps a tracker,
     switching needs `--switch-to-hosted-api` and leaves that tracker behind:
     ask first. See
     [A hosted Subspace API](subspace-installer/README.md#a-hosted-subspace-api).
-17. **An existing initiative for the fleet's work?** (**no**: setup finds
+18. **An existing initiative for the fleet's work?** (**no**: setup finds
     or creates one named after the fleet.) If the tracker already holds the
     fleet's projects under an initiative, ask for its UUID and pass
     `--initiative UUID`: the fleet's officers may assign issues only in
@@ -383,7 +396,7 @@ answer it now.
     other; later runs never move it back. With a hosted API, setup prints
     the request its administrator makes. See "Who owns the fleet's work" in
     [Subspace API registration](subspace-installer/README.md#subspace-api-registration).
-18. **Do captains code themselves?** (**no**: `--captain-tools delegate`.)
+19. **Do captains code themselves?** (**no**: `--captain-tools delegate`.)
     By default a captain with crew plans, reviews and opens pull requests,
     and its crew edit, test, commit and push: the captain has no edit tool,
     and its shell runs any command but Git's writes and `sed -i` or
@@ -392,7 +405,14 @@ answer it now.
     installed before this choice existed keeps captains that code until you
     pass `--captain-tools delegate`. See
     [Instructions, permissions and toolchains](subspace-installer/README.md#instructions-permissions-and-toolchains).
-19. **A deployment repository of their own?** When they deploy for
+    **Should captains be allowed to merge pull requests?** (**no**.) If yes,
+    ask which of the fleet's GitHub repositories to allow and include
+    `--captain-merge-repositories OWNER/REPO[,OWNER/REPO]` in the plan.
+    Captains with a write-capable GitHub App can squash-merge the exact
+    reviewed head from their own checkout. GitHub enforces each repository's
+    branch protections. Crew hand the merge back to their captain. See
+    [Captain pull request merges](subspace-installer/README.md#captain-pull-request-merges).
+20. **A deployment repository of their own?** When they deploy for
     themselves or their organisation, rather than trying Subspace out,
     recommend a new private repository that pins the Subspace and Stargate
     releases they deploy (and moves the pins to the latest releases on
@@ -406,6 +426,65 @@ answer it now.
     client ID. Creating the private repository on GitHub and pushing to it
     is outward-facing: ask for that separately. **Default: yes for a cloud
     or hosted deployment, no for a trial on a local VM.**
+21. **Which toolchains do the repositories need?** The VM has Git, Bun, a
+    C/C++ build toolchain, Python, Node 24 and the screenshot tools (Xvfb,
+    fonts, Playwright with its Chromium, and offline Mermaid rendering);
+    anything else the repositories build or test with (a .NET SDK, Rust, pnpm, Terraform, GUI
+    development libraries) must be installed for the officers and crew. Offer
+    three answers:
+    - **Derive them from the repositories** (`--toolchains derive`;
+      recommended when the user names repositories). Once the install has
+      cloned them, setup reads them on the VM, private ones included, and
+      ends the run with a proposal: each tool or package with its version,
+      the file and line it came from, a confidence, whether it is installed
+      and where it would go, then what it could not determine (versions from
+      a CI matrix or a secret, Docker-only tools, licensed builds, tests that
+      need a database). Nothing in it is installed yet. Show it to the user,
+      ask which items to install, and run the command it ends with, edited to
+      their answer (`./install.sh ... --toolchains TOOL@VERSION,...
+      --system-packages NAME,...` with the same other options, or
+      `sudo subspace-setup --toolchains ...` on the VM). If they are not
+      there, finish without it and leave them the proposal and that command.
+      Later runs propose only what repositories added since need.
+    - **List them** (`--toolchains node@22.11.0,pnpm@9.12.3
+      --system-packages zsh,clang`), when the user knows; any
+      [mise tool](https://mise.jdx.dev) works, such as
+      `cargo:cargo-nextest@0.9.100` or `github:example/tool@1.2.0`.
+    - **None** (`--toolchains none`). **Default: none**, the base tools only.
+
+    Shared tools are installed once for the whole fleet; Rust goes to each
+    officer's own directory, since Rust installs a repository's pinned
+    toolchain on first use, and so do tools whose installs run third-party
+    code (`cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:`, `conda:`), so
+    that code never runs as root. Add `--verify-toolchains` to
+    run each repository's basic check as a crew member would, after
+    installing, and report pass or fail; it never stops the install. See
+    [Toolchains](subspace-installer/README.md#toolchains).
+22. **How much memory may each ship use?** Every officer's engine gets a
+    memory cap sized for the VM, and the VM gets swap if it has none, so
+    that one runaway process (a test suite or a build) is killed inside its
+    own ship instead of taking the ship's engine and the VM down with it
+    ([Memory limits and swap](subspace-installer/README.md#memory-limits-and-swap)).
+    Tell the user what the sizing gives on the VM they chose, from the
+    table there: on a 64 GB VM with four captains, each captain and its crew
+    may use 20 GiB, the rear admiral 4 GiB, and the VM gets an 8 GiB swap
+    file. Explain that the captains' caps may add up to more than the VM,
+    on the bet that no more than three ships build heavily at once. Ask
+    whether that suits how they will use the fleet: if several ships will
+    run heavy builds at the same time, offer a lower cap, and if their
+    builds need more, a higher one. The options are `--captain-memory SIZE`
+    (every captain's hard cap, such as `16G`; `none` for no cap),
+    `--rear-admiral-memory SIZE`, and `--swap SIZE` or `--swap none` (leave
+    the VM's swap as it is); `auto` returns any of them to the sizing. One
+    ship's own cap goes in `/root/fleet/fleet.json` after the install, as
+    `memory` on that captain. The
+    dry run and the end of the install print the VM's memory, each engine's
+    limits and why, any limits set on the VM by hand, the swap decision and
+    any warning, in lines that start `Memory` and `Swap`. Read them and
+    report them to the user in your own words, every warning included (the
+    caps add up to more than the VM; the VM looks small for its fleet),
+    with the options that change them. **Default: the installer's sizing,
+    and swap when the VM has none.**
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -538,13 +617,13 @@ whichever ports sshd listens on), and
 [Private access](docs/private-access.md#cloudflare-zero-trust) instead. Leave
 `--access` out only for an existing VM you reach another private way.
 
-For a hosted API (question 16), add `--api-url URL --api-enrolment-token-file
-FILE --stargate-ref SHA` instead; the dry run checks that the API answers,
+For a hosted API (question 17), add `--api-url URL --api-enrolment-token-file
+FILE`; the dry run checks that the API answers,
 that the token is valid (without using it) and that the Stargate commit has
 `subspaceAgents`. Later runs need no token unless an officer is added or a key
 replaced; then ask the API's administrator for a fresh one.
 
-For an existing PostgreSQL (question 15), add `--database-url-file FILE`
+For an existing PostgreSQL (question 16), add `--database-url-file FILE`
 (`--database-ca-file FILE` for a private CA, `--migrate` to apply missing
 migrations), and the `--organisation` and `--admin-email` of an
 administrator already in that database. Run it with `--dry-run` first: the
@@ -572,9 +651,14 @@ Windows, in PowerShell from the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-deps `
-  --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega `
+  --name "Example Fleet" --rear-admiral Atlas --captains 'Orion,Vega' `
   --admin admiral --demo
 ```
+
+In PowerShell, quote every comma-separated list, as `--captains 'Orion,Vega'`
+above, or `--toolchains 'node@22.11.0,pnpm@9.12.3' --system-packages
+'zsh,clang'`: PowerShell otherwise reads one as an array. (`install.ps1`
+joins such an array with commas again, but other commands may not.)
 
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
 optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`,
@@ -631,10 +715,10 @@ installer does not yet carry it across the private network (for example with
 an SSH forward from each further fleet VM to the first VM's port 3001, run
 as an operator-owned service). Further fleets need the shared IRC server,
 because IRC on their own VM is unreachable from the first fleet's API.
-`--api-target` works only with a shared server the installer manages
-(`--irc-server`); with one in a container, register further fleets as
-[Point the fleets and desktops at it](#point-the-fleets-and-desktops-at-it)
-shows. The desktop needs the first fleet's tunnel, which carries the API.
+Use `--irc-server NAME` for a managed shared server or
+`--irc remote --irc-host HOST` for a shared TLS server you run separately.
+The host installer remembers the fleet's IRC endpoint after a successful
+run. The desktop needs the first fleet's tunnel, which carries the API.
 Every fleet's tunnel uses the same local ports for its dashboard, AgentsView
 and Fleet API, so to look at another fleet's dashboard, stop the first fleet's
 tunnel and start that fleet's for a while. For the same reason the API records
@@ -789,10 +873,11 @@ accounts in Ergo.
    ssh azureuser@fleet-one.example.ts.net sudo -n subspace-setup irc-bundle > bundles/fleet-one.json
    ```
 
-2. **Further fleets.** `--api-target` refuses a server the installer does not
-   manage, so install each further fleet with `--no-api` and the same
-   `--irc remote` options and its own `--target`, then register it with the
-   first fleet's API. The registration holds no secrets: the fleet's IRC
+2. **Further fleets.** Pass `--api-target <first fleet's target>` with the
+   same `--irc remote` options and its own `--target`. Setup registers
+   the fleet with the first fleet's API. To register it separately instead,
+   install with `--no-api` and use the commands below. The registration
+   holds no secrets: the fleet's IRC
    server, its standard channels, each captain's ship and channel, each
    officer's name, IRC nick, model and account subject, and the fleet's
    Stargate Fleet API address if you gave it one with `--fleet-api-url` (its
@@ -1242,12 +1327,15 @@ fleet's agents then have no way into the API yet.
 | See or add provider accounts (agents need one) | `./install.sh providers`, `./install.sh providers login codex-device` |
 | Open a shell on the VM | `./install.sh ssh` |
 | Watch a captain work | `./install.sh ssh`, then `sudo subspace-fleetctl attach orion` |
+| Change crew quota limits or switch off the usage guard | Re-run setup with `--usage-guard-warning 30 --usage-guard-cutoff 20`, or `--no-usage-guard` ([Usage guard](subspace-installer/README.md#usage-guard)). |
 | Follow Stargate's logs | `sudo journalctl --namespace=subspace-fleet -u subspace-fleet-gateway.service -f` |
 | Show the fleet and services | `./install.sh status` |
 | Change a setting | Run the install command again with the new flags |
 | Connect the rear admiral to Slack or Teams | [Slack](docs/slack.md), [Teams](docs/teams.md) |
 | Change the repositories | Run the install command again with `--repositories`; it replaces the list. Once a captain's session is pinned, the installer refuses an empty list or a different first repository, whether reordered or replaced |
 | Add private repositories or GitHub Apps | Edit `/root/fleet/fleet.json` on the VM, put credential files under `/root/fleet/fleet.secrets/`, then `sudo subspace-setup` |
+| Change the toolchains | `sudo subspace-setup toolchains` shows what is installed and why; `--toolchains TOOL@VERSION,...` and `--system-packages NAME,...` add, `--toolchains=-TOOL@VERSION` removes, and `sudo subspace-setup toolchains detect` proposes from the repositories again |
+| See or change memory limits and swap | `sudo subspace-fleetctl memory` on the VM (also in `./install.sh status`) shows each engine's limits and use, the swap, and any fleet process killed for memory since boot; run the install command again with `--captain-memory SIZE`, `--rear-admiral-memory SIZE` or `--swap SIZE` (`none` or `auto`) to change them ([Memory limits and swap](subspace-installer/README.md#memory-limits-and-swap)) |
 | Give a fleet installed with fleet-prefixed names (`example-fleet-orion`) plain ones | `sudo subspace-setup rename-officers --dry-run`, then without `--dry-run`, on the VM ([Officer names](subspace-installer/README.md#rename-an-installed-fleet)); not for a fleet installed with `--api-target` |
 | Print your IRC password | `sudo subspace-setup secret irc-admin` on the VM |
 | Seed the demo data again | `sudo subspace-setup demo` on the VM |
@@ -1289,6 +1377,13 @@ This undoes a pending change. With nothing pending, it removes the inbound
 firewall and SSH hardening entirely, for example when a confirmed `--ssh-from`
 no longer matches your address; run the installer again afterwards to restore
 them. Agent isolation stays, because it never blocks your login.
+
+Setup limits officers and their crew to public network destinations and local
+fleet services. Private IPv4 and IPv6 destinations are blocked, with access to
+the VM's configured DNS resolvers. If officers need a private TCP service,
+set it explicitly with `--agent-egress HOST:PORT`, for example
+`--agent-egress git.example.com:443`. Repeat the option to set several
+destinations. The list is saved, and `--agent-egress ''` clears it.
 
 - Local Lima VM: `limactl shell <target>` uses SSH too; if that fails, wait
   for the rollback, or stop and start the VM (`./install.sh stop`, then

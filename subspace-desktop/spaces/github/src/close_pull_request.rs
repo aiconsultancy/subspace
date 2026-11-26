@@ -51,7 +51,10 @@ pub(super) fn bind_keys(cx: &mut App) {
 }
 
 pub(super) fn open(board: &mut Github, window: &mut Window, cx: &mut Context<Github>) {
-    if !opening_allowed(board.writing, board.close_confirmation.is_some()) {
+    if !opening_allowed(
+        board.writing,
+        board.close_confirmation.is_some() || board.merge_confirmation.is_some(),
+    ) {
         return;
     }
     let Some((item, login)) = board

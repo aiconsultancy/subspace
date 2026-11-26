@@ -10,6 +10,7 @@ an alternative. These links open the same source guides published in the app.
 | Copilot Agents | [Copilot agent tasks](../../spaces/github-copilot-agents/help.md) |
 | Channels | [IRC networks, channels and private messages](../../spaces/irc/help.md) |
 | Issues | [Subspace API issues and comments](../../spaces/issues/help.md) |
+| Projects | [Projects and milestones](../../spaces/projects/help.md) |
 | Decisions | [Subspace API decisions](../../spaces/decisions/help.md) |
 | Space Lab | [Native dashboards and managed environments](../../spaces/space-lab/help.md) |
 | Actions | [GitHub Actions](../../spaces/actions/help.md) |

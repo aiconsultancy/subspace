@@ -4,8 +4,9 @@
 //! server vouches for who sent it. It must be a recognised progress notice
 //! ([`super::marker`]) that replies to a request this buffer holds: a
 //! message or action, and in a private conversation our own. The request
-//! names the agent it asks: a channel request's first word is `nick:`,
-//! `nick,` or `@nick`, and a private conversation's is its partner. The
+//! names the agent it asks: a channel request leads with `@nick` or has
+//! one distinct `@nick` elsewhere. Leading `nick:` and `nick,` also work.
+//! A private conversation's request names its partner. The
 //! notice's `account` tag, which only the server sets, must equal that
 //! nick, ignoring ASCII case. A request that asks its own sender, by nick
 //! or by the sender's account, is none.
@@ -19,6 +20,7 @@ use subspace_client_irc::{Line, LineKind, Target};
 
 use super::requests::{Arrival, Asked, Ending, Notice};
 use super::{Phase, marker};
+use crate::markup::{is_nick, is_nick_char};
 use crate::state::{Buffer, IrcState};
 
 /// What live `line`, to be held as `seq`, brings to its buffer's requests:
@@ -93,20 +95,50 @@ fn request(line: &Line) -> Option<(&str, String)> {
 }
 
 /// Whom `request` asks: the partner of a private conversation, for our own
-/// request there, or the nick a channel request's first word addresses,
-/// written `nick:`, `nick,` or `@nick`.
+/// request there, or the nick addressed in a channel message.
 fn addressee(request: &Line) -> Option<String> {
     match &request.buffer.target {
         Target::Query(partner) => request.own.then(|| partner.clone()),
         Target::Channel(_) => {
             let plain = subspace_client_irc::format::strip(&request.text);
-            let first = plain.split_whitespace().next()?;
-            let nick = first
-                .strip_prefix('@')
-                .or_else(|| first.strip_suffix([':', ',']))?
-                .trim_end_matches([':', ',']);
-            (!nick.is_empty()).then(|| nick.to_owned())
+            channel_addressee(&plain).map(str::to_owned)
         }
         Target::Server => None,
     }
+}
+
+/// A leading address wins. An explicit mention immediately after an
+/// introductory comma, as in "Thanks, @pilot", addresses the request too.
+fn channel_addressee(text: &str) -> Option<&str> {
+    let text = text.trim_start();
+    let first = text.split_whitespace().next()?;
+    let leading = first
+        .strip_prefix('@')
+        .and_then(|rest| {
+            rest.split(|character| character != '@' && !is_nick_char(character))
+                .next()
+        })
+        .filter(|nick| is_nick(nick))
+        .or_else(|| first.strip_suffix(':').filter(|nick| is_nick(nick)));
+    leading.or_else(|| {
+        let comma = first.strip_suffix(',').filter(|nick| is_nick(nick));
+        if text[first.len()..].trim_start().starts_with('@') {
+            inline_addressee(text).or(comma)
+        } else {
+            comma.or_else(|| inline_addressee(text))
+        }
+    })
+}
+
+/// One request timeline cannot describe two different agents' turns.
+fn inline_addressee(text: &str) -> Option<&str> {
+    let mut mentions = text
+        .split_whitespace()
+        .filter(|word| !word.contains("://"))
+        .flat_map(|word| word.split(|character| character != '@' && !is_nick_char(character)))
+        .filter_map(|word| word.strip_prefix('@').filter(|nick| is_nick(nick)));
+    let first = mentions.next()?;
+    mentions
+        .all(|nick| nick.eq_ignore_ascii_case(first))
+        .then_some(first)
 }

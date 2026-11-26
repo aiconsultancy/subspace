@@ -29,7 +29,7 @@ impl Jig {
         let name = self.name.read(cx).value().to_string();
         storage::theme_filename(&name)?;
         let document = self.edited_document(cx)?.named(&name)?;
-        theme::validate_custom_theme(&document.to_json()?)?;
+        theme::validate_custom_theme(&document.to_json()?, theme::product_themes(cx))?;
         Ok((name, document))
     }
 

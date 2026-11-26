@@ -203,6 +203,7 @@ the registrations differ.
 | `issues` | publishes | `issues@1/changed` |
 | `issues` | requests | `github@1/open-pull-request` |
 | `decisions` | requests | `issues@1/current-scope` |
+| `projects` | requests | `issues@1/current-scope` |
 | `github` | responds | `github@1/open-pull-request` |
 | `github` | responds | `github@1/resolve-pull-requests` |
 | `github` | publishes | `github@1/changed` |
@@ -211,6 +212,8 @@ Configured web Spaces are not in the product registrations this test reads:
 each one declares the same three roles as `irc` under its own configured ID
 (`spaces/web/src/bridge/issues.rs`). Only a page whose manifest asks for
 `issues`, and whose user allowed it, reaches the contract.
+
+Projects follows the shared initiative catalogue. It requests the Issues current-scope contract to open a milestone's linked issues and return to the same milestone. It exposes no desktop agent tools.
 
 The Issues board answers whenever enabled, including fixture builds. With it
 disabled, requests are unavailable and references stay plain. Debug capture

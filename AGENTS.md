@@ -130,6 +130,48 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
 - Merge a pull request only after both model reviews clear it. See
   [Pull request review clearance](#pull-request-review-clearance).
 
+## Required thermo-nuclear review
+
+Review the full diff against the PR's actual target branch. Every code-changing
+PR requires a thermo-nuclear code quality review. For agents, the requirement
+covers every change beyond documentation, including small fixes and changes
+to tests, dependencies, build, runtime or CI configuration. Changes limited to
+prose, such as Markdown PR templates and prose-only agent guidance, or assets
+used solely in docs qualify for the exception. Agent settings and skill front
+matter are configuration.
+
+Before opening or handing off an in-scope PR, read
+[Cursor's thermo-nuclear review guide](https://github.com/cursor/plugins/blob/6e3d2ea56d7d446b955eaae6ac4c8eef8bf504cf/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md)
+and apply its criteria. This policy authorises agents to read the guide and
+carry out the pass without a separate request.
+Fix blocking findings within scope and report blockers that need a decision.
+Complete this pass before the independent model reviews below.
+
+Include the **Thermo-nuclear review** section from
+[the PR template](.github/pull_request_template.md) in every code-changing PR
+and every PR an agent handles. Copy it into PRs opened through the CLI or API.
+For a generated PR in scope, the maintainer handling it adds the section and
+arranges the review before queuing a merge. The scheduled Framework release
+workflow handles unattended PRs limited to generated version and changelog
+updates. If an agent handles a release PR or the PR contains code changes,
+the normal thermo-nuclear review requirement applies.
+
+Tick the checkbox only after a person or agent has completed the review and
+resolved the blockers. Record the full reviewed head SHA, reviewer, model for
+an agent review, and the outcome or a link to the findings and their resolution.
+Clear the checkbox if the recorded evidence is inaccurate or the head or diff
+changes. Review the new head and update the evidence before ticking it again.
+
+For documentation-only PRs, leave the review checkbox unticked and enter
+`N/A (documentation only)` in the outcome field. Remove that entry if the PR
+gains any change beyond documentation. Before merging or queuing a merge,
+check the current diff and confirm that the exception still applies or that
+the checked box has valid evidence for the current head. Agents must keep a
+PR with missing, pending, stale or invalid review evidence out of merge.
+
+Complete the independent model review gate below as well, subject to its
+listed exceptions.
+
 ## Pull request review clearance
 
 Before merging, obtain two independent, read-only reviews of the PR changes.

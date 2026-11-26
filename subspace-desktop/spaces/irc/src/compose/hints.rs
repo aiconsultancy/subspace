@@ -22,7 +22,7 @@ pub(crate) const RETENTION: &str = "Subspace users see it for 30 days. No creden
 pub(crate) const HINTS: [(&str, &str, &str); 4] = [
     ("@", "mention", "at sign"),
     ("/", "commands", "slash"),
-    ("up", "recall", "Up arrow"),
+    ("up", "recall when empty", "Up arrow"),
     ("shift-enter", "new line", "Shift+Return"),
 ];
 

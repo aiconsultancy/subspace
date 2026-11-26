@@ -2,3 +2,23 @@
 services:
   api:
     command: ["sh", "-c", "bun run db:migrate && exec bun scripts/local-stack-server.ts"]
+    environment:
+      IRC_CREDENTIAL_SECRET: ""
+      IRC_AUTH_HOOK_TOKEN: ""
+      IRC_CREDENTIAL_SECRET_FILE: /run/subspace-stack/credential.secret
+      IRC_AUTH_HOOK_TOKEN_FILE: /run/subspace-stack/auth-hook.token
+      IRC_AUTH_ORGANISATION: dev:local
+      IRC_AUTH_SERVERS: "127.0.0.1:${IRC_PLAIN_PORT:-6667},127.0.0.1:${IRC_TLS_PORT:-6697}"
+    volumes:
+      - type: bind
+        source: ../.stack/irc/credential.secret
+        target: /run/subspace-stack/credential.secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../.stack/irc/auth-hook.token
+        target: /run/subspace-stack/auth-hook.token
+        read_only: true
+        bind:
+          create_host_path: false

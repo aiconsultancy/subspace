@@ -4,18 +4,15 @@
 
 use subspace_core::log::{Level, Logger};
 use subspace_core::path::{self, Resolved, Startup};
-use subspace_product::{PlatformEnv, ProductDescriptor};
+use subspace_product::PlatformEnv;
 
 /// Resolve and set the `PATH` for this process. The saved `PATH` lives
-/// beside the product's `state.json`.
+/// beside the app's `state.json`.
 // qual:allow(unsafe) reason: "launch calls this first, before the desktop, CLI, MCP or service mode starts a thread; path::apply documents the requirement."
-pub(crate) fn apply(descriptor: &ProductDescriptor) {
-    let cache_file = PlatformEnv::from_process().ok().map(|env| {
-        path::cache_path(&crate::product::state_directory(
-            &env,
-            descriptor.binary_name.as_str(),
-        ))
-    });
+pub(crate) fn apply() {
+    let cache_file = PlatformEnv::from_process()
+        .ok()
+        .map(|env| saved_path_file(&env));
     let startup = Startup {
         cache_file,
         force: false,
@@ -24,6 +21,11 @@ pub(crate) fn apply(descriptor: &ProductDescriptor) {
     unsafe {
         path::apply(startup);
     }
+}
+
+/// The saved `PATH` file in the app's data directory.
+pub(crate) fn saved_path_file(env: &PlatformEnv) -> std::path::PathBuf {
+    path::cache_path(&crate::product::state_directory(env))
 }
 
 /// Write the `startup path` record, if [`apply`] ran.

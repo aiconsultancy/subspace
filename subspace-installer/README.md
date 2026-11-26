@@ -162,11 +162,21 @@ How the effort reaches the model:
   Claude 3.7 and 4.0 to 4.5, except Opus 4.5, take only `high` and `max`.
   The installer reads dated IDs by their version, so
   `claude-opus-4-20250514` counts as Claude 4.0.
-  The Codex family takes `low`, `medium` and `high`.
+  The Codex family takes `low`, `medium` and `high`. The installer also
+  exposes `xhigh` for GPT-5.4 and GPT-6.2 Sol.
 - **Claude Agent SDK.** An officer with `"type": "claude-sdk"` passes the
   effort to Stargate's Claude backend as `effort`.
 
 The installer refuses an effort that the officer's harness does not offer.
+
+Captains with crew can use `stargate_model({op: "inspect", target: "codex-1"})`
+to read a worker's selected model and variant. To prepare an idle worker for a
+review, use `stargate_model({op: "effort", target: "codex-1", variant: "high"})`
+and inspect it again before dispatching. Pass the same `project` to both calls
+for a non-default repository. Crew can verify their own variant with
+`stargate_model({op: "get"})`. Follow the repository's review gate when it
+requires a particular model or effort. These grants apply to the captain's
+pinned root on new and existing fleets.
 
 Both the dry run and the install stop if the model proxy has signed-in
 accounts but none can serve an officer's model:
@@ -214,6 +224,13 @@ run and the install both stop before cloning anything and say how to go on:
 install without those repositories now, and add them as private ones once the
 officers have GitHub Apps ([Add private repositories later](#add-private-repositories-later)).
 An installed repository is not checked again.
+
+The rear admiral can call `refresh_origin` on the `repo_refresh` MCP server
+with an installed repository ID. The tool fetches from the configured upstream
+into `refs/remotes/origin/*` in the rear admiral's reference checkout. Use
+`read_origin_file` with a branch and path to read the fetched version. The checkout
+branch and working files remain read-only. Private fetches use the rear
+admiral's existing repository-scoped GitHub App credentials.
 
 A repository also takes an optional one-line `description` and `tracker`,
 free text that names where its work is tracked, for example
@@ -306,7 +323,11 @@ only the remaining slots' names to `fleet.json`.
 - **Rules.** ASCII letters, digits, spaces, hyphens and underscores,
   shortening to a crew ID of at most 32 characters. A name is unique in the
   fleet, across every ship, compared without case, and is never an officer's
-  ID, account or name. The fleet installer enforces them for any
+  ID, account or name. It is the names that are compared: a crew member's ID
+  need only be unique in its captain's crew, so every ship may have a
+  `claude-1`, as a fleet whose crew were named after installation has (see
+  below). Within a captain's crew a name is also no other member's ID, as
+  Stargate requires. The fleet installer enforces them for any
   `fleet.json`, and setup checks them before it writes anything. Crew have
   no records in the Subspace API, so the API does not check them: a captain
   records a crew member's work with `relayedCrew: {"name", "model"}`, where
@@ -316,7 +337,8 @@ only the remaining slots' names to `fleet.json`.
   crew slot claude-1)"), which the Fleet API returns with its model; the
   captain's instructions list each one as name, ID, family, slot and model;
   and `--dry-run` prints each captain's crew as `Rigel (Claude 1,
-  claude-sonnet-5-5)`.
+  claude-sonnet-5-5)`, adding `ID claude-1` for a crew member that keeps
+  another ID under its name.
 - **Installed fleets keep their crew.** A slot without a name of its own is
   called after its slot, `Claude 1`, on every ship, as in fleets installed
   before crew names; such names may repeat across ships. Stargate keeps a
@@ -330,7 +352,8 @@ only the remaining slots' names to `fleet.json`.
   `sudo subspace-setup rename-officers --crew-names 'Orion=Rigel,...'`
   keeps each crew member's ID (`crewIds`) and gives it the new name, so its
   sessions, worktrees and queued tasks stay. With today's Stargate it stops,
-  saying so, and changes nothing.
+  saying so, and changes nothing. Later runs of setup take the same names
+  again.
 
 ### Captain sessions
 
@@ -484,6 +507,15 @@ operator notes. If a file is not a regular UTF-8 file the captain can read,
 such as a symbolic link, it leaves both files unchanged and says so.
 
 ### Instructions, permissions and toolchains
+
+When a person attaches a file and addresses an officer in the same IRC
+message, the desktop shows a `UPL-…` reference. With the hosted Subspace
+bridge, Stargate reads supported attachments as that officer. If the
+session cannot take the attachment, the reference stays in the request.
+The officer and its crew can use `subspace_read_chat_upload` when advertised,
+or the authenticated `/api/v1/chat/uploads/<reference>/content` route. Pass
+the reference in crew assignments. Active members of the organisation can
+read the same file for 30 days.
 
 The installer renders role-specific OpenCode `AGENTS.md` and
 `skills/fleet-*/SKILL.md` under the rear admiral's and each captain's
@@ -649,14 +681,291 @@ server password and firewall identity, so a captain and its crew cannot read
 the rear admiral's or another captain's files, and the agents still cannot
 reach operator services or the cloud metadata service.
 
-The base tools include Git, Bun, a C/C++ build toolchain, and system Python with
-virtual environments. Mise installs Node 24 by default. Use `toolchains` to
-select versions of Node, Rust, Go, Python, kubectl, gh, Zig or Deno. For
-example, `"toolchains": {"node":"24","go":"1.26","rust":"stable","kubectl":"1.35"}`
-adds Go, Rust and kubectl. Use a full version to pin a tool or `false` to
-disable it. Managed tools are placed on the PATH for fleet processes and
-`fleetctl attach`. Repository-specific versions can still use the agent's own
-tool setup.
+The base tools include Git, Bun, a C/C++ build toolchain, system Python with
+virtual environments, and the [screenshot tools](#screenshots). Mise installs
+Node 24 by default; the [toolchains](#toolchains) the repositories need come
+on top.
+
+### Screenshots
+
+Agents always need to take screenshots, of web pages and of desktop apps, so
+every fleet VM gets the means in its base install, whatever its toolchains:
+
+- **A virtual display**: Xvfb (with `xvfb-run` and `xauth`) and working
+  keyboard maps (`x11-xkb-utils`, whose `xkbcomp` Xvfb needs to start, and
+  `xkb-data`), with basic fonts (DejaVu, Liberation, FreeFont, Noto colour
+  emoji and the X core fonts). A desktop app runs under
+  `xvfb-run -a -s "-screen 0 1280x800x24" <app>`.
+- **A headless browser**: Playwright's Chromium and its headless shell, at the
+  revision the pinned Playwright names, installed by root into
+  `/opt/subspace-fleet/browsers`. Its shared libraries come from the
+  distribution's packages, never from Playwright's `--with-deps`.
+- **The Playwright command line**: `playwright` on every officer's and crew
+  member's `PATH` (`/opt/subspace-fleet/bin/playwright`), the pinned
+  Playwright run by a pinned Node from the shared toolchain store, pointed at
+  those browsers. Officers and crew have no outbound network to download a
+  browser, so it never does: `playwright screenshot https://example.com
+  shot.png`, or `playwright screenshot --full-page` for a whole page.
+- **Mermaid rendering**: `mermaid-render diagram.mmd diagram.svg` exports
+  a vector diagram and `mermaid-render diagram.mmd diagram.png` takes a
+  screenshot of just the diagram. Write the Mermaid syntax in the `.mmd`
+  file without Markdown fences. The command uses the installed browser
+  offline so private diagrams stay on the VM. The rear admiral can also pass
+  `-` as the input to author a diagram on standard input.
+
+Every version is pinned in one place,
+[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright and Mermaid
+(with its `package-lock.json`, so `npm ci` checks each package's integrity
+hash and runs no package scripts), the Chromium revision that Playwright
+names, the Node that runs it, and the distribution packages for Ubuntu
+24.04 and Debian 12 on amd64 and arm64. An upgrade is a deliberate change
+there, then `npm install --package-lock-only --ignore-scripts` in that
+directory. The installer's dry run says what a run adds, so an existing
+fleet gains the tools on its next run and its dry run says so. A package
+apt does not offer, or a browser download that fails, is reported and does
+not stop the install; the next run tries again.
+
+After every install, the installer takes a screenshot of a local page under
+`xvfb-run` and renders a Mermaid PNG. It runs both with the tool environment
+of a captain with crew when one is available. It prints `Screenshot check ...
+PASS` or a warning identifying the failing command, and continues the install.
+
+A repository's own Playwright downloads its own browsers into the officer's
+`~/.cache/ms-playwright`, which needs network the lockdown does not give
+officers; one pinned to this Playwright version can use the installed
+browsers with `PLAYWRIGHT_BROWSERS_PATH=/opt/subspace-fleet/browsers`.
+
+To do without them, set `"screenshots": false` in `fleet.json` (on a VM set
+up with `subspace-setup`, `/root/fleet/fleet.json`, which setup keeps) and run
+the installer or `sudo subspace-setup` again. Nothing is removed; to remove
+what an earlier run installed, `sudo rm -rf /opt/subspace-fleet/playwright
+/opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright
+/opt/subspace-fleet/bin/mermaid-render` (the
+distribution packages stay).
+
+### Toolchains
+
+`toolchains` in `fleet.json` names the tools the fleet's repositories need,
+by [mise](https://mise.jdx.dev) tool specification, and `systemPackages` the
+Debian packages:
+
+```json
+"toolchains": {
+  "node": ["22.11.0", "24"],
+  "dotnet": "8.0.404",
+  "pnpm": "9.12.3",
+  "rust": { "version": "1.99.0", "options": { "components": "clippy,rustfmt" } },
+  "cargo:cargo-nextest": "0.9.100",
+  "github:example/release-tool": "2.4.0",
+  "conda:openssl": "3.4.0"
+},
+"systemPackages": ["zsh", "clang", "pkg-config", "libssl-dev"]
+```
+
+- **A tool** is a plain mise name (`node`, `dotnet`, `terraform`) or a
+  backend and a name: `aqua:`, `asdf:`, `cargo:`, `conda:`, `dotnet:`, `gem:`,
+  `github:`, `gitlab:`, `go:`, `npm:`, `pipx:`, `ubi:` or `vfox:`. Its value is
+  a version or channel (`24`, `1.99.0`, `stable`, `latest`), a list of up to
+  eight, `false` (only useful to turn off the default Node), or an object with
+  `version`, optional `install` (`shared` or `user`, below) and optional
+  `options`. The first version is the default where a repository pins none.
+- **Options** are mise tool options and apply to every version of the tool.
+  The installer passes `components`, `targets`, `profile`, `bin`, `bin_path`,
+  `exe`, `rename_exe`, `asset_pattern`, `matching`, `version_prefix`,
+  `filter_bins`, `runtime`, `features`, `default-features`, `crate`, `locked`
+  and `channel`, and refuses any other, such as `postinstall` or
+  `install_env`: root installs the shared tools, and no setting may make it
+  run a command. Each is checked for what it is for: `bin`, `exe` and
+  `rename_exe` are file names, never paths; `bin_path` is a directory inside
+  the tool's install directory (relative, without `.` or `..`); `components`,
+  `targets`, `filter_bins` and `features` are names separated by commas;
+  `profile` is `minimal`, `default` or `complete`; `locked` and
+  `default-features` are `true` or `false`; the rest are plain names (a
+  `channel` is a name, never an address). Detection reports an option it
+  cannot carry over in its "could not determine" list. Since mise applies one
+  set of options to every version of a tool, confirming a version whose
+  options differ from the tool's joins them: `components`, `targets`,
+  `filter_bins` and `features` are combined (two repositories pinning Rust
+  1.99.0 with `clippy` and 1.98.0 with `rustfmt` give both versions both),
+  and any other option must agree, or setup stops and says which to choose.
+  The proposal shows the result on each item before anyone confirms it, and a
+  version that is configured already but without an option a repository asks
+  for is proposed again, so confirming it adds the option.
+- **Names are strict.** They end up on command lines run as root, so a tool,
+  version, option or package that is not plainly a name or a version is
+  refused before anything is installed.
+- **Packages are only ever installed.** A package name must be one apt knows
+  exactly, with no version (`=`), release (`/`), architecture (`:`) or
+  pattern, and never ending in `-`, which `apt-get install` reads as "remove
+  this package". apt runs from `/` with `--no-remove`, so it stops rather than
+  remove anything to make room.
+- Existing fleets' values, such as `{"node":"24","go":"1.26","rust":"stable"}`,
+  keep their meaning.
+
+**What installs where.**
+
+| What | Installed by | Where | Who sees it |
+| --- | --- | --- | --- |
+| `systemPackages` | root, with apt | the system | everyone |
+| A shared tool (the default) | root, with mise, as explicit `tool@version` arguments, from `/opt/subspace-fleet` | `/opt/subspace-fleet/toolchains`, the shared store | every officer and crew member, through mise's system data directory |
+| A per-user tool: `rust`, `dotnet` and `yarn`, and the tools of backends that run third-party code while they install (`cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:`, `conda:`), by default; or `"install": "user"` | each officer's Linux user, with mise, as explicit `tool@version` arguments, from its home | the officer's own `~/.local/share/mise` | that officer and, since crew run as their captain's user, its crew |
+
+Neither install runs mise, a package manager or anything else inside an
+agent's checkout, so no repository's configuration reaches root. Rust is per
+user because rustup keeps its toolchains in the user's home and installs a
+repository's pinned toolchain and components when they are first used, which a
+read-only shared store cannot; `cargo:` tools build with that Rust.
+
+**Install-time code never runs as root by default.** `cargo:` runs build
+scripts, `npm:` lifecycle scripts, `gem:` native extension builds, `pipx:`
+package builds, `asdf:` and `vfox:` plugin scripts, and `conda:` packages may
+carry link scripts, all from third parties. Their tools install as each
+officer's user. Root's mise has those backends disabled
+(`MISE_DISABLE_BACKENDS`, with `pypi:` too), so a plain tool name that mise's
+registry resolves to one of them, such as a tool published only on npm, fails
+as root instead of running its code, and the install stops saying so; give it
+`"install": "user"` (Yarn, which the registry installs with a plugin or npm,
+is per user by default). In mise's registry, `azure-cli`, `gcloud`, `lua`,
+`php`, `playwright`, `poetry`, `prettier`, `trunk`, `turbo` and `vercel` are
+among them. To install
+such a tool once for the whole fleet as root, mark it explicitly:
+`"npm:@example/cli": {"version": "1.2.0", "install": "shared"}`, which also
+enables that backend for root's installs. Detection never proposes `shared`
+for them; only the operator can mark it, in `fleet.json`.
+
+**.NET is per user too.** The `dotnet` host finds SDKs in one root,
+`DOTNET_ROOT`, and nowhere else, so every SDK must be in the same root for
+`global.json` to choose among them, and an SDK a repository pins that the
+fleet has not got installs into that root on first use. Each officer's root is
+its own, `~/.local/share/mise/dotnet-root`, which it can write. A .NET marked
+`"install": "shared"` goes into `/opt/subspace-fleet/toolchains/dotnet-root`
+instead, once for the fleet, but then an SDK a repository pins that the
+fleet has not got cannot install (officers cannot write the shared root):
+confirm every SDK the repositories pin. The installer never removes a tool or
+package taken off the list; the dry run names them as left installed. The
+weekly tools service updates shared tools as root and per-user tools as each
+officer, within their configured versions.
+
+**The environment officers and crew run their tools in.** Each OpenCode
+engine, and the gateway of a Claude Agent SDK officer, which runs that
+officer's tools, gets:
+
+- a mise data directory of its own, `~/.local/share/mise`, with its shims first
+  on `PATH`, then the shared store's shims, then `/opt/subspace-fleet/bin`;
+- the shared store as mise's system data directory (`MISE_SYSTEM_DATA_DIR`) and
+  `/etc/subspace-fleet/toolchains.toml`, rendered from `toolchains`, as mise's
+  system configuration, so every configured tool is the default where a
+  repository pins nothing else;
+- mise configuration trusted in its workspace and its crew's worktrees (the
+  rear admiral's: its workspace and reference checkouts), so a repository's
+  own `mise.toml` applies there, and a version it pins that the fleet has not
+  got installs into the officer's own data directory on first use;
+- a private temporary directory, `TMPDIR=/tmp/ss-<id>`, mode `0700`, which the
+  engine makes in its service's private `/tmp`: tests that drive Git fail
+  with a temporary directory inside the home;
+- `DOTNET_ROOT` when a .NET SDK is configured: its own
+  `~/.local/share/mise/dotnet-root`, or the shared store's for a .NET marked
+  shared.
+
+The separation between officers is unchanged: each officer's data directory
+lives in its own home (mode `0700`), and crew share their captain's.
+
+**Working the list out from the repositories.** `subspace-setup` asks: derive
+the toolchains from the repositories, list them, or none ([INSTALL.md](../INSTALL.md#decide-with-the-user),
+question 21).
+
+- `--toolchains derive`: once the run has cloned the repositories, setup reads
+  them on the VM, private ones included, from the rear admiral's reference
+  checkouts, and prints a proposal. Nothing in it is installed until someone
+  confirms it.
+- `--toolchains node@22.11.0,pnpm@9.12.3` and `--system-packages zsh,clang`
+  confirm items, from a proposal or by hand. `--toolchains=-pnpm@9.12.3` or
+  `--system-packages=-zsh` takes one off the list (with `=`, since the value
+  starts with a hyphen).
+- `--toolchains none`, the default, proposes nothing.
+- `sudo subspace-setup toolchains` shows what is confirmed, where each item
+  came from, what was declined and what waits for an answer;
+  `sudo subspace-setup toolchains detect` proposes now, `--all` reads every
+  repository again, and `--json` prints the proposal as JSON for an agent.
+  With the fleet installer alone, `sudo /opt/subspace-fleet/lib/toolchains.py
+  detect` prints the same proposal.
+
+Detection reads files as data. It never runs mise, a package manager, Git or
+anything else from a repository, and skips dependency and build directories
+and files over 1 MiB. It never follows a symbolic link, at any component of a
+path, even while the mirror service refreshes the checkout: it opens each
+directory relative to the one it already holds open and each file relative to
+its directory. A repository's files are less trusted than the operator, so
+nothing in them can stop setup: a file detection cannot read is listed under
+"could not determine", and if detection fails altogether, setup says so and
+carries on to the lockdown. Its sources, most confident first:
+
+| Confidence | Source | Proposes |
+| --- | --- | --- |
+| high | `mise.toml` and mise's other file names, at any depth; asdf's `.tool-versions` | each tool and version, with the options above |
+| high | `rust-toolchain`, `rust-toolchain.toml` | Rust's channel, components and targets |
+| high | `global.json` | the SDK, honouring `rollForward`: `disable` and the patch policies the exact SDK, `latestFeature` the minor version (`8.0`), `latestMinor` and `latestMajor` the major |
+| high | `packageManager` (and `volta`) in `package.json` | an exact pnpm, Yarn or Bun |
+| high | version files: `.node-version`, `.nvmrc`, `.python-version`, `.ruby-version`, `.terraform-version`, `.go-version` and others | that version |
+| medium | `engines` in `package.json`, `go.mod`, `requires-python` in `pyproject.toml` | a request whose installed version meets the range: mise installs the newest version a prefix names, so `>=22.11.0 <22.12.0` proposes `22.11`, never `22` |
+| medium | CI workflows: set-up actions with their `with:` keys, and `apt-get install` lines | that tool and version; those packages |
+| low | documentation: `apt-get install` in code blocks of READMEs, install and contributing guides and `docs/` | those packages, proposed only |
+
+A version belongs to the `uses:` of its own workflow step, wherever `with:`
+sits in the step; `jdx/mise-action`'s `version:` is mise's own. Workflows are
+read with a small YAML reader (the VM's Python has no YAML module) that
+handles block and flow collections (`with: {version: '9.12.3'}`), quoted
+keys and values, and literal and folded (`run: >`) block scalars. A workflow
+that uses what it does not read, such as anchors, aliases, tags or merge
+keys, is listed under "could not determine" with the line, since requirements
+there may be missing from the proposal. A range or
+prefix that another proposed version meets is joined to it, with both
+sources, so `engines: {"node": ">=20"}` beside a `.tool-versions` pin of
+`22.11.0` proposes that one version; one that a configured version (or, for
+Python, the system's) meets is listed as already configured.
+
+Each item says its confidence, every file and line it came from, where it
+would be installed and whether it is already. The proposal then lists what
+detection could not determine: repositories it cannot read, versions from a
+matrix, a secret or an expression, Docker-only steps and Compose services,
+licensed builds, jobs for macOS or Windows, and tests that need a database. It
+ends with the setup command that confirms every high and medium item, for the
+person to edit; documentation-only items are left out of it.
+
+**Re-runs.** Setup records what was confirmed in `/root/fleet/toolchains.json`,
+each item with its source and date, and writes `toolchains` and
+`systemPackages` in `fleet.json` from it. A fleet's first run under this
+installer records `fleet.json`'s toolchains as they are. Later runs:
+
+- keep every confirmed item; one taken out of `fleet.json` by hand is kept,
+  with a line saying how to remove it, and one added by hand is recorded. A
+  hand edit is a difference from what setup last wrote into `fleet.json`,
+  which the record keeps, so a run that stopped between writing the record
+  and writing `fleet.json` is finished by the next, never undone by it;
+- propose only from repositories added since the last answered proposal;
+- record a proposal's unconfirmed items as declined once it is answered, and
+  never propose them again unless `toolchains detect --all` asks. A proposal
+  with nothing to confirm, because everything in it is configured already or
+  named only by documentation, counts as answered at once, and says so.
+
+**Dry run.** `--dry-run` lists each tool with where it goes and whether it is
+installed, each system package with whether apt has it, what is no longer
+configured (and stays installed), and the officers' environment. Setup's dry
+run also prints the proposal when the repositories are already cloned.
+
+**Checking that the tools work.** `--verify-toolchains`, on `subspace-setup`
+or the fleet installer, runs each repository's basic check after installing,
+as a crew member would: as its captain's Linux user, in a crew worktree, with
+the engine's environment. It asks each tool the repository's files name for
+its version (`node --version`, `dotnet --version`, `rustc --version`, ...) in
+the directory of the file that names it, so `global.json`, `rust-toolchain`
+and the repository's mise files resolve as they will for the crew, and
+compares that version with what the file asks for: a tool that runs at
+another version fails, and one the system already provides, such as Python
+for a `requires-python`, passes when its version meets the request. Then it
+runs the repository's own `check`, if `fleet.json` gives one (`"check": "make
+check"` on the repository). It prints pass or fail per repository, with every
+failure, and never fails the install.
 
 ### Channels
 
@@ -738,9 +1047,8 @@ rather than one fleet's Ergo:
 ### IRC sign-in
 
 `irc.auth` sets how the rear admiral and the captains sign in to IRC:
-`certificate` (SASL EXTERNAL), the default with a remote server, or
-`password` (SASL PLAIN), the default and for now the only choice with the
-[Ergo the installer manages](#local-irc-and-tls). Crew have no IRC accounts,
+`certificate` (SASL EXTERNAL) or `password` (SASL PLAIN). Guided setup uses
+certificates for fresh fleets and retains existing sign-in modes. Crew have no IRC accounts,
 and the [medical ship](#medical-ship) keeps its own password either way.
 
 **With certificates, no IRC password exists for an officer.** The installer
@@ -760,7 +1068,7 @@ certificate matches an unencrypted private key (`PRIVATE KEY`,
 `EC PRIVATE KEY` or `RSA PRIVATE KEY`). `--dry-run` and every render check
 the same, so a bundle Stargate would refuse stops the installer instead.
 
-**Bind the fingerprints on the IRC server.** An officer can sign in only
+**Bind the fingerprints on an unmanaged IRC server.** An officer can sign in only
 once its certificate's fingerprint is bound to its account. `--dry-run` and
 the install summary print one line per officer, with the SHA-256 fingerprint
 in the lower-case hex form Ergo's NickServ takes, and never key material:
@@ -861,25 +1169,13 @@ the credential only checks it and reports which certificates already sign
 in. The passwords are sent only to the server, over TLS, and never printed or
 saved.
 
-**The Ergo the installer manages keeps passwords for now**, in local mode
-and on the shared server `./install.sh irc-server` runs, for which the host
-installer passes `--irc-auth password`. Three things are missing:
-
-- Fleet members reach local Ergo over plain loopback IRC, and Stargate
-  presents a client certificate only over TLS. The gateways would need the
-  local TLS listener and a CA file for it, but Ergo generates that
-  certificate in its own volume when it starts, so the installer would have
-  to generate or pin it itself.
-- The image seeds every account with a password (`IRC_ACCOUNTS_FILE`).
-  Officers would instead need certificate-only accounts, registered with
-  `NickServ SAREGISTER <account>` and no passphrase, and their fingerprints
-  bound with `NickServ CERT ADD <account> <fingerprint>` as the operator at
-  seed time. `seed-channels.py` already signs in as the operator, so it could
-  do this from a fingerprint file the installer mounts, without changing the
-  entrypoint.
-- For a shared server, each fleet's bundle would carry its officers'
-  fingerprints instead of passwords, and `subspace-setup irc-server add`
-  would seed them the same way.
+**Managed Ergo** creates certificate-only accounts and binds their
+fingerprints during startup. In local mode, guided setup generates a
+persistent server certificate for the loopback TLS listener and makes
+Stargate trust it. For an upgraded shared server, a new fleet's bundle
+carries fingerprints. Existing bundles and older shared servers can use
+passwords. To keep an installed local fleet working, guided setup preserves
+its sign-in mode on reruns. Human and operator passwords are still seeded.
 
 ## Officer names
 
@@ -934,12 +1230,18 @@ sudo subspace-setup rename-officers [--irc-operator NAME --irc-operator-password
 
 1. **Plan and check.** It prints each officer's old and new IRC account,
    API agent name and ship channel. Before it changes anything, it checks
-   the fleet's answers with plain names as setup checks a new fleet's (a
+   the switch (step 4) as the switch will run: the fleet's answers with
+   plain names and any `--crew-names`, as setup checks a new fleet's (a
    name the IRC server, the API or the installer keeps for itself is
-   refused), and the new names on the IRC server and in the API: other
-   agents' names and nicks, and people's usernames. A hosted API is asked
-   only with `--api-admin-token-file`; without it, the dry run says the
-   API was not asked. The dry run stops here.
+   refused), and the `fleet.json` setup then hands the fleet installer,
+   with the fleet installer's own checks and dry run (crew names across the
+   fleet, pinned sessions). It prints each ship's crew as the switch
+   installs them, each name with its ID. It also checks the new names on
+   the IRC server and in the API: other agents' names and nicks, and
+   people's usernames. A hosted API is asked only with
+   `--api-admin-token-file`; without it, the dry run says the API was not
+   asked. The dry run stops here. A run that resumes at the switch checks
+   it the same way first.
    - A fleet with no Subspace API on its VM and no hosted API is refused:
      a fleet installed with `--api-target` keeps its agent records in
      another fleet's API, which the rename cannot reach, so keep its
@@ -1419,13 +1721,10 @@ the run ends.
   must be owned by root with mode `0600` and is never printed; setup keeps the
   token in `/root/fleet/fleet.secrets/subspace-enrolment-token` for the fleet
   installer, so later runs need no token.
-- **A Stargate that has it.** The mode needs Stargate's `subspaceAgents`
-  section, first in commit `5630a5c` and in no release yet, so this
-  installer's pinned v0.43.0 has not got it: pass `--stargate-ref` with that
-  commit or a later one. Setup checks every run by fetching that one commit
-  and looking for `src/subspace/bridge.ts`; the fleet installer refuses its
-  pinned release and stops before rendering unless the checked-out Stargate
-  has that file.
+- **Stargate compatibility.** The default release has both the
+  `subspaceAgents` section and the usage guard. If you supply a custom pin,
+  setup checks that it has the API bridge and, when enabled, the usage guard
+  before saving the configuration.
 - **Checks.** Before setup saves anything, every run, the dry run included,
   checks that the API answers `GET /health` and, when the run is given a
   token, checks it by posting an empty enrolment: the API refuses that for
@@ -1501,6 +1800,47 @@ and the token check against the merged API in a throwaway PostgreSQL. No
 hosted API was available, so enrolment, the signing proxy and a harness
 calling the tools through the bridge have not run against one.
 
+## Usage guard
+
+The installer enables the guard for Claude and Codex. It asks each captain
+in its own ship channel to stand down extra crew of the affected provider
+at **20% remaining**. At **10% remaining**, Stargate refuses new starts and
+resumptions of that kind. Active crew can finish or checkpoint and push.
+The rear admiral posts the notices and reports verified recovery.
+
+An existing fleet picks this up on upgrade to a Stargate release that
+supports the guard. When a saved Stargate pin is older, re-run
+`subspace-setup --stargate-ref latest` or update `stargate.ref` in a
+hand-written `fleet.json`. The dry run and final summary name the sender and
+both providers' limits. To change them, pass
+`--usage-guard-warning 30 --usage-guard-cutoff codex=18` when re-running
+setup. Use `--no-usage-guard` to turn it off and `--usage-guard` to turn it
+back on. Each limit is an integer from 0 to 99 and each cutoff must be
+below its warning.
+
+In a hand-written `fleet.json`, omit `usageGuard` for the defaults or set
+individual values:
+
+```json
+{
+  "usageGuard": {
+    "enabled": true,
+    "claude": { "warning": 20, "cutoff": 10 },
+    "codex": { "warning": 30, "cutoff": 20 }
+  }
+}
+```
+
+The guard uses the fleet's loopback CLIProxyAPI management route. The
+installer generates a separate private management key if it has none.
+The crew plugin reads the verified policy without access to that key.
+A provider with no valid reading is reported in the gateway journal.
+The installer keeps the guard off for a Claude Agent SDK rear admiral
+because its tools run as the gateway user. An OpenCode rear admiral uses
+a separate gateway account.
+See [Stargate's usage guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/usage.md#fleet-usage-guard).
+
+
 ## Agent dispatch
 
 Stargate's dispatcher runs in the rear admiral's gateway and hands out
@@ -1508,8 +1848,9 @@ Subspace issues: it offers each unassigned issue flagged *Ready for agents*
 to the captains in fleet command, one at a time, and tells a captain in
 fleet command about an issue assigned to it. See the
 [repository README](../README.md#agent-dispatch) for what people see and
-[Stargate's guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/agent-dispatch.md)
-for the details. It is off by default. `subspace-setup` asks whether to
+[Stargate's guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/agent-dispatch.md)
+for the details. It needs Stargate v0.43.0 or newer and is off by default.
+`subspace-setup` asks whether to
 switch it on (`--agent-dispatch`); in `fleet.json` it is:
 
 ```json
@@ -1657,6 +1998,29 @@ requests. GitHub signs bot commits made through its API when the request
 uses the app identity without custom author, committer or signature data.
 See [GitHub's bot signature verification rules](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification).
 Rotate or revoke a retired member's App key from the App settings.
+
+### Captain pull request merges
+
+Ask the operator before enabling merges. Pass
+`--captain-merge-repositories example/project[,example/library]` to
+`install.sh` or `subspace-setup`. Setup saves this list as
+`githubPolicy.captainMergeRepositories` in the fleet definition. The default
+is an empty list. Pass `--captain-merge-repositories none` to turn it off.
+Use the GitHub owner and repository names from the fleet's repository URLs.
+
+From the root of their own checkout of an enabled repository, a captain with
+a Contents write GitHub App can run:
+
+```sh
+subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA
+```
+
+Use the full SHA the captain reviewed and check the repository's approval
+and CI requirements first. The helper scopes the installation token to that
+repository and sends an immediate merge request. GitHub enforces branch
+protections and refuses a changed head SHA. Crew hand the PR and head SHA back
+to their captain. The helper refuses merges from crew worktrees. Crew still
+share the captain's Linux user and GitHub App.
 
 ### Add private repositories later
 
@@ -1914,9 +2278,11 @@ the selection to watch both. On upgrade, remove any previous
 
 Stargate writes the current state to `quota.json` in the primary gateway's
 data directory and posts to Slack as the rear admiral's bot. Slack intake
-ignores bot messages. An admiral relays the notice to the rear admiral in
-Slack or Starbase, and the rear admiral directs the captains, who control
-their crew's assignments through `stargate_crew`.
+ignores bot messages. With the [usage guard](#usage-guard) on, these Slack
+messages report the observed quota and captains follow the IRC notices
+for crew staffing. With the guard off, an admiral relays the notice to the
+rear admiral in Slack or Starbase, and the rear admiral directs captains
+using the following limits.
 
 - At 25% or less remaining, each captain keeps at most one crew member of
   that family working and holds further assignments as in-flight work
@@ -1927,7 +2293,199 @@ their crew's assignments through `stargate_crew`.
 - Above 25% after a warning, Stargate posts “Quota restored.” and the rear
   admiral tells captains to resume normal staffing.
 
-[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/usage.md).
+[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/usage.md#crew-quota-notices).
+
+## Memory limits and swap
+
+Every officer's engine has memory and task limits, sized for the VM, and
+the VM has swap. Without them one runaway process, such as a test suite
+whose child grows until the VM runs out of memory, makes the kernel kill
+processes wherever it must: the officer's engine with it, then again after
+each restart. With them the runaway meets its own engine's cap, the kernel
+kills it there, and the engine and the rest of the VM keep running.
+
+Each engine's systemd unit gets:
+
+- `MemoryMax`, the hard cap. A captain's crew run inside its engine, so one
+  cap covers the whole ship.
+- `MemoryHigh`, a soft limit a tenth under it, where the kernel starts to
+  reclaim and slow the engine down.
+- `MemorySwapMax`, the engine's swap allowance, a fifth of the hard cap.
+- `TasksMax=4096`, which stops a runaway that forks.
+- `OOMPolicy=continue`: when a process in the engine is killed for memory,
+  systemd logs it and the engine keeps running, instead of stopping the
+  whole engine as `OOMPolicy=stop`, systemd's default, does.
+
+A Claude Agent SDK officer's work runs in its own gateway
+(`subspace-fleet-gateway-agent-<id>.service`, or the rear admiral's
+`subspace-fleet-gateway.service`), which takes the officer's limits. The
+shared gateway and the model proxy, which every officer depends on, have no
+cap, so a leak in either cannot take the fleet off the air by itself;
+`OOMScoreAdjust=-500` has the kernel kill an agent's process before either
+when the whole VM runs out of memory. Limits need the unified cgroup
+hierarchy (cgroup v2), which Ubuntu 24.04 and Debian 12 use.
+
+### How the installer sizes them
+
+The installer reads the VM's memory (`MemTotal`) on every run.
+
+- **A captain's hard cap** is its share of the VM if up to three ships build
+  at full stretch at once: all of it with one captain, half with two, a
+  third with three or more. It is never more than leaves the OS and the
+  fleet's services their room, the rear admiral its cap and every other
+  captain 1 GiB at rest, never more than 32 GiB (no build these fleets run
+  needs more; a process that wants more is almost certainly a runaway) and
+  never less than 2 GiB. It is rounded down to a whole GiB, or to 256 MiB
+  under 4 GiB.
+- **The OS and the fleet's services** keep 2 GiB, plus 1 GiB when the
+  Subspace API and its PostgreSQL run on the VM and 512 MiB when Ergo does.
+  The installer knows the API runs here from `memory.localApi`, which
+  `subspace-setup` sets whenever it runs the API on the VM, whatever its
+  sign-in, or from an `api.url` on this VM's loopback.
+- **The rear admiral's hard cap** is an eighth of the VM, between 1 and
+  4 GiB.
+- **The soft limit** is the hard cap less a tenth, rounded down to a whole
+  GiB (256 MiB under 4 GiB); **the swap allowance** a fifth of it, to the
+  nearest GiB and at least 512 MiB.
+
+For example, a 64 GB VM reports about 62.7 GiB. With four captains each
+captain's share is a third, 20.9 GiB, so its hard cap is 20 GiB, its soft
+limit 18 GiB and its swap allowance 4 GiB; the rear admiral's are 4, 3 and
+1 GiB. The caps add up to 84 GiB, more than the VM. That is deliberate: a
+cap stops one ship taking the whole machine, and it is unlikely that more
+than three build at full stretch at once.
+
+A captain's hard cap, soft limit and swap allowance, with a hosted API and
+a shared IRC server (the rear admiral gets 2, 1.75 and 0.5 GiB on 16 GB and
+4, 3 and 1 GiB from 32 GB up):
+
+| VM | 1 captain | 4 captains | 8 captains |
+| --- | --- | --- | --- |
+| 16 GB (15.7 GiB) | 11, 9, 2 GiB | 5, 4, 1 GiB | 4, 3, 1 GiB |
+| 32 GB (31.3 GiB) | 25, 22, 5 GiB | 10, 9, 2 GiB | 10, 9, 2 GiB |
+| 64 GB (62.7 GiB) | 32, 28, 6 GiB | 20, 18, 4 GiB | 20, 18, 4 GiB |
+| 128 GB (125.3 GiB) | 32, 28, 6 GiB | 32, 28, 6 GiB | 32, 28, 6 GiB |
+
+With the API, PostgreSQL and Ergo on the VM, small VMs give one ship less:
+10 GiB with one captain on 16 GB, 3 GiB with eight.
+
+The installer never refuses a VM for being small. When a computed captain's
+cap falls below 4 GiB, what a typical build or test run needs, the dry run
+and the summary warn that builds may be killed for memory and name the
+memory the fleet needs, and the install goes ahead with the floor or what
+fits. When the hard caps add up to more than the VM, which is allowed, they
+say so too. Run the installer again after resizing the VM: the limits
+follow its memory.
+
+### Choose your own
+
+Set limits in `fleet.json`'s `memory`, fleet-wide for every officer, in a
+`captain` or `rearAdmiral` block for a role, or in an officer's own
+`memory`. Each takes `max`, `high`, `swapMax` and `tasksMax`; the officer's
+own wins over its role's, which wins over the fleet-wide one, which wins
+over the sizing.
+
+```json
+{
+  "memory": {
+    "captain": { "max": "24G" },
+    "rearAdmiral": { "max": "4G", "tasksMax": 2048 },
+    "swap": "8G"
+  },
+  "captains": [{ "id": "orion", "name": "Orion", "memory": { "max": "32G" } }]
+}
+```
+
+- Sizes are written as in systemd, `24G` or `512M` (GiB and MiB), at least
+  512 MiB. A soft limit or swap allowance you do not set follows the hard
+  cap you set.
+- `none`, or `0`, turns a limit off: the unit then has no such line, and
+  systemd's default applies (no memory limit; for tasks, 15% of the
+  system's). The one exception is `swapMax: 0`, which means no swap for that
+  engine.
+- `auto` is the installer's own value, over a less specific setting:
+  `"captain": { "max": "auto" }` gives every captain the sizing's hard cap
+  whatever the fleet-wide `max`, and an officer's own `auto` does the same
+  over its role's.
+- `subspace-setup --captain-memory SIZE` and `--rear-admiral-memory SIZE`
+  set each role's hard cap (`none` for no cap, `auto` for the sizing again,
+  written as `auto` so a fleet-wide `max` does not apply to that role), and
+  `--swap SIZE` the swap file (`none`, or `auto`). Setup keeps them on later
+  runs, over a value set in `fleet.json` by hand, and leaves the rest of
+  `memory` as you wrote it, officers' own included.
+
+A setting that cannot work is warned about, not refused: a cap above the
+VM's memory, which the VM runs out of before the cap takes effect, or a
+soft limit not below its hard cap.
+
+### Swap
+
+By default (`memory.swap` `auto`) the installer makes sure the VM has swap.
+If it has none, it creates `/subspace-fleet.swap`, an eighth of the VM's
+memory, between 2 and 16 GiB and at most a quarter of the root
+filesystem's free space; turns it on and adds it to `/etc/fstab`, so it
+survives a reboot; and sets `vm.swappiness` to 10 in
+`/etc/sysctl.d/60-subspace-fleet-swap.conf`, so the kernel swaps only under
+pressure. It adds no swap file, saying why, when:
+
+- the VM already has swap, whoever made it: a swap file or partition,
+  zram, or swap a cloud agent such as cloud-init set up;
+- `/etc/fstab` or a systemd swap unit names swap that is not on;
+- the Azure Linux agent manages swap (`ResourceDisk.EnableSwap=y` in
+  `/etc/waagent.conf`);
+- the root filesystem cannot hold a plain swap file (anything but ext2,
+  ext3, ext4 and XFS, such as btrfs);
+- the disk is tight: a quarter of the free space is under 1 GiB, or a size
+  you set is more than half of it;
+- `/etc/fstab` exists but cannot be read. The installer only ever appends
+  its one entry to that file, byte for byte after what is there, and never
+  writes it from a read that failed.
+
+Whenever the VM has swap, the installer's or another, it sets
+`vm.swappiness` to 10 the same way, unless another `sysctl` file sets it:
+then the installer leaves that one and removes its own. A size of your
+own, such as `"swap": "8G"`, applies only when the installer creates the
+file: it never resizes a swap file in use, and when the file is not the
+size you set, says how to (`sudo swapoff /subspace-fleet.swap && sudo rm
+/subspace-fleet.swap`, then run the installer again). With `auto` it keeps
+the file it made, whatever the VM's memory or disk has become since.
+`"swap": "none"`
+leaves swap and `vm.swappiness` exactly as they are. Uninstalling leaves the
+swap file, like other system settings. With `--no-systemd` the installer
+does not touch swap.
+
+### Limits set by hand
+
+A limit set on the VM by hand, with `systemctl set-property` (which writes
+a drop-in under `/etc/systemd/system.control/`, or `/run/` with
+`--runtime`) or in a drop-in file under
+`/etc/systemd/system/<unit>.d/`, wins over the installer's, because systemd
+applies drop-ins after the unit file. The installer never removes, edits or
+repeats them, so a tighter one is never loosened. The dry run, the summary
+and `subspace-fleetctl memory` list each one with where it is set and the
+installer's own value where that differs, say when an officer's are all the
+same as the installer's, and end with the commands that hand them to the
+installer: `sudo rm` for the files that hold only limits, which is what
+`systemctl set-property` writes, an edit for a file that holds more, then
+`sudo systemctl daemon-reload` and the installer again.
+
+### What you see
+
+The dry run, the end of every install and `subspace-setup`'s summary print
+lines that start `Memory:` and `Swap:`: the VM's memory, each engine's
+limits and why, limits set by hand, the swap decision, and warnings as
+`Memory warning:` and `Swap warning:`. On the VM,
+`sudo subspace-fleetctl memory` (also part of `sudo subspace-setup status`)
+shows each engine's limits as systemd applies them now, its memory use and
+peak, its restarts and last result, any limit that differs from the
+installer's, the VM's swap, and every fleet process the kernel has killed
+for memory since boot: when, which engine, which process and how big, and
+whether the whole VM had run out of memory (what caps prevent) or the
+process met its engine's own cap (what caps are for) or another limit the
+kernel names. That list comes from the journal (`journalctl -k -b`); when
+the journal cannot be read, it says the kills are unknown. An engine's own
+count of processes killed for memory since it started is every such kill,
+whether at its cap or with the whole VM out of memory.
 
 ## Configuration reference
 
@@ -1935,23 +2493,27 @@ their crew's assignments through `stargate_crew`.
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
 | `officerNames` | `plain` (the example, and what `subspace-setup` writes for a new fleet): each officer's `account` is its `id`, which is also its API agent name and Stargate ID, and a ship channel is `#<captain-id>`. `prefixed`, the default when left out: accounts as written and ship channels `#<slug>-<captain-id>`, as fleets installed before plain names have them. See [Officer names](#officer-names). |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, an `account` (with `officerNames` plain it may be left out, and is the `id` if given) and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` (each crew slot's [name](#crew-names)), `crewIds` (an installed crew member's ID kept under a new name; needs a Stargate that allows it) and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, an `account` (with `officerNames` plain it may be left out, and is the `id` if given) and optional `channel`, `git`, `githubApp`, `harness`, `memory` (its own [memory limits](#choose-your-own)) and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` (each crew slot's [name](#crew-names)), `crewIds` (an installed crew member's ID kept under a new name; needs a Stargate that allows it) and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model`, `effort` and `extraPermissions`, apply to one. Explicit OpenCode V2 rules in `permissions` replace the starter policy; rules in `extraPermissions` (fleet, role and officer, appended in that order) extend whichever applies. Each rule has `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`, as for a fleet installed before the setting; `subspace-setup` and `fleet.example.json` give a new fleet `delegate`. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
-| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
-| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
+| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions), and an optional `check` (one command line, at most 300 characters) that `--verify-toolchains` runs ([Toolchains](#toolchains)). The ID, URL and visibility are fixed once installed; the description, tracker and check may change. See [crew and repositories](#crew-and-repositories). |
+| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local binds loopback and can use TLS with `caFile` and the two Compose TLS files. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` or `password`. See [IRC sign-in](#irc-sign-in). |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<id>` for a captain (`#<slug>-<id>` with fleet-prefixed names). Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
-| `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released, and never older than v0.43.0, the first with [agent dispatch](#agent-dispatch). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
+| `usageGuard` | On by default. Configure `enabled` and the `claude` and `codex` warning and cutoff percentages. See [Usage guard](#usage-guard). |
+| `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released. Keep v0.46.0 or newer when the usage guard is enabled. `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
 | `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
-| `toolchains` | Mise versions. Defaults to Node 24 plus the base OS tooling. |
+| `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust`, `dotnet` and `yarn` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
+| `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
+| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots), including Xvfb with keyboard maps and fonts, Playwright with its Chromium, and offline Mermaid rendering. `false` installs nothing for them and leaves in place what an earlier run installed. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
+| `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap), or `auto` for the installer's own value. Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. `localApi: true` says the Subspace API and its PostgreSQL run on this VM, so the sizing leaves them their room; `subspace-setup` sets it whenever it runs the API here. |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. The rear admiral posts them through `stakeholders.slack` or its own Slack bot, so one of them is required. |
 | `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) `initiatives` (array of UUIDs) and `agentUrl` (the API's agent listener on this VM's loopback, such as `http://127.0.0.1:3001`; see [The API's agent listener](#the-apis-agent-listener)), or `enrolment: true` for [a hosted Subspace API](#a-hosted-subspace-api), which excludes `agentUrl` and `apiToken`. HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
@@ -2072,6 +2634,18 @@ all three ports from other interfaces are rejected. Keep this table when
 reloading a site-managed firewall. Apply your site's SSH and deliberate IRC
 listener policy separately, including Docker-published ports.
 
+Guided setup also restricts private egress for each officer's Linux user,
+including its crew. The rules cover RFC 1918, carrier-grade NAT and IPv4
+link-local ranges, plus IPv6 unique-local and link-local ranges. The VM's
+configured DNS resolvers remain reachable. Set specific private TCP
+destinations with `subspace-setup --agent-egress HOST:PORT` or repeat the
+flag to replace the saved list. Use `[IPv6]:PORT` for a literal IPv6
+address and `--agent-egress ''` to clear the list. Re-run setup when a DNS
+name's destination addresses change. The shared Stargate gateway keeps its
+IRC and API routes. A native Claude gateway shares its officer's Linux user
+and retains access to its configured IRC endpoint. `./install.sh audit`
+checks that each officer is covered.
+
 The API integration looks up the fleet by slug and creates or patches its
 registration, with its ships and officers (see
 [Subspace API registration](#subspace-api-registration)). After startup it
@@ -2092,7 +2666,8 @@ To change an assignment, also update any fleet configs that still claim it.
 
 The mirror service refreshes public refs and the rear admiral's reference
 checkouts. It leaves active captain and crew branches in place. The tool
-service updates Mise packages within their configured versions or channels.
+service updates the [toolchains](#toolchains) within their configured versions
+or channels: the shared ones as root, the per-user ones as each officer.
 The prune service vacuums archived fleet service journals and Git records of
 missing worktrees. Existing worktree directories and journals outside the
 fleet's namespace are retained. Set any calendar to `false` to disable its
@@ -2146,6 +2721,24 @@ setting together before it changes the fleet, in the dry run and the real
 run alike, so when an upgrade introduces several new settings at once and
 one is refused, none of them is applied.
 
+- **Screenshot tools on every fleet VM.** The next run of an existing fleet
+  installs the [screenshot tools](#screenshots): Xvfb, `x11-xkb-utils`,
+  fonts and the browser's libraries from apt, Node 24 into the shared store
+  if it has not got that version, Playwright into `/opt/subspace-fleet/playwright`
+  and its Chromium into `/opt/subspace-fleet/browsers` (several hundred
+  megabytes), and `playwright` and `mermaid-render` on the officers' `PATH`. The dry run lists
+  what it adds. `"screenshots": false` in `fleet.json` leaves them out.
+- **Memory limits and swap.** The upgrade gives every officer's engine
+  [memory and task limits](#memory-limits-and-swap) sized for the VM, with
+  `OOMPolicy=continue`, and restarts the engines with them, as any changed
+  unit does. A VM with no swap gets a swap file. Read the dry run's
+  `Memory:` and `Swap:` lines first. Limits you set by hand with
+  `systemctl set-property` or a drop-in keep winning; the dry run lists each
+  one beside the installer's value and gives the commands that hand it over,
+  and an existing swap file or partition stays as it is. To keep a fleet
+  without memory caps, set them to `none` (`subspace-setup
+  --captain-memory none --rear-admiral-memory none`), and `memory.swap` to
+  `none` (`--swap none`) to keep the VM without swap.
 - **Officers call the tracker's REST route as `subspace-request`.** On a
   fleet with a hosted API, officers' instructions now name
   `subspace-request` instead of the long Stargate command. The starter
@@ -2180,6 +2773,55 @@ one is refused, none of them is applied.
 - **An existing PostgreSQL** is a `subspace-setup` setting, kept in its
   answers; it changes nothing in the fleet installer's inputs and combines
   with any of the above.
+- **Toolchains and the engine environment.** A re-run gives every OpenCode
+  engine, and every Claude Agent SDK officer's gateway, the
+  [toolchain environment](#toolchains): its own mise data directory, the shared
+  store as mise's system data directory, trusted mise configuration in its
+  workspace and worktrees, `TMPDIR=/tmp/ss-<id>` and, with .NET, `DOTNET_ROOT`.
+  The engine units, and a Claude Agent SDK officer's gateway unit, no longer
+  set `PATH` and mise's variables themselves; their settings files do.
+  `toolchains` values keep their meaning, with one change: `rust` (and any
+  `cargo:` tool) now installs per officer, so the first run installs it once
+  for each officer's user, and a shared copy in `/opt/subspace-fleet/toolchains`
+  stays there unused (set `"install": "shared"` to keep using it). A fleet set up with
+  `subspace-setup` records its toolchains on the next run, in
+  `/root/fleet/toolchains.json`, and proposes nothing unless it asks with
+  `--toolchains derive`.
+
+  **A fleet whose tools were installed by hand.** Write what is installed into
+  the configuration, and the installer adopts it without reinstalling: mise
+  skips a `tool@version` it finds installed in the shared store or in the
+  officer's `~/.local/share/mise`, and apt skips an installed package. Then
+  take away the hand-made engine environment, which the installer's replaces,
+  before the run that restarts the engines:
+
+  ```sh
+  sudo ls /opt/subspace-fleet/toolchains/installs     # the shared tools, one directory per version
+  sudo ls /var/lib/subspace-fleet/agents/<id>/.local/share/mise/installs   # an officer's own
+  sudo subspace-setup --dry-run --toolchains derive   # what the repositories ask for, and what is installed
+  sudo subspace-setup --dry-run --toolchains 'node@22.11.0,dotnet@8.0.404,pnpm@9.12.3,rust@1.99.0' \
+    --system-packages zsh,clang,pkg-config            # each item should say installed
+  systemctl cat 'subspace-fleet-engine-*.service'     # shows each drop-in and the ExecStart it sets
+  sudo rm /etc/systemd/system/subspace-fleet-engine-<id>.service.d/<the hand-made one>.conf
+  sudo systemctl daemon-reload
+  sudo subspace-setup --toolchains 'node@22.11.0,dotnet@8.0.404,pnpm@9.12.3,rust@1.99.0' \
+    --system-packages zsh,clang,pkg-config
+  ```
+
+  Remove only the drop-ins, and the wrapper script one of them names, that set
+  the engines' `PATH`, mise variables, `TMPDIR` or `DOTNET_ROOT` or replace
+  their `ExecStart`; a drop-in left in place overrides the installer's
+  environment. Use the versions the installed directories show, exactly: a
+  request such as `22` where `22.11.0` is installed may install a newer 22. A
+  tool installed by hand into another directory than these is installed again.
+  .NET is per user by default: a .NET SDK installed by hand into the shared
+  store stays in use only if `fleet.json` marks it shared
+  (`"dotnet": {"version": "8.0.404", "install": "shared"}`, then `sudo
+  subspace-setup`, which records the change); otherwise each officer installs
+  its own.
+  With the fleet installer alone, write the same into `toolchains` and
+  `systemPackages` in `fleet.json` and run `sudo ./install.sh upgrade --config
+  ~/fleet.json --dry-run` first.
 - **Captain policies.** A fleet without `captainTools` keeps the standard
   policy. Captains with crew may now read their crew's worktrees, and with a
   hosted API every officer may run `subspace-request`. A delegate fleet's
@@ -2298,10 +2940,25 @@ checkouts and fresh worktree bases. It exercises nftables when permitted by
 the container and checks rule generation otherwise. For the offline checks,
 run `python3 -B subspace-installer/tests/policy_test.py`,
 `python3 -B subspace-installer/tests/sessions_test.py`,
-`python3 -B subspace-installer/tests/setup_test.py` and
-`python3 -B subspace-installer/tests/medical_test.py`.
+`python3 -B subspace-installer/tests/setup_test.py`,
+`python3 -B subspace-installer/tests/memory_test.py`,
+`python3 -B subspace-installer/tests/medical_test.py` and
+`python3 -B subspace-installer/tests/toolchains_test.py` (Python 3.11 or
+later: detection reads TOML). The last builds small fixture repositories of
+the kinds the toolchain detection must read, and checks the proposal,
+including that a workflow step's `with: version:` belongs to that step's
+`uses:`.
 
 ## Licence
 
 The Subspace fleet installer is licensed under the
 [Apache License 2.0](../LICENSE).
+
+## Captain peer messages
+
+Pass `--captain-peer-messages` to guided setup, or set `captainPeerMessages` to true in
+`fleet.json`, with a Stargate revision containing [#364](https://github.com/aiconsultancy/stargate/pull/364).
+The default is off. Each pinned OpenCode captain with crew can use `stargate_dm` to reach
+another pinned crew-hosting captain by ID with `via: "ship"` or `via: "command"`.
+Omit `via` for local crew mail. Agent dispatch has its own switch. Setup saves the choice
+for upgrades. Use `--no-captain-peer-messages` to turn it off.

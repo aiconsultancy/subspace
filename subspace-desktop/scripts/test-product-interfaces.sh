@@ -172,7 +172,7 @@ grep -Fq unknown-command "$fixture/error"
 # The IRC tools act on the running app's live connections; headless commands
 # have none, and the board's guide stays available.
 reject_code 2 irc networks
-grep -Fq 'unexpected word: irc' "$fixture/error"
+grep -Fq 'Unknown command: irc networks' "$fixture/error"
 invoke board_help get --board_id irc --json
 jq -e '.board_id == "irc" and (.markdown | contains("irc_write"))' "$fixture/output" >/dev/null
 

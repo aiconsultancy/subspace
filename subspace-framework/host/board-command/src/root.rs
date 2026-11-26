@@ -13,10 +13,10 @@ cmd "__complete-word" hide=#true effect="read" help="Internal: list completion c
 }"#;
 
 pub(crate) const COMPLETION: &str = "completion";
-pub(crate) const COMPLETE_WORD: &str = "__complete-word";
+pub(crate) use subspace_product::COMPLETE_WORD_COMMAND as COMPLETE_WORD;
 
 /// The root tree for `context`'s binary, before generated board routes.
-pub(crate) fn tree(context: &ProductContext) -> Result<usage::Spec, String> {
+pub fn tree(context: &ProductContext) -> Result<usage::Spec, String> {
     let upgrade = if context.product.update.is_some() {
         UPGRADE_USAGE
     } else {
@@ -31,9 +31,24 @@ pub(crate) fn tree(context: &ProductContext) -> Result<usage::Spec, String> {
     .map_err(|error| error.to_string())
 }
 
+/// Whether `spec` declares the Framework's own `completion` command, which
+/// the Framework then answers; a product's different `completion` is its own.
+pub(crate) fn declares_framework_completion(spec: &usage::Spec) -> bool {
+    let framework = format!("bin {:?}\n{COMPLETION_USAGE}", spec.bin).parse::<usage::Spec>();
+    let declared = |spec: &usage::Spec| {
+        spec.cmd
+            .subcommands
+            .get(COMPLETION)
+            .and_then(|command| serde_json::to_value(command).ok())
+    };
+    framework.is_ok_and(|framework| {
+        declared(spec).is_some_and(|ours| Some(ours) == declared(&framework))
+    })
+}
+
 /// Candidate next words for a partial command line. `words` excludes the
 /// program name; the last element is the (possibly empty) word under the cursor.
-pub(crate) fn complete_word(spec: &usage::Spec, words: &[String]) -> Vec<String> {
+pub fn complete_word(spec: &usage::Spec, words: &[String]) -> Vec<String> {
     let Some((prefix, preceding)) = words.split_last() else {
         return Vec::new();
     };

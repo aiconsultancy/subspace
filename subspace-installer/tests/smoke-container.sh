@@ -41,9 +41,13 @@ pids+=("$!")
 "$installer" --config "$config" --dry-run --no-systemd
 test ! -e "$etc"
 "$installer" --config "$config" --no-systemd
+zip -q -j "$work/check.zip" "$config"
+unzip -tq "$work/check.zip"
 mapfile -t units < "$etc/units"
 systemd-analyze verify "${units[@]/#//etc/systemd/system/}"
-python3 /installer/tests/fixture.py check_shape "$work"
+test -x "$app/lib/officer_upload.py"
+python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
+python3 -B /installer/tests/officer_upload_test.py
 python3 -B /installer/tests/policy_test.py
 python3 -B /installer/tests/medical_test.py
 (
@@ -55,7 +59,9 @@ runuser -u ss-orion -- touch "$crew_checkout/worker-draft"
 
 # Upgrades restore an older install's modified watcher without disturbing dependencies.
 stargate=$(dirname "$(dirname "$(jq -r .entrypoint "$etc/gateway.json")")")
-printf '\n// Old installer quota extension\n' >> "$stargate/src/quota-watch.ts"
+watcher="$stargate/src/backends/quota/quota-watch.ts"
+[[ -f "$watcher" ]] || watcher="$stargate/src/quota-watch.ts"
+printf '\n// Old installer quota extension\n' >> "$watcher"
 "$installer" upgrade --no-systemd > "$work/repeat"
 git -C "$stargate" diff --exit-code HEAD
 if grep -Eq '(^Installed|bun install|apt-get)' "$work/repeat"; then
@@ -68,7 +74,8 @@ fi
 ) > "$work/after"
 diff -u "$work/before" "$work/after"
 test -f "$crew_checkout/worker-draft"
-python3 /installer/tests/fixture.py check_shape "$work"
+test -x "$app/lib/officer_upload.py"
+python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
 "$app/lib/runtime.py" maintenance tools
 printf 'Second install preserved binaries, configuration and service units.\n'
 
@@ -93,6 +100,7 @@ done
 # then restart that engine so it loads Stargate's crew plugin with the pinned session.
 "$app/lib/runtime.py" commission false
 test "$(stat -c '%U %a' "$etc/sessions/orion.json")" = 'root 600'
+python3 /installer/tests/fixture.py check_shape "$work" commissioned
 kill "${pids[-1]}" 2>/dev/null || true
 wait "${pids[-1]}" 2>/dev/null || true
 unset 'pids[-1]'
