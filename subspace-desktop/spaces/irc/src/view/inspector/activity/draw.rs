@@ -73,7 +73,9 @@ pub(super) struct Plan {
     pub(super) held_back: HashMap<Key, u64>,
     /// The body drawn in parts, if any: the one last asked for.
     pub(super) pieced: Option<Pieced>,
-    /// The bytes the bodies drawn hold.
+    /// The bytes the bodies drawn hold, for a test to check against the
+    /// room; drawing reads only what is held back or drawn in parts.
+    #[cfg(test)]
     pub(super) drawn: u64,
 }
 
@@ -104,6 +106,7 @@ pub(super) fn replan(selection: &mut Selection) {
     selection.plan = Plan {
         held_back: fit.held_back,
         pieced,
+        #[cfg(test)]
         drawn: fit.drawn,
     };
     forget_prepared(selection);
