@@ -26,6 +26,12 @@ PREFIX = "subspace-desktop-v"
 def release(tag: str, *, draft: bool = False, prerelease: bool = True) -> dict:
     return {"tag_name": tag, "draft": draft, "prerelease": prerelease, "body": ""}
 
+# The variables mise sets for one project, shell session or task. What a
+# person sets, such as where mise keeps its tools, stays. product-fixture.sh
+# drops the same ones.
+MISE_SESSION = re.compile(
+    r"^(__MISE_(DIFF|SESSION|ORIG_PATH|WATCH)|MISE_(SHELL|ENV|ORIGINAL_CWD|CONFIG_ROOT|PROJECT_ROOT|TASK_.*))$")
+
 
 class PrereleaseTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -39,16 +45,17 @@ class PrereleaseTests(unittest.TestCase):
         # fixture key, and a developer's agent can prompt or never answer.
         (self.root / "gitconfig").write_text("")
         inherited = {name: value for name, value in os.environ.items()
-                     if not name.startswith(("GIT_", "SSH_", "MISE_", "__MISE_"))}
+                     if not name.startswith(("GIT_", "SSH_")) and not MISE_SESSION.match(name)}
         self.env = inherited | {
             "GIT_CONFIG_GLOBAL": str(self.root / "gitconfig"),
             "GIT_CONFIG_NOSYSTEM": "1",
             "PATH": f"{self.root / 'bin'}{os.pathsep}{os.environ['PATH']}",
             "FIXTURE": str(self.root),
-            # Fixture repositories resolve their own mise config. They run
-            # in their own root, so every mise variable of the outer project
-            # and session is dropped above and only the fixture is trusted.
-            "MISE_TRUSTED_CONFIG_PATHS": str(self.root),
+            # Fixture repositories resolve their own mise config: the outer
+            # project's session variables are dropped above and the fixture
+            # root is trusted, in front of the paths already trusted.
+            "MISE_TRUSTED_CONFIG_PATHS": os.pathsep.join(
+                filter(None, [str(self.root), os.environ.get("MISE_TRUSTED_CONFIG_PATHS")])),
             "GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main",
             "RELEASE_TYPE": "nightly", "RELEASE_FORCE": "false",
             "GITHUB_REPOSITORY": "fixture/repository", "GITHUB_RUN_ID": "1234",
