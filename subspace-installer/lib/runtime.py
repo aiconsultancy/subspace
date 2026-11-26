@@ -1406,7 +1406,8 @@ def validate(config, credentials, check_files=True):
                 "themselves.")
         require(any(person["harness"]["type"] == "opencode" for person in agents),
                 "api.enrolment needs an OpenCode officer: the shared gateway that holds the officers' keys serves "
-                "OpenCode officers, and a fleet of Claude Agent SDK officers has none.")
+                "OpenCode officers, and a fleet of Claude Agent SDK officers has none. With a local API, "
+                "subspace-setup --agent-listener enables the legacy listener instead.")
         release = tuple(int(part) for part in re.findall(r"\d+", STARGATE_RELEASE)[:3])
         require(stargate.get("ref", STARGATE_REF) != STARGATE_REF or release >= SUBSPACE_AGENTS_RELEASE,
                 f"api.enrolment needs a Stargate with its subspaceAgents section, from commit "
@@ -1865,7 +1866,7 @@ def subspace_mcp_url(cfg):
 
 
 def enrolled(cfg):
-    """Whether the fleet's officers reach a hosted API through Stargate's signing proxy (api.enrolment)."""
+    """Whether the fleet's officers reach the API through Stargate's signing proxy (api.enrolment)."""
     return bool((cfg.get("api") or {}).get("enrolment"))
 
 
@@ -3937,10 +3938,8 @@ def main(args):
             else:
                 print("Agent dispatch is off.")
             if enrolled(cfg):
-                print(f"The Subspace API is hosted at {cfg['api']['origin']}: each officer enrols its own key through "
-                      "Stargate with the fleet's enrolment token and reaches the API through its signing proxy. This "
-                      "VM keeps no administrator token and registers nothing; the API's administrators keep the "
-                      "fleet's records.")
+                print(f"Subspace API at {cfg['api']['origin']}: each officer enrols its own key through "
+                      "Stargate and uses its signing proxy. No administrator token is kept in the fleet configuration.")
                 if (APP / "src" / f"stargate-{cfg['stargate']['ref']}").is_dir():
                     require_subspace_agents(cfg)
                 else:

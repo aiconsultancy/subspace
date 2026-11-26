@@ -792,11 +792,15 @@ class SetupInputsTests(unittest.TestCase):
         def published():
             return '"127.0.0.1:3001:3001"' in (fleet_setup.INPUTS / "api.override.yaml").read_text()
 
-        # The first run offers the listener and publishes it on loopback.
+        # Fresh installs leave it off. Explicit opt-in publishes it on loopback.
         self.assertTrue(up())
+        self.assertEqual(env()["AGENT_PORT"], "")
+        self.assertFalse(fleet_setup.agent_listener_enabled() or published())
+        answers["agentListener"] = True
+        self.assertTrue(up())
+        answers["agentListener"] = None
         self.assertEqual(env()["AGENT_PORT"], "3001")
         self.assertEqual(env()["AGENT_ORGANISATION"], f"dev:{answers['organisation']}")
-        self.assertIn(fleet_setup.AGENT_OFFERED, api_env.read_text())
         self.assertTrue(fleet_setup.agent_listener_enabled() and published())
         override = (fleet_setup.INPUTS / "api.override.yaml").read_text()
         self.assertIn('"127.0.0.1:3000:3000"', override)
@@ -856,10 +860,10 @@ class SetupInputsTests(unittest.TestCase):
         def mcp(cfg):
             return [runtime.SUBSPACE_MCP_GRANT in runtime.harness_permissions(cfg, person) for person in cfg["members"]]
 
-        # A new fleet: the real run starts the API with development sign-in and the agent listener.
+        # A new fleet: the officer MCP uses Stargate's signed bridge.
         config, cfg = dry_run()
         self.assertEqual(config["api"], {"url": "http://127.0.0.1:3000", "initiatives": [],
-                                         "agentUrl": "http://127.0.0.1:3001"})
+                                         "enrolment": True})
         self.assertEqual(mcp(cfg), [True, True])
         # An installed fleet, unchanged: its saved initiative and the api.env the real run keeps.
         answers, _, _ = answers_for(argv[3:])
@@ -871,16 +875,34 @@ class SetupInputsTests(unittest.TestCase):
             fleet_setup.api_up(answers, fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None))
         config, cfg = dry_run()
         self.assertEqual(config["api"]["initiatives"], [answers["initiativeId"]])
-        real = runtime.validate(*self.generate(argv[3:], fleet_setup.local_api_block(
-            answers, [answers["initiativeId"]], fleet_setup.agent_listener_enabled()))[2:4], check_files=False)
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        _, rear, captains = answers_for(argv[3:])
+        members = fleet_setup.roster(answers, rear, captains)
+        actual = fleet_setup.planned_api_block(answers)
+        real = runtime.validate(*fleet_setup.run_inputs(answers, members, store, "c" * 40, "a" * 40,
+                                                         actual, token="header.payload.signature"),
+                                check_files=False)
         for planned, person in zip(cfg["members"], real["members"]):
             self.assertEqual(runtime.harness_permissions(cfg, planned), runtime.harness_permissions(real, person))
         self.assertEqual(mcp(cfg), [True, True])
-        # The operator turned the listener off: the officers lose the API's tools in both runs.
-        api_env.write_text(api_env.read_text().replace("AGENT_PORT=3001\n", "AGENT_PORT=\n"))
+        # An earlier fleet keeps its legacy listener until the operator turns it off.
+        api_env.write_text(api_env.read_text().replace("AGENT_PORT=\n", "AGENT_PORT=3001\n"))
+        config, cfg = dry_run()
+        self.assertIn("agentUrl", config["api"])
+        self.assertNotIn("enrolment", config["api"])
+        # An operator's previous opt-out stays off, even with development sign-in.
+        previous_api_env = "AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\n"
+        for legacy_off in ("AGENT_PORT=\n", ""):
+            api_env.write_text(previous_api_env + legacy_off)
+            config, cfg = dry_run()
+            self.assertNotIn("agentUrl", config["api"])
+            self.assertNotIn("enrolment", config["api"])
+            self.assertEqual(mcp(cfg), [False, False])
+        argv.append("--no-agent-listener")
         config, cfg = dry_run()
         self.assertNotIn("agentUrl", config["api"])
-        self.assertEqual(mcp(cfg), [False, False])
+        self.assertTrue(config["api"]["enrolment"])
+        self.assertEqual(mcp(cfg), [True, True])
         # Without development sign-in the real run writes no API settings, nor does the dry run.
         api_env.write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\n")
         config, cfg = dry_run()
@@ -1108,6 +1130,9 @@ class SetupInputsTests(unittest.TestCase):
         api.initiatives[workspace] = {"id": workspace, "name": "Local workspace", "fleetId": local, "channels": ""}
 
         def call(_token, method, path, body=None):
+            if method == "POST" and path == "/fleets/example-fleet/enrolment-tokens":
+                self.assertEqual(body, {"expiresInSeconds": 3600, "maxUses": 2})
+                return {"token": "senr1." + "B" * 64}
             try:
                 return api.call(method, path, body)
             except fixture.Refusal as refusal:
@@ -1117,6 +1142,7 @@ class SetupInputsTests(unittest.TestCase):
             """A real run, with the API, the installer and the VM's commands stubbed, up to its summary."""
             said = []
             with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(runtime, "directory"), patch.object(runtime, "account"), \
                     patch.object(fleet_setup, "installer"), patch.object(fleet_setup, "run"), \
                     patch.object(fleet_setup, "api_up", return_value=True), \
                     patch.object(fleet_setup, "history_database", return_value=None), \
@@ -1357,7 +1383,7 @@ class TrackerOwnershipTests(unittest.TestCase):
                     patch.object(fleet_setup, "installed_stargate_source", return_value=source):
                 fleet_setup.ownership_check(hosted, members, config)
                 self.assertEqual(said, ["not checking which fleet owns this fleet's tracker projects: the officers "
-                                        "have not enrolled with the hosted API yet"])
+                                        "have not enrolled with the Subspace API yet"])
                 (sockets / "atlas").mkdir(parents=True)
                 listener = socket.socket(socket.AF_UNIX)
                 self.addCleanup(listener.close)
@@ -1485,13 +1511,16 @@ class AgentDispatchSetupTests(unittest.TestCase):
         answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
             self.assertIn("3000:ss-fleet-gateway", fleet_setup.isolation_args(answers))
-            self.assertNotIn("--port-user", fleet_setup.isolation_args({**answers, "agentDispatch": False}))
+            self.assertIn("3000:ss-fleet-gateway", fleet_setup.isolation_args({**answers, "agentDispatch": False}))
+            self.assertNotIn("--port-user", fleet_setup.isolation_args(
+                {**answers, "agentDispatch": False, "agentListener": True, "organisation": "local"}))
         with patch.object(fleet_setup.pwd, "getpwnam", side_effect=KeyError), \
                 patch.object(fleet_setup, "metadata_users", return_value=[]):
             self.assertNotIn("--port-user", fleet_setup.isolation_args(answers))
 
     def test_only_the_officers_may_reach_the_agent_listener(self):
-        answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
+        answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": [],
+                   "agentListener": True, "organisation": "local"}
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
             "rearAdmiral": {"id": "atlas"}, "captains": [{"id": "orion"}, {"id": "vega"}]})
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
@@ -1644,8 +1673,9 @@ class ExternalDatabaseTests(unittest.TestCase):
         self.assertIn('  postgres:\n    profiles: ["subspace-local-database"]\n', override)
         self.assertIn("    depends_on: !reset {}\n", override)
         self.assertIn('    command: ["bun", "src/main.ts"]\n', override)
-        # The API and its agent listener are published on loopback exactly as with the API's own PostgreSQL.
-        self.assertIn('      - "127.0.0.1:3000:3000"\n      - "127.0.0.1:3001:3001"\n', override)
+        # Only the main API port is published by default.
+        self.assertIn('      - "127.0.0.1:3000:3000"\n', override)
+        self.assertNotIn("3001", override)
         self.assertNotIn("5432", override)
         self.assertNotIn(self.PASSWORD, override)
         self.assertEqual(calls, [
@@ -1712,7 +1742,8 @@ class ExternalDatabaseTests(unittest.TestCase):
             args = fleet_setup.isolation_args(answers)
         protected = [args[i + 1] for i, arg in enumerate(args) if arg == "--operator-only-port"]
         self.assertEqual(protected, [str(fleet_setup.API_PORT), str(fleet_setup.AGENT_API_PORT)])
-        self.assertIn(f"{fleet_setup.AGENT_API_PORT}:ss-atlas", args)
+        self.assertIn(f"{fleet_setup.API_PORT}:ss-fleet-gateway", args)
+        self.assertNotIn(f"{fleet_setup.AGENT_API_PORT}:ss-atlas", args)
 
     def test_the_plan_says_what_happens_without_the_url(self):
         answers, _ = self.answers("--database-url-file", self.url_file)
@@ -1736,7 +1767,8 @@ class ExternalDatabaseTests(unittest.TestCase):
                 "--database-url-file", self.url_file, "--dry-run"]
         output, written, vm_inputs = [], [], fleet_setup.INPUTS
 
-        def dry_installer(config_path, dry_run=False):
+        def dry_installer(config_path, dry_run=False, secrets_dir=None):
+            self.assertTrue((secrets_dir / runtime.ENROLMENT_TOKEN).exists())
             # The installer validates inputs written to a private copy, never to the VM's inputs.
             self.assertTrue(dry_run)
             self.assertFalse(Path(config_path).is_relative_to(vm_inputs))
@@ -1824,7 +1856,8 @@ class ExternalDatabaseTests(unittest.TestCase):
         checks = []
 
         def refuse(config_path, dry_run=False, secrets_dir=None, quiet=False):
-            checks.append((dry_run, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
+            checks.append((dry_run, (secrets_dir / runtime.ENROLMENT_TOKEN).exists(),
+                           json.loads(Path(config_path).read_text())["slug"]))
             raise fleet_setup.SetupError("Supply slack-app-token in captain orion's secrets directory.")
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
                 patch.object(fleet_setup, "installer", side_effect=refuse), \
@@ -1833,7 +1866,7 @@ class ExternalDatabaseTests(unittest.TestCase):
                 patch.object(fleet_setup, "say"), \
                 self.assertRaisesRegex(fleet_setup.SetupError, "slack-app-token"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
-        self.assertEqual(checks, [(True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
+        self.assertEqual(checks, [(True, True, "example-fleet")])
         run.assert_not_called()
         api_up.assert_not_called()
         compose.assert_not_called()
@@ -1841,6 +1874,7 @@ class ExternalDatabaseTests(unittest.TestCase):
         # Accepted, the check comes before the lockdown and the API, which then migrates as asked.
         order = []
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                patch.object(runtime, "directory"), patch.object(runtime, "account"), \
                 patch.object(fleet_setup, "installer", side_effect=lambda *a, dry_run=False, **k: order.append(
                     "check" if dry_run else "install")), \
                 patch.object(fleet_setup, "run", side_effect=lambda *a, **k: order.append(Path(str(a[0])).name)), \

@@ -1300,8 +1300,14 @@ keeps everyone else away. For a team, switch the API and desktop to
 WorkOS or Entra (see the [API guide](subspace-api/README.md#external-sign-in))
 before sharing access.
 
-The fleet's agents reach the API on its **agent listener** instead: port 3001
-on the VM's loopback, which the tunnel does not forward. There, a request
+The fleet's officers reach the API through Stargate's signing proxy by
+default on new installs. Setup registers the fleet and issues a short-lived
+enrolment token for the gateway. Each officer's harness uses its own Unix
+socket, and Stargate signs its requests. This uses the shared OpenCode gateway, so fleets
+using only native Claude Agent SDK officers need the legacy option.
+
+The **legacy agent listener** is available with `--agent-listener` on port
+3001 on the VM's loopback, which the tunnel does not forward. There, a request
 names a registered agent in an `X-Subspace-Agent` header and needs no token.
 The API resolves only an active agent record of the fleet's organisation and
 acts as that agent, which is never an administrator; the listener serves no
@@ -1314,11 +1320,11 @@ other service users or containers. Any of those can act as any registered
 agent of that organisation, so one agent can act as another.
 `./install.sh audit` checks that port 3001 is limited that way and serves no
 sign-in route, and that the main port stays closed to the agents. To turn
-the listener off, set `AGENT_PORT=` in `/root/fleet/api.env` and run setup
-again; later runs keep it off, and the agents then have no Subspace MCP
-server. Switching the API to WorkOS or
-Entra (development sign-in off) turns the agent listener off too, and the
-fleet's agents then have no way into the API yet.
+the listener off and use the signing proxy, run setup with
+`--no-agent-listener`. An existing installation keeps its configured
+listener and preserves a previous opt-out on unattended runs. Switching
+the API to WorkOS or Entra (development sign-in off) turns the agent listener
+off too, and the fleet's agents then have no way into the API yet.
 
 ## Day to day
 

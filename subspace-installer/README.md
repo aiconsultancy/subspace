@@ -1447,18 +1447,25 @@ A project that lists none of the fleet's repositories is not checked.
 
 ## The API's agent listener
 
-The fleet's rear admiral and captains use the Subspace API as their own agent
-records, through its MCP server, without WorkOS, Entra or a token.
+With development sign-in and a shared OpenCode gateway, a new fleet uses
+Stargate's signed bridge by default for both the local PostgreSQL and
+`--database-url-file` modes. Setup registers the fleet with the local API
+and issues a short-lived enrollment token scoped to that fleet. The gateway
+holds the officers' keys, while their harnesses each reach its own Unix
+socket. No administrator token is written to the fleet's installer inputs.
 
-- **`subspace-setup`** offers the API's agent listener once:
+The legacy loopback listener remains available for existing fleets and for
+fleets containing only native Claude Agent SDK officers.
+
+- **`subspace-setup --agent-listener`** enables the legacy listener:
   `AGENT_PORT=3001` and `AGENT_ORGANISATION=dev:<organisation>` in
   `/root/fleet/api.env`, the development sign-in organisation the agents are
-  registered in, with a comment line recording the offer. It publishes
+  registered in. Existing listener settings and previous opt-outs are retained. Setup publishes
   `127.0.0.1:3001` only while the listener is on, and keeps
   `AGENT_ORGANISATION` in step with the organisation while it has the
   installer's `dev:<organisation>` form. An operator turns the listener off
-  for good by setting `AGENT_PORT=` (or deleting it), and back on with
-  `AGENT_PORT=3001`. Setup also turns it off when `NODE_ENV` is `production`,
+  with `--no-agent-listener` and back on with `--agent-listener`. Setup
+  also turns it off when `NODE_ENV` is `production`,
   where the API refuses it, and when development sign-in is off (WorkOS or
   Entra); the agents then have no way into the API yet. While it is on, setup adds
   `api.agentUrl: "http://127.0.0.1:3001"` to the fleet configuration.
