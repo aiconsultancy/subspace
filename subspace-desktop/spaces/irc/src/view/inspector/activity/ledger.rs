@@ -15,7 +15,10 @@
 //! that request's read, its window is sized to the room left, when that
 //! holds what it holds and a part of its window; with no room left, to the
 //! floor's steady allowance, a part and its window ([`PAGE_READ`]), beside
-//! at most a page coming in. A read not even the floor holds is let go.
+//! at most a page coming in. A read replacing what is shown counts only
+//! what it asks for, a page for a part; a whole one the floor cannot hold
+//! beside what is shown is withdrawn, and what is shown stays (SUB
+//! decision `084f5236` item 2). A read not even the floor holds is let go.
 
 use std::collections::HashMap;
 
@@ -177,6 +180,13 @@ pub(super) fn spare(selection: &Selection, keep: &Key) -> u64 {
     left(selection, keep).saturating_sub(kept(selection, Some(keep)))
 }
 
+/// Whether `wanted` more fits the room beside what `keep`'s read counts
+/// now and its own body, once everything else is let go.
+pub(super) fn fits_beside(selection: &Selection, keep: &Key, wanted: u64) -> bool {
+    let kept = kept(selection, Some(keep)).saturating_add(body(selection, Some(keep)));
+    kept.saturating_add(wanted) <= room(selection)
+}
+
 /// What a page's window may draw beside it, given the `left` bytes the
 /// room leaves once the page is counted: what is left, up to a part, when
 /// that holds a part, its copy and their index at all; otherwise the
@@ -191,14 +201,19 @@ pub(super) fn window_allowance(left: u64) -> u64 {
 
 /// Fits the read `keep`, the request being made or the latest, into the
 /// `left` bytes the room leaves it: unchanged when it fits; otherwise its
-/// window sized to what is left, or the floor ([`floor_allowance`]); let
-/// go when not even the floor holds it.
+/// window sized to what is left, or the floor ([`floor_allowance`]). When
+/// the floor holds what it shows but not beside the read under way for it,
+/// that read is withdrawn and what it shows stays (SUB decision `084f5236`
+/// item 2); it is let go only when not even the floor holds what it shows.
 fn fit_kept(selection: &mut Selection, keep: &Key, left: u64) {
-    let Some(loaded) = selection.loaded.get(keep) else {
+    let Some(loaded) = selection.loaded.get_mut(keep) else {
         return;
     };
     if loaded.charge() <= left {
         return;
+    }
+    if floor_allowance(loaded.charges(), left).is_none() {
+        loaded.withdraw();
     }
     match floor_allowance(loaded.charges(), left) {
         Some(allowance) => refit(selection, keep, allowance),

@@ -25,8 +25,10 @@
 //! while the next part is read, the part shown and its window stay counted
 //! beside the page coming in, and once it arrives that page and its window
 //! are counted in their place. **Load the latest** keeps what was read
-//! shown and counted until the newer version arrives, or beside its error.
-//! What a read draws is never planned beside the snapshot's bodies: it
+//! shown and counted until the newer version arrives, or beside its error,
+//! and counts beside it only what it asks for: a page for a part, the
+//! whole item only when both fit the room (SUB decision `084f5236` item
+//! 2). What a read draws is never planned beside the snapshot's bodies: it
 //! always draws, within its own allowance. A new snapshot never lets go of
 //! the read the floor keeps: the part of the item last asked for.
 
@@ -39,7 +41,7 @@ use subspace_client_fleet::{Error, FleetApi, FleetClient};
 
 use super::Selection;
 use super::draw::{Key, Pieced};
-use super::ledger::{make_room, room, spare, stamp, window_allowance};
+use super::ledger::{fits_beside, make_room, room, spare, stamp, window_allowance};
 use super::parts::PART;
 use crate::Irc;
 pub(super) use part::show_page;
@@ -136,22 +138,42 @@ impl Loaded {
         !matches!(self.held, Held::Failed(_))
     }
 
-    /// Replaces what it shows with read `read`, granted `allowance`, which
-    /// counts as coming in until it arrives; what it shows stays shown and
-    /// charged meanwhile.
+    /// Replaces what it shows with read `read`, which counts what it asks
+    /// for (`reserve`, a page for a part) as coming in until it arrives,
+    /// and is granted `allowance` once it does; what it shows stays shown
+    /// and charged meanwhile (SUB decision `084f5236` item 2).
     fn reload(
         &mut self,
-        allowance: u64,
+        (reserve, allowance): (u64, u64),
         (read, regrow): (u64, bool),
         (cancel, task): (Arc<AtomicBool>, Task<()>),
     ) {
         self.cancel.store(true, Ordering::Release);
-        self.incoming = allowance;
+        self.incoming = reserve;
         self.reload = Reload::Reading(allowance);
         self.read = read;
         self.regrow = regrow;
         self.cancel = cancel;
         self._read = Some(task);
+    }
+
+    /// Withdraws the read under way that replaces what it shows, or reads
+    /// its next part, so what it shows alone stays, charged: a newer
+    /// version waits to be asked for again. A first read under way is all
+    /// it presents, so it stays.
+    pub(super) fn withdraw(&mut self) {
+        if !self.shows() {
+            return;
+        }
+        self.cancel.store(true, Ordering::Release);
+        self._read = None;
+        self.incoming = 0;
+        if matches!(self.reload, Reload::Reading(_)) {
+            self.reload = Reload::None;
+        }
+        if let Held::Parts(parts) = &mut self.held {
+            parts.loading = None;
+        }
     }
 
     /// What the ledger fits it by: what it holds, what comes in for it,
@@ -258,9 +280,13 @@ fn read_item(
         return;
     };
     // A first read still in flight, or failed, goes first; what was read
-    // stays until the new read arrives.
-    if !selection.loaded.get(&key).is_some_and(Loaded::shows) {
-        selection.loaded.remove(&key);
+    // stays until the new read arrives, and any read under way for it
+    // gives way to this one.
+    match selection.loaded.get_mut(&key) {
+        Some(shown) if shown.shows() => shown.withdraw(),
+        _ => {
+            selection.loaded.remove(&key);
+        }
     }
     if regrow {
         stamp(selection, &key);
@@ -284,7 +310,9 @@ fn read_item(
         });
     });
     match selection.loaded.get_mut(&key) {
-        Some(shown) if shown.shows() => shown.reload(allowance, (read, regrow), (cancel, task)),
+        Some(shown) if shown.shows() => {
+            shown.reload((reserve, allowance), (read, regrow), (cancel, task));
+        }
         _ => {
             let loaded = Loaded::reading(allowance, (read, regrow), (cancel, task));
             selection.loaded.insert(key, loaded);
@@ -298,15 +326,39 @@ fn read_item(
 /// reserves for the read and is granted in all: room for the whole item
 /// and its drawn copy, and at least for its page 0, when both fit;
 /// otherwise a page, and a window sized to the room left beside it, or
-/// the floor's when none is.
+/// the floor's when none is. A first read counts what it is granted from
+/// the start. A read that replaces what is shown counts only what it asks
+/// for beside it, the whole item only when both fit the room, otherwise a
+/// page (SUB decision `084f5236` item 2).
 fn admit(selection: &mut Selection, key: &Key, bytes: u64) -> (u64, u64) {
-    if fits_whole(selection, bytes) {
-        let reserve = whole_reserve(room(selection), bytes);
-        let allowance = reserve.saturating_add(bytes);
-        make_room(selection, allowance, Some(key));
-        return (reserve, allowance);
+    let shown = selection.loaded.contains_key(key);
+    if let Some((wanted, granted)) = whole_read(selection, (key, shown), bytes) {
+        make_room(selection, wanted, Some(key));
+        return granted;
     }
-    make_room(selection, PAGE_READ, Some(key));
+    make_room(selection, if shown { PAGE } else { PAGE_READ }, Some(key));
+    part_read(selection, key)
+}
+
+/// What a whole read of `key` of declared size `bytes` counts at once,
+/// and what it reserves and is granted in all, when the item and its
+/// drawn copy fit the room: all of it for a first read, only its reserve
+/// beside what is `shown`, and then only when both fit.
+fn whole_read(
+    selection: &Selection,
+    (key, shown): (&Key, bool),
+    bytes: u64,
+) -> Option<(u64, (u64, u64))> {
+    let reserve = whole_reserve(room(selection), bytes);
+    let allowance = reserve.saturating_add(bytes);
+    let wanted = if shown { reserve } else { allowance };
+    (fits_whole(selection, bytes) && (!shown || fits_beside(selection, key, wanted)))
+        .then_some((wanted, (reserve, allowance)))
+}
+
+/// What a read of `key` in parts reserves and is granted in all once room
+/// is made: a page, and a window sized to the room left beside it.
+fn part_read(selection: &Selection, key: &Key) -> (u64, u64) {
     let window = window_allowance(spare(selection, key).saturating_sub(PAGE));
     (PAGE, PAGE.saturating_add(window))
 }

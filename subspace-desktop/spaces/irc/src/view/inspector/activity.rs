@@ -424,6 +424,13 @@ pub(crate) fn set_room(selection: &mut Selection, bytes: u64) {
     draw::replan(selection);
 }
 
+/// Lets go of what a snapshot of the same generation no longer names and
+/// fits what stays, as each snapshot or event that changes it does.
+#[cfg(test)]
+pub(crate) fn snapshot_pruned(selection: &mut Selection) {
+    prune(selection);
+}
+
 /// The bytes the bodies the open turns draw hold.
 #[cfg(test)]
 pub(crate) fn drawn_bytes(selection: &Selection) -> u64 {
