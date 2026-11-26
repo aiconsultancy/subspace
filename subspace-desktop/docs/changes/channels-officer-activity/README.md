@@ -32,8 +32,8 @@ item too large to send inline is paged and loads on demand, never hidden.
   part this version does not know shows as its indented JSON, never
   dropped.
 - **Paged items.** An item the snapshot sends as paged shows its kind, name,
-  status and size, with **Load in full**, or **Load in parts** when it is
-  larger than the room left. No item is too large to read (SUB
+  status and size, with **Load in full** when it and its drawn copy both
+  fit the room left (SUB decision `6f5e67dd`), or **Load in parts**. No item is too large to read (SUB
   decision `a17870f4`). The client reads every page, restarting if the
   item's `seq` changes midway, and the view shows the joined item whole:
   as its kind, or, for a kind or shape this version does not know, as its
@@ -45,41 +45,56 @@ item too large to send inline is paged and loads on demand, never hidden.
 - **One budget.** Everything the view holds counts against 64 MiB: the
   snapshot's inline content (estimated from its strings and values) and
   every item read, inline text counted in UTF-8 bytes. Room is made before
-  each read for the item's declared size, and the budget holds during the
-  read as after it: a read never holds more than its room. An item whose
-  page 0 claims more is read again once with room made for that claimed
-  size when it fits the budget, and in parts otherwise. The least recently
-  opened item goes first (it shows **Load in full** again); items go when
+  each read for the item's declared size and its drawn copy, and the
+  budget holds during the read as after it: a read never holds more than
+  its room. An item whose page 0 claims more is read again once with room
+  made for that claimed size and its drawn copy when they fit the budget,
+  and in parts otherwise. The least recently opened item goes first (it
+  shows its load action again); items go when
   their turn leaves the snapshot. A reply that arrives after its item was
   let go, or after it was read again, is dropped.
-- **What is drawn counts too** (SUB decision `ed71a299`). What the open
-  turns draw counts against the same budget, beside the inline content and
-  the items read: a block its length, or one 64 KiB part when it shows in
-  parts; an unknown item its indented JSON; an item read on demand the
-  bytes it shows. Collapsed turns build no bodies and draw nothing. Bodies
-  are drawn the most recently opened turn first, and its items in order;
-  one that would pass the room left shows its label, its size and that it
-  is not drawn to stay within the view's memory budget, with **Show**.
-  **Show** makes room, letting go of the least recently opened items read
-  first, then of bodies shown earlier, the least recent first, and draws
-  the body asked for.
+- **What is drawn counts too** (SUB decisions `ed71a299` and `0c13b784`).
+  What the open turns draw counts against the same budget, beside the
+  inline content and the items read, in the UTF-8 bytes it mounts: each
+  block as drawn, every `⟨U+XXXX⟩` marker in full, or one 64 KiB part when
+  it shows in parts, plus the formatted text kept for it while drawn (an
+  indented JSON value, an error); an item read on demand what it shows.
+  Collapsed turns build no bodies and draw nothing. Each body is measured
+  once per version of its item, by turn, item and `seq`, and which bodies
+  are drawn is worked out again only when the snapshot, the items read,
+  the turns opened or the bodies asked for change, never for a frame.
+- **Draw order.** The bodies asked for with **Show** come first, the latest
+  first; then the open turns, the most recently opened first, and their
+  items in order. Each is drawn while it fits the room left; one that would
+  pass it shows its label, its size and that it is not drawn to stay
+  within the view's memory budget, with **Show**. **Show** first makes
+  room, letting go of the least recently opened items read, then of bodies
+  asked for earlier, the least recent first, until what is held and drawn
+  fits beside the body asked for. If the body still does not fit, it is
+  drawn one part of at most 64 KiB at a time, with **First part**,
+  **Previous part**, **Next part**, **Last part** and `Part k of N`: never
+  hidden and never cut. Only the part shown is formatted and kept.
 - **The floor.** Inline content is the snapshot itself and is never let
-  go. When it alone fills the budget, the view holds no items read, one
-  page per part read in flight, and the one body last asked for.
-- **Larger than the budget.** An item larger than the room left is read
-  one page at a time: its JSON, one 64 KiB page per part, with **First
-  part**, **Previous part**, **Next part**, **Last part** and `Part k of
-  N`. Only the page shown is held; while the next part is read, room for
-  one more page is held beside it, and once it arrives only its length.
-  When the room made is under one page, the part is read anyway. Each part
-  is pinned to the `seq`, page count and size of the part before; when the
-  item changed, the view starts again once from the newest version's
-  first part and says a newer version is on the gateway. A part past the
+  go. When it alone fills the budget, the view holds one part (at most
+  64 KiB) of the item last asked for and its drawn copy, and one page per
+  part read in flight.
+- **Larger than the budget.** An item that, with its drawn copy, does not
+  fit the room left is read one page at a time: its JSON, one 64 KiB page
+  per part, with **First part**, **Previous part**, **Next part**, **Last
+  part** and `Part k of N`; a page whose markers draw more than 64 KiB
+  shows in parts of its own. Only the page shown is held; while the next
+  part is read, room for one more page is held beside it, and once it
+  arrives only its length. When the room made is under one page, the part
+  is read anyway. Each part is pinned to the `seq`, page count and size of
+  the part before, never a copy of it; when the item changed, the view
+  starts again once from the newest version's first part and says a newer
+  version is on the gateway. A part past the
   item's last page (the item shrank) is a change too: the first part is
   read once, and **Try again** after a failure reads the first part, never
   the old one.
-- **Long text in parts.** A text over 256 KiB shows one 64 KiB part at a
-  time, cut on character boundaries, with **First part**, **Previous
+- **Long text in parts.** A text drawing more than 256 KiB, markers and
+  all, shows one part of at most 64 KiB drawn at a time, cut on character
+  boundaries, with **First part**, **Previous
   part**, **Next part**, **Last part** and `Part k of N`, so every byte,
   the last included, is in reach.
 - **Untrusted text.** Text keeps its newlines and tabs; every other control
