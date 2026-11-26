@@ -13,7 +13,7 @@
 
 import { h, mount, txt } from "./activity-view.js";
 import { binarySides, DIFF_MODES, diffError, hexRows, HEX_WINDOW_BYTES, knownKind, knownStatus, PREVIEW_MAX_PIXELS, previewable } from "./diff.js";
-import { patchLines } from "./diff-parts.js";
+import { bytesOf, patchLines } from "./diff-parts.js";
 import { measurePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
 import { formatBytes, formatClock } from "./format.js";
 
@@ -178,21 +178,32 @@ function patchTree(entry, shown, view) {
   ];
 }
 
-function hexTree(binary) {
+/**
+ * One side's bytes: one 4 KiB window of the part on show (a gateway page),
+ * each row with its offset in the file, and First, Previous, Next, and Last
+ * where its page can be read directly. A window move past the part's edge
+ * reads the next or previous part; the part on show stays until it arrives.
+ */
+function hexTree(binary, view) {
   const side = SIDE[binary.side];
+  const part = binary.part;
   const parts = [];
-  if (binary.state === "loading") parts.push(h("p", { class: "act-note" }, `Reading ${side.toLowerCase()} bytes…`));
-  if (binary.state === "failed") parts.push(h("p", { class: "act-warn" }, txt(binary.error.message)), h("button", { class: "btn", type: "button", "data-diff-binary-retry": "" }, "Retry page"));
-  if (binary.state === "idle" && !binary.page) parts.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read these bytes."));
-  const page = binary.page;
-  if (page) {
-    if (page.size === 0) parts.push(h("p", { class: "act-note" }, `${side} side: empty file (0 bytes).`));
+  if (part?.evicted) parts.push(h("p", { class: "act-note" }, "These bytes were let go to make room for a newer read. They are read again, at the same snapshot, when shown."), h("button", { class: "btn", type: "button", "data-diff-binary": binary.side }, "Show them again"));
+  else if (binary.state === "loading") parts.push(h("p", { class: "act-note" }, part?.data === null ? `Reading ${side.toLowerCase()} bytes…` : `Reading more ${side.toLowerCase()} bytes; these stay on show until they arrive…`));
+  else if (binary.state === "failed") {
+    const problem = diffError(part.error, { file: true, action: "Retry page" });
+    if (view.changed || problem.kind === "cancelled" || problem.kind === "stale") parts.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read these bytes."));
+    else parts.push(h("p", { class: "act-warn" }, txt(problem.message)), h("button", { class: "btn", type: "button", "data-diff-binary-retry": "" }, "Retry page"));
+  }
+  const after = part?.data === null || part?.data === undefined ? null : part;
+  if (after) {
+    if (binary.size === 0) parts.push(h("p", { class: "act-note" }, `${side} side: empty file (0 bytes).`));
     else {
       const start = binary.window * HEX_WINDOW_BYTES;
-      const slice = page.bytes.subarray(start, start + HEX_WINDOW_BYTES);
-      const from = page.offset + start;
-      const atStart = page.offset === 0 && binary.window === 0;
-      const atEnd = from + slice.length >= page.size;
+      const slice = bytesOf(after.data, start, HEX_WINDOW_BYTES);
+      const from = binary.offset + start;
+      const atStart = after.part === 0 && binary.window === 0;
+      const atEnd = !after.hasNext && binary.window >= binary.windows - 1;
       const button = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-diff-bytes": to, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
       parts.push(
         h(
@@ -200,8 +211,9 @@ function hexTree(binary) {
           { class: "act-parts", role: "group", "aria-label": `${side} bytes` },
           button("first", "First", atStart),
           button("previous", "Previous", atStart),
-          h("span", { class: "act-sub" }, `${side} bytes ${count(from)}–${count(from + slice.length)} of ${count(page.size)}`),
+          h("span", { class: "act-sub" }, `${side} bytes ${count(from)}–${count(from + slice.length)}${binary.size === null ? "" : ` of ${count(binary.size)}`}`),
           button("next", "Next", atEnd),
+          after.count !== null && (after.hasLast || after.part === after.count - 1) ? button("last", "Last", atEnd) : null,
         ),
         h("pre", { class: "act-pre diff-hex", "aria-label": `${side} bytes as hex and ASCII` }, hexRows(slice, from).join("\n")),
       );
@@ -235,7 +247,7 @@ function binaryTree(view, entry) {
   const sides = binarySides(entry.file);
   const actions = sides.map((side) => h("button", { class: "btn", type: "button", "data-diff-binary": side, ...(view.changed ? { "aria-disabled": "true" } : {}) }, `${SIDE[side]} bytes`));
   if (previewable(entry.file.path)) actions.push(...sides.map((side) => h("button", { class: "btn", type: "button", "data-diff-preview": side, ...(view.changed ? { "aria-disabled": "true" } : {}) }, `Preview ${side} image`)));
-  const open = view.binary?.index === entry.index ? hexTree(view.binary) : view.preview?.index === entry.index ? previewTree(view.preview) : null;
+  const open = view.binary?.index === entry.index ? hexTree(view.binary, view) : view.preview?.index === entry.index ? previewTree(view.preview) : null;
   return [h("p", { class: "act-note" }, `Binary file${Number.isInteger(entry.file.size) ? `, ${formatBytes(entry.file.size)}` : ""}. Its bytes are read a page at a time.`), h("div", { class: "act-parts" }, actions), open];
 }
 

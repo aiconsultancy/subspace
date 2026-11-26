@@ -20,7 +20,7 @@
 
 import { DEFAULT_ROOM_BYTES, HttpError, InvalidResponseError } from "./api.js";
 import { createBudget } from "./budget.js";
-import { createPartSource, PATCH_START, patchLines } from "./diff-parts.js";
+import { base64Length, createPartSource, PATCH_START, patchLines } from "./diff-parts.js";
 import { shownBytes, WINDOW_BYTES } from "./document.js";
 
 /** The gateway feature that says it serves the diff routes. */
@@ -308,10 +308,17 @@ export function validatePatchPage(answer, { path, page, at }) {
 }
 
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-const MAX_BASE64 = Math.ceil(BINARY_PAGE_BYTES / 3) * 4;
+/** The longest base64 a binary page may hold: 1 MiB decoded. A binary part is held as this text. */
+export const BINARY_PART_BYTES = Math.ceil(BINARY_PAGE_BYTES / 3) * 4;
+
+/** Check `data` is base64 of at most 1 MiB, without decoding it; returns the bytes it decodes to. */
+function checkBase64(data) {
+  if (data.length > BINARY_PART_BYTES || !BASE64.test(data)) throw new InvalidResponseError("A binary page is not valid base64 of at most 1 MiB.");
+  return base64Length(data);
+}
 
 export function decodeBase64(data) {
-  if (data.length > MAX_BASE64 || !BASE64.test(data)) throw new InvalidResponseError("A binary page is not valid base64 of at most 1 MiB.");
+  checkBase64(data);
   const raw = atob(data);
   const bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
@@ -322,7 +329,9 @@ export function decodeBase64(data) {
  * A binary page: pinned to `at`, for `path` and `side`, starting where the
  * last page ended, inside the file's size. A page that ends at the size is
  * the last one, whatever else it says; one that ends before it must name the
- * next page. An empty file is one page of size 0 with no data.
+ * next page. An empty file is one page of size 0 with no data. Its bytes
+ * stay base64 (`data`, `length` decoded): the hex view decodes one window
+ * at a time.
  */
 export function validateContent(answer, { path, at, side, page, offset, size }) {
   if (!isObj(answer) || !isStr(answer.fingerprint) || !isObj(answer.file)) throw new InvalidResponseError("The file page is not a valid answer.");
@@ -340,15 +349,16 @@ export function validateContent(answer, { path, at, side, page, offset, size }) 
   if (!ok) throw new InvalidResponseError("The binary page is not valid content for this side.");
   if (content.offset !== offset) throw new InvalidResponseError(`The binary page starts at ${content.offset}, not ${offset}.`);
   if (size !== null && content.size !== size) throw new InvalidResponseError("The binary page gives another size for the same file.");
-  const bytes = decodeBase64(content.data ?? "");
-  const end = content.offset + bytes.length;
+  const data = content.data ?? "";
+  const length = checkBase64(data);
+  const end = content.offset + length;
   if (end > content.size) throw new InvalidResponseError("The binary page runs past the file's size.");
   if (end < content.size) {
     if (!isStr(content.nextPage)) throw new InvalidResponseError("The binary page ends before the file does but names no next page.");
-    if (!bytes.length) throw new InvalidResponseError("The binary page is empty but the file goes on.");
+    if (!length) throw new InvalidResponseError("The binary page is empty but the file goes on.");
     if (content.nextPage === page) throw new InvalidResponseError("The binary page points back at itself.");
   }
-  return { offset: content.offset, size: content.size, bytes, nextPage: end < content.size ? content.nextPage : null };
+  return { offset: content.offset, size: content.size, data, length, nextPage: end < content.size ? content.nextPage : null };
 }
 
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp)$/i;
@@ -371,6 +381,9 @@ export function binarySides(file) {
   if (file.status === "removed") return ["old"];
   return ["old", "new"];
 }
+
+/** The text a hex window of `bytes` bytes draws: a row of 8 is 16 + 2 + 23 + 2 + 8 characters and a newline. */
+export const hexShownBytes = (bytes) => Math.ceil(bytes / HEX_ROW_BYTES) * 52;
 
 /** Rows of a hex and ASCII dump: a 16-digit offset, 8 bytes in hex, and the bytes as ASCII with `.` for the rest. */
 export function hexRows(bytes, offset) {
@@ -464,6 +477,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     stalePage = false;
     liveChanged = false;
     busy = null;
+    binary?.source.drop();
     binary = null;
     preview = null;
     emit();
@@ -571,7 +585,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
   // ----- binary bytes: one hex view or one preview at a time -----
 
   function closeBinary() {
-    binary?.read.cancel();
+    binary?.source.drop();
     preview?.read.cancel();
     const had = binary || preview;
     binary = null;
@@ -579,92 +593,96 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     if (had) emit();
   }
 
-  /** Read page `number` of the open hex view, from the cursor the previous page gave. */
-  async function readBinaryPage(number, land) {
-    const view = binary;
-    if (!view || changed()) return;
-    view.read.cancel();
-    view.read = read.child();
-    const token = view.read;
+  /**
+   * One side of a binary file as parts (SUB decision 75c3ed93 §2): each a
+   * gateway page of at most 1 MiB decoded, held as its base64, following the
+   * gateway's cursors and pinned to the snapshot's fingerprint. Each part
+   * knows the offset it starts at; `onSize` hears the file's size.
+   */
+  function binarySource(entry, side, onChange, onSize) {
     const gen = generation;
-    view.state = "loading";
-    view.error = null;
-    view.version += 1;
-    emit();
-    try {
-      const answer = await retryBusy(token, (signal) =>
-        client.diffFile(target.ship, target.member, { project: target.project, mode, path: view.path, page: view.cursors[number] ?? undefined, at: fingerprint, side: view.side }, signal),
-      );
-      const content = validateContent(answer, { path: view.path, at: fingerprint, side: view.side, page: view.cursors[number] ?? null, offset: view.offsets[number], size: view.size });
-      if (!current(gen) || binary !== view || view.read !== token || token.cancelled) return;
-      view.size = content.size;
-      view.number = number;
-      view.page = content;
-      view.cursors[number + 1] = content.nextPage ?? undefined;
-      view.offsets[number + 1] = content.offset + content.bytes.length;
-      const windows = Math.max(1, Math.ceil(content.bytes.length / HEX_WINDOW_BYTES));
-      view.window = land === "last" ? windows - 1 : 0;
-      view.state = "ready";
-      busy = null;
-    } catch (failure) {
-      if (!current(gen) || binary !== view || view.read !== token) return;
-      const problem = diffError(failure, { file: true, action: "Retry page" });
-      if (problem.kind === "cancelled") {
-        view.state = view.page ? "ready" : "idle";
-      } else if (problem.kind === "stale") {
-        view.state = view.page ? "ready" : "idle";
-        stalePage = true;
-        cancelSnapshotReads();
-      } else {
-        view.state = "failed";
-        view.error = problem;
-        view.retry = { number, land };
-        if (problem.kind === "busy") busy = problem.message;
-      }
-    }
-    view.version += 1;
-    emit();
+    const at = fingerprint;
+    const snapshot = read;
+    const path = entry.file.path;
+    let size = null;
+    return createPartSource({
+      budget,
+      key: ["binary", at, mode, path, side].join("\u0000"),
+      version: at,
+      partBytes: BINARY_PART_BYTES,
+      // A part draws one 4 KiB hex window at a time.
+      drawn: (data) => hexShownBytes(Math.min(HEX_WINDOW_BYTES, base64Length(data))),
+      first: { offset: 0 },
+      onChange,
+      read: ({ cursor, start, signal }) =>
+        partRead(gen, async () => {
+          const answer = await readFile(snapshot, at, { path, page: cursor ?? undefined, side }, signal);
+          const content = validateContent(answer, { path, at, side, page: cursor, offset: start.offset, size });
+          size = content.size;
+          onSize(size);
+          return { data: content.data, next: content.nextPage, after: { offset: start.offset + content.length } };
+        }),
+    });
   }
+
+  /** The hex view's windows in the part on show: 4 KiB each, at least one. */
+  const windowsIn = (data) => Math.max(1, Math.ceil(base64Length(data ?? "") / HEX_WINDOW_BYTES));
 
   function openBinary(index, side) {
     const entry = files[index];
     if (status !== "ready" || !entry?.file.binary || !binarySides(entry.file).includes(side) || changed()) return;
+    // Bytes the budget let go are read again where they were, at the same snapshot.
+    if (binary?.index === index && binary.side === side && binary.source.view?.evicted) return binary.source.show();
     closeBinary();
-    binary = { index, path: entry.file.path, side, cursors: [undefined], offsets: [0], number: 0, size: null, page: null, window: 0, state: "idle", error: null, retry: null, read: read.child(), version: 0 };
-    readBinaryPage(0, "first");
+    const view = { index, path: entry.file.path, side, window: 0, land: "first", part: null, moves: 0, size: null, source: null };
+    // A part arrives: land on its first window, or its last after Previous or Last.
+    view.source = binarySource(entry, side, () => {
+      const shown = view.source?.view;
+      if (shown?.data !== null && shown?.data !== undefined && shown.part !== view.part) {
+        view.window = view.land === "last" ? windowsIn(shown.data) - 1 : 0;
+        view.part = shown.part;
+      }
+      emit();
+    }, (size) => (view.size = size));
+    binary = view;
+    return view.source.show();
   }
 
-  /** Move the hex view: first, previous or next window, reading pages as needed. */
+  /**
+   * Move the hex view a window: First, Previous, Next or Last. A move past
+   * the part's first or last window reads the part before or after; Last
+   * only where its page can be read without the pages between.
+   */
   function moveBinary(to) {
     const view = binary;
-    if (!view?.page || view.state === "loading") return;
-    const windows = Math.max(1, Math.ceil(view.page.bytes.length / HEX_WINDOW_BYTES));
-    if (to === "first") {
-      if (view.number === 0) {
-        view.window = 0;
-        view.version += 1;
-        emit();
-      } else readBinaryPage(0, "first");
-    } else if (to === "previous") {
-      if (view.window > 0) {
-        view.window -= 1;
-        view.version += 1;
-        emit();
-      } else if (view.number > 0) readBinaryPage(view.number - 1, "last");
-    } else if (to === "next") {
-      if (view.window < windows - 1) {
-        view.window += 1;
-        view.version += 1;
-        emit();
-      } else if (view.page.nextPage) readBinaryPage(view.number + 1, "first");
-    }
+    const shown = view?.source.view;
+    if (!shown || shown.data === null || shown.state === "loading") return;
+    const windows = windowsIn(shown.data);
+    const step = (window) => {
+      view.window = window;
+      view.moves += 1;
+      emit();
+    };
+    const turn = (part, land) => {
+      view.land = land;
+      return view.source.move(part);
+    };
+    if (to === "first") return shown.part === 0 ? step(0) : turn("first", "first");
+    if (to === "previous") return view.window > 0 ? step(view.window - 1) : shown.hasPrevious ? turn("previous", "last") : undefined;
+    if (to === "next") return view.window < windows - 1 ? step(view.window + 1) : shown.hasNext ? turn("next", "first") : undefined;
+    if (to === "last" && shown.count !== null) return shown.part === shown.count - 1 ? step(windows - 1) : shown.hasLast ? turn("last", "last") : undefined;
   }
 
   function retryBinary() {
-    const view = binary;
-    if (view?.state !== "failed") return;
-    const { number, land } = view.retry ?? { number: 0, land: "first" };
-    readBinaryPage(number, land);
+    return binary?.source.retry();
+  }
+
+  /** The open hex view as the panel draws it. */
+  function binaryView() {
+    if (!binary) return null;
+    const shown = binary.source.view;
+    const { index, path, side, window, moves, size } = binary;
+    return { index, path, side, window, size, windows: windowsIn(shown?.data), part: shown, offset: shown?.start.offset ?? 0, state: shown?.state ?? "idle", version: `${shown?.changes}.${moves}` };
   }
 
   /** Assemble one side of an image in memory for a still preview, as #110. */
@@ -693,12 +711,13 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
           view.state = "too-large";
           break;
         }
-        if (number === 0 && !imageType(content.bytes)) {
+        const bytes = decodeBase64(content.data);
+        if (number === 0 && !imageType(bytes)) {
           view.state = "unsupported";
           break;
         }
-        parts.push(content.bytes);
-        offset += content.bytes.length;
+        parts.push(bytes);
+        offset += bytes.length;
         if (!content.nextPage) {
           const bytes = new Uint8Array(offset);
           let at = 0;
@@ -747,7 +766,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
         changed: changed(),
         banner: unstable ? DIFF_MESSAGES.unstable : changed() ? DIFF_MESSAGES.changed : null,
         busy,
-        binary,
+        binary: binaryView(),
         preview,
         revision,
         budget,
@@ -802,6 +821,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       generation += 1;
       read?.cancel();
       dropSources();
+      binary?.source.drop();
       budget.clear();
       binary = null;
       preview = null;

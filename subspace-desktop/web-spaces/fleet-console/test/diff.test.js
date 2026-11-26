@@ -3,19 +3,22 @@ import { test } from "node:test";
 import { createApiClient, HttpError, MAX_DIFF_BODY_BYTES, MAX_DIFF_FILE_BODY_BYTES } from "../src/api.js";
 import {
   BINARY_PAGE_BYTES,
+  BINARY_PART_BYTES,
   binarySides,
   canViewDiff,
   createDiffWatcher,
   DIFF_MESSAGES,
   diffsEnabled,
   hexRows,
+  HEX_ROW_BYTES,
   HEX_WINDOW_BYTES,
+  hexShownBytes,
   imageType,
   isDiffFile,
   validateContent,
 } from "../src/diff.js";
 import { createDiffPanel } from "../src/diff-view.js";
-import { patchLines } from "../src/diff-parts.js";
+import { base64Length, bytesOf, patchLines } from "../src/diff-parts.js";
 import { crewPanel } from "../src/inspector.js";
 import { isGit } from "../src/contract.js";
 import { createFleetManager, createSampleFleetManager } from "../src/fleet-manager.js";
@@ -480,40 +483,63 @@ test("diff binary: an empty file is one page of size 0", async () => {
   const { watcher, files } = watch(binaryRoutes({ old: new Uint8Array(0), new: new Uint8Array(3) }));
   watcher.start();
   await flush();
-  watcher.openBinary(0, "old");
-  await flush();
+  await watcher.openBinary(0, "old");
   assert.equal(watcher.view.binary.state, "ready");
-  assert.equal(watcher.view.binary.page.size, 0);
-  assert.equal(watcher.view.binary.page.nextPage, null);
+  assert.equal(watcher.view.binary.size, 0);
+  assert.equal(watcher.view.binary.part.count, 1, "one part, no next page");
   assert.equal(files().length, 1);
-  assert.deepEqual(files()[0].query, { project: "subspace", mode: "branch", path: "img.bin", page: undefined, at: FP, side: "old" });
+  assert.deepEqual(files()[0].query, { project: "subspace", mode: "branch", path: "img.bin", page: undefined, side: "old", at: FP });
   const panel = createDiffPanel({ doc: fakeDoc, watcher });
   panel.update(watcher.view, { name: "Starbuck" });
   assert.match(panel.root.textContent, /Old side: empty file \(0 bytes\)\./);
 });
 
-test("diff binary: a page ending exactly at the size is the last, and pages follow by offset", async () => {
+test("diff binary: hex windows page across a part boundary; Previous lands on the part before's last window, offsets run on", async () => {
   const bytes = Uint8Array.from({ length: 2 * BINARY_PAGE_BYTES }, (_, i) => i & 0xff);
   const { watcher, files } = watch(binaryRoutes({ old: bytes, new: bytes }));
   watcher.start();
   await flush();
-  watcher.openBinary(0, "new");
-  await flush();
+  await watcher.openBinary(0, "new");
   const view = () => watcher.view.binary;
-  assert.equal(view().page.offset, 0);
-  assert.equal(view().page.nextPage, String(BINARY_PAGE_BYTES));
-  for (let i = 0; i < BINARY_PAGE_BYTES / HEX_WINDOW_BYTES - 1; i += 1) watcher.moveBinary("next");
-  assert.equal(files().length, 1, "windows within a page read nothing");
-  watcher.moveBinary("next");
+  const perPart = BINARY_PAGE_BYTES / HEX_WINDOW_BYTES;
+  assert.equal(view().windows, perPart);
+  assert.equal(view().part.hasNext, true);
+  assert.equal(watcher.view.budget.used, BINARY_PART_BYTES + hexShownBytes(HEX_WINDOW_BYTES), "the part, as base64, and one drawn hex window");
+  for (let i = 0; i < perPart - 1; i += 1) watcher.moveBinary("next");
+  assert.equal(files().length, 1, "windows within a part read nothing");
+  await watcher.moveBinary("next");
+  assert.equal(files()[1].query.page, String(BINARY_PAGE_BYTES), "the gateway's cursor");
+  assert.equal(view().offset, BINARY_PAGE_BYTES);
+  assert.equal(view().window, 0);
+  assert.equal(view().part.count, 2, "the page ending exactly at the size is the last");
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  const rows = () => panel.root.findAll((node) => node.attributes.class === "act-pre diff-hex")[0].textContent.split("\n");
+  assert.equal(rows()[0].slice(0, 16), BINARY_PAGE_BYTES.toString(16).padStart(16, "0"), "each row shows its offset in the file");
+  assert.match(panel.root.textContent, /New bytes 1,048,576–1,052,672 of 2,097,152/);
+  await watcher.moveBinary("previous");
+  assert.equal(files()[2].query.page, undefined, "Previous from a part's first window reads the part before");
+  assert.equal(view().window, perPart - 1, "and lands on its last window");
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(rows().at(-1).slice(0, 16), (BINARY_PAGE_BYTES - HEX_ROW_BYTES).toString(16).padStart(16, "0"));
+  assert.equal(panel.root.findAll((node) => node.attributes["data-diff-bytes"] === "last").length, 1, "Last, as the last page's cursor is known");
+  await watcher.moveBinary("last");
+  assert.equal(view().part.part, 1);
+  assert.equal(view().window, perPart - 1, "Last lands on the last window");
+  assert.equal(files().length, 4);
+});
+
+test("diff binary: no Last while reaching the last page means reading every page between", async () => {
+  const bytes = new Uint8Array(3 * 1024);
+  const { watcher } = watch(binaryRoutes({ old: bytes, new: bytes }, { pageBytes: 1024 }));
+  watcher.start();
   await flush();
-  assert.equal(files()[1].query.page, String(BINARY_PAGE_BYTES));
-  assert.equal(view().page.offset, BINARY_PAGE_BYTES);
-  assert.equal(view().page.offset + view().page.bytes.length, view().page.size, "ends exactly at the size");
-  assert.equal(view().page.nextPage, null, "so it has no next page");
-  watcher.moveBinary("previous");
-  await flush();
-  assert.equal(files()[2].query.page, undefined, "Previous from a page's first window reads the page before");
-  assert.equal(view().window, BINARY_PAGE_BYTES / HEX_WINDOW_BYTES - 1, "and lands on its last window");
+  await watcher.openBinary(0, "new");
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(panel.root.findAll((node) => node.attributes["data-diff-bytes"] === "last").length, 0);
+  watcher.moveBinary("last");
+  assert.equal(watcher.view.binary.part.part, 0, "Last does nothing yet");
 });
 
 test("diff binary: a page that ends at the size but names a next page is still the last", () => {
@@ -537,14 +563,35 @@ test("diff binary: wrong side, offset, encoding, size or a short page without a 
   assert.throws(() => validateContent({ ...answer({}), fingerprint: "fp-2" }, ask), /changed while loading/);
 });
 
+test("diff binary: bytes the budget let go are read again at the same `at`, at the part shown before", async () => {
+  const budget = createBudget(64 * 1024);
+  const bytes = Uint8Array.from({ length: 2048 }, (_, i) => i & 0xff);
+  const { watcher, files } = watch(binaryRoutes({ old: bytes, new: bytes }, { pageBytes: 1024 }), { budget: budget.scope("diff\u0000") });
+  watcher.start();
+  await flush();
+  await watcher.openBinary(0, "new");
+  await watcher.moveBinary("next");
+  assert.equal(watcher.view.binary.part.count, 2);
+  const activity = budget.scope("activity\u0000");
+  activity.request("item");
+  activity.reserve("item", 64 * 1024 - 100, null);
+  assert.equal(watcher.view.binary.part.evicted, true, "the Activity view's latest read let the bytes go");
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  panel.root.listeners.click({ target: panel.root.findAll((node) => node.tag === "button" && node.textContent === "Show them again")[0] });
+  await flush();
+  assert.deepEqual(files().at(-1).query, { project: "subspace", mode: "branch", path: "img.bin", page: "1024", side: "new", at: FP });
+  assert.equal(watcher.view.binary.part.part, 1);
+  assert.equal(watcher.view.binary.offset, 1024);
+});
+
 test("diff binary: a failed page offers Retry page for that page", async () => {
   const routes = binaryRoutes({ new: Uint8Array.from([1, 2, 3]) });
   let fail = true;
   const { watcher, files } = watch({ ...routes, file: (query, n) => (fail && n === 0 ? Promise.reject(new HttpError(500)) : routes.file(query)) });
   watcher.start();
   await flush();
-  watcher.openBinary(0, "new");
-  await flush();
+  await watcher.openBinary(0, "new");
   assert.equal(watcher.view.binary.state, "failed");
   const panel = createDiffPanel({ doc: fakeDoc, watcher });
   panel.update(watcher.view, { name: "Starbuck" });
@@ -555,7 +602,7 @@ test("diff binary: a failed page offers Retry page for that page", async () => {
   await flush();
   assert.equal(files().length, 2);
   assert.equal(watcher.view.binary.state, "ready");
-  assert.deepEqual([...watcher.view.binary.page.bytes], [1, 2, 3]);
+  assert.deepEqual([...bytesOf(watcher.view.binary.part.data, 0, 3)], [1, 2, 3]);
 });
 
 test("diff binary: sides, hex rows and image signatures", () => {
@@ -772,12 +819,10 @@ test("diff source: the sample fleet serves a checkout with paging, markers and b
   await watcher.movePatch(route, "next");
   assert.equal(watcher.view.patch(route).part, 1, "a patch in parts");
   const chart = watcher.view.files.findIndex((e) => e.file.path === "assets/chart.bin");
-  watcher.openBinary(chart, "old");
-  await flush();
-  assert.equal(watcher.view.binary.page.size, 0, "an empty old side");
-  watcher.openBinary(chart, "new");
-  await flush();
-  assert.equal(watcher.view.binary.page.bytes.length, BINARY_PAGE_BYTES);
+  await watcher.openBinary(chart, "old");
+  assert.equal(watcher.view.binary.size, 0, "an empty old side");
+  await watcher.openBinary(chart, "new");
+  assert.equal(base64Length(watcher.view.binary.part.data), BINARY_PAGE_BYTES);
   const panel = createDiffPanel({ doc: fakeDoc, watcher });
   const notes = watcher.view.files.findIndex((e) => e.file.path === "docs/notes.md");
   panel.update(watcher.view, { name: member.name });
