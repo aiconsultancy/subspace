@@ -180,3 +180,44 @@ export function mountHud(parent) {
     },
   };
 }
+
+/**
+ * The frame-time readout: frame times, CPU and GPU split where measurable,
+ * and the quality level, mounted hidden in `parent`. Shown by `?perf=1`, the
+ * setting or Shift+P, and updated only while it is visible. `onGpu` hears
+ * each GPU time measured; `onMount` gets the readout's element once mounted.
+ * Returns {show(on)}.
+ */
+export function createPerfReadout({ renderer, stats, governor, parent, onGpu = () => {}, onMount = () => {} }) {
+  const gpuTimer = renderer.enableGpuTimer?.((ms) => {
+    onGpu(ms);
+    stats.gpu(ms);
+  });
+  const hud = mountHud(parent);
+  onMount(hud.element);
+  const snapshot = () => {
+    const pixels = renderer.pixels ?? { width: 0, height: 0, scale: 1 };
+    const settings = governor.settings;
+    return { ...stats.snapshot(), level: governor.level, label: settings.label, bloom: settings.bloom, scale: pixels.scale, width: pixels.width, height: pixels.height, renderer: renderer.kind, verdict: governor.verdict, refresh: governor.refresh, history: governor.history, gpuTimer: Boolean(gpuTimer) };
+  };
+  Object.defineProperty(window, "__fleetPerf", { value: Object.freeze({ snapshot }) });
+  let timer = 0;
+  const update = () => {
+    if (document.hidden) return;
+    const info = snapshot();
+    hud.update(hudLines(info, stats.rates(performance.now()), { ...info, pinned: governor.pinned }));
+  };
+  return {
+    show(on) {
+      hud.show(on);
+      if (on && !timer) {
+        stats.rates(performance.now());
+        update();
+        timer = setInterval(update, 500);
+      } else if (!on && timer) {
+        clearInterval(timer);
+        timer = 0;
+      }
+    },
+  };
+}

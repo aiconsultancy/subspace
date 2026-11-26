@@ -29,7 +29,7 @@ import { createChrome } from "./chrome.js";
 import { crewPanel, fleetPanel, shipPanel, tooltip } from "./inspector.js";
 import { createInspectorView, selectionSignature, waitingPanel } from "./panel.js";
 import { ambientFps, createGovernor, LEVELS } from "./quality.js";
-import { createFrameStats, createPerfToggle, hudLines, isPerfToggleKey, mountHud } from "./perf.js";
+import { createFrameStats, createPerfReadout, createPerfToggle, isPerfToggleKey } from "./perf.js";
 import { createFleetManager, createSampleFleetManager } from "./fleet-manager.js";
 import { fleetName, resolveFleets } from "./fleet-sources.js";
 import { browserStorage, createFleetStore } from "./fleet-store.js";
@@ -889,51 +889,20 @@ async function applyConfig(retry) {
 
 // ---------- performance readout ----------
 
-/**
- * The frame-time readout: frame times, CPU and GPU split where measurable,
- * and the quality level. Shown by `?perf=1`, the setting or Shift+P; built
- * the first time it shows, and updated only while it is visible.
- */
+/** The frame-time readout (perf.js), built the first time it shows. */
 let perfReadout = null;
-
-function createPerfReadout() {
-  const gpuTimer = renderer.enableGpuTimer?.((ms) => {
-    lastGpu = ms;
-    stats.gpu(ms);
-  });
-  const hud = mountHud(stage);
-  avoidObserver.observe(hud.element);
-  const snapshot = () => {
-    const pixels = renderer.pixels ?? { width: 0, height: 0, scale: 1 };
-    const settings = governor.settings;
-    return { ...stats.snapshot(), level: governor.level, label: settings.label, bloom: settings.bloom, scale: pixels.scale, width: pixels.width, height: pixels.height, renderer: renderer.kind, verdict: governor.verdict, refresh: governor.refresh, history: governor.history, gpuTimer: Boolean(gpuTimer) };
-  };
-  Object.defineProperty(window, "__fleetPerf", { value: Object.freeze({ snapshot }) });
-  let timer = 0;
-  const update = () => {
-    if (document.hidden) return;
-    const info = snapshot();
-    hud.update(hudLines(info, stats.rates(performance.now()), { ...info, pinned: governor.pinned }));
-  };
-  return {
-    show(on) {
-      hud.show(on);
-      if (on && !timer) {
-        stats.rates(performance.now());
-        update();
-        timer = setInterval(update, 500);
-      } else if (!on && timer) {
-        clearInterval(timer);
-        timer = 0;
-      }
-    },
-  };
-}
 
 function applyPerf() {
   const on = perfToggle.shown;
   if (!on && !perfReadout) return;
-  perfReadout ??= createPerfReadout();
+  perfReadout ??= createPerfReadout({
+    renderer,
+    stats,
+    governor,
+    parent: stage,
+    onGpu: (ms) => (lastGpu = ms),
+    onMount: (element) => avoidObserver.observe(element),
+  });
   perfReadout.show(on);
 }
 
