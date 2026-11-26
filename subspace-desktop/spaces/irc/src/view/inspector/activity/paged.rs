@@ -10,7 +10,7 @@ use subspace_framework::dashboard::panel::IconName;
 
 use super::blocks::{page_block, paged_blocks};
 use super::draw::Pieced;
-use super::load::Window;
+use super::load::{Reload, Window};
 use super::parts::{Draw, body_block, caption, card, part_controls};
 use super::{Held, Loaded, Parts, Selection};
 use crate::Irc;
@@ -107,8 +107,8 @@ pub(super) fn load_parts(
     match &loaded.held {
         Held::Loading => vec![caption(&format!("{id}:loading"), "Loading…", cx)],
         Held::Whole(entry) => {
-            let latest = (entry.base().seq < paged.base.seq).then(|| action("Load the latest"));
-            let mut drawn: Vec<AnyElement> = latest.into_iter().collect();
+            let newer = entry.base().seq < paged.base.seq;
+            let mut drawn = latest(id, (&loaded.reload, newer), &action, cx);
             // Drawn within its reservation: in parts when its body is
             // larger than what the reservation leaves beside it.
             match &loaded.window {
@@ -121,10 +121,8 @@ pub(super) fn load_parts(
             drawn
         }
         Held::Parts(parts) => {
-            let mut shown_parts = Vec::new();
-            if parts.page.seq < paged.base.seq {
-                shown_parts.push(action("Load the latest"));
-            }
+            let newer = parts.page.seq < paged.base.seq;
+            let mut shown_parts = latest(id, (&loaded.reload, newer), &action, cx);
             shown_parts.extend(in_parts(id, (key, parts, &loaded.window), draw, cx));
             shown_parts
         }
@@ -132,6 +130,29 @@ pub(super) fn load_parts(
             caption(&format!("{id}:failed"), &error.to_string(), cx),
             action("Try again"),
         ],
+    }
+}
+
+/// **Load the latest** when the snapshot names a version `newer` than the
+/// one shown; while that read is under way, that it is; when it failed,
+/// why, and a retry. What was shown stays meanwhile (SUB decision
+/// `4311830a` item 2).
+fn latest(
+    id: &str,
+    (reload, newer): (&Reload, bool),
+    action: &dyn Fn(&'static str) -> AnyElement,
+    cx: &Context<Irc>,
+) -> Vec<AnyElement> {
+    match reload {
+        Reload::Reading(_) => vec![caption(&format!("{id}:loading"), "Loading the latest…", cx)],
+        Reload::Failed(error) => vec![
+            caption(&format!("{id}:failed"), &error.to_string(), cx),
+            action("Try again"),
+        ],
+        Reload::None => newer
+            .then(|| action("Load the latest"))
+            .into_iter()
+            .collect(),
     }
 }
 

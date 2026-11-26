@@ -151,6 +151,12 @@ pub(super) fn left(selection: &Selection, keep: &Key) -> u64 {
     room(selection).saturating_sub(beside(selection, &asked, (Some(keep), wanted)))
 }
 
+/// The room left for `keep`'s next read beside everything else, what its
+/// read shows now included.
+pub(super) fn spare(selection: &Selection, keep: &Key) -> u64 {
+    left(selection, keep).saturating_sub(kept(selection, Some(keep)))
+}
+
 /// What a page's window may draw beside it, given the `left` bytes the
 /// room leaves once the page is counted: what is left, up to a part, when
 /// that holds a part at all; otherwise the floor's part.

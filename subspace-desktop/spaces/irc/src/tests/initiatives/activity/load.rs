@@ -291,5 +291,6 @@ fn an_item_goes_with_its_turn(cx: &mut TestAppContext) {
 mod budget;
 mod floor;
 mod kinds;
+mod latest;
 mod leave;
 mod part;

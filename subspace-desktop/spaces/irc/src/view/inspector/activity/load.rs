@@ -33,7 +33,7 @@ use subspace_client_fleet::{Error, FleetApi, FleetClient};
 
 use super::Selection;
 use super::draw::{Key, Pieced};
-use super::ledger::{left, make_room, room, stamp, window_allowance};
+use super::ledger::{make_room, room, spare, stamp, window_allowance};
 use super::parts::PART;
 use crate::Irc;
 pub(super) use part::show_page;
@@ -68,6 +68,9 @@ pub(super) struct Loaded {
     raw: u64,
     /// What it draws within its allowance.
     pub(super) window: Window,
+    /// A newer read replacing what it shows, which stays shown and charged
+    /// until the newer one arrives.
+    pub(super) reload: Reload,
     /// Changes whenever what is held does, so its body is measured again
     /// ([`super::draw`]).
     pub(super) version: u64,
@@ -95,6 +98,7 @@ impl Loaded {
             incoming: 0,
             raw: 0,
             window: Window::None,
+            reload: Reload::None,
             version: read,
             read,
             regrow,
@@ -111,6 +115,30 @@ impl Loaded {
             _ => self.raw.saturating_add(self.window.charge()),
         };
         steady.saturating_add(self.incoming)
+    }
+
+    /// Whether it shows what was read: kept, shown and charged while a
+    /// newer read replaces it.
+    fn shows(&self) -> bool {
+        matches!(self.held, Held::Whole(_) | Held::Parts(_))
+    }
+
+    /// Replaces what it shows with read `read`, granted `allowance`, which
+    /// counts as coming in until it arrives; what it shows stays shown and
+    /// charged meanwhile.
+    fn reload(
+        &mut self,
+        allowance: u64,
+        (read, regrow): (u64, bool),
+        (cancel, task): (Arc<AtomicBool>, Task<()>),
+    ) {
+        self.cancel.store(true, Ordering::Release);
+        self.incoming = allowance;
+        self.reload = Reload::Reading(allowance);
+        self.read = read;
+        self.regrow = regrow;
+        self.cancel = cancel;
+        self._read = Some(task);
     }
 
     /// What the ledger fits it by: what it holds, what comes in for it,
@@ -135,6 +163,16 @@ pub(super) enum Held {
     Whole(ActivityEntry),
     /// Too large to hold whole: one page of its JSON at a time.
     Parts(Parts),
+    Failed(Error),
+}
+
+/// A newer read of an item, replacing what it shows (SUB decision
+/// `4311830a` item 2).
+pub(super) enum Reload {
+    None,
+    /// Under way, granted this allowance once it arrives.
+    Reading(u64),
+    /// It failed: what was shown stays, beside the error and a retry.
     Failed(Error),
 }
 
@@ -189,7 +227,10 @@ pub(super) fn load(board: &mut Irc, turn: &str, item: &str, bytes: u64, cx: &mut
 /// it before the read: a whole read never holds more than that room, and
 /// page 0 claiming more comes back alone. Once, when `regrow`, an item
 /// that grew past its room but fits the budget is read again with room
-/// made for the size its page 0 claimed.
+/// made for the size its page 0 claimed; only the first read is the
+/// person's request, so only it changes priority ([`stamp`]). What an
+/// earlier read shows stays shown and charged until this one arrives
+/// (SUB decision `4311830a` item 2).
 fn read_item(
     board: &mut Irc,
     key: (String, String),
@@ -203,9 +244,15 @@ fn read_item(
     let Some((selection, client)) = board.inspector_activity.as_mut().zip(client) else {
         return;
     };
-    // Any read of the item already in flight goes first.
-    selection.loaded.remove(&key);
-    let read = stamp(selection, &key);
+    // A first read still in flight, or failed, goes first; what was read
+    // stays until the new read arrives.
+    if !selection.loaded.get(&key).is_some_and(Loaded::shows) {
+        selection.loaded.remove(&key);
+    }
+    if regrow {
+        stamp(selection, &key);
+    }
+    let read = next_read(selection);
     let (reserve, allowance) = admit(selection, &key, bytes);
     let cancel = Arc::new(AtomicBool::new(false));
     let (agent, read_key, flag) = (selection.agent.clone(), key.clone(), cancel.clone());
@@ -223,8 +270,13 @@ fn read_item(
             publish(board, (&read_key, read), result, cx)
         });
     });
-    let loaded = Loaded::reading(allowance, (read, regrow), (cancel, task));
-    selection.loaded.insert(key, loaded);
+    match selection.loaded.get_mut(&key) {
+        Some(shown) if shown.shows() => shown.reload(allowance, (read, regrow), (cancel, task)),
+        _ => {
+            let loaded = Loaded::reading(allowance, (read, regrow), (cancel, task));
+            selection.loaded.insert(key, loaded);
+        }
+    }
     super::draw::replan(selection);
     cx.notify();
 }
@@ -242,7 +294,7 @@ fn admit(selection: &mut Selection, key: &Key, bytes: u64) -> (u64, u64) {
         return (reserve, allowance);
     }
     make_room(selection, PAGE_READ, Some(key));
-    let window = window_allowance(left(selection, key).saturating_sub(PAGE));
+    let window = window_allowance(spare(selection, key).saturating_sub(PAGE));
     (PAGE, PAGE.saturating_add(window))
 }
 
@@ -293,9 +345,36 @@ fn publish(
     let Some(loaded) = current(board, (key, read)) else {
         return;
     };
-    (loaded.held, loaded.raw) = match result {
-        Ok(ItemRead::Whole { entry, bytes }) => (Held::Whole(entry), bytes),
-        Ok(ItemRead::Larger(first)) => {
+    match (
+        outcome(result),
+        std::mem::replace(&mut loaded.reload, Reload::None),
+    ) {
+        // What was shown stays, beside the error and a retry.
+        (Err(error), Reload::Reading(_)) => loaded.reload = Reload::Failed(error),
+        (Err(error), _) => (loaded.held, loaded.raw) = (Held::Failed(error), 0),
+        (Ok(read), reload) => {
+            (loaded.held, loaded.raw) = read;
+            if let Reload::Reading(allowance) = reload {
+                loaded.allowance = allowance;
+            }
+        }
+    }
+    loaded.incoming = 0;
+    if let Some(selection) = board.inspector_activity.as_mut() {
+        restamp(selection, key);
+        settle(selection, key);
+        // An answer, not a request: priority stays as the person left it.
+        make_room(selection, 0, Some(key));
+        super::draw::replan(selection);
+    }
+    cx.notify();
+}
+
+/// What a read's answer holds, and the bytes of item JSON in it.
+fn outcome(result: Result<ItemRead, Error>) -> Result<(Held, u64), Error> {
+    match result? {
+        ItemRead::Whole { entry, bytes } => Ok((Held::Whole(entry), bytes)),
+        ItemRead::Larger(first) => {
             let bytes = first.data.len() as u64;
             let parts = Parts {
                 page: first,
@@ -303,27 +382,24 @@ fn publish(
                 loading: None,
                 failed: None,
             };
-            (Held::Parts(parts), bytes)
+            Ok((Held::Parts(parts), bytes))
         }
-        Ok(_) => (Held::Failed(Error::InvalidResponse), 0),
-        Err(error) => (Held::Failed(error), 0),
-    };
-    loaded.incoming = 0;
-    if let Some(selection) = board.inspector_activity.as_mut() {
-        restamp(selection, key);
-        settle(selection, key);
-        make_room(selection, 0, Some(key));
-        // Read to be seen: its body is asked for, and room made for it.
-        super::draw::ask(selection, key);
+        _ => Err(Error::InvalidResponse),
     }
-    cx.notify();
+}
+
+/// The name of a new read, or of a change to what an item read holds:
+/// never a request, so priority stays.
+fn next_read(selection: &mut Selection) -> u64 {
+    selection.reads += 1;
+    selection.reads
 }
 
 /// Marks what is held of `key` as changed, so its body is measured again.
 fn restamp(selection: &mut Selection, key: &(String, String)) {
-    selection.opened += 1;
+    let version = next_read(selection);
     if let Some(loaded) = selection.loaded.get_mut(key) {
-        loaded.version = selection.opened;
+        loaded.version = version;
     }
 }
 

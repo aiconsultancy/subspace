@@ -115,10 +115,13 @@ pub(crate) struct Selection {
     /// Counts the generations seen, so a body's version names its own
     /// ([`draw::Version`]): its `seq` is compared only within one.
     epoch: u64,
-    /// Counts each request, each turn opened and each change to what an
-    /// item read holds: orders the requests ([`ledger::stamp`]) and the
-    /// turns, and names each read so a late reply is dropped.
+    /// Counts each request and each turn opened: orders the requests
+    /// ([`ledger::stamp`]) and the turns.
     opened: u64,
+    /// Counts each read and each change to what an item read holds, so a
+    /// late reply is dropped and a body changed is measured again; never
+    /// a request ([`load`]).
+    reads: u64,
     /// The most bytes the view holds ([`MAX_LOADED`]).
     budget: u64,
     /// About how many bytes the snapshot's inline content holds, which
@@ -168,6 +171,7 @@ pub(super) fn open(
         generation: String::new(),
         epoch: 0,
         opened: 0,
+        reads: 0,
         budget: MAX_LOADED,
         inline: 0,
         fetch: None,
@@ -429,6 +433,20 @@ pub(crate) fn measured() -> u64 {
 #[cfg(test)]
 pub(crate) fn walked() -> u64 {
     pieces::walked_chars()
+}
+
+/// Asks for the body of item `item` of turn `turn`, as **Show** does: a
+/// person's request.
+#[cfg(test)]
+pub(crate) fn ask_for(selection: &mut Selection, turn: &str, item: &str) {
+    draw::ask(selection, &(turn.to_owned(), item.to_owned()));
+}
+
+/// The latest request: the item or body last asked for.
+#[cfg(test)]
+pub(crate) fn latest_request(selection: &Selection) -> Option<(String, String)> {
+    let (key, _) = selection.asked.iter().max_by_key(|(_, asked)| **asked)?;
+    Some(key.clone())
 }
 
 /// The read under way or last made of item `item` of turn `turn`.

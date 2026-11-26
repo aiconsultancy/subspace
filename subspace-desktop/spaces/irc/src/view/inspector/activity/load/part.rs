@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gpui_kit::{AppContext as _, Context};
 use subspace_client_fleet::activity::{ItemPart, PartFailed};
 
-use super::{Held, PAGE, client, current, make_room, restamp, settle, stamp};
+use super::{Held, PAGE, Reload, client, current, make_room, next_read, restamp, settle, stamp};
 use crate::Irc;
 
 /// Shows part `page` of an item read part by part, pinned to the version
@@ -43,7 +43,8 @@ pub(in super::super) fn show_page(
     // replaces, held until the part arrives.
     loaded.incoming = PAGE;
     // The latest request from its admission: the one the floor keeps.
-    let read = stamp(selection, key);
+    stamp(selection, key);
+    let read = next_read(selection);
     make_room(selection, 0, Some(key));
     let agent = selection.agent.clone();
     let Some(loaded) = selection.loaded.get_mut(key) else {
@@ -54,6 +55,8 @@ pub(in super::super) fn show_page(
     };
     parts.loading = Some(page);
     parts.failed = None;
+    // The latest request: any newer read of the item gives way to it.
+    loaded.reload = Reload::None;
     // Only the version is pinned: no copy of the page outside its room.
     let pinned = parts.page.version();
     // The part read before, if any, asks for nothing more.
@@ -110,8 +113,9 @@ fn publish_part(
     if let Some(selection) = board.inspector_activity.as_mut() {
         restamp(selection, key);
         settle(selection, key);
+        // An answer, not a request: priority stays as the person left it.
         make_room(selection, 0, Some(key));
-        super::super::draw::ask(selection, key);
+        super::super::draw::replan(selection);
     }
     cx.notify();
 }
