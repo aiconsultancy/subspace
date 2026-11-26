@@ -7,6 +7,7 @@ use subspace_client_fleet::Error;
 use subspace_client_fleet::model::CrewMember;
 
 mod overlay;
+mod preview;
 mod retry;
 mod roster;
 use overlay::overlay_facts;
@@ -50,7 +51,10 @@ impl DetailState {
             return false;
         }
         let invalidated = connection_changed || !self.roster.same_assignment(&roster);
-        let task_changed = !self.roster.same_task_revision(&roster);
+        let needs_read = !invalidated
+            && self
+                .roster
+                .needs_read(&roster, self.detail.as_ref().map(|detail| &detail.member));
         let returned = self.roster.member_returned(&roster);
         if invalidated {
             self.detail = None;
@@ -67,7 +71,7 @@ impl DetailState {
             self.probe();
         } else if invalidated {
             self.rearm();
-        } else if task_changed {
+        } else if needs_read {
             self.queue();
         }
         true

@@ -4,7 +4,8 @@ use std::borrow::Cow;
 
 use subspace_client_fleet::model::{CrewContext, CrewMember, Git, PullRequest};
 
-use super::roster::{same_checkout, same_task_facts};
+use super::preview::overlay_text;
+use super::roster::{same_checkout, task_revision};
 use crate::markup::PrRef;
 
 macro_rules! overlay {
@@ -19,7 +20,7 @@ pub(super) fn overlay_facts(shown: &mut Cow<'_, CrewMember>, old: &CrewContext, 
     let git_changed = git_changed(&old.git, &new.git);
     let pr_changed =
         old.pull_request != new.pull_request || old.pull_request_known != new.pull_request_known;
-    let task_changed = !same_task_facts(old.current.as_ref(), new.current.as_ref());
+    let task_changed = task_revision(old.current.as_ref()) != task_revision(new.current.as_ref());
     if !(git_changed || pr_changed || task_changed)
         && old.activity == new.activity
         && old.provisioned == new.provisioned
@@ -38,7 +39,8 @@ pub(super) fn overlay_facts(shown: &mut Cow<'_, CrewMember>, old: &CrewContext, 
     if task_changed {
         match (&mut context.current, &old.current, &new.current) {
             (Some(shown), Some(old), Some(new)) if shown.id == new.id => {
-                overlay!(shown, old, new; status, updated_at, summary, phase, progress)
+                overlay_text(shown, old, new);
+                overlay!(shown, old, new; status, updated_at)
             }
             (shown, _, new) => shown.clone_from(new),
         }

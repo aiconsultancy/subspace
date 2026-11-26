@@ -2,6 +2,8 @@
 
 use subspace_client_fleet::model::{CrewContext, CrewMember, Git, ShipDetail, Task, TaskStatus};
 
+use super::preview;
+
 #[derive(PartialEq, Eq)]
 pub(in super::super) enum Roster {
     Present(Box<CrewMember>),
@@ -40,7 +42,11 @@ impl Roster {
         old.id == new.id && old.backend == new.backend && assignments(old).eq(assignments(new))
     }
 
-    pub(super) fn same_task_revision(&self, next: &Self) -> bool {
+    pub(super) fn needs_read(&self, next: &Self, full: Option<&CrewMember>) -> bool {
+        !self.same_task_revision(next) || self.divergent_preview(next, full)
+    }
+
+    fn same_task_revision(&self, next: &Self) -> bool {
         let (Self::Present(old), Self::Present(new)) = (self, next) else {
             return false;
         };
@@ -50,6 +56,21 @@ impl Roster {
                     current_in(new, ctx.project.as_deref()).and_then(|ctx| ctx.current.as_ref());
                 task_revision(ctx.current.as_ref()) == task_revision(next)
             })
+    }
+
+    fn divergent_preview(&self, next: &Self, full: Option<&CrewMember>) -> bool {
+        let (Self::Present(old), Self::Present(new)) = (self, next) else {
+            return false;
+        };
+        old.contexts.iter().any(|context| {
+            let key = context.project.as_deref();
+            let old = context.current.as_ref();
+            let new = current_in(new, key).and_then(|context| context.current.as_ref());
+            let full = full
+                .and_then(|member| current_in(member, key))
+                .and_then(|context| context.current.as_ref());
+            matches!((old, new), (Some(old), Some(new)) if preview::diverged(old, new, full))
+        })
     }
 }
 
@@ -70,7 +91,7 @@ pub(super) fn current_in<'a>(member: &'a CrewMember, key: Option<&str>) -> Optio
         .find(|ctx| ctx.project.as_deref() == key)
 }
 
-fn task_revision(task: Option<&Task>) -> Option<(&str, TaskStatus, Option<i64>)> {
+pub(super) fn task_revision(task: Option<&Task>) -> Option<(&str, TaskStatus, Option<i64>)> {
     task.map(|task| (task.id.as_str(), task.status, task.updated_at))
 }
 
@@ -83,17 +104,4 @@ pub(super) fn same_checkout(left: Option<&Git>, right: Option<&Git>) -> bool {
         )
     }
     left.map(identity) == right.map(identity)
-}
-
-pub(super) fn same_task_facts(old: Option<&Task>, new: Option<&Task>) -> bool {
-    fn text(task: Option<&Task>) -> Option<(&str, &str, &str)> {
-        task.map(|task| {
-            (
-                task.summary.as_str(),
-                task.phase.as_str(),
-                task.progress.as_str(),
-            )
-        })
-    }
-    task_revision(old) == task_revision(new) && text(old) == text(new)
 }

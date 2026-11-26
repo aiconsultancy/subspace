@@ -4,6 +4,7 @@ use subspace_client_fleet::model::CrewMember;
 
 use super::{DetailState, Roster};
 
+mod previews;
 mod record_identity;
 mod recovery;
 
@@ -126,8 +127,7 @@ fn tail_only_progress_changes_refresh_full_detail() {
     state.finish(read, Ok(revision(&new, 2)));
     assert_progress(&state, &new);
 
-    let mut crew = revision("Different roster text alone", 2);
-    assert!(state.update(Roster::Present(Box::new(crew.clone())), 0));
+    let mut crew = revision(&prefix, 2);
     assert_eq!(state.begin(), None);
     crew.contexts[0].current.as_mut().unwrap().status =
         subspace_client_fleet::model::TaskStatus::Running;
@@ -142,7 +142,8 @@ fn a_response_merges_task_text_changed_during_the_read() {
     assert!(state.update(roster("first", "Checking the next chart…", 2), 0));
     state.finish(first, Ok(member("first", "Full older progress", 1)));
     assert!(state.has_full_detail());
-    assert_progress(&state, "Checking the next chart…");
+    assert_progress(&state, "Full older progress");
+    assert!(state.begin().is_some(), "a changed preview queues a reread");
 }
 
 #[test]
@@ -166,34 +167,6 @@ fn a_routine_git_change_uses_the_latest_git_record_without_a_new_read() {
     assert_eq!(git.ahead, Some(2));
     assert_eq!(git.checked_at, 3);
     assert_eq!(state.begin(), None);
-}
-
-#[test]
-fn summary_phase_and_progress_changes_each_replace_the_bounded_task_temporarily() {
-    for change in ["summary", "phase", "progress"] {
-        let mut state = DetailState::new(roster("first", "Checking…", 1), 0);
-        let first = state.begin().unwrap();
-        state.finish(first, Ok(member("first", "Full chart progress", 1)));
-        let mut live = member("first", "Checking…", 1);
-        let task = live.contexts[0].current.as_mut().unwrap();
-        match change {
-            "summary" => task.summary = "A new summary".into(),
-            "phase" => task.phase = "review".into(),
-            _ => task.progress = "More work".into(),
-        }
-        let mut expected = task.clone();
-        if change != "progress" {
-            expected.progress = "Full chart progress".into();
-        }
-        assert!(state.update(Roster::Present(Box::new(live)), 0));
-        let shown = state.shown(true).0.unwrap();
-        assert_eq!(shown.current_task(), Some(&expected), "{change}");
-        assert_eq!(
-            shown.contexts[0].current.as_ref(),
-            Some(&expected),
-            "{change}"
-        );
-    }
 }
 
 #[test]
