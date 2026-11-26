@@ -3,8 +3,8 @@
 use std::process::ExitCode;
 
 use subspace_product::{
-    BuildInfo, Channel, DataNameError, MCP_COMMAND, ProductContext, ProductDescriptor,
-    UPGRADE_COMMAND, product_metadata, validate_product,
+    BuildInfo, Channel, DataNameError, HostCommand, ProductContext, ProductDescriptor,
+    host_command, product_metadata, validate_product,
 };
 
 use crate::{BoardRegistration, DesktopOptions, prepare_context, run_desktop};
@@ -27,6 +27,10 @@ pub struct ProductBuild {
     /// start. `None` shows no Account settings page.
     pub account: Option<crate::AccountRegistration>,
     pub descriptor: ProductDescriptor,
+    /// Runs after startup `PATH` setup, before configuration, theme validation
+    /// or GPUI. Arguments exclude the binary name. `Some(code)` exits;
+    /// `None` continues normal startup. No capability gate applies.
+    pub pre_startup: Option<fn(&[String]) -> Option<ExitCode>>,
     /// Optional prefix for desktop window titles, menus and About.
     pub display_name_prefix: Option<&'static str>,
     pub version: &'static str,
@@ -80,18 +84,53 @@ fn reads_configuration_for(args: &[String], updates: bool) -> bool {
     )
 }
 
+impl ProductBuild {
+    /// Build a product with no optional host integrations or startup hook.
+    pub fn new(descriptor: ProductDescriptor, version: &'static str, build: BuildInfo) -> Self {
+        Self {
+            descriptor,
+            version,
+            build,
+            pre_startup: None,
+            account: None,
+            display_name_prefix: None,
+            search_reranker: None,
+            default_theme_override: None,
+            configured_boards: None,
+            settings_extensions: &[],
+            dock_panel: None,
+            github_oauth: None,
+            fonts: &[],
+            product_themes: &[],
+            #[cfg(feature = "report-issue")]
+            report_issue_repository: None,
+        }
+    }
+}
+
+type CommandRunner = fn(
+    &ProductContext,
+    &[subspace_mcp::Board],
+    &subspace_agent_tools::ToolEnvironment,
+    &[String],
+) -> ExitCode;
+
 /// `updates` is whether this app has an update source. Without one,
 /// `upgrade` is not a Framework command and falls through to the normal
 /// command path, which reports it as unknown.
 fn route(args: &[String], updates: bool) -> StartupRoute {
-    match args {
-        [] => StartupRoute::Desktop,
-        [arg] if arg == "__product_metadata" => StartupRoute::Metadata,
-        [arg] if arg == "about" || arg == "--about" => StartupRoute::About,
-        [arg] if arg == "--version" => StartupRoute::Version,
-        [first, ..] if first == MCP_COMMAND => StartupRoute::Mcp,
-        [first, ..] if updates && first == UPGRADE_COMMAND => StartupRoute::Upgrade,
-        _ => StartupRoute::Command,
+    startup_route(args.is_empty(), host_command(args, updates))
+}
+
+fn startup_route(empty: bool, host: Option<HostCommand>) -> StartupRoute {
+    match (empty, host) {
+        (true, _) => StartupRoute::Desktop,
+        (_, Some(HostCommand::Metadata)) => StartupRoute::Metadata,
+        (_, Some(HostCommand::About)) => StartupRoute::About,
+        (_, Some(HostCommand::Version)) => StartupRoute::Version,
+        (_, Some(HostCommand::Mcp)) => StartupRoute::Mcp,
+        (_, Some(HostCommand::Upgrade)) => StartupRoute::Upgrade,
+        (false, None) => StartupRoute::Command,
     }
 }
 
@@ -104,44 +143,78 @@ pub fn launch(
     build: ProductBuild,
     boards: Vec<BoardRegistration>,
     artwork: &'static [(&'static str, &'static [u8])],
-    command: fn(
-        &ProductContext,
-        &[subspace_mcp::Board],
-        &subspace_agent_tools::ToolEnvironment,
-        &[String],
-    ) -> ExitCode,
+    command: CommandRunner,
 ) -> ExitCode {
     if let Err(error) = name_data_directory(build.descriptor.binary_name.as_str()) {
         return finish(Err(error));
     }
     crate::startup_path::apply();
-    let mut descriptor = build.descriptor;
-    let version = build.version;
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    launch_after_path(build, boards, artwork, command, &args)
+}
+
+fn launch_after_path(
+    build: ProductBuild,
+    boards: Vec<BoardRegistration>,
+    artwork: &'static [(&'static str, &'static [u8])],
+    command: CommandRunner,
+    args: &[String],
+) -> ExitCode {
+    if let Some(code) = build.pre_startup.and_then(|hook| hook(args)) {
+        return code;
+    }
+    prepare_startup(build, (boards, artwork), command, args)
+}
+
+fn prepare_startup(
+    build: ProductBuild,
+    (boards, artwork): (
+        Vec<BoardRegistration>,
+        &'static [(&'static str, &'static [u8])],
+    ),
+    command: CommandRunner,
+    args: &[String],
+) -> ExitCode {
+    let mut build = build;
+    let descriptor = &mut build.descriptor;
+    let version = build.version;
     if let Err(error) = descriptor.apply_default_theme_override(build.default_theme_override) {
         return finish(Err(error.to_string()));
     }
     subspace_update::cleanup_previous(&descriptor.binary_name);
     let updates = descriptor.update.is_some();
-    warn_prerelease(&descriptor, version, &args, &route(&args, updates));
-    if route(&args, updates) == StartupRoute::Metadata {
-        return finish(print_metadata(&descriptor, version));
+    warn_prerelease(descriptor, version, args, &route(args, updates));
+    if route(args, updates) == StartupRoute::Metadata {
+        return finish(print_metadata(descriptor, version));
     }
-    if let Some(text) = build_text(&route(&args, updates), &descriptor, version, &build.build) {
+    if let Some(text) = build_text(&route(args, updates), descriptor, version, &build.build) {
         println!("{text}");
         return ExitCode::SUCCESS;
     }
-    if route(&args, updates) == StartupRoute::Upgrade {
-        return upgrade(&descriptor, version, &args);
+    if route(args, updates) == StartupRoute::Upgrade {
+        return upgrade(descriptor, version, args);
     }
-    let context = match prepare_context(descriptor, version) {
+    let context = match prepare_context(build.descriptor.clone(), version) {
         Ok(context) => ProductContext {
             build: build.build,
             ..context
         },
         Err(error) => return finish(Err(error)),
     };
-    match route(&args, updates) {
+    start_mode(build, context, (boards, artwork), args, command)
+}
+
+fn start_mode(
+    build: ProductBuild,
+    context: ProductContext,
+    (boards, artwork): (
+        Vec<BoardRegistration>,
+        &'static [(&'static str, &'static [u8])],
+    ),
+    args: &[String],
+    command: CommandRunner,
+) -> ExitCode {
+    match route(args, context.product.update.is_some()) {
         StartupRoute::Desktop => finish(run_desktop(
             context,
             boards,
@@ -162,7 +235,7 @@ pub fn launch(
         )),
         _ => {
             let sign_in = (boards.as_slice(), build.github_oauth.is_some());
-            headless(&context, sign_in, &args, build.search_reranker, command)
+            headless(&context, sign_in, args, build.search_reranker, command)
         }
     }
 }
@@ -252,12 +325,7 @@ fn headless(
     (boards, sign_in): (&[BoardRegistration], bool),
     args: &[String],
     reranker: Option<crate::RerankerFactory>,
-    command: fn(
-        &ProductContext,
-        &[subspace_mcp::Board],
-        &subspace_agent_tools::ToolEnvironment,
-        &[String],
-    ) -> ExitCode,
+    command: CommandRunner,
 ) -> ExitCode {
     let files = crate::product::ProductFiles::for_context(context);
     let (mut environment, notices) = crate::tool_environment(
@@ -337,6 +405,8 @@ mod tests {
         assert!(data_name_outcome(Err(invalid)).is_err());
     }
 
+    mod pre_startup;
+
     fn words(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
     }
@@ -395,6 +465,15 @@ mod tests {
         );
         assert_eq!(route(&["about".into()], true), StartupRoute::About);
         assert_eq!(route(&["--about".into()], true), StartupRoute::About);
+    }
+
+    #[test]
+    fn a_lone_about_is_start_ups_but_a_space_named_about_keeps_its_commands() {
+        assert_eq!(route(&words(&["about"]), true), StartupRoute::About);
+        assert_eq!(
+            route(&words(&["about", "read"]), true),
+            StartupRoute::Command
+        );
     }
 
     #[test]

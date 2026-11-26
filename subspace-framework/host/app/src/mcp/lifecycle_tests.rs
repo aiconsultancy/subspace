@@ -141,7 +141,7 @@ fn acp_sessions_get_the_in_app_tools_whatever_settings_mcp_serves(cx: &mut TestA
         let boards = cx.global::<McpService>().boards.clone();
         let served = subspace_mcp::served_catalog(&boards, &[], &headless).unwrap();
         assert!(
-            served.get("live_read").is_none(),
+            served.served_catalog().tools().get("live_read").is_none(),
             "headless omits live tools"
         );
     });

@@ -1,5 +1,6 @@
 use crate::cli::{commands, run_catalog};
 use crate::root::complete_word;
+use crate::tree::Capabilities;
 use crate::{approval::CliApproval, input};
 use serde_json::{Value, json};
 use std::{
@@ -62,7 +63,19 @@ impl WriteService for Notes {
     }
 }
 
-fn catalog(count: &Arc<AtomicUsize>) -> Catalog {
+/// Every tool in `catalog` as one a declared Space provides.
+fn served(catalog: Catalog) -> Capabilities {
+    Capabilities {
+        space_tools: catalog
+            .tools()
+            .iter()
+            .map(|tool| tool.spec().name)
+            .collect(),
+        catalog,
+    }
+}
+
+fn catalog(count: &Arc<AtomicUsize>) -> Capabilities {
     let tool = WriteTool::new(
         ToolSpec {
             name: "actions_write",
@@ -78,14 +91,20 @@ fn catalog(count: &Arc<AtomicUsize>) -> Catalog {
         },
         Arc::new(Notes(count.clone())),
     );
-    Catalog::new(vec![Arc::new(tool)]).unwrap()
+    served(Catalog::new(vec![Arc::new(tool)]).unwrap())
 }
 
 fn strings(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).into()).collect()
 }
 
+mod collisions;
+mod composition;
+mod fallback;
 mod naming;
+mod parse_errors;
+mod product_flags;
+mod reserved;
 mod root;
 
 #[test]
@@ -242,7 +261,7 @@ async fn cli_json_equals_mcp_structured_content_for_the_same_fixture() {
         .unwrap();
     let (client, server_end) = tokio::io::duplex(65536);
     let server = subspace_mcp::ToolServer::new(
-        catalog,
+        catalog.catalog,
         subspace_mcp::Identity::new("fixture", "Fixture", "1"),
     );
     let task = tokio::spawn(async move {

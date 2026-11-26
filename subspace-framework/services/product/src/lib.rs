@@ -9,6 +9,7 @@ mod descriptor;
 mod error;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
+mod host_command;
 mod identity;
 mod integration;
 mod mcp;
@@ -22,10 +23,13 @@ pub use channel::{Channel, asset_stem, configure_channel};
 pub use context::ProductContext;
 pub use data_name::{DEFAULT_DATA_NAME, DataNameError, configure_data_name, data_name};
 pub use descriptor::{
-    BoardDescriptor, ProductDescriptor, ValidatedBoard, ValidatedProduct, validate_known_products,
-    validate_product,
+    BoardDescriptor, CommandMount, ProductDescriptor, ValidatedBoard, ValidatedProduct,
+    validate_known_products, validate_product,
 };
 pub use error::ProductError;
+pub use host_command::{
+    COMPLETE_WORD_COMMAND, HostCommand, host_command, reserved_group_words, reserved_leaf_words,
+};
 pub use identity::{
     Identity, parse_asset_path, parse_bundle_id, parse_display_name, parse_identity,
 };

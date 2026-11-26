@@ -1,7 +1,8 @@
 use super::naming::single_tool;
-use super::{catalog, context, strings};
+use super::{catalog, context, served, strings};
 use crate::cli::{commands, run_catalog};
 use crate::root::{complete_word, init_script};
+use crate::tree::Capabilities;
 use std::{
     process::ExitCode,
     sync::{Arc, atomic::AtomicUsize},
@@ -30,13 +31,13 @@ fn the_root_declares_completion_mcp_and_upgrade_beside_board_routes() {
 fn a_product_without_updates_has_no_upgrade_command() {
     let mut context = context();
     context.product.update = None;
-    let commands = commands(&context, &Catalog::new(Vec::new()).unwrap()).unwrap();
+    let commands = commands(&context, &Capabilities::default()).unwrap();
     assert!(!commands.spec.cmd.subcommands.contains_key("upgrade"));
 }
 
 #[test]
 fn a_generated_command_cannot_replace_a_root_command() {
-    let catalog = Catalog::new(vec![single_tool("completion")]).unwrap();
+    let catalog = served(Catalog::new(vec![single_tool("completion")]).unwrap());
     assert_eq!(
         commands(&context(), &catalog).err().unwrap(),
         "Generated command collides with existing command: completion"
