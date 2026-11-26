@@ -1,13 +1,12 @@
 //! Crew rows in the Ship tab.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::h_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
     SharedString, Styled as _, TestSupportExt as _, div,
 };
-use subspace_framework::dashboard::{Tokens, avatar, truncated};
+use subspace_framework::dashboard::{Tokens, action::row_button, avatar, truncated};
 
 use crate::{
     Irc,
@@ -64,16 +63,11 @@ pub(in super::super) fn row(
         return row.id(id).test_support().into_any_element();
     };
     let target = (fleet.to_owned(), ship.id.clone(), member.id.clone());
-    Button::new(id.clone())
-        .ghost()
-        .w_full()
+    row_button(id, format!("Open crew member {}", member.name), row)
         .min_w_0()
-        .accessibility_id(id)
-        .accessibility_label(format!("Open crew member {}", member.name))
         .when(focus.returned.as_deref() == Some(&member.id), |button| {
             button.track_focus(&focus.row)
         })
-        .child(row)
         .on_click(cx.listener(move |board, _, window, cx| {
             super::open(board, &target, window, cx);
         }))

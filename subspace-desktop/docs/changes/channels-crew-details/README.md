@@ -87,6 +87,6 @@ route.
 
 This extends the existing Channels inspector, without adding a board,
 changing its zones or adding a command, setting or board-to-board role.
-The inspector uses shared sections and action components; the crew row
-uses a GPUI Kit button. The existing [Channels guide](../../irc.md) describes
+The inspector uses shared sections and action components, including the
+crew row and page menu trigger. The existing [Channels guide](../../irc.md) describes
 how to open and leave the view.

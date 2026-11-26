@@ -6,8 +6,7 @@ use std::fmt::Write as _;
 use gpui_kit::base::TestTextExt as _;
 use gpui_kit::base::{Pagination, PaginationState};
 use gpui_kit::component::{
-    Disableable as _, Sizable as _, Size,
-    button::{Button, ButtonVariants as _},
+    Disableable as _,
     menu::{PopupMenu, PopupMenuItem},
     v_flex,
 };
@@ -15,7 +14,7 @@ use gpui_kit::{AnyElement, Context, IntoElement, ParentElement as _, Styled as _
 use subspace_client_fleet::model::{Task, TaskStatus};
 use subspace_framework::dashboard::{
     Tokens,
-    action::{Intent, icon_button},
+    action::{Intent, filter_button, icon_button},
     anchored, feedback,
     panel::IconName,
     workspace,
@@ -261,14 +260,10 @@ fn page_step(state: &PaginationState, previous: bool) -> impl IntoElement {
 
 fn page_jump(state: PaginationState) -> impl IntoElement {
     let (current, total) = (state.current_page(), state.total_pages());
-    let button = Button::new("jump")
-        .ghost()
+    let button = filter_button("jump", format!("Page {current} of {total}"), false)
         .compact()
-        .with_size(Size::XSmall)
         .accessibility_label(format!("Jump to page, current page {current} of {total}"))
-        .label(format!("Page {current} of {total}"))
-        .tooltip("Jump to page")
-        .dropdown_caret(true);
+        .tooltip("Jump to page");
     anchored::dropdown_menu(button, move |menu, _, _| jump_menu(menu, &state))
 }
 
