@@ -67,6 +67,7 @@ fn main() -> ExitCode {
     subspace_framework::shell::launch(
         subspace_framework::shell::ProductBuild {
             descriptor,
+            pre_startup: None,
             display_name_prefix: Some(env!("SUBSPACE_BUILD_TITLE_PREFIX")),
             default_theme_override: option_env!("SUBSPACE_DEFAULT_THEME"),
             version: env!("CARGO_PKG_VERSION"),
