@@ -265,10 +265,10 @@ per fleet.
   a single fleet.
 - **Fleet installer** ([`subspace-installer/`](subspace-installer/README.md)).
   Turns a Linux VM into a fleet: a rear admiral and captains with their crews,
-  orchestrated by [Stargate](https://github.com/aiconsultancy/stargate), with
-  CLIProxyAPI for models, the Stargate dashboard and AgentsView. Fleets default
-  to OpenCode as the agent harness. The installer can register its fleet with
-  the API.
+  orchestrated by [Stargate](https://github.com/aiconsultancy/stargate), which
+  includes a fleet dashboard.
+  Fleets default to OpenCode as the agent harness. The installer can
+  register its fleet with the API.
 - **A GitHub App per captain and rear admiral.** Every captain and the rear
   admiral has its own GitHub App, so each one commits, comments and opens pull
   requests under its own identity. Crew run under their captain's Linux user
@@ -280,6 +280,20 @@ per fleet.
 Our reference deployment ran on Azure, with credentials such as the agents'
 GitHub App keys in Azure Key Vault. The public version uses per-agent
 credential files that the installer provisions instead.
+
+### Optional fleet integrations
+
+- **Server-side charts and diagrams.** Agents render Mermaid diagrams and
+  Flint data charts on the fleet VM. Officers can use Flint through its
+  local MCP server and share PNGs in IRC when the fleet is connected to
+  the Subspace API. [Mermaid](https://github.com/mermaid-js/mermaid) ·
+  [Flint Chart](https://github.com/microsoft/flint-chart) ·
+  [Installer configuration](subspace-installer/README.md#screenshots)
+- **Session browsing.** AgentsView lets you browse and search agent sessions.
+  [AgentsView](https://github.com/kenn-io/agentsview)
+- **Model access.** The standard fleet installer configures CLIProxyAPI to
+  connect agents to their model providers.
+  [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
 
 ## Screenshots
 
