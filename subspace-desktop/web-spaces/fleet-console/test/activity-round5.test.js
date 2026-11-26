@@ -220,3 +220,98 @@ test("3: a part's body stays mounted while its placeholder's status and size cha
   assert.equal(windowsIn(panel.root)[0], body, "the part's window is the same node");
   watcher.stop();
 });
+
+// ---------- 4. Items read belong to their snapshot generation ----------
+
+/** The snapshot `snapshot` as a new generation, its item at `seq`. */
+function nextGeneration(snapshot, seq = 3) {
+  const next = structuredClone(snapshot);
+  next.cursor = { generation: "gen-new", seq: 4 };
+  next.turns[1].items[0].seq = seq;
+  return next;
+}
+
+test("4: a new stream generation drops the item read whole in the old one (probe 7)", async () => {
+  const { pages, snapshot } = pagedWith("PREVIOUS FIELD " + "a".repeat(70_000));
+  const { watcher, client, panel } = await prepare(snapshot, 1024 * 1024);
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  panel.update(watcher.view, officer);
+  assert.match(panel.root.textContent, /PREVIOUS FIELD/);
+  client.activity = async () => nextGeneration(snapshot);
+  watcher.retry();
+  await settle();
+  panel.update(watcher.view, officer);
+  assert.equal(watcher.view.cursor.generation, "gen-new");
+  assert.equal(watcher.view.full("turn-b", "ia"), null, "seq 9 of the old generation is not newer than seq 3 of this one");
+  assert.equal(watcher.view.budget.bytes(ITEM), 0, "and what it held is released");
+  assert.doesNotMatch(panel.root.textContent, /PREVIOUS FIELD/);
+  assert.equal(buttons(panel.root, "Load in full").length, 1);
+  watcher.stop();
+});
+
+test("4: a whole read in flight when the generation changes is aborted, its waiter settles and its reply is never shown", async () => {
+  const { pages, snapshot } = pagedWith("OLD " + "a".repeat(70_000));
+  const { watcher, client } = await prepare(snapshot, 1024 * 1024);
+  const held = [];
+  const signals = [];
+  client.activityItemPage = (agent, turn, id, page, signal) => {
+    signals.push(signal);
+    return new Promise((resolve) => held.push(() => resolve(pages[page])));
+  };
+  let done = false;
+  const load = watcher.loadItem("turn-b", "ia").then(() => (done = true));
+  await settle();
+  assert.equal(held.length, 1, "the first page is asked for");
+  client.activity = async () => nextGeneration(snapshot);
+  watcher.retry();
+  await settle();
+  await settle();
+  assert.equal(done, true, "the waiter settled with the old generation");
+  assert.equal(signals[0].aborted, true, "the read was aborted");
+  for (const release of held.splice(0)) release();
+  await load;
+  await settle();
+  assert.equal(watcher.view.full("turn-b", "ia"), null, "the old reply is not shown");
+  assert.equal(watcher.view.budget.bytes(ITEM), 0);
+  watcher.stop();
+});
+
+test("4: a part read in flight when the generation changes is aborted and dropped", async () => {
+  const { pages, snapshot } = pagedWith("a".repeat(600 * 1024));
+  const { watcher, client } = await prepare(snapshot, 0);
+  const held = [];
+  const signals = [];
+  client.activityItemPage = (agent, turn, id, page, signal) => {
+    signals.push(signal);
+    return new Promise((resolve) => held.push(() => resolve(pages[page])));
+  };
+  const load = watcher.loadItem("turn-b", "ia");
+  await settle();
+  assert.equal(watcher.view.full("turn-b", "ia").mode, "parts");
+  client.activity = async () => nextGeneration(snapshot);
+  watcher.retry();
+  await settle();
+  assert.equal(watcher.view.full("turn-b", "ia"), null);
+  assert.equal(signals[0].aborted, true);
+  for (const release of held.splice(0)) release();
+  await load;
+  await settle();
+  assert.equal(watcher.view.full("turn-b", "ia"), null, "the old part never shows");
+  assert.equal(watcher.view.budget.bytes(ITEM), 0);
+  watcher.stop();
+});
+
+test("4: a snapshot of the same generation keeps what was read", async () => {
+  const { pages, snapshot } = pagedWith("KEPT " + "a".repeat(70_000));
+  const { watcher, client } = await prepare(snapshot, 1024 * 1024);
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem("turn-b", "ia");
+  const again = structuredClone(snapshot);
+  again.cursor = { ...again.cursor, seq: again.cursor.seq + 1 };
+  client.activity = async () => again;
+  watcher.retry();
+  await settle();
+  assert.equal(watcher.view.full("turn-b", "ia")?.state, "ready");
+  watcher.stop();
+});

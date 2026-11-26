@@ -34,6 +34,12 @@
 // stream has answered. A gateway that refuses `?agent=` is polled every five
 // seconds instead. When the fleet's address or token changes, everything read
 // from the old one is dropped and the view starts again on the new stream.
+//
+// Items read belong to the snapshot generation they were read in (SUB
+// decision 1c19f413 §4): a seq means nothing in another generation. A
+// snapshot of a new generation aborts every read in flight, settles their
+// waiters and drops every item read, and a reply from the old generation is
+// never shown.
 
 import { ChangingError, DEFAULT_ROOM_BYTES, PAGE_DATA_BYTES, PART_PAGES, readItemPart, readPagedItem, TooLargeError } from "./api.js";
 import { createBudget } from "./budget.js";
@@ -343,6 +349,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
         const snapshot = decodeActivity(json);
         failures = 0;
         clearRetry();
+        // A new generation: nothing read in the old one carries over, and its reads stop.
+        if (state.cursor && state.cursor.generation !== snapshot.cursor.generation) dropAll();
         state = { ...state, status: "ready", agent: snapshot.agent, turns: snapshot.turns.slice(-MAX_TURNS), cursor: snapshot.cursor, snapshotSeq: snapshot.cursor.seq, lastSeq: snapshot.cursor.seq, error: null, refreshing: false, stale: false };
         pending = false;
         const queued = buffer;
@@ -543,7 +551,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    */
   function partsEntry(turnId, itemId) {
     const key = fullKey(turnId, itemId);
-    const entry = { turnId, itemId, mode: "parts", pager: null };
+    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null };
     entry.pager = createPager({
       budget,
       key,
@@ -614,10 +622,14 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     }
   }
 
-  /** Whether a read finished for nothing: the view closed, the source changed, or the item was dropped. */
-  function abandoned(key, own, at) {
+  /** Whether `entry` was read in the snapshot generation on show. */
+  const current = (entry) => entry.generation === (state.cursor?.generation ?? null);
+
+  /** Whether a read finished for nothing: the view closed, the source or generation changed, or the item was dropped. */
+  function abandoned(key, own, at, generation) {
     if (reading?.controller === own) reading = null;
-    if (stopped || at !== epoch || own.signal.aborted || full.get(key)?.mode !== "whole") {
+    const entry = full.get(key);
+    if (stopped || at !== epoch || own.signal.aborted || entry?.mode !== "whole" || entry.generation !== generation || !current(entry)) {
       pump();
       return true;
     }
@@ -626,6 +638,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
 
   async function readWhole(key, own, at) {
     const entry = full.get(key);
+    const generation = entry.generation;
     const held = entry.item ? entry.bytes * FORMAT_FACTOR : 0;
     let result = null;
     let failure = null;
@@ -640,21 +653,21 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     } catch (error) {
       failure = error;
     }
-    if (abandoned(key, own, at)) return;
-    const current = full.get(key);
+    if (abandoned(key, own, at, generation)) return;
+    const now = full.get(key);
     if (result) {
-      full.set(key, { ...current, seq: result.seq, state: "ready", item: result.item, bytes: result.bytes, error: null });
+      full.set(key, { ...now, seq: result.seq, state: "ready", item: result.item, bytes: result.bytes, error: null });
       holdWhole(key, result.bytes * FORMAT_FACTOR);
     } else if (failure instanceof TooLargeError) {
       // Larger than the budget: never read whole. Read its first part instead.
-      openParts(current.turnId, current.itemId);
+      openParts(now.turnId, now.itemId);
       refreshFull();
       changed();
       return;
     } else {
       // A failed read of a newer version keeps the version already read on show.
-      full.set(key, { ...current, state: "failed", error: failure instanceof ChangingError ? failure.message : readFailure(failure) });
-      if (current.item) holdWhole(key, current.bytes * FORMAT_FACTOR);
+      full.set(key, { ...now, state: "failed", error: failure instanceof ChangingError ? failure.message : readFailure(failure) });
+      if (now.item) holdWhole(key, now.bytes * FORMAT_FACTOR);
       else budget.release(key);
     }
     settle(key);
@@ -693,7 +706,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (previous?.state === "ready" && previous.item && previous.seq >= item.seq) return Promise.resolve();
     const done = settled(key);
     if (previous?.state !== "loading" && previous?.state !== "queued") {
-      full.set(key, { turnId, itemId, mode: "whole", seq: previous?.seq ?? item.seq, state: "queued", item: previous?.item ?? null, bytes: previous?.bytes ?? 0, error: null });
+      full.set(key, { turnId, itemId, mode: "whole", generation: state.cursor?.generation ?? null, seq: previous?.seq ?? item.seq, state: "queued", item: previous?.item ?? null, bytes: previous?.bytes ?? 0, error: null });
       queue.push(key);
       pump();
       changed();
@@ -714,9 +727,9 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     return entry.pager.open(to);
   }
 
-  /** What the view shows of an item read: a whole entry as held, a parts entry as its pager sees it. */
+  /** What the view shows of an item read: a whole entry as held, a parts entry as its pager sees it; nothing from another generation. */
   function shownFull(entry) {
-    if (!entry) return null;
+    if (!entry || !current(entry)) return null;
     if (entry.mode !== "parts") return entry;
     const pager = entry.pager.view;
     const error = pager.error === null ? null : pager.error instanceof ChangingError ? pager.error.message : readFailure(pager.error);
