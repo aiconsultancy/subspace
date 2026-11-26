@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use gpui_kit::{App, Global};
 use serde_json::Value;
+use subspace_core::former_ids::Renames;
 use subspace_dashboard::CurrentProduct;
 use subspace_product::{
     OsKind, PlatformEnv, ProductContext, ProductDescriptor, product_data_name, validate_product,
@@ -128,16 +129,19 @@ fn context_with_env(
     env: PlatformEnv,
 ) -> Result<ProductContext, String> {
     let validated = validate_product(descriptor).map_err(|error| error.to_string())?;
+    let renames = subspace_core::former_ids::declared(&validated);
     let context = ProductContext::new(validated, env);
     let file = config_file(&context);
-    if let Some(value) = load_alias_file(&file)? {
+    if let Some(value) = load_alias_file(&file, &renames)? {
         apply_aliases(descriptor, &value)?;
     }
     let product = validate_product(descriptor).map_err(|error| error.to_string())?;
     Ok(ProductContext::new(product, context.env))
 }
 
-fn load_alias_file(file: &std::path::Path) -> Result<Option<Value>, String> {
+/// The config file's JSON, with what it saved under the product's former
+/// Space ids `renames` read as the Spaces' own, as the config parser reads it.
+fn load_alias_file(file: &std::path::Path, renames: &Renames) -> Result<Option<Value>, String> {
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -148,9 +152,12 @@ fn load_alias_file(file: &std::path::Path) -> Result<Option<Value>, String> {
             ));
         }
     };
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|_| format!("invalid product configuration JSON: {}", file.display()))
+    let mut value: Value = serde_json::from_str(&text)
+        .map_err(|_| format!("invalid product configuration JSON: {}", file.display()))?;
+    if let Some(root) = value.as_object_mut() {
+        subspace_core::former_ids::rename_config(root, renames);
+    }
+    Ok(Some(value))
 }
 
 fn apply_aliases(descriptor: &mut ProductDescriptor, value: &Value) -> Result<(), String> {
@@ -189,6 +196,7 @@ mod tests {
         DesktopName, ProductFiles, apply_aliases, config_file, context_with_env, load_alias_file,
         preference_file,
     };
+    use subspace_core::former_ids::Renames;
     use subspace_product::{OsKind, PlatformEnv, ProductContext, fixture, validate_product};
 
     #[test]
@@ -232,6 +240,58 @@ mod tests {
         );
     }
 
+    /// The context of the fixture product, whose first Space, `github`, was
+    /// `example-old`, with `config` as its config file.
+    fn context_with_config(config: &str) -> Result<ProductContext, String> {
+        let root = tempfile::tempdir().unwrap();
+        let env = PlatformEnv {
+            os: OsKind::Linux,
+            home: root.path().to_owned(),
+            xdg_config_home: Some(root.path().join("config")),
+            xdg_state_home: Some(root.path().join("state")),
+            app_data: None,
+            local_app_data: None,
+        };
+        let mut descriptor = fixture::descriptor();
+        descriptor.boards[0].former_ids = vec!["example-old".into()];
+        let product = validate_product(&descriptor).unwrap();
+        let file = config_file(&ProductContext::new(product, env.clone()));
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, config).unwrap();
+        context_with_env(&mut descriptor, env)
+    }
+
+    #[test]
+    fn shortcuts_saved_under_a_former_space_id_reach_the_space() {
+        let context =
+            context_with_config(r#"{"commands":{"aliases":{"example-old":["example-short"]}}}"#)
+                .unwrap();
+        let board = context.product.board_for_command("example-short").unwrap();
+        assert_eq!(board.id.as_str(), "github");
+    }
+
+    #[test]
+    fn the_space_s_own_shortcuts_win_over_its_former_id_s() {
+        let context = context_with_config(
+            r#"{"commands":{"aliases":{"example-old":["example-short","example-gone"],
+                "github":["example-short"]}}}"#,
+        )
+        .unwrap();
+        let board = context.product.board_for_command("example-short").unwrap();
+        assert_eq!(board.id.as_str(), "github");
+        assert!(context.product.board_for_command("example-gone").is_none());
+        assert!(context.product.board_for_command("example-old").is_none());
+    }
+
+    #[test]
+    fn another_entry_s_shortcut_is_no_key_for_shortcuts() {
+        let error = context_with_config(
+            r#"{"commands":{"aliases":{"github":["zz-short"],"zz-short":["zz-other"]}}}"#,
+        )
+        .unwrap_err();
+        assert!(error.contains("excluded board: zz-short"), "{error}");
+    }
+
     #[test]
     fn gui_files_are_product_specific() {
         let root = tempfile::tempdir().unwrap();
@@ -264,12 +324,15 @@ mod tests {
     fn alias_loader_does_not_repeat_configuration_contents() {
         let root = tempfile::tempdir().unwrap();
         let file = root.path().join("config.json");
-        assert_eq!(load_alias_file(&file).unwrap(), None);
+        assert_eq!(load_alias_file(&file, &Renames::new()).unwrap(), None);
         std::fs::write(&file, "a-secret-that-is-not-json").unwrap();
-        let error = load_alias_file(&file).unwrap_err();
+        let error = load_alias_file(&file, &Renames::new()).unwrap_err();
         assert!(error.contains("invalid product configuration JSON"));
         assert!(!error.contains("a-secret"));
         std::fs::write(&file, "{}").unwrap();
-        assert_eq!(load_alias_file(&file).unwrap(), Some(serde_json::json!({})));
+        assert_eq!(
+            load_alias_file(&file, &Renames::new()).unwrap(),
+            Some(serde_json::json!({}))
+        );
     }
 }

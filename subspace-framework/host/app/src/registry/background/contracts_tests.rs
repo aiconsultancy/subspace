@@ -84,6 +84,7 @@ fn product(ids: &[&str]) -> subspace_product::ValidatedProduct {
         .map(|id| BoardDescriptor {
             id: (*id).into(),
             aliases: Vec::new(),
+            former_ids: Vec::new(),
             default_enabled: true,
         })
         .collect();

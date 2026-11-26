@@ -18,6 +18,8 @@ mod board_navigation;
 pub(crate) mod board_order;
 #[cfg(test)]
 mod board_page_tests;
+#[cfg(test)]
+mod board_rename_tests;
 mod chat_engine;
 mod configured;
 #[cfg(test)]

@@ -8,7 +8,7 @@ use subspace_agent_tools::{ToolEnvironment, ToolHost};
 use subspace_core::config::Config;
 use subspace_dashboard::settings::BoardSettings;
 use subspace_dashboard::{Dashboard, DashboardHandle, Services};
-use subspace_product::ValidatedProduct;
+use subspace_product::{BoardIdUse, ValidatedProduct};
 
 use super::{BoardRegistration, RegistrationSets, registration_sets_with};
 
@@ -208,28 +208,34 @@ pub(crate) fn desktop_sets(
     Ok((sets, notices))
 }
 
-/// The configured boards whose ids the product does not already use, with
-/// a notice for each one left out.
+/// The configured boards whose ids the product does not already use, as a
+/// Space's id or former id, with a notice for each one left out.
 pub(super) fn accept_configured(
     product: &ValidatedProduct,
     configured: Vec<BoardRegistration>,
 ) -> (Vec<BoardRegistration>, Vec<String>) {
-    let (rejected, accepted): (Vec<_>, Vec<_>) = configured.into_iter().partition(|board| {
-        product
-            .boards
-            .iter()
-            .any(|built_in| built_in.id.as_str() == board.id)
-    });
-    let notices = rejected
-        .iter()
-        .map(|board| {
-            format!(
-                "Configured board {} ignored: a built-in board already uses this id",
-                board.id
-            )
+    let mut notices = Vec::new();
+    let accepted = configured
+        .into_iter()
+        .filter(|board| match built_in_use(product, board.id) {
+            Some(reason) => {
+                notices.push(format!("Configured board {} ignored: {reason}", board.id));
+                false
+            }
+            None => true,
         })
         .collect();
     (accepted, notices)
+}
+
+/// Why the product's own Spaces leave no room for a configured board `id`.
+fn built_in_use(product: &ValidatedProduct, id: &str) -> Option<&'static str> {
+    product.board_id_use(id).map(|used| match used {
+        BoardIdUse::Id => "a built-in board already uses this id",
+        BoardIdUse::FormerId => {
+            "a built-in board used this id before and its saved settings are read as that board's"
+        }
+    })
 }
 
 /// Agent/MCP routing uses static IDs. Retain each ID once per process, never

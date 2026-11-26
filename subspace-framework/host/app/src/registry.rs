@@ -554,6 +554,7 @@ mod tests {
             .map(|(id, default_enabled)| BoardDescriptor {
                 id: (*id).into(),
                 aliases: Vec::new(),
+                former_ids: Vec::new(),
                 default_enabled: *default_enabled,
             })
             .collect();
@@ -736,6 +737,23 @@ mod tests {
         assert_eq!(ids(&accepted), ["wiki"]);
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("future-board"));
+    }
+
+    #[test]
+    fn a_configured_board_cannot_take_a_built_in_former_id() {
+        let mut descriptor = subspace_product::fixture::descriptor();
+        descriptor.boards[0].former_ids = vec!["example-old".into()];
+        let product = validate_product(&descriptor).unwrap();
+        let (accepted, notices) = super::configured::accept_configured(
+            &product,
+            vec![configured("example-old"), configured("wiki")],
+        );
+        assert_eq!(ids(&accepted), ["wiki"]);
+        assert_eq!(notices.len(), 1);
+        assert!(
+            notices[0].contains("example-old") && notices[0].contains("used this id before"),
+            "{notices:?}"
+        );
     }
 
     #[test]

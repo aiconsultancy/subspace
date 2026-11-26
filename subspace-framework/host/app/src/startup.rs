@@ -9,6 +9,10 @@ use subspace_product::{
 
 use crate::{BoardRegistration, DesktopOptions, prepare_context, run_desktop};
 
+mod headless;
+
+use headless::headless;
+
 #[derive(Debug, PartialEq, Eq)]
 enum StartupRoute {
     Desktop,
@@ -316,55 +320,6 @@ fn upgrade(descriptor: &ProductDescriptor, version: &str, args: &[String]) -> Ex
     }
 }
 
-/// `mcp`: the selected boards' agent tools for other harnesses, without GPUI
-/// or a Copilot login.
-/// `sign_in` is whether the app offers Sign in with GitHub, which guidance
-/// may then name.
-fn headless(
-    context: &ProductContext,
-    (boards, sign_in): (&[BoardRegistration], bool),
-    args: &[String],
-    reranker: Option<crate::RerankerFactory>,
-    command: CommandRunner,
-) -> ExitCode {
-    let files = crate::product::ProductFiles::for_context(context);
-    let (mut environment, notices) = crate::tool_environment(
-        &files.config,
-        boards,
-        subspace_agent_tools::ToolHost::Headless,
-        sign_in,
-    );
-    let log_notice = crate::logging::start(&files, context);
-    for notice in notices.into_iter().chain(log_notice) {
-        eprintln!("{notice}");
-    }
-    let selected = match crate::registry::selected_registrations(
-        &context.product,
-        boards,
-        &environment.config,
-    ) {
-        Ok(selected) => selected,
-        Err(error) => return finish(Err(error)),
-    };
-    if let Err(error) =
-        crate::search_runtime::initialize(&mut environment, context, &selected, &files, reranker)
-    {
-        eprintln!("Full-text search unavailable: {error}");
-    }
-    let boards = crate::registry::mcp_boards(&selected);
-    if args.first().is_some_and(|arg| arg == "mcp") {
-        subspace_mcp::run(
-            context,
-            &boards,
-            &environment,
-            &args[1..],
-            &environment.config.mcp,
-        )
-    } else {
-        command(context, &boards, &environment, args)
-    }
-}
-
 fn print_metadata(descriptor: &ProductDescriptor, version: &str) -> Result<(), String> {
     let metadata = product_metadata(descriptor, version).map_err(|error| error.to_string())?;
     println!("{metadata}");
@@ -386,6 +341,9 @@ mod tests {
     use subspace_product::{Channel, DataNameError, ProductError};
 
     use super::{StartupRoute, data_name_outcome, route, warning_line, warns};
+
+    #[cfg(unix)]
+    mod former_ids;
 
     #[test]
     fn launch_keeps_an_app_s_own_data_name_and_refuses_a_second_one() {

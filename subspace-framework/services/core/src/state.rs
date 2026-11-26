@@ -233,8 +233,61 @@ impl State {
     /// copy. Only space, tab, carriage return and line feed count as blank.
     /// A non-string value keeps its exact JSON text, such as a number with
     /// more digits than `u64` or `f64` hold.
+    /// Keys and values saved under a Space's former id are read as the
+    /// Space's own (see [`crate::former_ids`]); the file is not changed.
     pub fn load(file: &Path) -> Self {
-        read_state(file)
+        Self::load_with(file, &crate::former_ids::installed())
+    }
+
+    /// As [`State::load`], with the former ids `renames`.
+    pub(crate) fn load_with(file: &Path, renames: &crate::former_ids::Renames) -> Self {
+        let mut state = read_state(file);
+        state.rename_board_ids(renames);
+        state
+    }
+
+    /// Moves the keys and values saved under a former Space id in `renames`
+    /// to the Space's id (see [`crate::former_ids`]). A key the Space's id
+    /// already has wins, and the former key is dropped. True when anything
+    /// changed.
+    pub(crate) fn rename_board_ids(&mut self, renames: &crate::former_ids::Renames) -> bool {
+        let keys =
+            crate::former_ids::state_moves(self.values.keys().chain(self.invalid.keys()), renames);
+        let values = self.renamed_values(renames);
+        let changed = !keys.is_empty() || !values.is_empty();
+        self.move_keys(keys);
+        self.values.extend(values);
+        changed
+    }
+
+    /// The string values that name a former Space id, under their keys.
+    fn renamed_values(&self, renames: &crate::former_ids::Renames) -> Vec<(String, String)> {
+        self.values
+            .iter()
+            .filter_map(|(key, value)| {
+                Some((
+                    key.clone(),
+                    crate::former_ids::renamed_value(key, value, renames)?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Moves each `(from, to)` key, a string or a raw JSON value alike,
+    /// unless `to` already holds a value; `from` is removed either way.
+    fn move_keys(&mut self, moves: Vec<(String, String)>) {
+        for (from, to) in moves {
+            let text = self.values.remove(&from);
+            let raw = self.invalid.remove(&from);
+            if self.values.contains_key(&to) || self.invalid.contains_key(&to) {
+                continue;
+            }
+            if let Some(text) = text {
+                self.values.insert(to, text);
+            } else if let Some(raw) = raw {
+                self.invalid.insert(to, raw);
+            }
+        }
     }
 
     /// The string value of `key`. `None` for a missing key and for a key

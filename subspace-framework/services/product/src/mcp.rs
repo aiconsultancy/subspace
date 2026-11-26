@@ -5,6 +5,11 @@
 /// The reserved root command name. No board or alias may use it.
 pub const MCP_COMMAND: &str = "mcp";
 
+/// The `mcp.groups` id of the Application group: the tools every board
+/// shares, such as help and search, which the MCP server serves beside the
+/// boards' own groups.
+pub const MCP_APPLICATION_GROUP: &str = "application";
+
 /// The default Streamable HTTP address.
 pub const MCP_DEFAULT_BIND: &str = "127.0.0.1:7331";
 

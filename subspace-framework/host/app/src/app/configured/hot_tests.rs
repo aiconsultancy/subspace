@@ -91,6 +91,7 @@ fn descriptor(id: &str) -> BoardDescriptor {
     BoardDescriptor {
         id: id.into(),
         aliases: Vec::new(),
+        former_ids: Vec::new(),
         default_enabled: true,
     }
 }

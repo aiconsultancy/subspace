@@ -43,12 +43,14 @@ impl BoardFile {
     }
 
     /// The file's object with `changes` set, unless the file changed since
-    /// it was opened.
-    pub(super) fn edited(
+    /// it was opened or the board's settings now resolve to `current`, another
+    /// file, such as its own file appearing beside a former id's.
+    pub(super) fn edited_at(
         &self,
+        current: &Path,
         changes: &Map<String, Value>,
     ) -> Result<Map<String, Value>, SettingsError> {
-        if read_existing(&self.file)? != self.original {
+        if current != self.file || read_existing(&self.file)? != self.original {
             return Err(SettingsError::Stale);
         }
         let mut root = self.root.clone();

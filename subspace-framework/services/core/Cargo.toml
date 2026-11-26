@@ -46,6 +46,7 @@ windows-sys = { workspace = true, features = [
 
 [dev-dependencies]
 base64.workspace = true
+subspace-product = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

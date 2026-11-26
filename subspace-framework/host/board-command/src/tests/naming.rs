@@ -135,6 +135,7 @@ fn mixed_context() -> ProductContext {
         .map(|id| BoardDescriptor {
             id: id.into(),
             aliases: vec![],
+            former_ids: vec![],
             default_enabled: false,
         })
         .collect();
@@ -209,6 +210,7 @@ fn a_tool_belongs_to_the_longest_board_id_prefix() {
         .map(|id| BoardDescriptor {
             id: id.into(),
             aliases: vec![],
+            former_ids: vec![],
             default_enabled: true,
         })
         .collect();

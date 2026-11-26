@@ -41,6 +41,7 @@ fn product_without_update(root: &Path) -> ProductContext {
         boards: vec![BoardDescriptor {
             id: "github".into(),
             aliases: Vec::new(),
+            former_ids: Vec::new(),
             default_enabled: true,
         }],
         update: None,

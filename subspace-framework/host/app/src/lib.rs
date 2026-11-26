@@ -83,7 +83,7 @@ fn run_desktop(
     let files = product::ProductFiles::for_context(&context);
     let sign_in = options.github_oauth.is_some();
     let (mut environment, mut notices) =
-        tool_environment(&files.config, &boards, ToolHost::App, sign_in);
+        product_tool_environment(&context, &files, &boards, ToolHost::App, sign_in);
     #[cfg(feature = "report-issue")]
     notices.extend(app::report_issue::target(options.report_issue_repository).err());
     notices.extend(logging::start(&files, &context));
@@ -184,6 +184,21 @@ fn bind_keys(cx: &mut App) {
     subspace_dashboard::bind_keys(cx);
     #[cfg(debug_assertions)]
     inspector::init(cx);
+}
+
+/// As [`tool_environment`], for the running product in either start-up mode,
+/// and the first load of its config and state files. First it installs the
+/// product's former Space ids, so this and every later config, Settings or
+/// state read maps them (see [`subspace_core::former_ids`]).
+pub(crate) fn product_tool_environment(
+    context: &ProductContext,
+    files: &product::ProductFiles,
+    boards: &[BoardRegistration],
+    host: ToolHost,
+    sign_in: bool,
+) -> (ToolEnvironment, Vec<String>) {
+    subspace_core::former_ids::install(subspace_core::former_ids::declared(&context.product));
+    tool_environment(&files.config, boards, host, sign_in)
 }
 
 /// The product's configuration, with the own settings files of `boards`, and

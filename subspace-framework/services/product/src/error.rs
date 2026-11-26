@@ -30,6 +30,16 @@ pub enum ProductError {
     DuplicateAlias { name: String },
     #[error("command name '{name}' is reserved for the product")]
     ReservedCommand { name: String },
+    #[error("former Space id '{name}' is the id of a Space")]
+    FormerIdInUse { name: String },
+    #[error("duplicate former Space id '{name}'")]
+    DuplicateFormerId { name: String },
+    #[error("former Space id '{name}' is a name the Framework saves its own data under")]
+    ReservedFormerId { name: String },
+    #[error(
+        "Space '{name}' cannot have former ids: the Framework saves its own data under that name"
+    )]
+    ReservedRenameTarget { name: String },
     #[error("root command mount requires exactly one Space")]
     RootMountConflict,
     #[error("duplicate binary name '{name}'")]
