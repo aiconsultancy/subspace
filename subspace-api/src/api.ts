@@ -37,6 +37,11 @@ import { documentGroup, documentHandlers } from "./documents";
 import { reviewGroup, reviewHandlers } from "./reviews";
 import { cycleGroup, cycleHandlers } from "./cycles";
 import { decisionGroup, decisionHandlers } from "./decisions";
+import {
+  acknowledgeDecisionOutcome,
+  DecisionOutcome,
+  listDecisionOutcomes,
+} from "./decision-outcomes";
 import { Database, databaseLayer } from "./db";
 import {
   CreateFleet,
@@ -183,6 +188,21 @@ const fleetGroup = HttpApiGroup.make("fleets")
       success: Fleet,
       error: endpointErrors,
     }),
+    HttpApiEndpoint.get("listDecisionOutcomes", "/fleets/:fleetId/decision-outcomes", {
+      params: { fleetId: Uuid },
+      query: PageQuery,
+      success: pageOf(DecisionOutcome),
+      error: endpointErrors,
+    }),
+    HttpApiEndpoint.post(
+      "acknowledgeDecisionOutcome",
+      "/fleets/:fleetId/decision-outcomes/:id/delivered",
+      {
+        params: { fleetId: Uuid, id: Uuid },
+        success: Schema.Void.pipe(HttpApiSchema.status(204)),
+        error: endpointErrors,
+      },
+    ),
     HttpApiEndpoint.get("listShips", "/fleets/:fleetId/ships", {
       params: { fleetId: Uuid },
       success: Schema.Array(Ship),
@@ -409,6 +429,20 @@ const fleetLive = HttpApiBuilder.group(api, "fleets", (handlers) =>
     .handle("editFleet", ({ params, payload }) =>
       handleDb(
         Effect.flatMap(CurrentMember, (member) => updateFleet(member, params.reference, payload)),
+      ),
+    )
+    .handle("listDecisionOutcomes", ({ params, query }) =>
+      handleDb(
+        Effect.flatMap(CurrentMember, (member) =>
+          listDecisionOutcomes(member, params.fleetId, query),
+        ),
+      ),
+    )
+    .handle("acknowledgeDecisionOutcome", ({ params }) =>
+      handleDb(
+        Effect.flatMap(CurrentMember, (member) =>
+          acknowledgeDecisionOutcome(member, params.fleetId, params.id),
+        ),
       ),
     )
     .handle("listShips", ({ params }) =>

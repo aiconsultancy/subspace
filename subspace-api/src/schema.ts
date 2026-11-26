@@ -915,6 +915,43 @@ export const decisions = pgTable(
   ],
 );
 
+export const decisionOutcomes = pgTable(
+  "decision_outcomes",
+  {
+    organisationId: organisationId(),
+    decisionId: uuid("decision_id").notNull(),
+    fleetId: uuid("fleet_id").notNull(),
+    recordedById: uuid("recorded_by_id").notNull(),
+    recordedByRank: text("recorded_by_rank", { enum: ["captain", "rearAdmiral"] }).notNull(),
+    status: text({ enum: ["accepted", "rejected"] }).notNull(),
+    createdAt: createdAt(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organisationId, table.decisionId] }),
+    foreignKey({
+      columns: [table.organisationId, table.decisionId],
+      foreignColumns: [decisions.organisationId, decisions.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.fleetId],
+      foreignColumns: [fleets.organisationId, fleets.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.recordedById],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    check("decision_outcomes_status", sql`${table.status} IN ('accepted', 'rejected')`),
+    check(
+      "decision_outcomes_recorder_rank",
+      sql`${table.recordedByRank} IN ('captain', 'rearAdmiral')`,
+    ),
+    index("decision_outcomes_pending")
+      .on(table.organisationId, table.fleetId, table.createdAt, table.decisionId)
+      .where(sql`${table.deliveredAt} IS NULL`),
+  ],
+);
+
 export const decisionIssues = pgTable(
   "project_decision_issues",
   {

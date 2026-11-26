@@ -1,0 +1,455 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "dd7824f0-1ead-4b8f-a942-0c4403d7bc90",
+  "prevIds": [
+    "86597254-86f4-4301-8e01-ee163453996a"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "decision_outcomes"
+      ],
+      "writes": [
+        "s|tbl|public.decision_outcomes",
+        "n|tbl|public.decision_outcomes",
+        "e|tbl|public.decision_outcomes",
+        "n|rel|public.decision_outcomes",
+        "n|type|public.decision_outcomes",
+        "n|rel|public.decision_outcomes_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "decision_outcomes",
+        "decision_outcomes_pending"
+      ],
+      "writes": [
+        "s|idx|public.decision_outcomes_pending",
+        "n|idx|public.decision_outcomes_pending",
+        "e|idx|public.decision_outcomes_pending",
+        "n|rel|public.decision_outcomes_pending"
+      ],
+      "reads": [
+        "n|tbl|public.decision_outcomes",
+        "n|sch|public",
+        "n|col|public.decision_outcomes.organisation_id",
+        "n|col|public.decision_outcomes.fleet_id",
+        "n|col|public.decision_outcomes.created_at",
+        "n|col|public.decision_outcomes.decision_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "decision_outcomes"
+      ],
+      "writes": [
+        "s|fk|public.decision_outcomes.decision_outcomes_organisation_id_organisations_id_fkey",
+        "n|fk|public.decision_outcomes.decision_outcomes_organisation_id_organisations_id_fkey",
+        "e|fk|public.decision_outcomes.decision_outcomes_organisation_id_organisations_id_fkey",
+        "n|con|public.decision_outcomes.decision_outcomes_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.decision_outcomes",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.decision_outcomes.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "decision_outcomes"
+      ],
+      "writes": [
+        "s|fk|public.decision_outcomes.decision_outcomes_4dtbEVZysXJh_fkey",
+        "n|fk|public.decision_outcomes.decision_outcomes_4dtbEVZysXJh_fkey",
+        "e|fk|public.decision_outcomes.decision_outcomes_4dtbEVZysXJh_fkey",
+        "n|con|public.decision_outcomes.decision_outcomes_4dtbEVZysXJh_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.decision_outcomes",
+        "n|sch|public",
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|col|public.decision_outcomes.organisation_id",
+        "n|col|public.decision_outcomes.decision_id",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.id",
+        "e|uniqueness|public.project_decisions.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "decision_outcomes"
+      ],
+      "writes": [
+        "s|fk|public.decision_outcomes.decision_outcomes_gRIuOkUyN21T_fkey",
+        "n|fk|public.decision_outcomes.decision_outcomes_gRIuOkUyN21T_fkey",
+        "e|fk|public.decision_outcomes.decision_outcomes_gRIuOkUyN21T_fkey",
+        "n|con|public.decision_outcomes.decision_outcomes_gRIuOkUyN21T_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.decision_outcomes",
+        "n|sch|public",
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.decision_outcomes.organisation_id",
+        "n|col|public.decision_outcomes.fleet_id",
+        "n|col|public.fleets.organisation_id",
+        "n|col|public.fleets.id",
+        "e|uniqueness|public.fleets.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "decision_outcomes"
+      ],
+      "writes": [
+        "s|fk|public.decision_outcomes.decision_outcomes_w7zveBrYeZYy_fkey",
+        "n|fk|public.decision_outcomes.decision_outcomes_w7zveBrYeZYy_fkey",
+        "e|fk|public.decision_outcomes.decision_outcomes_w7zveBrYeZYy_fkey",
+        "n|con|public.decision_outcomes.decision_outcomes_w7zveBrYeZYy_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.decision_outcomes",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.decision_outcomes.organisation_id",
+        "n|col|public.decision_outcomes.recorded_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "decision_outcomes",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "fleet_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "recorded_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "recorded_by_rank",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "status",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "delivered_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_outcomes_pending",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "fleet_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "created_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "decision_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"delivered_at\" IS NULL",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_outcomes_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_outcomes_4dtbEVZysXJh_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "decision_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "project_decisions",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_outcomes_gRIuOkUyN21T_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "fleet_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "fleets",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_outcomes_w7zveBrYeZYy_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "recorded_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_outcomes_pkey",
+        "columns": [
+          "organisation_id",
+          "decision_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_outcomes_status",
+        "value": "\"status\" IN ('accepted', 'rejected')",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decision_outcomes",
+        "name": "decision_outcomes_recorder_rank",
+        "value": "\"recorded_by_rank\" IN ('captain', 'rearAdmiral')",
+        "entityType": "checks"
+      }
+    }
+  ]
+}
