@@ -17,26 +17,19 @@
 // (`activity.js`), and each part shows in windows the same way. A run of
 // hidden characters is one marker element, each character still its own
 // `⟨U+XXXX⟩`, so a copy is exactly what shows.
+//
+// Sizes are what shows (SUB decision 0c13b784 §1): the UTF-8 bytes of the
+// text after each hidden character becomes its 12-byte marker. A body is
+// measured once per version, as numbers only (`document.js`), and only the
+// window drawn is ever built as text (§2).
 
 import { ACTIVITY_MESSAGES, isWellFormedItem } from "./activity.js";
+import { documentPieces, HIDDEN, marker, measurePieces, sliceOfPieces, sourcePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
 import { formatBytes, formatClock, formatDuration } from "./format.js";
-import { splitBounded } from "./pager.js";
-import { utf8Length } from "./utf8.js";
 
-/** The most one mounted window of an item's text holds: UTF-8 bytes and lines, split between code points. */
-export const WINDOW_BYTES = 64 * 1024;
-export const WINDOW_LINES = 1000;
+export { marker, WINDOW_BYTES, WINDOW_LINES };
 /** The most items an open turn mounts at once; Earlier items and Later items move among the rest. */
 export const ITEM_WINDOW = 20;
-
-/**
- * Control characters other than newline and tab, DEL and C1 controls, the
- * bidi marks, embeddings, overrides and isolates, the line and paragraph
- * separators and the byte order mark.
- */
-const HIDDEN = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069\uFEFF]+/g;
-
-export const marker = (char) => `⟨U+${char.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}⟩`;
 
 /** Split text into plain strings and `{ctl}` markers, one for each run of hidden characters. */
 export function visibleSegments(text) {
@@ -210,65 +203,68 @@ function itemBody(item) {
 }
 
 /**
- * An item's whole content as one text, for showing in windows: each field
- * labelled, strings as text and anything else as JSON, nothing left out.
+ * An item's whole content as one text: each field labelled, strings as text
+ * and anything else as JSON, nothing left out. The panel never builds it;
+ * it measures and draws its pieces a window at a time.
  */
-export function itemDocument(item) {
-  const block = (value) => (typeof value === "string" ? value : json(value));
-  const out = [];
-  for (const [key, value] of Object.entries(item ?? {})) {
-    if (key === "content" && Array.isArray(value)) {
-      value.forEach((part, index) => out.push(`content[${index}]${part?.type === "text" ? " (text)" : ""}\n${part?.type === "text" && typeof part.text === "string" ? part.text : json(part)}`));
-    } else out.push(`${key}\n${block(value)}`);
-  }
-  return out.join("\n\n");
-}
-
-/** Content split into windows that each fit WINDOW_BYTES and WINDOW_LINES. */
-export const windowsOf = (text) => splitBounded(text, { maxBytes: WINDOW_BYTES, maxLines: WINDOW_LINES });
+export const itemDocument = (item) => [...documentPieces(item)].join("");
 
 /**
- * How an item shows: field by field when its text fits one window, or else
- * as its text in windows, one mounted at a time. `windows` is null in the
- * first case; `bytes` is its text's UTF-8 length either way.
+ * How a body measures: `bounds` are its windows' starts (UTF-16 units) with
+ * its end last, `sizes` each window's bytes as shown, `bytes` the total as
+ * shown. Made from pieces, so the body's text is never built whole.
+ *
+ * @param {{kind: "inline"|"whole", item: object}|{kind: "part", data: string}} source
+ */
+export const measureSource = (source) => measurePieces(sourcePieces(source));
+
+/** The number of windows a measure splits a body into. */
+const windowCount = (measure) => measure.bounds.length - 1;
+
+/** Window `index` of a body, built alone. */
+const windowText = (source, measure, index) => sliceOfPieces(sourcePieces(source), measure.bounds[index], measure.bounds[index + 1]);
+
+/**
+ * How an item shows: field by field when it fits one window, or else in
+ * windows, one drawn at a time. `windows` (null in the first case) builds
+ * every window, so it is for tests and tools: the panel draws one window
+ * and builds no other. `bytes` is its size as shown.
  */
 export function formatItem(item) {
-  const text = item.kind === "unreadable" ? json(item.raw) : itemDocument(item);
-  const windows = windowsOf(text);
-  return { windows: windows.length > 1 ? windows : null, bytes: utf8Length(text) };
-}
-
-/** A part read of an item too large to hold, in windows. */
-export function formatPart(data) {
-  return { windows: windowsOf(data), bytes: utf8Length(data) };
+  const source = { kind: "inline", item };
+  const measure = measureSource(source);
+  const count = windowCount(measure);
+  return { windows: count > 1 ? Array.from({ length: count }, (_, index) => windowText(source, measure, index)) : null, bytes: measure.bytes };
 }
 
 const clampIndex = (index, count) => Math.min(Math.max(0, index), Math.max(0, count - 1));
 
-/** One window of `windows`, with First, Previous, Next and Last among them when there are several. */
-function windowed(turnId, itemId, windows, index) {
-  const at = clampIndex(index, windows.length);
-  if (windows.length === 1) return [pre(windows[0], "act-part")];
+/** One window of a body, with First, Previous, Next and Last among them when there are several. */
+function windowed(turnId, itemId, source, measure, index) {
+  const count = windowCount(measure);
+  const at = clampIndex(index, count);
+  const text = windowText(source, measure, at);
+  if (count === 1) return [pre(text, "act-part")];
   const go = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-activity-window": to, "data-activity-turn": turnId, "data-activity-item": itemId, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
   const nav = h(
     "div",
     { class: "act-parts", role: "group", "aria-label": "Sections" },
     go("first", "First", at === 0),
     go("previous", "Previous", at === 0),
-    h("span", { class: "act-sub" }, `Section ${at + 1} of ${windows.length}`),
-    go("next", "Next", at === windows.length - 1),
-    go("last", "Last", at === windows.length - 1),
+    h("span", { class: "act-sub" }, `Section ${at + 1} of ${count}`),
+    go("next", "Next", at === count - 1),
+    go("last", "Last", at === count - 1),
   );
-  return [nav, pre(windows[at], "act-part")];
+  return [nav, pre(text, "act-part")];
 }
 
-/** An item's body from its format: field by field, or one window of its text. */
-function formattedBody(turnId, item, format, window) {
-  return format.windows ? [h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind ?? "Item")))), windowed(turnId, item.id, format.windows, window)] : itemBody(item);
+/** An item's body from its measure: field by field when it fits one window, or else one window of its text. */
+function formattedBody(turnId, item, source, measure, window) {
+  return windowCount(measure) > 1 ? [h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind ?? "Item")))), windowed(turnId, item.id, source, measure, window)] : itemBody(item);
 }
 
 /** An item read part by part: the part's navigation, then one window of the part. */
-function partsBody(turnId, item, full, format, window) {
+function partsBody(turnId, item, full, source, measure, window) {
   const go = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-activity-part": to, "data-activity-turn": turnId, "data-activity-item": item.id, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
   const of = full.count === null ? `${full.known}+` : String(full.count);
   const nav = h(
@@ -280,15 +276,16 @@ function partsBody(turnId, item, full, format, window) {
     go("next", "Next part", !full.hasNext),
     go("last", "Last part", !full.hasLast),
   );
-  return [nav, format ? windowed(turnId, item.id, format.windows, window) : null];
+  return [nav, measure ? windowed(turnId, item.id, source, measure, window) : null];
 }
 
 /**
  * A paged item: read on request, then shown whole (field by field or in
  * windows) or, when larger than the view's budget, a part at a time.
- * `full` is the watcher's entry; `format` its format, made by the caller.
+ * `full` is the watcher's entry; `source` and `measure` what its body is
+ * drawn from, or null when there is none.
  */
-function pagedItem(turnId, item, full, format, window) {
+function pagedItem(turnId, item, full, source, measure, window) {
   const what = item.kind === "tool" ? (item.name ?? "Tool") : (KIND_NAMES[item.kind] ?? item.kind);
   const pages = `${item.paged.pages} ${item.paged.pages === 1 ? "page" : "pages"}, ${formatBytes(item.paged.bytes)}`;
   const head = h("div", { class: "act-head" }, h("b", { class: item.kind === "tool" ? "mono" : "" }, txt(what)), item.callId ? h("span", { class: "act-sub mono" }, txt(item.callId)) : null, chip(item.status, { ...TOOL_STATUS, ...TEXT_STATUS }));
@@ -306,7 +303,7 @@ function pagedItem(turnId, item, full, format, window) {
     return [
       head,
       h("p", { class: "act-note" }, note),
-      full.data !== null ? partsBody(turnId, item, full, format, window) : null,
+      full.data !== null ? partsBody(turnId, item, full, source, measure, window) : null,
       latest ? [h("p", { class: "act-note" }, "A newer version is on the gateway."), load("Load the latest")] : null,
       full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the part: ", txt(full.error)), load("Try again")] : null,
     ];
@@ -321,28 +318,29 @@ function pagedItem(turnId, item, full, format, window) {
   // A newer version is read only on request: a running tool changes often.
   const latest = full.state === "ready" && full.seq < item.seq;
   return [
-    formattedBody(turnId, shown, format, window),
+    formattedBody(turnId, shown, source, measure, window),
     note ? h("p", { class: "act-note" }, note) : null,
     latest ? load("Load the latest") : null,
     full.state === "failed" ? [h("p", { class: "act-warn" }, "Could not read the newer version: ", txt(full.error)), load("Try again")] : null,
   ];
 }
 
-/** What an item's body is made from: its own fields, the item read whole, or the part shown. */
-function itemSource(item, full) {
-  if (!item.paged) return { kind: "inline", source: item };
-  if (full?.mode === "parts") return full.data === null ? null : { kind: "part", source: full.data };
-  return full?.item ? { kind: "whole", source: full.item } : null;
+/** What an item's body is made from: its own fields, the item read whole, or the part shown; null when there is nothing to draw yet. */
+export function itemSource(item, full) {
+  if (!item.paged) return { kind: "inline", item };
+  if (full?.mode === "parts") return full.data === null ? null : { kind: "part", data: full.data };
+  return full?.item ? { kind: "whole", item: full.item } : null;
 }
 
 /**
- * One item of a turn. `full` is the item's read when it is paged. `format`
- * makes (or recalls) the format of a source; `window` is the window shown.
+ * One item of a turn. `full` is the item's read when it is paged. `measure`
+ * is the measure of its source (`measureSource`), which the panel keeps per
+ * version; `window` is the window shown.
  */
-export function itemTree(turnId, item, full = null, { window = 0, format = null } = {}) {
-  const from = itemSource(item, full);
-  const made = from ? (format ?? ((at) => (at.kind === "part" ? formatPart(at.source) : formatItem(at.source))))(from) : null;
-  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full, made, window) : formattedBody(turnId, item, made, window));
+export function itemTree(turnId, item, full = null, { window = 0, measure = null } = {}) {
+  const source = itemSource(item, full);
+  const made = source ? (measure ?? measureSource(source)) : null;
+  return h("li", { class: `act-item k-${item.kind}` }, item.paged ? pagedItem(turnId, item, full, source, made, window) : formattedBody(turnId, item, source, made, window));
 }
 
 /** A turn's summary line. */
@@ -418,6 +416,22 @@ function place(parent, element, index) {
 const isOpen = (details) => details.getAttribute("open") !== null;
 
 /**
+ * The version of a body's source, which keys its measure and window: the
+ * snapshot's generation with the item's seq, the read's seq and length, or
+ * the part's place in its version. Never the source itself, so nothing kept
+ * holds a body that was evicted or replaced.
+ */
+export function sourceVersion(source, item, full, view) {
+  const generation = view.cursor?.generation ?? "";
+  if (source.kind === "inline") return `i|${generation}|${item.seq}`;
+  if (source.kind === "whole") return `w|${generation}|${full.seq}|${full.bytes}`;
+  return `p|${generation}|${full.seq}|${full.version?.bytes}|${full.version?.pages}|${full.part}|${full.newer}`;
+}
+
+/** The bytes a body draws, as shown: the window drawn, or the whole body when it fits one. */
+const drawnBytes = (measure, window) => measure.sizes[clampIndex(window, measure.sizes.length)];
+
+/**
  * The live panel. `update(view, officer)` redraws what changed.
  *
  * What it mounts is bounded: a closed turn mounts no items; an open one
@@ -440,38 +454,34 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   /** turn ID -> {element, summary, notes, nav, items, version, navKey, start, kids: Map(item ID -> {element, version, bytes})} */
   const turns = new Map();
   let headerKey = "";
-  /** Formats made, by item: key -> {source, format}. Inline items' and parts' are charged to the budget; a whole read's is in its read's charge. */
-  const formats = new Map();
-  /** The window shown of each item, with the source it was chosen for: key -> {source, index}. */
+  /**
+   * Bodies measured, by item: key -> {version, bounds, sizes, bytes}. Only
+   * numbers, never the body's text or a reference to it, made once per
+   * version (`sourceVersion`) and dropped as soon as the version shown
+   * changes: a new seq, a read evicted or replaced, another part (§2).
+   */
+  const measures = new Map();
+  /** The window shown of each item, for the version it was chosen in: key -> {version, index}. */
   const windows = new Map();
   let last = null;
   const itemKey = (turn, item) => `${turn}\u0000${item}`;
   const budgetOf = () => last?.view.budget ?? null;
+  /** How many bodies have been measured: a body is measured once per version, never on each draw. */
+  let measured = 0;
 
-  function forgetFormat(key) {
-    formats.delete(key);
-    budgetOf()?.release(`fmt\u0000${key}`);
+  /** The measure of a body's version, made once. */
+  function measureFor(key, version, source) {
+    const held = measures.get(key);
+    if (held?.version === version) return held;
+    measured += 1;
+    const made = { version, ...measureSource(source) };
+    measures.set(key, made);
+    return made;
   }
 
-  /** The format of an item's source, made once per source and charged to the budget. */
-  const formatFor = (key) => (from) => {
-    const held = formats.get(key);
-    if (held?.source === from.source) {
-      budgetOf()?.touch(`fmt\u0000${key}`);
-      return held.format;
-    }
-    const format = from.kind === "part" ? formatPart(from.source) : formatItem(from.source);
-    formats.set(key, { source: from.source, format });
-    const budget = budgetOf();
-    if (budget && from.kind !== "whole" && format.windows) {
-      budget.reserve(`fmt\u0000${key}`, format.bytes, () => formats.delete(key), { force: true });
-    } else budget?.release(`fmt\u0000${key}`);
-    return format;
-  };
-
-  function windowAt(key, source) {
+  function windowAt(key, version) {
     const at = windows.get(key);
-    return at?.source === source ? at.index : 0;
+    return at?.version === version ? at.index : 0;
   }
 
   /** Unmount a turn's items and give back their charge. */
@@ -484,13 +494,13 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   function moveWindow(button) {
     const { activityTurn: turn, activityItem: item, activityWindow: to } = button.dataset;
     const key = itemKey(turn, item);
-    const held = formats.get(key);
-    if (!held?.format.windows) return;
-    const count = held.format.windows.length;
-    const at = windowAt(key, held.source);
+    const held = measures.get(key);
+    if (!held || windowCount(held) < 2) return;
+    const count = windowCount(held);
+    const at = windowAt(key, held.version);
     const next = { first: 0, previous: Math.max(0, at - 1), next: Math.min(count - 1, at + 1), last: count - 1 }[to] ?? at;
     if (next === at) return;
-    windows.set(key, { source: held.source, index: next });
+    windows.set(key, { version: held.version, index: next });
     redraw();
     const escape = globalThis.CSS?.escape ?? ((value) => value.replace(/["\\]/g, "\\$&"));
     root.querySelector?.(`[data-activity-window="${to}"][data-activity-item="${escape(item)}"]`)?.focus?.();
@@ -509,6 +519,24 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
   }
 
   const redraw = () => last && update(last.view, last.officer);
+
+  /**
+   * Forget the measures and windows of bodies whose version shown changed
+   * or that are gone: an item no longer shown, a read evicted or replaced,
+   * another part. Nothing kept outlives the version it was made for.
+   */
+  function forgetStale(shown, view) {
+    const live = new Map();
+    for (const turn of shown) {
+      for (const item of turn.items) {
+        const full = item.paged ? view.full(turn.id, item.id) : null;
+        const source = itemSource(item, full);
+        if (source) live.set(itemKey(turn.id, item.id), sourceVersion(source, item, full, view));
+      }
+    }
+    for (const [key, held] of [...measures]) if (live.get(key) !== held.version) measures.delete(key);
+    for (const [key, held] of [...windows]) if (live.get(key) !== held.version) windows.delete(key);
+  }
 
   root.addEventListener("click", (event) => {
     const target = event.target;
@@ -575,17 +603,17 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     shown.forEach((item, at) => {
       const full = item.paged ? view.full(turn.id, item.id) : null;
       const key = itemKey(turn.id, item.id);
-      const from = itemSource(item, full);
-      const window = from ? windowAt(key, from.source) : 0;
-      const version = `${item.seq}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}|${full.part ?? ""}|${full.want ?? ""}|${full.newer ?? ""}|${full.data === null}` : ""}|${window}`;
+      const source = itemSource(item, full);
+      const bodyVersion = source ? sourceVersion(source, item, full, view) : "";
+      const window = source ? windowAt(key, bodyVersion) : 0;
+      const version = `${bodyVersion}|${full ? `${full.state}|${full.seq}|${full.error ?? ""}|${full.part ?? ""}|${full.want ?? ""}|${full.newer ?? ""}|${full.data === null}` : ""}|${window}`;
       let kid = entry.kids.get(item.id);
       if (!kid || kid.version !== version) {
-        let format = null;
-        const tree = itemTree(turn.id, item, full, { window, format: (source) => (format = formatFor(key)(source)) });
+        const measure = source ? measureFor(key, bodyVersion, source) : null;
+        const tree = itemTree(turn.id, item, full, { window, measure });
         const element = mount(tree, doc);
         if (kid) kid.element.replaceWith(element);
-        const bytes = format ? (format.windows ? utf8Length(format.windows[clampIndex(window, format.windows.length)]) : format.bytes) : 0;
-        kid = { element, version, bytes };
+        kid = { element, version, bytes: measure ? drawnBytes(measure, window) : 0 };
         entry.kids.set(item.id, kid);
       }
       mounted += kid.bytes;
@@ -609,10 +637,7 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
       entry.element.remove();
       turns.delete(id);
     }
-    // Forget the formats and windows of items no longer shown.
-    const items = new Set(shown.flatMap((turn) => turn.items.map((item) => itemKey(turn.id, item.id))));
-    for (const held of [...formats.keys()]) if (!items.has(held)) forgetFormat(held);
-    for (const held of [...windows.keys()]) if (!items.has(held)) windows.delete(held);
+    forgetStale(shown, view);
     shown.forEach((turn, index) => {
       const entry = turnEntry(turn);
       const version = turnVersion(turn);
@@ -642,5 +667,10 @@ export function createActivityPanel({ doc, onClose, onLoad, onPart, onRetry }) {
     });
   }
 
-  return { root, update };
+  return {
+    root,
+    update,
+    /** What the panel keeps between frames, for tests: the versions measured, the windows chosen and how many measures were made. */
+    held: () => ({ measures: [...measures].map(([key, held]) => [key, held.version]), windows: [...windows].map(([key, held]) => [key, held.version, held.index]), measured }),
+  };
 }

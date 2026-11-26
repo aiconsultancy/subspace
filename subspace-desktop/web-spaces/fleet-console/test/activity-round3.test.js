@@ -85,12 +85,13 @@ test("finding 1: an item over 64 MiB is read and shown part by part, never refus
 
 test("finding 2: a run of hidden characters is one marker element, each character still shown, and a copy is exactly what shows", () => {
   assert.deepEqual(view.visibleSegments("a\u0000\u0001\u202Eb\u200Fc"), ["a", { ctl: "⟨U+0000⟩⟨U+0001⟩⟨U+202E⟩" }, "b", { ctl: "⟨U+200F⟩" }, "c"]);
-  const run = "\u0001".repeat(10_000);
+  // 5,000 markers (60,000 bytes as shown) fit one window.
+  const run = "\u0001".repeat(5_000);
   const element = view.mount(view.itemTree("turn-a", textItem("i9", 1, `x${run}y`)), fakeDoc);
   const markers = element.findAll((node) => node.attributes.class === "ctl");
   assert.equal(markers.length, 1, "one element for the run, not one per character");
-  const shown = `x${"⟨U+0001⟩".repeat(10_000)}y`;
-  assert.equal(markers[0].textContent, "⟨U+0001⟩".repeat(10_000));
+  const shown = `x${"⟨U+0001⟩".repeat(5_000)}y`;
+  assert.equal(markers[0].textContent, "⟨U+0001⟩".repeat(5_000));
   // What a selection copies is the elements' text: exactly what shows.
   assert.ok(element.textContent.includes(shown));
   assert.equal(view.visibleText(`x${run}y`), shown);
