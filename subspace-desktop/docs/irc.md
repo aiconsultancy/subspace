@@ -1992,8 +1992,11 @@ messages after its anchor.
   sent, “Subspace users see it for 30 days. No credentials.”, named in full
   and shown in full on hover; a narrow pane truncates it. With uploads on,
   one quiet line above the input holds the paperclip
-  (`irc-send-attachment`, **Send as attachment…**,
-  `uploads/outgoing/view.rs`). `ChatInput` draws its frame
+  (`irc-attach-file`, **Attach files…**) and, when there is a draft,
+  **Attach draft as Markdown** (`irc-send-attachment`,
+  `uploads/outgoing/view.rs`). The paperclip opens the system file picker.
+  A file dropped on the text box enters the same attachment tray as a file
+  chosen in the picker. `ChatInput` draws its frame
   edge to edge, so the field is not rounded. Up and Down recall sent lines while the draft is empty,
   one line or a recalled line not yet edited (`ChatInput::set_recalled`), so
   a multi-line message does not stop the walk; they move between the lines of

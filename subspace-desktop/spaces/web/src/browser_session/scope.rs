@@ -91,9 +91,21 @@ impl SessionScope {
         Ok(self)
     }
 
-    /// The address the view starts at, and Go to the start page returns to.
+    /// The address the view starts at, and Go to the start page returns to,
+    /// unless the product gives the session a start of its own
+    /// ([`crate::NativeSession::with_start`]).
     pub fn home(&self) -> &str {
         self.home.as_str()
+    }
+
+    /// `route`, a reference relative to the home such as `?team=blue` or
+    /// `teams/blue`, as a page the view may load, or `None` when it is a
+    /// blank page, leaves the scope or names the signal or a reserved
+    /// route.
+    pub(crate) fn resolve(&self, route: &str) -> Option<String> {
+        let url = self.home.join(route).ok()?;
+        let page = url.as_str() != "about:blank" && self.admit(url.as_str()) == Admission::Load;
+        page.then(|| url.into())
     }
 
     pub(crate) fn host(&self) -> &str {
@@ -448,6 +460,50 @@ mod tests {
             scope.admit("https://app.example.com/desktop/session/required"),
             Admission::Load
         );
+    }
+
+    #[test]
+    fn a_start_resolves_under_the_home_and_stays_in_the_scope() {
+        let scope = scope();
+        for (route, start) in [
+            ("", HOME),
+            (
+                "?team=Blue%20Sky",
+                "https://app.example.com/desktop/?team=Blue%20Sky",
+            ),
+            (
+                "?team=Blue Sky&x=1",
+                "https://app.example.com/desktop/?team=Blue%20Sky&x=1",
+            ),
+            ("teams/blue", "https://app.example.com/desktop/teams/blue"),
+            (
+                "teams/blue#week",
+                "https://app.example.com/desktop/teams/blue#week",
+            ),
+            ("/desktop/teams", "https://app.example.com/desktop/teams"),
+            (HOME, HOME),
+        ] {
+            assert_eq!(scope.resolve(route).as_deref(), Some(start), "{route:?}");
+        }
+        for refused in [
+            "..",
+            "../other/",
+            "/other/",
+            "//elsewhere.example.com/desktop/",
+            "https://elsewhere.example.com/desktop/",
+            "http://app.example.com/desktop/",
+            "https://user@app.example.com/desktop/",
+            "about:blank",
+            "javascript:alert(1)",
+            "session",
+            "session.json",
+            "Session/status",
+            "session/required",
+            "%2e%2e/other/",
+            "teams//blue",
+        ] {
+            assert_eq!(scope.resolve(refused), None, "{refused:?}");
+        }
     }
 
     #[test]

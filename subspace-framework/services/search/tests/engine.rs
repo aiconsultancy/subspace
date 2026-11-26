@@ -15,6 +15,8 @@ mod quota;
 mod ranking;
 #[path = "cases/records.rs"]
 mod records;
+#[path = "cases/reference_kinds.rs"]
+mod reference_kinds;
 #[path = "cases/review.rs"]
 mod review;
 #[path = "cases/selection.rs"]

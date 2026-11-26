@@ -162,11 +162,21 @@ How the effort reaches the model:
   Claude 3.7 and 4.0 to 4.5, except Opus 4.5, take only `high` and `max`.
   The installer reads dated IDs by their version, so
   `claude-opus-4-20250514` counts as Claude 4.0.
-  The Codex family takes `low`, `medium` and `high`.
+  The Codex family takes `low`, `medium` and `high`. The installer also
+  exposes `xhigh` for GPT-5.4 and GPT-6.2 Sol.
 - **Claude Agent SDK.** An officer with `"type": "claude-sdk"` passes the
   effort to Stargate's Claude backend as `effort`.
 
 The installer refuses an effort that the officer's harness does not offer.
+
+Captains with crew can use `stargate_model({op: "inspect", target: "codex-1"})`
+to read a worker's selected model and variant. To prepare an idle worker for a
+review, use `stargate_model({op: "effort", target: "codex-1", variant: "high"})`
+and inspect it again before dispatching. Pass the same `project` to both calls
+for a non-default repository. Crew can verify their own variant with
+`stargate_model({op: "get"})`. Follow the repository's review gate when it
+requires a particular model or effort. These grants apply to the captain's
+pinned root on new and existing fleets.
 
 Both the dry run and the install stop if the model proxy has signed-in
 accounts but none can serve an officer's model:
@@ -214,6 +224,13 @@ run and the install both stop before cloning anything and say how to go on:
 install without those repositories now, and add them as private ones once the
 officers have GitHub Apps ([Add private repositories later](#add-private-repositories-later)).
 An installed repository is not checked again.
+
+The rear admiral can call `refresh_origin` on the `repo_refresh` MCP server
+with an installed repository ID. The tool fetches from the configured upstream
+into `refs/remotes/origin/*` in the rear admiral's reference checkout. Use
+`read_origin_file` with a branch and path to read the fetched version. The checkout
+branch and working files remain read-only. Private fetches use the rear
+admiral's existing repository-scoped GitHub App credentials.
 
 A repository also takes an optional one-line `description` and `tracker`,
 free text that names where its work is tracked, for example
@@ -491,6 +508,15 @@ such as a symbolic link, it leaves both files unchanged and says so.
 
 ### Instructions, permissions and toolchains
 
+When a person attaches a file and addresses an officer in the same IRC
+message, the desktop shows a `UPL-…` reference. With the hosted Subspace
+bridge, Stargate reads supported attachments as that officer. If the
+session cannot take the attachment, the reference stays in the request.
+The officer and its crew can use `subspace_read_chat_upload` when advertised,
+or the authenticated `/api/v1/chat/uploads/<reference>/content` route. Pass
+the reference in crew assignments. Active members of the organisation can
+read the same file for 30 days.
+
 The installer renders role-specific OpenCode `AGENTS.md` and
 `skills/fleet-*/SKILL.md` under the rear admiral's and each captain's
 `~/.config/opencode/` using the fleet name, agent name and assigned channel.
@@ -680,9 +706,15 @@ every fleet VM gets the means in its base install, whatever its toolchains:
   those browsers. Officers and crew have no outbound network to download a
   browser, so it never does: `playwright screenshot https://example.com
   shot.png`, or `playwright screenshot --full-page` for a whole page.
+- **Mermaid rendering**: `mermaid-render diagram.mmd diagram.svg` exports
+  a vector diagram and `mermaid-render diagram.mmd diagram.png` takes a
+  screenshot of just the diagram. Write the Mermaid syntax in the `.mmd`
+  file without Markdown fences. The command uses the installed browser
+  offline so private diagrams stay on the VM. The rear admiral can also pass
+  `-` as the input to author a diagram on standard input.
 
 Every version is pinned in one place,
-[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright
+[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright and Mermaid
 (with its `package-lock.json`, so `npm ci` checks each package's integrity
 hash and runs no package scripts), the Chromium revision that Playwright
 names, the Node that runs it, and the distribution packages for Ubuntu
@@ -693,10 +725,10 @@ fleet gains the tools on its next run and its dry run says so. A package
 apt does not offer, or a browser download that fails, is reported and does
 not stop the install; the next run tries again.
 
-After every install, the installer checks that a crew member can take one
-screenshot of a local page: as the user of a captain with crew, with its
-tool environment, under `xvfb-run`. It prints `Screenshot check ... PASS` or a
-`WARNING` with what failed, and never fails the install.
+After every install, the installer takes a screenshot of a local page under
+`xvfb-run` and renders a Mermaid PNG. It runs both with the tool environment
+of a captain with crew when one is available. It prints `Screenshot check ...
+PASS` or a warning identifying the failing command, and continues the install.
 
 A repository's own Playwright downloads its own browsers into the officer's
 `~/.cache/ms-playwright`, which needs network the lockdown does not give
@@ -707,7 +739,8 @@ To do without them, set `"screenshots": false` in `fleet.json` (on a VM set
 up with `subspace-setup`, `/root/fleet/fleet.json`, which setup keeps) and run
 the installer or `sudo subspace-setup` again. Nothing is removed; to remove
 what an earlier run installed, `sudo rm -rf /opt/subspace-fleet/playwright
-/opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright` (the
+/opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright
+/opt/subspace-fleet/bin/mermaid-render` (the
 distribution packages stay).
 
 ### Toolchains
@@ -1014,9 +1047,8 @@ rather than one fleet's Ergo:
 ### IRC sign-in
 
 `irc.auth` sets how the rear admiral and the captains sign in to IRC:
-`certificate` (SASL EXTERNAL), the default with a remote server, or
-`password` (SASL PLAIN), the default and for now the only choice with the
-[Ergo the installer manages](#local-irc-and-tls). Crew have no IRC accounts,
+`certificate` (SASL EXTERNAL) or `password` (SASL PLAIN). Guided setup uses
+certificates for fresh fleets and retains existing sign-in modes. Crew have no IRC accounts,
 and the [medical ship](#medical-ship) keeps its own password either way.
 
 **With certificates, no IRC password exists for an officer.** The installer
@@ -1036,7 +1068,7 @@ certificate matches an unencrypted private key (`PRIVATE KEY`,
 `EC PRIVATE KEY` or `RSA PRIVATE KEY`). `--dry-run` and every render check
 the same, so a bundle Stargate would refuse stops the installer instead.
 
-**Bind the fingerprints on the IRC server.** An officer can sign in only
+**Bind the fingerprints on an unmanaged IRC server.** An officer can sign in only
 once its certificate's fingerprint is bound to its account. `--dry-run` and
 the install summary print one line per officer, with the SHA-256 fingerprint
 in the lower-case hex form Ergo's NickServ takes, and never key material:
@@ -1137,25 +1169,13 @@ the credential only checks it and reports which certificates already sign
 in. The passwords are sent only to the server, over TLS, and never printed or
 saved.
 
-**The Ergo the installer manages keeps passwords for now**, in local mode
-and on the shared server `./install.sh irc-server` runs, for which the host
-installer passes `--irc-auth password`. Three things are missing:
-
-- Fleet members reach local Ergo over plain loopback IRC, and Stargate
-  presents a client certificate only over TLS. The gateways would need the
-  local TLS listener and a CA file for it, but Ergo generates that
-  certificate in its own volume when it starts, so the installer would have
-  to generate or pin it itself.
-- The image seeds every account with a password (`IRC_ACCOUNTS_FILE`).
-  Officers would instead need certificate-only accounts, registered with
-  `NickServ SAREGISTER <account>` and no passphrase, and their fingerprints
-  bound with `NickServ CERT ADD <account> <fingerprint>` as the operator at
-  seed time. `seed-channels.py` already signs in as the operator, so it could
-  do this from a fingerprint file the installer mounts, without changing the
-  entrypoint.
-- For a shared server, each fleet's bundle would carry its officers'
-  fingerprints instead of passwords, and `subspace-setup irc-server add`
-  would seed them the same way.
+**Managed Ergo** creates certificate-only accounts and binds their
+fingerprints during startup. In local mode, guided setup generates a
+persistent server certificate for the loopback TLS listener and makes
+Stargate trust it. For an upgraded shared server, a new fleet's bundle
+carries fingerprints. Existing bundles and older shared servers can use
+passwords. To keep an installed local fleet working, guided setup preserves
+its sign-in mode on reruns. Human and operator passwords are still seeded.
 
 ## Officer names
 
@@ -2480,7 +2500,7 @@ whether at its cap or with the whole VM out of memory.
 | `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`, as for a fleet installed before the setting; `subspace-setup` and `fleet.example.json` give a new fleet `delegate`. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions), and an optional `check` (one command line, at most 300 characters) that `--verify-toolchains` runs ([Toolchains](#toolchains)). The ID, URL and visibility are fixed once installed; the description, tracker and check may change. See [crew and repositories](#crew-and-repositories). |
-| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
+| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local binds loopback and can use TLS with `caFile` and the two Compose TLS files. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` or `password`. See [IRC sign-in](#irc-sign-in). |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<id>` for a captain (`#<slug>-<id>` with fleet-prefixed names). Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
@@ -2491,7 +2511,7 @@ whether at its cap or with the whole VM out of memory.
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
 | `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust`, `dotnet` and `yarn` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
 | `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
-| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots): Xvfb with keyboard maps, fonts, and Playwright with its Chromium. `false` installs nothing for them and leaves in place what an earlier run installed. |
+| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots), including Xvfb with keyboard maps and fonts, Playwright with its Chromium, and offline Mermaid rendering. `false` installs nothing for them and leaves in place what an earlier run installed. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap), or `auto` for the installer's own value. Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. `localApi: true` says the Subspace API and its PostgreSQL run on this VM, so the sizing leaves them their room; `subspace-setup` sets it whenever it runs the API here. |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
@@ -2614,6 +2634,18 @@ all three ports from other interfaces are rejected. Keep this table when
 reloading a site-managed firewall. Apply your site's SSH and deliberate IRC
 listener policy separately, including Docker-published ports.
 
+Guided setup also restricts private egress for each officer's Linux user,
+including its crew. The rules cover RFC 1918, carrier-grade NAT and IPv4
+link-local ranges, plus IPv6 unique-local and link-local ranges. The VM's
+configured DNS resolvers remain reachable. Set specific private TCP
+destinations with `subspace-setup --agent-egress HOST:PORT` or repeat the
+flag to replace the saved list. Use `[IPv6]:PORT` for a literal IPv6
+address and `--agent-egress ''` to clear the list. Re-run setup when a DNS
+name's destination addresses change. The shared Stargate gateway keeps its
+IRC and API routes. A native Claude gateway shares its officer's Linux user
+and retains access to its configured IRC endpoint. `./install.sh audit`
+checks that each officer is covered.
+
 The API integration looks up the fleet by slug and creates or patches its
 registration, with its ships and officers (see
 [Subspace API registration](#subspace-api-registration)). After startup it
@@ -2694,7 +2726,7 @@ one is refused, none of them is applied.
   fonts and the browser's libraries from apt, Node 24 into the shared store
   if it has not got that version, Playwright into `/opt/subspace-fleet/playwright`
   and its Chromium into `/opt/subspace-fleet/browsers` (several hundred
-  megabytes), and `playwright` on the officers' `PATH`. The dry run lists
+  megabytes), and `playwright` and `mermaid-render` on the officers' `PATH`. The dry run lists
   what it adds. `"screenshots": false` in `fleet.json` leaves them out.
 - **Memory limits and swap.** The upgrade gives every officer's engine
   [memory and task limits](#memory-limits-and-swap) sized for the VM, with
@@ -2921,3 +2953,12 @@ including that a workflow step's `with: version:` belongs to that step's
 
 The Subspace fleet installer is licensed under the
 [Apache License 2.0](../LICENSE).
+
+## Captain peer messages
+
+Pass `--captain-peer-messages` to guided setup, or set `captainPeerMessages` to true in
+`fleet.json`, with a Stargate revision containing [#364](https://github.com/aiconsultancy/stargate/pull/364).
+The default is off. Each pinned OpenCode captain with crew can use `stargate_dm` to reach
+another pinned crew-hosting captain by ID with `via: "ship"` or `via: "command"`.
+Omit `via` for local crew mail. Agent dispatch has its own switch. Setup saves the choice
+for upgrades. Use `--no-captain-peer-messages` to turn it off.

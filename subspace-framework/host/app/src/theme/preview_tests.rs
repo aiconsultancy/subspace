@@ -5,6 +5,7 @@ mod bundled;
 mod defaults;
 mod font_overrides;
 mod new_install;
+mod product_themes;
 mod selection;
 
 use gpui_kit::component::{Theme, try_parse_color};

@@ -29,6 +29,19 @@ pub fn check_help_image_cache(board: BoardDoc) -> Result<(), String> {
     result
 }
 
+/// Validate an app's own theme documents (`ProductBuild.product_themes`) as
+/// startup does, apart from the product's default, and install them so the
+/// shell fixtures load them. Call it before [`offline_shell_fixture`].
+// qual:api (product crates load their own theme documents into the shell fixtures)
+pub fn install_product_themes(
+    themes: crate::ProductThemes,
+    cx: &mut gpui_kit::App,
+) -> Result<(), String> {
+    crate::theme::validate_product_theme_documents(themes)?;
+    crate::theme::install_product_themes(themes, cx);
+    Ok(())
+}
+
 /// Register an app's embedded fonts as startup does, and return the families
 /// that then count as installed, or the notice startup would show. The test
 /// text system loads no font data, so this checks the list, not the files.

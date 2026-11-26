@@ -138,11 +138,19 @@ describe.skipIf(!testDatabase)("agent tokens on the main listener", () => {
   let admin: string;
   let member: string;
   const adminRole = "Subspace.Admin";
+  let wholeBlobReads = 0;
+  const ranges: [number, number][] = [];
 
   beforeAll(async () => {
     database = await isolatedDatabase("agent_keys");
     tenant = await entraTenant();
     const env = { ...tenant.env, NODE_ENV: "production", ENTRA_ADMIN_ROLE: adminRole };
+    const blobs = new Map<string, Uint8Array>();
+    const getBlob = async (id: string) => {
+      const bytes = blobs.get(id);
+      if (!bytes) throw new Error("Upload bytes missing");
+      return bytes;
+    };
     api = await startApi(
       database.url,
       {
@@ -152,6 +160,22 @@ describe.skipIf(!testDatabase)("agent tokens on the main listener", () => {
         IRC_AUTH_SERVERS: "irc.example.com:6697",
       },
       tenant.fetchRemote,
+      {
+        put: async (id, bytes) => {
+          blobs.set(id, bytes);
+        },
+        get: async (id) => {
+          wholeBlobReads++;
+          return getBlob(id);
+        },
+        range: async (id, offset, length) => {
+          ranges.push([offset, length]);
+          return (await getBlob(id)).subarray(offset, offset + length);
+        },
+        delete: async (id) => {
+          blobs.delete(id);
+        },
+      },
     );
     unconfigured = await startApi(database.url, env, tenant.fetchRemote);
     admin = await tenant.sign(crypto.randomUUID(), {
@@ -212,6 +236,86 @@ describe.skipIf(!testDatabase)("agent tokens on the main listener", () => {
   };
   const mcp = (token: string, method: string, params?: unknown) =>
     api.call("/mcp", token, "POST", { jsonrpc: "2.0", id: 1, method, params });
+
+  test("an officer reads a shared chat file with its own API identity", async () => {
+    const { key } = await keyedAgent();
+    const file = "A shared plan";
+    const upload = await api.call("/api/v1/chat/uploads", member, "POST", {
+      uploadId: crypto.randomUUID(),
+      fileName: "plan.txt",
+      contentType: "text/plain",
+      base64: Buffer.from(file).toString("base64"),
+    });
+    expect(upload.status).toBe(201);
+    const { reference } = (await upload.json()) as { reference: string };
+    const metadata = await api.call(
+      `/api/v1/chat/uploads/${reference}`,
+      await agentToken(key, audience),
+    );
+    expect(metadata.status).toBe(200);
+    const bytes = await api.call(
+      `/api/v1/chat/uploads/${reference}/content`,
+      await agentToken(key, audience),
+    );
+    expect(await bytes.text()).toBe(file);
+    for (const offset of [0, 2]) {
+      const response = await mcp(await agentToken(key, audience), "tools/call", {
+        name: "subspace_read_chat_upload",
+        arguments: { reference, offset },
+      });
+      expect(response.status).toBe(200);
+      const { result } = await response.json();
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        fileName: "plan.txt",
+        reference,
+        offset,
+        nextOffset: null,
+        ...(offset
+          ? { base64: Buffer.from(file.slice(offset)).toString("base64") }
+          : { text: file }),
+      });
+    }
+  });
+
+  test("an officer pages a chat upload in bounded byte ranges", async () => {
+    const { key } = await keyedAgent();
+    const first = "a".repeat(32_768);
+    const last = "tail";
+    const upload = await api.call("/api/v1/chat/uploads", member, "POST", {
+      uploadId: crypto.randomUUID(),
+      fileName: "report.txt",
+      contentType: "text/plain",
+      base64: Buffer.from(first + last).toString("base64"),
+    });
+    expect(upload.status).toBe(201);
+    const { reference } = (await upload.json()) as { reference: string };
+    const wholeBefore = wholeBlobReads;
+    const rangesBefore = ranges.length;
+    const page = async (offset: number) => {
+      const response = await mcp(await agentToken(key, audience), "tools/call", {
+        name: "subspace_read_chat_upload",
+        arguments: { reference, offset },
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()).result;
+    };
+    for (const [offset, text, nextOffset] of [
+      [0, first, first.length],
+      [first.length, last, null],
+    ] as const) {
+      const result = await page(offset);
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({ offset, nextOffset });
+      expect(Buffer.from(result.structuredContent.base64, "base64").toString()).toBe(text);
+    }
+    expect((await page(first.length + last.length + 1)).isError).toBe(true);
+    expect(wholeBlobReads).toBe(wholeBefore);
+    expect(ranges.slice(rangesBefore)).toEqual([
+      [0, first.length],
+      [first.length, last.length],
+    ]);
+  });
 
   test("an agent with a freshly generated Ed25519 or P-256 key is that agent in production", async () => {
     for (const kind of ["ed25519", "p256"] as const) {

@@ -9525,7 +9525,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-account"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "rand 0.10.3",
@@ -9549,7 +9549,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-agent"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -9570,11 +9570,11 @@ dependencies = [
 
 [[package]]
 name = "subspace-agent-model"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "subspace-agent-tools"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -9614,7 +9614,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-auth-return"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "serde_json",
@@ -9622,7 +9622,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-board-command"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "serde_json",
@@ -9635,7 +9635,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-charts"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "rquickjs",
  "serde",
@@ -9644,7 +9644,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-chat"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
@@ -9678,7 +9678,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-client-github"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "serde",
@@ -9708,11 +9708,11 @@ dependencies = [
 
 [[package]]
 name = "subspace-client-test-support"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "subspace-component-gallery-board"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "gpui-kit",
  "subspace-charts",
@@ -9723,14 +9723,14 @@ dependencies = [
 
 [[package]]
 name = "subspace-contracts"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "url",
 ]
 
 [[package]]
 name = "subspace-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
@@ -9757,7 +9757,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-dashboard"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -9799,7 +9799,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-entra-auth"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "openidconnect",
  "rustls",
@@ -9815,7 +9815,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-framework"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "subspace-account",
  "subspace-agent",
@@ -9854,7 +9854,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-github-auth"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "rand 0.10.3",
@@ -9932,7 +9932,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-lucide"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "gpui-kit",
  "gpui-kit-assets",
@@ -9940,7 +9940,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-mcp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -9973,7 +9973,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-product"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "dirs 7.0.0",
  "semver",
@@ -9993,7 +9993,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-report-issue"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "gpui-kit",
  "image",
@@ -10004,7 +10004,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-search"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "libc",
  "rusqlite",
@@ -10014,7 +10014,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-search-onnx"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "fastembed",
  "libc",
@@ -10026,7 +10026,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-search-ui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -10037,7 +10037,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-shell"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -10121,7 +10121,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-update"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -10142,7 +10142,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-web"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "serde",
@@ -10178,7 +10178,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-workos-auth"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "rustls",

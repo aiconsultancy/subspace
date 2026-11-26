@@ -38,6 +38,7 @@ esac
 need=()
 command -v python3 >/dev/null || need+=(python3)
 command -v git >/dev/null || need+=(git)
+command -v openssl >/dev/null || need+=(openssl)
 command -v curl >/dev/null || need+=(curl ca-certificates)
 command -v nft >/dev/null || need+=(nftables)
 dry_run=false

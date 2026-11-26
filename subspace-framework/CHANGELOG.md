@@ -4,6 +4,30 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.6.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.5.0...subspace-framework-v0.6.0) (2026-11-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **framework:** ProductBuild has a new public field, product_themes. Code that builds ProductBuild as a struct literal must set it; `product_themes: &[]` keeps today's behaviour. record_new_install_theme takes the product's theme documents as a third argument and checks them as start-up does before it writes; pass the same slice, or `&[]`. A custom theme file can no longer name a variant `Default Light` or `Default Dark`, the two themes GPUI Kit preloads: it is skipped with a notice until the variant is renamed in the file and selected again.
+* **framework:** an app that offers Copilot chat must enable the subspace-framework `copilot` feature; `agent` and `host` no longer build it.
+
+### Features
+
+* **framework:** build the Copilot chat engine only with a copilot feature ([92d2a86](https://github.com/aiconsultancy/subspace/commit/92d2a8685308d420bc30aca70385798e6ff7210c))
+* **framework:** let a product bundle its own theme documents ([17c2d80](https://github.com/aiconsultancy/subspace/commit/17c2d80f82f13a4ce3d1ab90b8d7191e2d2898d5))
+* **framework:** let apps register search reference kinds ([#143](https://github.com/aiconsultancy/subspace/issues/143)) ([d806293](https://github.com/aiconsultancy/subspace/commit/d80629389e1f0097333b24948d231a2e1ad730e0))
+
+
+### Bug Fixes
+
+* **desktop:** follow-up fixes for the optional Copilot build ([0f52440](https://github.com/aiconsultancy/subspace/commit/0f52440c80e2804b2bf3479837550bbe229bf831))
+* **framework:** check the exact kind in ReferenceIdentity::of_kind ([01a5b6d](https://github.com/aiconsultancy/subspace/commit/01a5b6d89ceea91eb4d0a864061cbfa894816cca))
+* **framework:** explain a refused cloud replay in a toast ([7811fb7](https://github.com/aiconsultancy/subspace/commit/7811fb77c143cfb1345269675eddc70c312d0e97))
+* **framework:** keep Save from writing a Copilot preference without Copilot ([af47a90](https://github.com/aiconsultancy/subspace/commit/af47a90d5bfdd6712848e5951db6c2c0dc23c7f0))
+* **framework:** keep tool arguments in order in Pi and ACP summaries ([bb8946f](https://github.com/aiconsultancy/subspace/commit/bb8946f877cba126a81607a779cda4e2f707d30c))
+* **framework:** stop suggesting Copilot in a build without it ([30ba9c3](https://github.com/aiconsultancy/subspace/commit/30ba9c399ee6d6fac0d2c9bc886e21aea99212d1))
+
 ## [0.5.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.4.0...subspace-framework-v0.5.0) (2026-11-25)
 
 

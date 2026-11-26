@@ -1216,6 +1216,92 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     ).toBe(false);
   });
 
+  test("a rear admiral reconstructs documents, attachments and chat uploads without splitting characters", async () => {
+    const issue = await createIssue("Long text fixture");
+    const content = "a".repeat(1535) + "🛰" + "\r\n" + "z".repeat(3300) + "🪐";
+    const doc = await call<{ reference: string }>(
+      201,
+      `/issues/${issue.id}/documents`,
+      "admin",
+      "POST",
+      { type: "spec", title: "Fixture", content },
+    );
+    const chat = await call<{ reference: string }>(201, "/chat/uploads", "admin", "POST", {
+      uploadId: crypto.randomUUID(),
+      fileName: "note.md",
+      contentType: "text/markdown",
+      base64: Buffer.from(content).toString("base64"),
+    });
+    const form = new FormData();
+    form.append("file", new Blob([content], { type: "text/markdown" }), "note.md");
+    const upload = await fetch(`${origin}/api/v1/issues/${issue.id}/attachments`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tokens.get("admin")}` },
+      body: form,
+    });
+    expect(upload.status).toBe(201);
+    const { mediaId } = (await upload.json()) as { mediaId: string };
+    const sharedDoc = await tool<{ reference: string }>(
+      "subspace_share_attachment",
+      { mediaId, uploadId: crypto.randomUUID() },
+      "rearAdmiral",
+    );
+    expect(sharedDoc.isError).toBe(false);
+    expect(
+      (
+        await tool(
+          "subspace_view_image",
+          { kind: "chatUpload", reference: sharedDoc.structuredContent.reference },
+          "rearAdmiral",
+        )
+      ).isError,
+    ).toBe(true);
+    type TextPage = {
+      text: string;
+      offset: number;
+      nextOffset: number | null;
+      revision: number | null;
+    };
+    for (const [kind, reference] of [
+      ["document", doc.reference],
+      ["attachment", mediaId],
+      ["chatUpload", chat.reference],
+      ["chatUpload", sharedDoc.structuredContent.reference],
+    ] as const) {
+      const name = "subspace_read_text_page";
+      expect((await tool(name, { kind, reference }, "other")).isError).toBe(true);
+      let offset: number | null = 0;
+      let revision: number | undefined;
+      let joined = "";
+      do {
+        const response = await tool<TextPage>(
+          name,
+          { kind, reference, offset, revision },
+          "rearAdmiral",
+        );
+        expect(response.isError).toBe(false);
+        const page: TextPage = response.structuredContent;
+        expect(page.offset).toBe(Buffer.byteLength(joined));
+        expect(Buffer.byteLength(page.text)).toBeLessThanOrEqual(1536);
+        if (offset === 0 && kind === "document") {
+          await call(200, `/documents/${reference}`, "admin", "PUT", {
+            baseRevision: 1,
+            content: "Revised",
+          });
+          expect((await tool(name, { kind, reference, offset: page.nextOffset })).isError).toBe(
+            true,
+          );
+        }
+        revision = page.revision ?? undefined;
+        joined += page.text;
+        offset = page.nextOffset;
+        if (offset !== null) expect(offset).toBe(Buffer.byteLength(joined));
+      } while (offset !== null);
+      expect(joined).toBe(content);
+      expect((await tool(name, { kind, reference, offset: 1536, revision })).isError).toBe(true);
+    }
+  });
+
   test("desktop Markdown media references resolve and keep attached bytes available", async () => {
     const issue = await createIssue("Desktop image fixture");
     const form = new FormData();
@@ -1228,6 +1314,49 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     });
     expect(uploaded.status).toBe(201);
     const { id, url } = (await uploaded.json()) as { id: string; url: string };
+    const listed = await tool<{ items: { mediaId: string }[] }>(
+      "subspace_list_attachments",
+      { issue: issue.id },
+      "rearAdmiral",
+    );
+    expect(listed.structuredContent.items.map((item) => item.mediaId)).toContain(id);
+    const share = { mediaId: id, uploadId: crypto.randomUUID() };
+    expect((await tool("subspace_share_attachment", share, "other")).isError).toBe(true);
+    const shared = await tool<{ reference: string }>("subspace_share_attachment", share, "captain");
+    expect(shared.isError).toBe(false);
+    const { reference } = shared.structuredContent;
+    expect(
+      (
+        await tool<{ reference: string }>(
+          "subspace_get_chat_upload",
+          { reference: share.uploadId },
+          "rearAdmiral",
+        )
+      ).structuredContent.reference,
+    ).toBe(reference);
+    expect((await tool("subspace_share_attachment", share, "captain")).structuredContent).toEqual(
+      shared.structuredContent,
+    );
+    for (const target of [
+      { kind: "attachment", reference: id },
+      { kind: "chatUpload", reference },
+    ]) {
+      expect((await tool("subspace_view_image", target, "other")).isError).toBe(true);
+      const response = await rpc("rearAdmiral", "tools/call", {
+        name: "subspace_view_image",
+        arguments: target,
+      });
+      expect(response.result).toEqual({
+        content: [{ type: "image", mimeType: "image/gif", data: gif.toString("base64") }],
+        isError: false,
+      });
+    }
+    expect((await tool("subspace_delete_chat_upload", { reference }, "rearAdmiral")).isError).toBe(
+      true,
+    );
+    expect((await tool("subspace_delete_chat_upload", { reference }, "captain")).isError).toBe(
+      false,
+    );
     await call(404, `/issues/media/${id}`, "other");
     const path = `/issues/${issue.id}/comments`;
     const comment = await call<Versioned>(201, path, "admin", "POST", {

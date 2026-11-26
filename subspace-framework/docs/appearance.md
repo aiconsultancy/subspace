@@ -282,7 +282,8 @@ the chosen light or dark variant, font roles, density and application text
 colours together. It does not change service configuration or credentials.
 Restart the app to reload manually added files.
 
-Bundled names are reserved. Invalid custom files and duplicate names produce
+Bundled names are reserved, and so are `Default Light` and `Default Dark`,
+which GPUI Kit registers itself when it starts. Invalid custom files and duplicate names produce
 warnings; they do not stop the application. Saves refuse symlinks, files over
 1 MiB and competing writers. The theme file and active preferences have
 separate save boundaries. A partial-save message states which one succeeded.
@@ -319,20 +320,50 @@ stops the app at startup. Saved user theme choices still take priority over the
 compiled default. An explicit product default comes next when no build override
 exists, followed by the framework fallback.
 
+### Theme documents a product supplies
+
+A product can embed its own theme documents beside the Framework's catalogue.
+Set `ProductBuild.product_themes` to `&[("example-dark", include_str!("../themes/example-dark.json"))]`,
+a list of `(id, json)` pairs, and use `&[]` for none. Then:
+
+- List the id in `ProductDescriptor.themes`, as for a Framework document.
+- Name one of its variants as `ProductDescriptor.default_theme` to make it
+  the default. `record_new_install_theme` takes the same slice as its last
+  argument, so a new install can start in it.
+- Its variants appear in Settings and the theme picker like any other, and
+  Report issue names the theme by the document's id.
+
+Each document must parse as a theme set with at least one variant, whether
+or not the descriptor lists it. An id that is `custom` (the id Report issue
+gives a user's own theme), repeats a Framework document's id or another
+product document's id, or invalid JSON, including a repeated field, stops
+the app at startup with an error that names the id. So does a variant name
+that repeats, ignoring case, a Framework or GPUI Kit variant, GPUI Kit's own
+`Default Light` or `Default Dark`, or a variant in another product document;
+the error names the document's id and the variant. Variant names are reserved like the
+Framework's, so a custom theme file cannot reuse them. The Framework ships no
+product theme files.
+
+In an app's tests, `test_support::install_product_themes` checks the
+documents as startup does, apart from the product's default, and installs
+them, so `offline_shell_fixture` loads them; call it before the fixture.
+
 ### A theme for new installs
 
 A product can give new installs a theme other than its default, without
 moving existing installs. Before the desktop starts, and only when it starts
 the desktop app, the product's entrypoint calls
-`shell::record_new_install_theme(&context, "Twilight Two")`. When the
-product has neither a config file nor a state file, a new install, it saves
-that variant as `appearance.theme` in a new state file, so it is the user's
-saved choice from then on and a later change of default never moves it. An
-install with either file is left alone, including one whose files are
+`shell::record_new_install_theme(&context, "Twilight Two", product_themes)`,
+with the same documents as `ProductBuild.product_themes` (`&[]` for none).
+When the product has neither a config file nor a state file, a new install,
+it saves that variant as `appearance.theme` in a new state file, so it is the
+user's saved choice from then on and a later change of default never moves
+it. An install with either file is left alone, including one whose files are
 unreadable or malformed, so an install with no saved theme keeps showing the
-product's default. The variant must be in the product's theme catalogue; if
-it is not, or the files' folder cannot be read, nothing is written and the
-call returns the reason. The Subspace App records Twilight Two this way and
+product's default. The product's theme documents must pass the checks
+startup makes, and the variant must be in the product's theme catalogue; if
+either fails, or the files' folder cannot be read, nothing is written and
+the call returns the reason. The Subspace App records Twilight Two this way and
 keeps Cupertino Dark as its default; a build that sets
 `SUBSPACE_DEFAULT_THEME` records nothing. Command-line and headless runs
 never call it.

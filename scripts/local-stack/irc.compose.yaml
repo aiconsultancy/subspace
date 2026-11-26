@@ -4,11 +4,21 @@
 services:
   irc:
     environment:
+      IRC_AUTH_API_TOKEN: ""
       IRC_OPER_NAME: local-operator
       IRC_OPER_PASSWORD_FILE: /run/subspace-stack/operator.password
       IRC_ACCOUNTS_FILE: /run/subspace-stack/accounts.json
       IRC_CHANNELS_FILE: /run/subspace-stack/channels.json
+      IRC_AUTH_API_URL: http://api:3000
+      IRC_AUTH_API_TOKEN_FILE: /run/subspace-stack/auth-hook.token
+      IRC_AUTH_API_ALLOW_HTTP: "true"
     volumes:
+      - type: bind
+        source: ../.stack/irc/auth-hook.token
+        target: /run/subspace-stack/auth-hook.token
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ../.stack/irc/operator.seed
         target: /run/subspace-stack/operator.password

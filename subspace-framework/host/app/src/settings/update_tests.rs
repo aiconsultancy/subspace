@@ -44,6 +44,7 @@ fn product_without_update(root: &Path) -> ProductContext {
             default_enabled: true,
         }],
         update: None,
+        command_mount: Default::default(),
     };
     let product = validate_product(&descriptor).unwrap();
     let env = PlatformEnv {

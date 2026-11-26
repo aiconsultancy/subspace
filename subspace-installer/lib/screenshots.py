@@ -10,6 +10,8 @@ take screenshots, of web pages and of desktop apps.
   pinned Playwright (/opt/subspace-fleet/playwright, installed with npm ci from a lockfile, so every package is
   checked against its integrity hash) run by a pinned Node in the shared toolchain store, pointed at those
   browsers. Officers and crew have no outbound network to download a browser, so it never does.
+- The mermaid-render command on the same PATH, using a pinned Mermaid and the same Chromium to export local
+  diagram definitions as SVG or PNG.
 
 Every version is pinned in lib/screenshots/package.json (with package-lock.json beside it), and nowhere else.
 "screenshots": false in fleet.json turns it off.
@@ -32,17 +34,19 @@ PINS = Path(__file__).resolve().parent / "screenshots"
 PLAYWRIGHT = APP / "playwright"
 BROWSERS = APP / "browsers"
 WRAPPER = APP / "bin/playwright"
+MERMAID_WRAPPER = APP / "bin/mermaid-render"
 PNG = b"\x89PNG\r\n\x1a\n"
 # A local page, so the check needs no network.
 PAGE = ("data:text/html,<title>Subspace</title><body style='font-family:sans-serif'><h1>Subspace screenshot check"
         "</h1><p>Fonts: Liberation, DejaVu, emoji &#x1F6F0;</p></body>")
+DIAGRAM = "flowchart LR\n  A[Draft] --> B[Review]\n"
 
 
 def pins(directory=PINS):
     """The pinned versions and packages, from lib/screenshots/package.json."""
     data = json.loads((Path(directory) / "package.json").read_text())
     own = data["subspace"]
-    return {"playwright": data["dependencies"]["playwright"], "node": own["node"],
+    return {**data["dependencies"], "node": own["node"],
             "chromiumRevision": own["chromiumRevision"], "chromiumVersion": own["chromiumVersion"],
             "packages": own["packages"]}
 
@@ -76,16 +80,17 @@ def browser_directories(pinned):
     return [BROWSERS / f"chromium-{revision}", BROWSERS / f"chromium_headless_shell-{revision}"]
 
 
-def installed_playwright():
+def installed_version(package):
     try:
-        return json.loads((PLAYWRIGHT / "node_modules/playwright/package.json").read_text())["version"]
+        return json.loads((PLAYWRIGHT / "node_modules" / package / "package.json").read_text())["version"]
     except (OSError, ValueError, KeyError):
         return None
 
 
 def state(pinned):
-    """What is installed already: node, playwright and chromium, each True or False."""
-    return {"node": node(pinned).is_file(), "playwright": installed_playwright() == pinned["playwright"],
+    """What is installed already."""
+    return {"node": node(pinned).is_file(), "playwright": installed_version("playwright") == pinned["playwright"],
+            "mermaid": installed_version("mermaid") == pinned["mermaid"] and MERMAID_WRAPPER.is_file(),
             "chromium": all(path.is_dir() for path in browser_directories(pinned))}
 
 
@@ -113,10 +118,11 @@ def plan_lines(enabled, pinned, distribution, present=None, done=None):
     lines = [f"Screenshots (base install; \"screenshots\": false in fleet.json turns them off): Xvfb with keyboard "
              f"maps and fonts, and Playwright {pinned['playwright']} with its Chromium {pinned['chromiumVersion']} "
              f"(revision {pinned['chromiumRevision']}) in {BROWSERS}, run by Node {pinned['node']}, as {WRAPPER} for "
-             "officers and crew. The browser is installed now, since officers and crew cannot download one."]
+             f"officers and crew. Mermaid {pinned['mermaid']} uses the same Chromium via {MERMAID_WRAPPER}."]
     missing = [name for name in wanted if name not in present]
     parts = ([f"{len(missing)} of {len(wanted)} packages ({', '.join(missing)})"] if missing else []) + [
         label for key, label in (("node", f"Node {pinned['node']}"), ("playwright", f"Playwright {pinned['playwright']}"),
+                                 ("mermaid", f"Mermaid {pinned['mermaid']}"),
                                  ("chromium", "Chromium")) if not done[key]]
     lines.append("  This run installs: " + "; ".join(parts) + "." if parts else "  Installed already.")
     if distribution not in pinned["packages"]:
@@ -125,11 +131,10 @@ def plan_lines(enabled, pinned, distribution, present=None, done=None):
     return lines
 
 
-def wrapper_text(pinned):
-    return (f"#!/bin/sh\n# Written by the Subspace fleet installer: Playwright {pinned['playwright']} with the browsers "
-            f"the installer put in\n# {BROWSERS}. Officers and crew cannot download a browser, so it never does.\n"
+def wrapper_text(pinned, entrypoint):
+    return ("#!/bin/sh\n# Written by the Subspace fleet installer. Use the shared Chromium.\n"
             f"export PLAYWRIGHT_BROWSERS_PATH={BROWSERS}\nexport PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1\n"
-            f"exec {node(pinned)} {cli()} \"$@\"\n")
+            f"exec {node(pinned)} {entrypoint} \"$@\"\n")
 
 
 def write_file(path, text, mode):
@@ -142,10 +147,33 @@ def write_file(path, text, mode):
     os.replace(stream.name, path)
 
 
+def install_packages(pinned, manifest, lock):
+    """Download into a staging directory so a failed npm run leaves the installed tools usable."""
+    modules = PLAYWRIGHT / "node_modules"
+    with tempfile.TemporaryDirectory(prefix=".npm-", dir=PLAYWRIGHT) as temporary:
+        stage = Path(temporary)
+        write_file(stage / "package.json", manifest, 0o644)
+        write_file(stage / "package-lock.json", lock, 0o644)
+        subprocess.run([str(node(pinned).parent / "npm"), "ci", "--ignore-scripts", "--omit=dev", "--no-audit",
+                        "--no-fund"], cwd=stage, check=True, env={
+                            "PATH": f"{node(pinned).parent}:{toolchains.BASE_PATH}", "HOME": "/root",
+                            "npm_config_cache": str(stage / "cache"), "npm_config_update_notifier": "false"})
+        backup = stage / "previous-node-modules"
+        try:
+            if modules.exists():
+                modules.rename(backup)
+            (stage / modules.name).rename(modules)
+        finally:
+            if backup.exists() and not modules.exists():
+                backup.rename(modules)
+    write_file(PLAYWRIGHT / "package.json", manifest, 0o644)
+    write_file(PLAYWRIGHT / "package-lock.json", lock, 0o644)
+
+
 def install(pinned, root_environment, say=print):
     """As root, install what the pins name that is missing: Node into the shared toolchain store (mise, explicit
-    node@VERSION), Playwright with npm ci from the lockfile (scripts off), and Playwright's Chromium into BROWSERS;
-    then the wrapper. Returns the problems, if any: a failure here is reported and never stops the install."""
+    node@VERSION), Playwright and Mermaid with npm ci from the lockfile (scripts off), and Playwright's Chromium
+    into BROWSERS; then the wrappers. A failure is reported and never stops the install."""
     previous = os.umask(0o022)
     try:
         BROWSERS.mkdir(mode=0o755, exist_ok=True)
@@ -154,15 +182,10 @@ def install(pinned, root_environment, say=print):
             subprocess.run([str(toolchains.MISE), "install", f"node@{pinned['node']}"], cwd=APP,
                            env=root_environment, check=True)
         lock = (PINS / "package-lock.json").read_text()
-        if installed_playwright() != pinned["playwright"] or not (PLAYWRIGHT / "package-lock.json").is_file() or \
+        if any(installed_version(package) != pinned[package] for package in ("playwright", "mermaid")) or \
+                not (PLAYWRIGHT / "package-lock.json").is_file() or \
                 (PLAYWRIGHT / "package-lock.json").read_text() != lock:
-            write_file(PLAYWRIGHT / "package.json", (PINS / "package.json").read_text(), 0o644)
-            write_file(PLAYWRIGHT / "package-lock.json", lock, 0o644)
-            with tempfile.TemporaryDirectory(prefix="subspace-npm-") as cache:
-                subprocess.run([str(node(pinned).parent / "npm"), "ci", "--ignore-scripts", "--omit=dev", "--no-audit",
-                                "--no-fund"], cwd=PLAYWRIGHT, check=True, env={
-                                    "PATH": f"{node(pinned).parent}:{toolchains.BASE_PATH}", "HOME": "/root",
-                                    "npm_config_cache": cache, "npm_config_update_notifier": "false"})
+            install_packages(pinned, (PINS / "package.json").read_text(), lock)
         # Playwright skips a browser it has installed already, and removes the browsers of an earlier pin.
         subprocess.run([str(node(pinned)), str(cli()), "install", "chromium"], cwd=PLAYWRIGHT, check=True, env={
             "PATH": f"{node(pinned).parent}:{toolchains.BASE_PATH}", "HOME": "/root",
@@ -171,7 +194,10 @@ def install(pinned, root_environment, say=print):
             return [f"Playwright {pinned['playwright']} installed no Chromium revision {pinned['chromiumRevision']} "
                     f"({', '.join(missing)} missing): set chromiumRevision in lib/screenshots/package.json to the "
                     "revision that Playwright names"]
-        write_file(WRAPPER, wrapper_text(pinned), 0o755)
+        renderer = PLAYWRIGHT / "mermaid-render.cjs"
+        write_file(renderer, (PINS / renderer.name).read_text(), 0o644)
+        write_file(WRAPPER, wrapper_text(pinned, cli()), 0o755)
+        write_file(MERMAID_WRAPPER, wrapper_text(pinned, renderer), 0o755)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         return [f"{type(error).__name__}: {error}"]
     finally:
@@ -195,35 +221,47 @@ def png_size(path):
 
 
 def check(user, home, environment, timeout=180):
-    """Take one screenshot of a local page as an officer's user (crew run as their captain's), with its tool
-    environment, under a virtual display: Xvfb must start, which needs working keyboard maps, and the browser must
-    run and write a PNG. Returns (passed, report); never raises for a failed check."""
+    """Take a page screenshot under Xvfb and render a Mermaid PNG as an officer with its tool environment.
+    Returns (passed, report)."""
     scratch = subprocess.run(["runuser", "-u", user, "--", "mktemp", "-d", f"/tmp/{user}-screenshot.XXXXXX"],
                              capture_output=True, text=True, check=False)
     if scratch.returncode:
         return False, "could not make a private temporary directory"
     temporary = scratch.stdout.strip()
     shot = f"{temporary}/check.png"
-    command = ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1280x800x24", str(WRAPPER), "screenshot",
-               "--browser", "chromium", "--viewport-size", "800,600", PAGE, shot]
+    diagram = f"{temporary}/diagram.png"
+    officer = ["runuser", "-u", user, "--", *toolchains.clean_environment(
+        user, home, {**environment, "TMPDIR": temporary})]
+    checks = [
+        ("Playwright", "PNG of a local page under Xvfb", ["xvfb-run", "--auto-servernum",
+                        "--server-args=-screen 0 1280x800x24",
+                        str(WRAPPER), "screenshot", "--browser", "chromium", "--viewport-size", "800,600",
+                        PAGE, shot], None),
+        ("Mermaid", "Mermaid PNG", [str(MERMAID_WRAPPER), "-", diagram], DIAGRAM),
+    ]
     try:
-        try:
-            result = subprocess.run(["runuser", "-u", user, "--", *toolchains.clean_environment(
-                user, home, {**environment, "TMPDIR": temporary}), *command], cwd=home, capture_output=True,
-                text=True, timeout=timeout, check=False)
-        except subprocess.TimeoutExpired:
-            return False, f"the screenshot did not finish within {timeout} seconds"
-        if result.returncode:
-            tail = (result.stderr or result.stdout).strip().splitlines()[-3:]
-            return False, f"xvfb-run ... {WRAPPER} screenshot failed ({result.returncode}): " + " / ".join(tail)
-        size = png_size(shot)
-        if size is None:
-            return False, "the browser ran, but wrote no PNG"
-        return True, f"a {size[0]}x{size[1]} PNG of a local page, with Playwright's Chromium under Xvfb"
+        results = []
+        for name, label, command, source in checks:
+            try:
+                result = subprocess.run([*officer, *command], input=source, cwd=home, capture_output=True,
+                                        text=True, timeout=timeout, check=False)
+            except subprocess.TimeoutExpired:
+                results.append((False, f"the {name} screenshot did not finish within {timeout} seconds"))
+                continue
+            if result.returncode:
+                tail = (result.stderr or result.stdout).strip().splitlines()[-3:]
+                results.append((False, f"{name} screenshot failed ({result.returncode}): " + " / ".join(tail)))
+                continue
+            size = png_size(command[-1])
+            if not size or min(size) <= 0:
+                results.append((False, f"{name} wrote no valid PNG"))
+            else:
+                results.append((True, f"a {size[0]}x{size[1]} {label}"))
+        return all(passed for passed, _ in results), " and ".join(report for _, report in results)
     finally:
         subprocess.run(["runuser", "-u", user, "--", "rm", "-rf", "--", temporary], check=False)
 
 
 def remove_hint():
-    return (f"To remove what an earlier run installed: sudo rm -rf {PLAYWRIGHT} {BROWSERS} {WRAPPER} (the "
+    return (f"To remove what an earlier run installed: sudo rm -rf {PLAYWRIGHT} {BROWSERS} {WRAPPER} {MERMAID_WRAPPER} (the "
             "distribution packages stay).")

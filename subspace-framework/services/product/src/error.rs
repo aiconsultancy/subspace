@@ -30,6 +30,8 @@ pub enum ProductError {
     DuplicateAlias { name: String },
     #[error("command name '{name}' is reserved for the product")]
     ReservedCommand { name: String },
+    #[error("root command mount requires exactly one Space")]
+    RootMountConflict,
     #[error("duplicate binary name '{name}'")]
     DuplicateBinary { name: String },
     #[error("duplicate bundle identity '{name}'")]

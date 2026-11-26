@@ -21,6 +21,8 @@ mod bundled_fonts;
 mod capture;
 #[cfg(windows)]
 mod console;
+#[cfg(test)]
+mod data_directory_tests;
 mod diagnostics;
 #[cfg(debug_assertions)]
 mod inspector;
@@ -50,7 +52,7 @@ pub use search_runtime::RerankerFactory;
 pub use settings::extensions::SettingsExtension;
 pub use startup::{ProductBuild, launch, reads_configuration};
 pub use startup_failure::report_startup_failure;
-pub use theme::record_new_install_theme;
+pub use theme::{ProductThemes, record_new_install_theme};
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -64,6 +66,7 @@ pub(crate) struct DesktopOptions {
     pub dock_panel: Option<DockPanelRegistration>,
     pub github_oauth: Option<OAuthClient>,
     pub fonts: &'static [BundledFont],
+    pub product_themes: ProductThemes,
     #[cfg(feature = "report-issue")]
     pub report_issue_repository: Option<&'static str>,
 }
@@ -76,7 +79,7 @@ fn run_desktop(
     artwork: &'static [(&'static str, &'static [u8])],
     options: DesktopOptions,
 ) -> Result<(), String> {
-    theme::validate_product_themes(&context.product)?;
+    theme::validate_product_themes(&context.product, options.product_themes)?;
     let files = product::ProductFiles::for_context(&context);
     let sign_in = options.github_oauth.is_some();
     let (mut environment, mut notices) =
@@ -118,6 +121,7 @@ fn run_desktop(
         prefs::init_file(Some(files.state.clone()), cx);
         let config_file = files.config.clone();
         cx.set_global(files);
+        theme::install_product_themes(options.product_themes, cx);
         let notices = start_theme(notices, options.fonts, cx);
         install_services(environment, tools, config_file, options.github_oauth, cx);
         account::init(options.account, cx);

@@ -110,6 +110,28 @@ if [[ -f /etc/subspace-fleet/fleet.json ]]; then
     else
         fail 'Fleet service firewall (inet subspace_fleet) is not loaded. Re-run the installer.'
     fi
+    hook=$(nft -n list chain inet subspace_fleet private_egress 2>/dev/null) || hook=
+    egress=$(nft -n list chain inet subspace_fleet officer_destinations 2>/dev/null) || egress=
+    egress_users=$(sed -nE 's/.*skuid *(\{ *)?([0-9, ]+)( *\})? jump officer_destinations.*/\2/p' <<<"$hook" | tr ',' ' ')
+    if ! grep -q 'type filter hook output' <<<"$hook" ||
+          ! grep -Eq 'ip daddr \{ 10\.0\.0\.0/8, 100\.64\.0\.0/10, 169\.254\.0\.0/16, 172\.16\.0\.0/12, 192\.168\.0\.0/16 \} reject' <<<"$egress" ||
+          ! grep -Eq 'ip6 daddr \{ fc00::/7, fe80::/10 \} reject' <<<"$egress"; then
+        fail 'Officer private network egress rules are missing. Re-run the installer.'
+    elif officers=$(jq -er '(.rearAdmiral, .captains[]) | .id' /etc/subspace-fleet/fleet.json); then
+        egress_missing=()
+        while read -r person; do
+            if ! uid=$(id -u -- "ss-$person" 2>/dev/null) || ! grep -qw "$uid" <<<"$egress_users"; then
+                egress_missing+=("$person")
+            fi
+        done <<<"$officers"
+        if (( ${#egress_missing[@]} )); then
+            fail "Private egress restrictions are missing for: ${egress_missing[*]}."
+        else
+            pass 'Private network egress is restricted for each officer.'
+        fi
+    else
+        fail 'Could not read the officer roster for the private egress audit.'
+    fi
 fi
 
 # 3. SSH daemon.

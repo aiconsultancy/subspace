@@ -34,21 +34,38 @@ impl WebBoard {
         Self::with_source(config, PageSource::Session(Box::new(page)), cx)
     }
 
-    /// Follows the account and the clock, each poll.
+    /// Follows the account, the clock and the product's start route, each
+    /// poll. The route comes last, so a session that ends in this poll
+    /// still forgets the page from before a start that moved in it.
     pub(crate) fn tick_session(&mut self, cx: &mut Context<Self>) {
         let shown = self.active;
         let Some(session) = self.source.session() else {
             return;
         };
         let generation = session.source.generation(cx);
+        let moved = session.moved_route(cx);
+        let restarted = moved.is_some();
         self.step(
             |machine, now, here| {
                 let mut effects = machine.account(generation);
-                effects.extend(machine.tick(now, shown, here));
+                effects.extend(machine.tick(now, shown, here.clone()));
+                if let Some(route) = moved {
+                    effects.extend(machine.route(route.as_deref(), here));
+                }
                 effects
             },
             cx,
         );
+        if restarted {
+            self.follow_start();
+        }
+    }
+
+    /// Go to the start page goes where the session now starts.
+    fn follow_start(&mut self) {
+        if let Some(session) = self.source.session() {
+            self.start = session.start();
+        }
     }
 
     /// The view was sent to the scope's signal.
@@ -101,7 +118,7 @@ impl WebBoard {
             Effect::Show(attempt, url) => self.show(attempt, url, cx),
             Effect::Discard(attempt) => self.discard(attempt),
             Effect::Renewed => self.report_renewal(cx),
-            Effect::Return(url) => self.return_to(&url, cx),
+            Effect::Load(url) => self.load(&url, cx),
             Effect::Close => self.close_view(cx),
             Effect::Notice(message) => self.state.notice = Some(message),
             Effect::Log(problem) => log(&self.config.id, problem),
@@ -249,8 +266,8 @@ impl WebBoard {
         }
     }
 
-    /// Loads `url`, the page the view showed, again.
-    fn return_to(&mut self, url: &str, cx: &mut Context<Self>) {
+    /// Loads `url` in the view the session shows.
+    fn load(&mut self, url: &str, cx: &mut Context<Self>) {
         let Some(page) = &self.page else {
             return;
         };

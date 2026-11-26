@@ -8,9 +8,10 @@
 use std::time::Instant;
 
 use gpui_kit::component::v_flex;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Styled as _,
-    Subscription, Window,
+    AnyElement, AppContext as _, Context, Entity, ExternalPaths, InteractiveElement as _,
+    IntoElement, ParentElement as _, Styled as _, Subscription, Window,
 };
 use subspace_client_irc::{BufferKey, MAX_INLINE_BYTES, Target, draft_line_limit};
 use subspace_framework::dashboard::chat_input::completion::CompletionList;
@@ -128,7 +129,17 @@ impl Draft {
             .children(self.reply.as_ref().map(|replying| reply::row(replying, cx)))
             .children(uploads.then(|| crate::uploads::outgoing::controls(&self.entity, tray, cx)))
             .child(self.list.clone())
-            .child(self.entity.clone())
+            .child(
+                v_flex()
+                    .id("irc-composer-drop")
+                    .w_full()
+                    .when(uploads, |target| {
+                        target.on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                            crate::uploads::outgoing::paths(this, paths.0.to_vec(), cx);
+                        }))
+                    })
+                    .child(self.entity.clone()),
+            )
             .child(hints::row(uploads, cx))
             .into_any_element()
     }

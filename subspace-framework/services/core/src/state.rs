@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use serde_json::value::RawValue;
-use subspace_product::Channel;
 
 /// `<directory>/state.json` in the platform state directory:
 /// `$XDG_STATE_HOME` on Linux, the local data directory elsewhere
@@ -22,15 +21,16 @@ pub fn path() -> Option<PathBuf> {
         .map(|dir| dir.join(directory_name()).join("state.json"))
 }
 
-/// The Subspace data directory name of this build's channel: `subspace` on
-/// stable, `subspace-<type>` for a pre-release type. Config, state and
-/// caches that are not product-specific use it.
+/// The data directory name, [`subspace_product::product_data_name`]: the
+/// app's data name on stable, `<name>-<type>` for a pre-release type. The
+/// data name is the one the app set with
+/// [`subspace_product::configure_data_name`], else its binary name, which
+/// `launch`, `prepare_context` and `record_new_install_theme` set; a
+/// process that reads a path before any of them uses `subspace`. Config,
+/// state, caches and logs use it, and so do the Keychain service
+/// `<data name>.github` and any service an app derives from this name.
 pub fn directory_name() -> String {
-    directory_name_for(Channel::current())
-}
-
-fn directory_name_for(channel: Channel) -> String {
-    channel.name("subspace")
+    subspace_product::product_data_name()
 }
 
 /// `name` beside the state file, such as `github-cache.json`. Large
@@ -309,15 +309,11 @@ mod tests {
 
     use subspace_product::Channel;
 
-    use super::{State, directory_name, directory_name_for};
+    use super::{State, directory_name};
 
     #[test]
-    fn each_type_keeps_its_core_state_in_its_own_directory() {
-        assert_eq!(directory_name_for(Channel::Stable), "subspace");
-        assert_eq!(directory_name_for(Channel::Nightly), "subspace-nightly");
-        assert_eq!(directory_name_for(Channel::Alpha), "subspace-alpha");
-        assert_eq!(directory_name_for(Channel::Beta), "subspace-beta");
-        assert_eq!(directory_name(), directory_name_for(Channel::current()));
+    fn the_core_state_of_a_process_that_names_nothing_is_under_subspace() {
+        assert_eq!(directory_name(), Channel::current().name("subspace"));
     }
 
     #[test]

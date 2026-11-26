@@ -72,6 +72,7 @@ pub fn descriptor_for(channel: Channel) -> ProductDescriptor {
         icon_paths: icon_paths(channel),
         themes: THEMES.iter().map(|id| (*id).to_owned()).collect(),
         default_theme: Some(DEFAULT_THEME.into()),
+        command_mount: Default::default(),
         boards: BOARDS
             .iter()
             .map(|(id, default_enabled)| BoardDescriptor {

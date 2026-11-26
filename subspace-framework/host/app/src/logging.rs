@@ -19,7 +19,7 @@ pub(crate) fn stored_level(state: &State) -> Level {
 }
 
 /// The log directory beside the state file.
-fn directory(state_file: &Path) -> Option<std::path::PathBuf> {
+pub(crate) fn directory(state_file: &Path) -> Option<std::path::PathBuf> {
     Some(state_file.parent()?.join("logs"))
 }
 

@@ -31,6 +31,7 @@ import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+from ipaddress import ip_address
 import json
 import os
 from pathlib import Path
@@ -38,6 +39,7 @@ import pwd
 import re
 import secrets
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -256,10 +258,10 @@ def parse_args(argv):
     parser.add_argument("--irc-host", help="shared IRC server's DNS name (remote mode; must match its TLS certificate)")
     parser.add_argument("--irc-port", type=int, help="shared IRC server's TLS port (default 6697)")
     parser.add_argument("--irc-ca", help="absolute path on this VM to the shared server's CA certificate (PEM)")
+    parser.add_argument("--managed-shared-irc", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--irc-auth", choices=["certificate", "password"],
-                        help="how officers sign in to a remote IRC server: certificate (SASL EXTERNAL, the default; "
-                        "setup prints the NickServ lines that bind each one) or password (SASL PLAIN, for the shared "
-                        "server ./install.sh irc-server runs). Kept on later runs")
+                        help="how officers sign in to IRC: certificate (SASL EXTERNAL, the default for new fleets) "
+                        "or password (SASL PLAIN). A rerun keeps the installed mode.")
     parser.add_argument("--irc-operator", help="an IRC operator's name (OPER) with NickServ's accreg capability: setup "
                         "then registers each officer's account and binds its certificate itself (certificate sign-in)")
     parser.add_argument("--irc-operator-account", help="an IRC account the operator's connection signs in to first "
@@ -281,6 +283,7 @@ def parse_args(argv):
                         "'' removes it")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
+    parser.add_argument("--shared-api-target", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
                         "PostgreSQL container here: absolute path to a root-only file (mode 0600) holding its "
                         "postgresql://user:password@host:5432/database?sslmode=verify-full URL. Kept on later runs")
@@ -301,6 +304,8 @@ def parse_args(argv):
                         "records the SSH tunnel's end on the desktop, http://127.0.0.1:8484")
     parser.add_argument("--stargate-ref", help="'latest' (the default: Stargate's newest release, looked up on "
                         "every run) or a full commit SHA to pin")
+    parser.add_argument("--captain-peer-messages", action=argparse.BooleanOptionalAction, default=None,
+                        help="Enable cross-ship messages between pinned crew-hosting captains.")
     parser.add_argument("--agent-dispatch", dest="agent_dispatch", action="store_true", default=None,
                         help="switch on Stargate's agent dispatch: " + DISPATCH_SUMMARY + " (default off; needs the API)")
     parser.add_argument("--no-agent-dispatch", dest="agent_dispatch", action="store_false")
@@ -310,6 +315,9 @@ def parse_args(argv):
     parser.add_argument("--ssh-from", help="comma-separated source addresses or CIDRs allowed to SSH in")
     parser.add_argument("--allow-port", help="comma-separated TCP ports to accept from private networks only, "
                         "for example 443 for an nginx listener on the tailnet")
+    parser.add_argument("--agent-egress", action="append", metavar="HOST:PORT",
+                        help="allow a private TCP destination for officers. Repeat to set several; "
+                        "use --agent-egress '' to clear the saved list")
     parser.add_argument("--key-vault", help="Azure Key Vault name for the generated secrets (managed identity)")
     parser.add_argument("--metadata-user", help="comma-separated Linux users, besides root and the operator, that "
                         "may reach the cloud metadata service (the agents never can)")
@@ -424,6 +432,8 @@ def gather(args, saved):
                 given = prompt(f"Names for {name}'s crew ({', '.join(slot_label(slot) for slot in slots)}), "
                                "comma-separated", None, interactive) or ""
                 named.update(parse_crew_names(f"{name}={given}", answers))
+    if args.captain_peer_messages is not None:
+        answers["captainPeerMessages"] = args.captain_peer_messages
     if args.captain_tools is not None:
         answers["captainTools"] = args.captain_tools
     elif not saved and not (INPUTS / "fleet.json").exists() and not (FLEET_ETC / "fleet.json").exists():
@@ -517,6 +527,10 @@ def gather(args, saved):
         chosen[key] = value
     answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
+        if args.managed_shared_irc:
+            answers["managedSharedIrc"] = True
+        elif args.irc_host and args.irc_host != saved.get("ircHost"):
+            answers.pop("managedSharedIrc", None)
         pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
         if args.irc_port is not None:
             answers["ircPort"] = args.irc_port
@@ -532,10 +546,13 @@ def gather(args, saved):
             # A remote fleet set up before certificates were the default signs in with passwords; keep it so.
             answers["ircAuth"] = "password" if saved.get("irc") == "remote" else "certificate"
     else:
-        require(args.irc_auth in (None, "password"), "--irc-auth certificate needs a remote IRC server (--irc remote): "
-                "officers reach the Ergo on this VM without TLS, which certificates need.")
-        answers.pop("ircAuth", None)
-    require(not (args.irc_operator or args.irc_operator_password_file) or answers.get("ircAuth") == "certificate",
+        answers.pop("managedSharedIrc", None)
+        answers["ircAuth"] = args.irc_auth or (
+            saved.get("ircAuth", "password") if saved.get("irc") == "local" else "certificate")
+        require(not (saved.get("irc") == "local" and saved.get("ircAuth", "password") != answers["ircAuth"]),
+                "An installed local fleet must retain its IRC sign-in mode during setup.")
+    require(not (args.irc_operator or args.irc_operator_password_file)
+            or (answers["irc"] == "remote" and answers.get("ircAuth") == "certificate"),
             "--irc-operator is for certificate sign-in on a remote IRC server (--irc remote --irc-auth certificate).")
     require(bool(args.irc_operator) == bool(args.irc_operator_password_file),
             "Pass --irc-operator and --irc-operator-password-file together.")
@@ -544,6 +561,12 @@ def gather(args, saved):
     require(not args.irc_operator_account or args.irc_operator,
             "--irc-operator-account is the account the operator's connection signs in to: pass --irc-operator too.")
     hosted_api(args, answers, saved)
+    if args.shared_api_target:
+        require(not answers.get("apiUrl"), "--api-target cannot replace an explicit or saved hosted API (--api-url).")
+        hostname = answers.get("ircHost")
+        require(answers["irc"] == "remote" and hostname and not loopback_irc_host(hostname),
+                "--api-target needs remote IRC: use --irc-server NAME or --irc remote --irc-host HOST.")
+        args.api = False
     if args.vm_host == "":
         answers.pop("vmHost", None)
     elif args.vm_host is not None:
@@ -609,6 +632,8 @@ def gather(args, saved):
     if args.allow_port is not None:
         answers["allowPorts"] = [value.strip() for value in args.allow_port.split(",") if value.strip()]
     answers.setdefault("allowPorts", [])
+    if args.agent_egress is not None:
+        answers["agentEgress"] = list(dict.fromkeys(value for value in args.agent_egress if value))
     if args.key_vault is not None:
         answers["keyVault"] = args.key_vault
     if args.metadata_user is not None:
@@ -803,6 +828,10 @@ def check_answers(answers):
     for value in answers["allowPorts"]:
         require(str(value).isdigit() and 1 <= int(value) <= 65535 and int(value) != 22,
                 f"Invalid --allow-port {value}.")
+    try:
+        runtime.agent_egress(answers.get("agentEgress", []))
+    except runtime.Invalid as error:
+        raise SetupError(f"--agent-egress: {error}") from None
     if answers.get("keyVault"):
         require(VAULT.fullmatch(answers["keyVault"]), "Invalid Key Vault name.")
     for user in answers.get("metadataUsers", []):
@@ -1130,6 +1159,10 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     }
     if history:
         config["irc"]["compose"]["history"] = history
+    if answers["irc"] == "local" and answers.get("ircAuth") == "certificate":
+        tls = INPUTS / "irc-tls"
+        config["irc"].update(auth="certificate", tls=True, port=IRC_TLS, caFile=str(tls / "cert.pem"))
+        config["irc"]["compose"].update(tlsCert=str(tls / "cert.pem"), tlsKey=str(tls / "key.pem"))
     if answers["irc"] == "remote":
         config["irc"] = {
             "mode": "remote", "host": answers["ircHost"], "port": answers["ircPort"], "tls": True,
@@ -1141,6 +1174,10 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
     previous = read_json(INPUTS / "fleet.json", {})
+    if endpoints := answers.get("agentEgress", previous.get("agentEgress", [])):
+        config["agentEgress"] = endpoints
+    if answers.get("captainPeerMessages", previous.get("captainPeerMessages", False)):
+        config["captainPeerMessages"] = True
     if policy := answers.get("captainTools", previous.get("captainTools")):
         config["captainTools"] = policy
     config["toolchains"], packages = toolchain_settings(read_json(INPUTS / TOOLCHAIN_RECORD), previous)
@@ -1728,6 +1765,23 @@ def irc_source():
             shutil.rmtree(work, ignore_errors=True)
 
 
+def local_irc_tls():
+    """Keep a server certificate for the TLS loopback listener and trust it in Stargate."""
+    target = INPUTS / "irc-tls"
+    if target.exists():
+        require((target / "cert.pem").is_file() and (target / "key.pem").is_file(),
+                "Local IRC TLS needs both its saved certificate and key.")
+        return
+    with tempfile.TemporaryDirectory(prefix="irc-tls-", dir=INPUTS) as scratch:
+        source = Path(scratch) / "tls"
+        source.mkdir(mode=0o700)
+        run("openssl", "req", "-x509", "-newkey", "rsa:3072", "-nodes", "-sha256", "-days", "3650",
+            "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+            "-out", source / "cert.pem", "-keyout", source / "key.pem", capture=True)
+        (source / "key.pem").chmod(0o600)
+        source.rename(target)
+
+
 def installer(config_path, dry_run=False, secrets_dir=None, quiet=False):
     """Run the fleet installer. quiet keeps its plan to itself, as a check whose plan would mislead does; what it
     refuses still reaches the terminal."""
@@ -1763,6 +1817,13 @@ def stargate_release(answers):
 def check_usage_guard_source(answers, rear, ref):
     # Setup changes officer models and effort, while the saved harness types stay in effect.
     previous = read_json(INPUTS / "fleet.json", {})
+    try:
+        runtime.require_peer_message_source({
+            "captainPeerMessages": answers.get("captainPeerMessages", previous.get("captainPeerMessages")),
+            "stargate": {"repo": STARGATE_REPO, "ref": ref},
+        })
+    except runtime.Invalid as error:
+        raise SetupError(str(error)) from None
     harness = previous.get("harness") or {}
     officer = previous.get("rearAdmiral") or {}
     role_type = (harness.get("rearAdmiral") or {}).get("type", harness.get("type", "opencode"))
@@ -1845,6 +1906,19 @@ def compose(*args, capture=False, check=True, env=None, input_text=None):
     return run("docker", "compose", "--project-name", API_PROJECT, "--project-directory", API_DIR,
                "--env-file", INPUTS / "api.env", "-f", API_DIR / "compose.yaml", "-f", INPUTS / "api.override.yaml",
                *args, capture=capture, check=check, env=env, input_text=input_text, keep_stdin=False)
+
+
+def loopback_irc_host(host):
+    if host.lower().rstrip(".").split(".")[-1] == "localhost":
+        return True
+    try:
+        address = ip_address(host.strip("[]"))
+    except ValueError:
+        try:
+            address = ip_address(socket.inet_aton(host))
+        except OSError:
+            return False
+    return (getattr(address, "ipv4_mapped", None) or address).is_loopback
 
 
 def hosted_api(args, answers, saved):
@@ -2951,8 +3025,9 @@ def register_fleet(registration):
         fleet_records.check(slug, records)
     except fleet_records.Refused as error:
         raise SetupError(f"{error} Set the fleet up again with this version of the installer.") from None
-    require(registration.get("ircHost") not in ("127.0.0.1", "localhost", "::1"),
-            "A further fleet needs a shared IRC server (--irc-server): IRC on its own VM is unreachable from here.")
+    hostname = registration.get("ircHost")
+    require(isinstance(hostname, str) and not loopback_irc_host(hostname),
+            "A further fleet needs a remote IRC server (--irc-server or --irc remote --irc-host).")
     port = registration.get("ircPort")
     require(isinstance(registration.get("ircHost"), str) and isinstance(port, int) and 1 <= port <= 65535,
             "The registration has an invalid IRC server.")
@@ -3156,7 +3231,7 @@ def check_certificates(answers, members, certificates, operator, register):
             "NickServ's accreg capability, or bind the fingerprints by hand, then run setup again.")
 
 
-def irc_bundle(answers, members, secret_store):
+def irc_bundle(answers, members, secret_store, certificates=None):
     """What a shared IRC server needs for this fleet: its SASL accounts and channels."""
     channels = fleet_channels(answers, members)
     topics = [f"{answers['name']} Starbase: admirals and the rear admiral",
@@ -3164,8 +3239,10 @@ def irc_bundle(answers, members, secret_store):
         f"{answers['name']}: {person['name']}'s ship" for person in members[1:]]
     bundle = {
         "fleet": answers["slug"],
-        "accounts": [{"name": account, "password": secret_store.password(f"irc-{account}")}
-                     for account in [person["account"] for person in members]],
+        "accounts": ([{"name": account, "fingerprint": fingerprint} for account, (_, fingerprint) in certificates.items()]
+                     if certificates is not None else [
+                         {"name": person["account"], "password": secret_store.password(f"irc-{person['account']}")}
+                         for person in members]),
         "channels": [{"name": name, "topic": topic} for name, topic in zip(channels, topics, strict=True)],
         "humans": [answers["admin"]],
     }
@@ -3291,11 +3368,16 @@ def configure(args):
                              answers["officerNames"] == "plain" else "fleet-prefixed, as installed; 'subspace-setup "
                              "rename-officers' gives them plain names") + "): "
         + ", ".join(person["account"] for person in members))
-    if answers.get("ircAuth") == "certificate":
+    if local_irc and answers.get("ircAuth") == "certificate":
+        local_irc_tls()
+    elif answers.get("ircAuth") == "certificate":
         operator = irc_operator(args)
         certificates = officer_certificates(members, generate=not args.dry_run)
-        for line in certificate_lines(answers, certificates):
-            say(line)
+        if answers.get("managedSharedIrc") and not args.dry_run:
+            irc_bundle(answers, members, secret_store, certificates)
+        else:
+            for line in certificate_lines(answers, certificates):
+                say(line)
         if operator and args.dry_run:
             check_certificates(answers, members, certificates, operator, register=False)
     elif not local_irc:
@@ -3468,7 +3550,7 @@ def configure(args):
 
 def remote_irc_next_step(answers, operator):
     """What is left to do on a remote IRC server once setup is done."""
-    if answers.get("ircAuth") == "certificate":
+    if answers.get("ircAuth") == "certificate" and not answers.get("managedSharedIrc"):
         # No password bundle exists in this mode: the officers' accounts are bound to their certificates.
         if operator:
             return (f"officers sign in to {answers['ircHost']} with certificates, which setup registered and checked "

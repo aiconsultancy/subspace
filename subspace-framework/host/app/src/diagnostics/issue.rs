@@ -5,17 +5,20 @@ use subspace_product::ProductContext;
 use subspace_report_issue::Diagnostics;
 
 use super::build_identity;
-use crate::theme::bundled_theme_id;
+use crate::theme::{ProductThemes, bundled_theme_id};
 
 /// Inputs are descriptor IDs or embedded appearance identities, never paths.
+/// `product_themes` are the app's own theme documents, whose ids `theme_name`
+/// may resolve to.
 pub(crate) fn collect(
     context: &ProductContext,
     active_board: Option<&str>,
     theme_name: &str,
     icon_size: &str,
+    product_themes: ProductThemes,
 ) -> Diagnostics {
     let facts = IssueDiagnostics::from(build_identity(context))
-        .with_appearance(bundled_theme_id(theme_name), icon_size);
+        .with_appearance(bundled_theme_id(theme_name, product_themes), icon_size);
     let board = active_board.filter(|id| {
         context.product.boards.len() > 1
             && context
@@ -64,6 +67,7 @@ mod tests {
             Some("test-only-private-tunnel-name"),
             "test-only-private-theme-and-token",
             "medium",
+            &[],
         );
         let repository = target(Some("example-org/example-app")).unwrap().unwrap();
         let report = prepare(&Draft::new("A test-only report"), &diagnostics, &repository).unwrap();
@@ -83,10 +87,16 @@ mod tests {
         context.build.commit = "abc1234";
         context.build.dirty = true;
         let board = context.product.boards[0].id.as_str();
-        let diagnostics = collect(&context, Some(board), crate::theme::THEME_NAME, "small");
+        let diagnostics = collect(
+            &context,
+            Some(board),
+            crate::theme::THEME_NAME,
+            "small",
+            &[],
+        );
         assert_eq!(diagnostics.active_board(), Some(board));
         assert_eq!(diagnostics.theme_id(), Some("one-dark"));
-        assert_eq!(bundled_theme_id("not-an-embedded-theme"), "custom");
+        assert_eq!(bundled_theme_id("not-an-embedded-theme", &[]), "custom");
         assert_eq!(diagnostics.commit(), Some("abc1234-dirty"));
     }
 }
