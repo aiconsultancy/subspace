@@ -176,6 +176,7 @@ pub(super) fn render(detail: &IssueDetail, tokens: &Tokens, cx: &mut Context<Iss
         .gap_1p5()
         .child(
             h_flex()
+                .min_w_0()
                 .gap_3()
                 .flex_wrap()
                 .child(
@@ -183,6 +184,8 @@ pub(super) fn render(detail: &IssueDetail, tokens: &Tokens, cx: &mut Context<Iss
                         .id("issue-title")
                         .aria_label(fields.title.clone())
                         .test_support()
+                        .min_w_0()
+                        .max_w_full()
                         .font_family(heading_font(cx))
                         .text_size(tokens.heading_size(ISSUE_TITLE_PX))
                         .font_weight(FontWeight::BOLD)
@@ -195,6 +198,7 @@ pub(super) fn render(detail: &IssueDetail, tokens: &Tokens, cx: &mut Context<Iss
                 .when(tracker || archived, |row| {
                     row.child(
                         h_flex()
+                            .flex_shrink_0()
                             .gap_2()
                             .when(tracker, |marks| {
                                 marks.child(badge("Tracker", tokens.surface, tokens.fg))
