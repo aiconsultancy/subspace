@@ -41,13 +41,19 @@ one shows, and the differences are listed below with their reasons.
   page's fingerprint (else stale) and the same ship, member, project, mode
   and total, and add files; a repeated token, a token after `total` files
   or a list that does not add up to `total` is an invalid response. Nothing
-  is cut.
+  is cut. Each page is cut down to its rows' metadata as it arrives: the
+  list keeps every row but none of the inline patch text, so a 17-page list
+  of 1,088 files (68 MiB of inline patches) holds no patch byte outside the
+  budget.
 - **Patch parts.** Each file's patch is one `createPager` (`src/pager.js`,
   through `src/diff-parts.js`), keyed by the snapshot's fingerprint, the
   mode and the path (SUB decision 75c3ed93 §1). A part is one gateway
-  patch page: the patch the list gave, then each page its `patchNextPage`
-  names, read by `…/diff/file?page=&at=<fingerprint>` with the cursor the
-  page before gave. One part shows at a time, with **First part**,
+  patch page, all from one sequence: the file route's first page,
+  `…/diff/file?path=&at=<fingerprint>`, read when the patch is first shown,
+  then each page its `patchNextPage` names, read with `&page=`. The list's
+  inline patch (its first 64 KiB) is never shown or followed: the file
+  route's first page holds up to 1 MiB, so the two sequences' pages end in
+  different places. One part shows at a time, with **First part**,
   **Previous part** and **Next part**, and **Last part** once the count is
   known (a page naming no next page is the last); Last reads only the last
   page, by its remembered cursor. A patch with no next page is one part,
@@ -59,12 +65,12 @@ one shows, and the differences are listed below with their reasons.
   New, a removed one only Old) open a hex and ASCII view: a 16-digit offset
   in the file, 8 bytes a row and `.` for bytes outside printable ASCII, as
   #110, shown 4 KiB at a time. Each side is one pager (75c3ed93 §2): a part
-  is one gateway binary page, read by `?side=` from the cursor the page
+  is one gateway binary page, read by `?side=` from the token the page
   before gave, at the snapshot's fingerprint, and held as its base64; one
   window is decoded at a time. **First**, **Previous** and **Next** move a
   window; past a part's first or last window they read the part before or
   after, Previous landing on its last window. **Last** shows only once the
-  last page's cursor is known, so it never reads the pages between. Each
+  last page's token is known, so it never reads the pages between. Each
   page must be for the side asked for, `encoding: "base64"`, start at the
   offset the previous one ended at, give the same size, decode to at most
   1 MiB and not run past the size. A page ending before the size must name
@@ -127,7 +133,9 @@ one shows, and the differences are listed below with their reasons.
   boundary continues in the next.
 - **Memory only and chat-free.** Diffs are never stored or logged, never
   reach chat or the page's `setContext` value, and are dropped when the
-  view closes. Image previews revoke their object URL when replaced.
+  view closes. Image previews revoke their object URL when replaced. The
+  panel lets go of a part's windows when the budget frees the part, and of
+  the last view when it closes.
 - **Sample mode.** `src/sample-diff.js` answers the same routes for every
   sample checkout: eight files over two list pages, a patch in three pages,
   a removal, a rename with no content change, an untracked note with a bidi
@@ -189,14 +197,15 @@ fingerprint on `isGit`, the routes' query strings and unread error bodies,
 each status code of the first page, busy retries with `Retry-After`, the
 default wait and the ten-second cap, an empty snapshot, list paging by
 `nextPage` through the real client with an opaque token,
-stale and invalid list pages, patch parts one at a time with Last once the
+stale and invalid list pages, a 17-page list keeping no patch text outside
+the budget and reading an opened patch at the snapshot, charged, patch parts one at a time with Last once the
 count is known, a one-part patch, windows of a long part numbered across
 windows, **Retry page** for a patch and a binary page keeping the part on
 show, busy and gone file pages, a self-pointing or wrong-path page, a 409
 or another fingerprint for a stale `at` leading to Refresh, a part freed by
 the budget read again at the same `at` and at the same part, a 409 on that
 read, an empty binary file, hex windows paging across a part boundary with
-offsets running on, no Last until the last page's cursor is known, binary
+offsets running on, no Last until the last page's token is known, binary
 bytes freed and read again at the same part, binary page checks, an image
 preview grown into free room and given back first, a preview that cannot
 fit, the Activity and diff views sharing one budget without freeing the

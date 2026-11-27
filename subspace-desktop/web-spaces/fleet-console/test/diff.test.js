@@ -52,10 +52,21 @@ const b64 = (bytes) => Buffer.from(bytes).toString("base64");
 /**
  * A diff client answering from `routes`: `list(query, n)` and
  * `file(query, n)` return a value, throw, or return a promise. Every call is
- * recorded, with its signal.
+ * recorded, with its signal. As the gateway, a patch's first file page
+ * (no `page`, no `side`) is the patch the list gave for that path, with its
+ * `patchNextPage`, at the list's fingerprint; `first` replaces that answer,
+ * and `file` hears only the rest (`n` counts what it heard).
  */
-function fakeClient({ list = () => page([file("a.txt")]), file: fileRoute = () => Promise.reject(new HttpError(404)) } = {}) {
+function fakeClient({ list = () => page([file("a.txt")]), file: fileRoute = () => Promise.reject(new HttpError(404)), first = null } = {}) {
   const calls = [];
+  const listed = new Map();
+  let at = null;
+  let heard = 0;
+  const firstPage = (query) => {
+    const row = listed.get(query.path);
+    if (!row || query.at !== at) return Promise.reject(new HttpError(row ? 409 : 404));
+    return { fingerprint: at, file: row };
+  };
   return {
     calls,
     lists: () => calls.filter((call) => call.kind === "list"),
@@ -64,12 +75,19 @@ function fakeClient({ list = () => page([file("a.txt")]), file: fileRoute = () =
       diff: async (ship, member, query, signal) => {
         const n = calls.filter((call) => call.kind === "list").length;
         calls.push({ kind: "list", ship, member, query, signal });
-        return list(query, n);
+        const answer = await list(query, n);
+        if (answer?.files) {
+          if (answer.fingerprint !== at) listed.clear();
+          at = answer.fingerprint;
+          for (const row of answer.files) if (!listed.has(row.path)) listed.set(row.path, row);
+        }
+        return answer;
       },
       diffFile: async (ship, member, query, signal) => {
-        const n = calls.filter((call) => call.kind === "file").length;
         calls.push({ kind: "file", ship, member, query, signal });
-        return fileRoute(query, n);
+        if (query.page === undefined && query.side === undefined) return (first ?? firstPage)(query);
+        heard += 1;
+        return fileRoute(query, heard - 1);
       },
     },
   };
@@ -307,14 +325,14 @@ test("diff patch: one part at a time, each a gateway page pinned to the fingerpr
   await flush();
   panel.update(watcher.view, { name: "Starbuck" });
   const patch = () => watcher.view.patch(0);
-  assert.equal(patch().part, 0, "the inline patch is the first part");
-  assert.equal(files().length, 0, "read from the list, not the file route");
+  assert.equal(patch().part, 0);
+  assert.deepEqual(files().map((call) => call.query), [{ project: "subspace", mode: "branch", path: "big.ts", page: undefined, at: FP }], "the first part is the file route's first page at the snapshot, not the list's inline copy");
   assert.match(panel.root.textContent, /Part 1 of 2\+/);
   assert.deepEqual(buttonsIn(panel.root, "Last part"), [], "no Last while the count is unknown");
   panel.root.listeners.click({ target: buttonsIn(panel.root, "Next part")[0] });
   await flush();
   panel.update(watcher.view, { name: "Starbuck" });
-  assert.deepEqual(files()[0].query, { project: "subspace", mode: "branch", path: "big.ts", page: "p2", at: FP });
+  assert.deepEqual(files()[1].query, { project: "subspace", mode: "branch", path: "big.ts", page: "p2", at: FP });
   assert.equal(patch().data, PATCH_PAGES.p2.patch, "the part replaces the one before: nothing appends");
   assert.deepEqual(added(panel), ["10"], "line numbers from the part's own hunk");
   await watcher.movePatch(0, "next");
@@ -381,7 +399,7 @@ test("diff patch: a failed page keeps the part on show and offers Retry page, wh
   assert.match(panel.root.textContent, new RegExp(DIFF_MESSAGES.failed.replace(/[()]/g, "\\$&")));
   panel.root.listeners.click({ target: buttonsIn(panel.root, "Retry page")[0] });
   await flush();
-  assert.deepEqual(files().map((call) => call.query.page), ["p2", "p2"]);
+  assert.deepEqual(files().map((call) => call.query.page), [undefined, "p2", "p2"]);
   assert.equal(watcher.view.patch(0).part, 1);
   assert.equal(watcher.view.patch(0).state, "ready");
 });
@@ -455,13 +473,13 @@ test("diff patch: a part the budget let go is read again at the same `at` when n
   await watcher.openPatch(0);
   await watcher.movePatch(0, "next");
   assert.equal(watcher.view.patch(0).count, 2, "the second page is the last");
-  assert.equal(files().length, 1);
+  assert.equal(files().length, 2, "a.ts's first page, then p2");
   await watcher.openPatch(1);
   assert.equal(watcher.view.patch(0).evicted, true, "opening b.ts's patch let a.ts's part go");
   assert.equal(watcher.view.patch(1).state, "ready", "the latest request is held");
   await watcher.openPatch(0);
-  assert.equal(files().length, 2);
-  assert.deepEqual(files()[1].query, { project: "subspace", mode: "branch", path: "a.ts", page: "p2", at: FP }, "the same page at the same `at`");
+  assert.equal(files().length, 4, "b.ts's first page, then only a.ts's p2 again");
+  assert.deepEqual(files()[3].query, { project: "subspace", mode: "branch", path: "a.ts", page: "p2", at: FP }, "the same page at the same `at`");
   assert.equal(watcher.view.patch(0).part, 1, "the part shown before, not the first");
   assert.equal(watcher.view.patch(0).state, "ready");
   assert.equal(watcher.view.patch(0).hasLast, false, "on the last part");
@@ -745,7 +763,7 @@ test("diff cancel: a page read waiting in backoff is cancelled when the fingerpr
   assert.equal(timers.pending(), 0, "the wait is cancelled");
   timers.fire();
   await flush();
-  assert.equal(files().length, 1, "no read at the stale fingerprint");
+  assert.equal(files().length, 2, "the first page and the waiting read; none at the stale fingerprint");
   assert.equal(watcher.view.patch(0).part, 0, "the part on show stays");
 });
 
@@ -761,7 +779,7 @@ test("diff cancel: closing the view cancels reads in backoff and in flight", asy
   assert.equal(timers.pending(), 0);
   timers.fire();
   await flush();
-  assert.equal(files().length, 1);
+  assert.equal(files().length, 2);
   assert.equal(changes(), before, "nothing reaches a closed view");
   assert.equal(watcher.view.budget.used, 0, "and it holds nothing of the budget");
   // A list read in flight when the view closes: its signal aborts and its answer is dropped.
@@ -886,7 +904,7 @@ test("diff source: the sample fleet serves a checkout with paging, markers and b
   assert.equal(watcher.view.status, "ready", JSON.stringify(watcher.view.error));
   assert.equal(watcher.view.files.length, watcher.view.diff.total);
   assert.ok(watcher.view.files.length > 4, "more than one list page");
-  const route = watcher.view.files.findIndex((e) => e.first);
+  const route = watcher.view.files.findIndex((e) => e.file.path === "src/warp/route.ts");
   await watcher.openPatch(route);
   await watcher.movePatch(route, "next");
   assert.equal(watcher.view.patch(route).part, 1, "a patch in parts");
@@ -908,6 +926,63 @@ test("diff source: the sample fleet serves a checkout with paging, markers and b
 });
 
 // ---------- the console's one budget (SUB decision 75c3ed93 §3) ----------
+
+/**
+ * The patch text a view keeps, in UTF-8 bytes: every distinct string of at
+ * least 1 KiB reachable from the view's data (its rows and snapshot), and the
+ * parts on show of the patches `opened`. Metadata is far shorter.
+ */
+function retainedText(view, opened = []) {
+  const seen = new Set();
+  const strings = new Set();
+  const walk = (value) => {
+    if (typeof value === "string") {
+      if (value.length >= 1024) strings.add(value);
+    } else if (value && typeof value === "object" && !seen.has(value)) {
+      seen.add(value);
+      for (const item of Object.values(value)) walk(item);
+    }
+  };
+  walk({ files: view.files, diff: view.diff });
+  for (const index of opened) walk(view.patch(index)?.data);
+  return [...strings].reduce((sum, text) => sum + Buffer.byteLength(text), 0);
+}
+
+test("diff budget: a 17-page list keeps no patch text outside the budget; an opened patch is read at the snapshot and charged", async () => {
+  // Stargate's list pages hold at most 4 MiB of inline patches, 64 KiB a file:
+  // 17 full pages are 1,088 files and 68 MiB, more than the 64 MiB budget.
+  const rows = 17 * 64;
+  const inline = (path) => `+${path}${"x".repeat(65_534 - path.length)}\n`;
+  const budget = createBudget(64 * 2 ** 20);
+  const { watcher, files, lists } = watch(
+    {
+      list: (query) => {
+        const offset = Number(query.page ?? 0);
+        const listed = Array.from({ length: 64 }, (_, n) => file(`file-${offset + n}.txt`, { status: "added", patch: inline(`file-${offset + n}.txt`) }));
+        return page(listed, { total: rows, ...(offset + 64 < rows ? { nextPage: String(offset + 64) } : {}) });
+      },
+    },
+    { budget },
+  );
+  watcher.start();
+  await settle();
+  assert.equal(watcher.view.status, "ready", watcher.view.error?.message ?? watcher.view.status);
+  assert.equal(lists().length, 17);
+  assert.equal(watcher.view.files.length, rows, "every row is listed");
+  assert.equal(retainedText(watcher.view), 0, "no list page's patch text is kept");
+  assert.ok(watcher.view.files.every((entry) => !("patch" in entry.file) && !("patchNextPage" in entry.file)));
+  assert.equal(files().length, 0, "nothing is read until a patch is opened");
+  const last = rows - 1;
+  await watcher.openPatch(last);
+  assert.deepEqual(files().map((call) => call.query), [{ project: "subspace", mode: "branch", path: `file-${last}.txt`, page: undefined, at: FP }]);
+  assert.equal(watcher.view.patch(last).data, inline(`file-${last}.txt`));
+  const retained = retainedText(watcher.view, [last]);
+  assert.ok(retained > 0 && budget.used >= retained && retained <= budget.limit, `${retained} retained, ${budget.used} charged, ${budget.limit} limit`);
+  watcher.stop();
+  assert.equal(retainedText(watcher.view), 0, "closed: nothing kept");
+  assert.equal(budget.used, 0);
+});
+
 
 test("diff budget: the views share one budget through scopes; each frees the other's oldest, never the latest request", () => {
   const budget = createBudget(100);

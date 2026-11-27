@@ -316,6 +316,8 @@ export function createDiffPanel({ doc, watcher, onClose, urls = globalThis.URL }
   /** The selected file's patch as the panel draws it, or null: the part on show, its windows and the section drawn. */
   function shownPatch(view) {
     const patch = view.status === "ready" && selected !== null ? view.patch(selected) : null;
+    // Nothing on show: let go of the windows of a part the budget freed.
+    if (!patch || patch.data === null) windowsOf = { data: null, start: null, windows: null };
     if (!patch) return null;
     if (patch.data === null) return { patch, windows: null, section: 0 };
     if (windowsOf.data !== patch.data || windowsOf.start !== patch.start) {
@@ -439,8 +441,12 @@ export function createDiffPanel({ doc, watcher, onClose, urls = globalThis.URL }
       last = { view, member };
       redraw();
     },
+    /** Closed: let go of the last view and the part windows drawn from it. */
     destroy() {
       dropImage();
+      last = null;
+      files = null;
+      windowsOf = { data: null, start: null, windows: null };
     },
   };
 }

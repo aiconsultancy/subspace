@@ -54,6 +54,11 @@ function sampleFiles() {
 
 const ROUTE_PAGES = { "route-1": { patch: routePatch(1), next: "route-2" }, "route-2": { patch: routePatch(2), next: undefined } };
 
+/**
+ * A sample file as the gateway sends it: without the sample's own `mode` and `sides`.
+ *
+ * @param {{mode?: string, sides?: object, [field: string]: unknown}} entry
+ */
 const wire = ({ mode: _, sides: __, ...file }) => file;
 
 /**
@@ -105,6 +110,8 @@ export function createSampleDiffClient({ fingerprintFor, now = Date.now }) {
         const content = { side, encoding: "base64", offset, size: bytes.length, ...(end > offset ? { data: base64Of(bytes.subarray(offset, end)) } : {}), ...(end < bytes.length ? { nextPage: `at-${end}` } : {}) };
         return Promise.resolve({ fingerprint, file: wire({ ...file, patch: null }), content });
       }
+      // The first page is the patch from its start; only route.ts goes on.
+      if (page === undefined) return Promise.resolve({ fingerprint, file: wire(file) });
       const next = ROUTE_PAGES[page];
       if (file.path !== "src/warp/route.ts" || !next) return Promise.reject(new HttpError(400));
       return Promise.resolve({ fingerprint, file: wire({ ...file, patch: next.patch, patchNextPage: next.next }) });

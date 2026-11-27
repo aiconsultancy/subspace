@@ -255,11 +255,25 @@ function checkDiffPage(page, target, mode) {
 const sameCheckout = (a, b) => a.ship === b.ship && a.member === b.member && (a.project ?? null) === (b.project ?? null) && a.mode === b.mode && a.total === b.total;
 
 /**
+ * A row of the file list as the view keeps it: the file's metadata, and
+ * whether it has a patch to read. The list's inline patch is not kept: a
+ * patch is read a part at a time from the file route at the snapshot's
+ * fingerprint, its first page included, so every patch byte held is a
+ * pager's part, charged to the budget (thermo P1-2 on #169).
+ */
+function listedRow(file) {
+  const { patch, patchNextPage, ...rest } = file;
+  return { file: { ...rest, previousPath: file.previousPath ?? null }, patched: (patch ?? "") !== "" || patchNextPage !== undefined };
+}
+
+/**
  * Read every page of the file list for one snapshot, following each page's
  * opaque `nextPage` token (STAR-5's `page` parameter). Each page must carry
  * the first page's fingerprint (else the snapshot moved on: stale) and
  * checkout, add files, and never repeat a token; the pages must list exactly
- * `total` files. Nothing is cut: it returns the whole list or throws.
+ * `total` files. Nothing is cut: it returns the whole list or throws. Each
+ * page is cut down to its rows' metadata (`listedRow`) as it arrives, so no
+ * page's patch text outlives the read of that page.
  */
 export async function loadDiffList(client, target, mode, read) {
   const query = (page) => ({ project: target.project, mode, page });
@@ -270,7 +284,7 @@ export async function loadDiffList(client, target, mode, read) {
     throw tagFirst(error);
   }
   checkDiffPage(first, target, mode);
-  const files = [...first.files];
+  const files = first.files.map(listedRow);
   let unstable = first.unstable === true;
   let token = first.nextPage ?? null;
   const seen = new Set();
@@ -283,13 +297,13 @@ export async function loadDiffList(client, target, mode, read) {
     checkDiffPage(page, target, mode);
     if (page.fingerprint !== first.fingerprint) throw new StaleError();
     if (!page.files.length || !sameCheckout(first, page)) throw new InvalidResponseError("A later page of the file list is for another checkout or is empty.");
-    files.push(...page.files);
+    files.push(...page.files.map(listedRow));
     unstable ||= page.unstable === true;
     token = page.nextPage ?? null;
   }
   if (files.length !== first.total) throw new InvalidResponseError(`The file list has ${files.length} files, not ${first.total}.`);
-  const { nextPage: _, files: __, ...rest } = first;
-  return { ...rest, unstable, files };
+  const { nextPage: _, files: __, ...summary } = first;
+  return { summary: { ...summary, unstable }, files };
 }
 
 /** Marks an error from the list's first page, where 404 means no diff here. */
@@ -466,11 +480,8 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     sources.clear();
   }
 
-  /** A file of the list: its inline patch is its first part, `first` the cursor of the page after it. */
-  function entryFor(file, index) {
-    const { patch, patchNextPage, ...rest } = file;
-    return { index, file: { ...rest, previousPath: file.previousPath ?? null }, inline: patch ?? null, first: patchNextPage ?? null };
-  }
+  /** A row of the list, by its place in it. */
+  const entryFor = (row, index) => ({ index, ...row });
 
   async function load() {
     cancelSnapshotReads();
@@ -495,12 +506,12 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     try {
       const loaded = await loadDiffList(client, target, mode, mine);
       if (!current(gen)) return;
-      diff = loaded;
-      unstable = loaded.unstable;
+      diff = loaded.summary;
+      unstable = diff.unstable;
       files = loaded.files.map(entryFor);
       status = "ready";
-      liveChanged = liveRevision !== baseline && live !== null && live !== loaded.fingerprint;
-      fingerprint = loaded.fingerprint;
+      liveChanged = liveRevision !== baseline && live !== null && live !== diff.fingerprint;
+      fingerprint = diff.fingerprint;
       if (liveChanged) cancelSnapshotReads();
     } catch (failure) {
       if (!current(gen)) return;
@@ -552,12 +563,15 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
   }
 
   const patchKey = (entry) => ["patch", fingerprint, mode, entry.file.path].join("\u0000");
-  const hasPatch = (entry) => Boolean(entry) && !entry.file.binary && (entry.inline !== null || entry.first !== null);
+  const hasPatch = (entry) => Boolean(entry) && !entry.file.binary && entry.patched;
 
   /**
-   * The patch of file `index` as parts (SUB decision 75c3ed93 §1): its
-   * inline patch, then each page `patchNextPage` names, read at the
-   * snapshot's fingerprint. A patch with no next page is one part.
+   * The patch of file `index` as parts (SUB decision 75c3ed93 §1): the file
+   * route's first page, then each page its `patchNextPage` names, all read
+   * at the snapshot's fingerprint. One sequence of pages: the list's inline
+   * preview (64 KiB) ends elsewhere than the file route's first page (1 MiB),
+   * so its token is never followed here. A patch with no next page is one
+   * part.
    */
   function patchSource(index) {
     const entry = files[index];
@@ -579,13 +593,9 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       onChange: emit,
       read: ({ part, cursor, start, signal }) =>
         partRead(gen, async () => {
-          let text = entry.inline;
-          let next = entry.first;
-          if (part > 0 || text === null) {
-            const page = cursor ?? entry.first;
-            const answer = await readFile(snapshot, at, { path, page }, signal);
-            ({ patch: text, next } = validatePatchPage(answer, { path, page, at }));
-          }
+          const page = part === 0 ? undefined : cursor;
+          const answer = await readFile(snapshot, at, { path, page }, signal);
+          const { patch: text, next } = validatePatchPage(answer, { path, page: page ?? null, at });
           return { data: text, next, after: patchLines(text, start).end };
         }),
     });
