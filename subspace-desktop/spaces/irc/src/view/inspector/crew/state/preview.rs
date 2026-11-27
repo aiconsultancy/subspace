@@ -112,10 +112,12 @@ pub(super) fn diverged(old: &Task, new: &Task, full: Option<&Task>) -> bool {
     })
 }
 
-pub(super) fn overlay_text(shown: &mut Task, old: &Task, new: &Task) -> PartialFields {
+pub(super) fn overlay_text(shown: &mut Task, baseline: Option<&Task>, new: &Task) -> PartialFields {
     PartialFields(Field::ALL.map(|field| {
         let preview = field.text(new);
-        if field.text(old) == preview || field.is_projection(field.text(shown), preview) {
+        if baseline.is_some_and(|old| field.text(old) == preview)
+            || field.is_projection(field.text(shown), preview)
+        {
             return false;
         }
         *field.text_mut(shown) = preview.to_owned();

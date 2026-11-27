@@ -1,8 +1,9 @@
 //! Apply changes between bounded roster snapshots to a full-detail context.
 
 use std::borrow::Cow;
+use std::cmp::Ordering;
 
-use subspace_client_fleet::model::{CrewContext, CrewMember, Git, PullRequest};
+use subspace_client_fleet::model::{CrewContext, CrewMember, Git, PullRequest, Task};
 
 use super::preview::{PartialFields, overlay_text};
 use super::roster::{same_checkout, task_revision};
@@ -24,8 +25,15 @@ pub(super) fn overlay_facts(
     let git_changed = git_changed(&old.git, &new.git);
     let pr_changed =
         old.pull_request != new.pull_request || old.pull_request_known != new.pull_request_known;
-    let task_changed = task_revision(old.current.as_ref()) != task_revision(new.current.as_ref());
-    if !(git_changed || pr_changed || task_changed)
+    let index = shown
+        .contexts
+        .iter()
+        .position(|context| context.project == new.project);
+    let fetched = index.and_then(|index| shown.contexts[index].current.as_ref());
+    let change = TaskChange::between(fetched, old.current.as_ref(), new.current.as_ref());
+    if !git_changed
+        && !pr_changed
+        && change == TaskChange::None
         && old.activity == new.activity
         && old.provisioned == new.provisioned
     {
@@ -33,7 +41,7 @@ pub(super) fn overlay_facts(
     }
 
     let contexts = &mut shown.to_mut().contexts;
-    let Some(context) = contexts.iter_mut().find(|ctx| ctx.project == new.project) else {
+    let Some(context) = index.and_then(|index| contexts.get_mut(index)) else {
         contexts.push(new.clone());
         return PartialFields::from_roster(new.current.as_ref());
     };
@@ -41,32 +49,63 @@ pub(super) fn overlay_facts(
         overlay_checkout(context, old, new, git_changed, pr_changed);
     }
     overlay!(context, old, new; activity, provisioned);
-    if task_changed {
-        overlay_task(context, old, new)
-    } else {
-        PartialFields::default()
+    overlay_task(context, old, new, change)
+}
+
+#[derive(PartialEq, Eq)]
+enum TaskChange {
+    None,
+    NewerFeed,
+    RosterDelta,
+}
+
+impl TaskChange {
+    fn between(fetched: Option<&Task>, start: Option<&Task>, feed: Option<&Task>) -> Self {
+        match (task_order(fetched, feed), fetched, feed) {
+            // An older feed cannot replace a newer reply, even across task IDs.
+            (Some(Ordering::Greater), _, _) => Self::None,
+            (Some(Ordering::Less), Some(fetched), Some(feed)) if fetched.id == feed.id => {
+                Self::NewerFeed
+            }
+            _ if task_revision(start) != task_revision(feed) => Self::RosterDelta,
+            _ => Self::None,
+        }
     }
 }
 
-fn overlay_task(context: &mut CrewContext, old: &CrewContext, new: &CrewContext) -> PartialFields {
-    match (&mut context.current, &old.current, &new.current) {
-        (Some(shown), Some(old), Some(new)) if shown.id == new.id => {
-            // The detail endpoint can see a revision the feed has not reached
-            // yet. A feed update after the read started is not always newer.
-            if task_revision(Some(shown)) == task_revision(Some(new))
-                || matches!((shown.updated_at, new.updated_at), (Some(fetched), Some(feed)) if fetched > feed)
-            {
-                return PartialFields::default();
-            }
-            let partial = overlay_text(shown, old, new);
-            overlay!(shown, old, new; status, updated_at);
-            partial
+fn overlay_task(
+    context: &mut CrewContext,
+    old: &CrewContext,
+    new: &CrewContext,
+    change: TaskChange,
+) -> PartialFields {
+    match (change, &mut context.current, &old.current, &new.current) {
+        (TaskChange::None, ..) => PartialFields::default(),
+        (TaskChange::NewerFeed, Some(shown), _, Some(new)) => {
+            shown.status = new.status;
+            shown.updated_at = new.updated_at;
+            overlay_text(shown, None, new)
         }
-        (shown, _, new) => {
+        (_, Some(shown), Some(old), Some(new)) if shown.id == new.id => {
+            overlay_without_newer_revision(shown, old, new)
+        }
+        (_, shown, _, new) => {
             shown.clone_from(new);
             PartialFields::from_roster(new.as_ref())
         }
     }
+}
+
+fn task_order(fetched: Option<&Task>, feed: Option<&Task>) -> Option<Ordering> {
+    Some(fetched?.updated_at?.cmp(&feed?.updated_at?))
+}
+
+fn overlay_without_newer_revision(shown: &mut Task, old: &Task, new: &Task) -> PartialFields {
+    if task_revision(Some(shown)) == task_revision(Some(new)) {
+        return PartialFields::default();
+    }
+    overlay!(shown, old, new; status, updated_at);
+    overlay_text(shown, Some(old), new)
 }
 
 fn git_changed(old: &Option<Git>, new: &Option<Git>) -> bool {

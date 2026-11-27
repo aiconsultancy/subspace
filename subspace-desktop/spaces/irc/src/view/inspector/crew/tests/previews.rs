@@ -1,7 +1,7 @@
 //! Read demand and displayed text for same-revision task previews.
 
 use subspace_client_fleet::Error;
-use subspace_client_fleet::model::CrewMember;
+use subspace_client_fleet::model::{CrewMember, TaskStatus};
 
 use super::super::state::Field;
 use super::{DetailState, Roster, assert_progress, member, roster};
@@ -79,6 +79,97 @@ fn a_feed_revision_behind_the_reply_never_replaces_its_fetched_text() {
     let (shown, _, previews) = state.shown(true);
     assert_eq!(shown.unwrap().current_task(), fetched.current_task());
     assert!(!previews.fields(Some("chart")).contains(Field::Progress));
+}
+
+#[test]
+fn a_newer_feed_can_return_to_the_request_start_text_and_status() {
+    let tail = "🌊".repeat(400);
+    let mut start = revision(&tail, 1);
+    let task = start.contexts[0].current.as_mut().unwrap();
+    task.phase = "implement".into();
+    task.status = TaskStatus::Running;
+    let mut state = DetailState::new(present(start.clone()), 0);
+    let first = state.begin().unwrap();
+    let mut fetched = revision(&"z".repeat(2000), 2);
+    let task = fetched.contexts[0].current.as_mut().unwrap();
+    task.phase = "review".into();
+    task.status = TaskStatus::Uncertain;
+    state.finish(first, Ok(fetched.clone()));
+    assert_eq!(
+        state.shown(true).0.unwrap().current_task(),
+        fetched.current_task()
+    );
+
+    start.contexts[0].current.as_mut().unwrap().updated_at = Some(3);
+    assert!(state.update(present(start.clone()), 0));
+    let follow_up = state.begin().expect("new revision queues a read");
+    state.finish(follow_up, Err(Error::InvalidResponse));
+    assert!(state.retry_delay().is_none());
+    assert!(state.begin().is_none());
+    assert!(state.can_retry());
+
+    let (shown, note, marks) = state.shown(true);
+    assert!(note.unwrap().contains("last available"));
+    assert_eq!(shown.unwrap().current_task(), start.current_task());
+    assert!(marks.fields(Some("chart")).contains(Field::Progress));
+    assert!(!marks.fields(Some("chart")).contains(Field::Phase));
+}
+
+#[test]
+fn a_feed_known_newer_at_admission_still_wins_over_an_older_reply() {
+    let tail = "x".repeat(400);
+    let mut feed = revision(&tail, 3);
+    feed.contexts[0].current.as_mut().unwrap().status = TaskStatus::Running;
+    let mut state = DetailState::new(present(feed.clone()), 0);
+    let read = state.begin().unwrap();
+    state.finish(read, Ok(revision(&"z".repeat(2000), 2)));
+
+    let (shown, _, previews) = state.shown(true);
+    assert_eq!(shown.unwrap().current_task(), feed.current_task());
+    assert!(previews.fields(Some("chart")).contains(Field::Progress));
+    assert!(
+        state.begin().is_none(),
+        "no extra read without new feed demand"
+    );
+}
+
+#[test]
+fn an_intermediate_feed_revision_cannot_replace_a_fetched_successor() {
+    let mut state = DetailState::new(present(revision("Starting", 1)), 0);
+    let first = state.begin().unwrap();
+    assert!(state.update(present(revision(&"x".repeat(400), 2)), 0));
+    let mut fetched = revision(&"z".repeat(2000), 3);
+    fetched.contexts[0].current.as_mut().unwrap().id = "successor".into();
+    state.finish(first, Ok(fetched.clone()));
+    assert_eq!(
+        state.shown(true).0.unwrap().current_task(),
+        fetched.current_task()
+    );
+
+    let follow_up = state.begin().expect("intermediate update queued a read");
+    state.finish(follow_up, Err(Error::InvalidResponse));
+    let (shown, _, marks) = state.shown(true);
+    assert_eq!(shown.unwrap().current_task(), fetched.current_task());
+    assert!(!marks.fields(Some("chart")).contains(Field::Progress));
+}
+
+#[test]
+fn missing_timestamps_do_not_make_either_assignment_newer() {
+    for (fetched_at, feed_at) in [(Some(3), None), (None, Some(2))] {
+        let mut state = DetailState::new(present(revision("Starting", 1)), 0);
+        let first = state.begin().unwrap();
+        let mut feed = revision("Checking", 2);
+        feed.contexts[0].current.as_mut().unwrap().updated_at = feed_at;
+        assert!(state.update(present(feed.clone()), 0));
+        let mut fetched = revision("A different task", 3);
+        let task = fetched.contexts[0].current.as_mut().unwrap();
+        task.id = "successor".into();
+        task.updated_at = fetched_at;
+        state.finish(first, Ok(fetched));
+
+        let shown = state.shown(true).0.unwrap();
+        assert_eq!(shown.current_task(), feed.current_task());
+    }
 }
 
 #[test]
