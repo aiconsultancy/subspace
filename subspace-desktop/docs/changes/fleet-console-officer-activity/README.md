@@ -59,7 +59,9 @@ the desktop side are separate work.
   more than `partBytes`, has no data, or does not advance is a failure.
   `splitBounded(text, {maxBytes, maxLines})` splits text into windows
   between code points.
-- **Budget.** `src/budget.js` is one view's byte budget (64 MiB). It is a
+- **Budget.** `src/budget.js` is one view's byte budget (64 MiB). The
+  console holds one and gives each view its own `scope` of it (see the
+  [crew diff spec](../fleet-console-crew-diff/README.md)). It is a
   cache budget only (SUB `20ce0349`): larger content is paged, never hidden
   or cut. The budget is shared by the inline snapshot, the items read and
   what the panel draws. The inline snapshot is charged first as `inline`,
