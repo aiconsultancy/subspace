@@ -143,7 +143,10 @@ one shows, and the differences are listed below with their reasons.
   64 KiB as shown, markers included, and 1,000 lines, measured by
   `src/document.js` `measurePieces`), each with First, Previous, Next and
   Last. Line numbers run on across windows and parts; a line split by a
-  boundary continues in the next.
+  boundary continues in the next. A hunk header split before its closing
+  `@@` shows as a header and counts as nothing; its start is carried
+  (under 80 characters) and the next window or part completes it, so the
+  numbers after it are the header's.
 - **Memory only and chat-free.** Diffs are never stored or logged, never
   reach chat or the page's `setContext` value, and are dropped when the
   view closes. Image previews revoke their object URL when replaced. The
@@ -209,26 +212,29 @@ feature gate on the crew card (on, off, absent, Git error, no worktree), the
 fingerprint on `isGit`, the routes' query strings and unread error bodies,
 each status code of the first page, busy retries with `Retry-After`, the
 default wait and the ten-second cap, an empty snapshot, list paging by
-`nextPage` through the real client with an opaque token,
-stale and invalid list pages, a 17-page list keeping no patch text outside
-the budget and reading an opened patch at the snapshot, charged, rows
-sharing a display path each showing their own patch from their own list
-page (stale at another fingerprint) and no bytes, patch parts one at a time
-with Last once the count is known, a one-part patch, windows of a long part
-numbered across windows, **Retry page** for a patch and a binary page keeping the part on
-show, busy and gone file pages, a self-pointing or wrong-path page, a 409
-or another fingerprint for a stale `at` leading to Refresh, a part freed by
-the budget read again at the same `at` and at the same part, before the
-count is known too (by its own cursor, with no Last), a 409 on that read, an empty binary file, hex windows paging across a part boundary with
-offsets running on, no Last until the last page's token is known, binary
-bytes freed and read again at the same part, binary page checks, an image
-preview grown into free room and given back first, a preview that cannot
-fit, the Activity and diff views sharing one budget without freeing the
-latest request, `wouldFree` on a scope naming only that view's keys with a
-yielding entry first and admitting as `reserve` does with its `pinned`
-option, the Activity view's growth refit on the shared budget, the
-fingerprint banner (moved, repeated, absent, moved during the load, unstable), cancellation of reads in
-backoff when the fingerprint goes stale, the view closes or Hide bytes is
-pressed, a late answer dropped after a stale fingerprint, Refresh and a mode
-change dropping the old snapshot, a token change while a read is held, and
-the sample checkout end to end with markers.
+`nextPage` through the real client with an opaque token, stale and invalid
+list pages, a 17-page list keeping no patch text outside the budget and
+reading an opened patch at the snapshot, charged, rows sharing a display
+path each showing their own patch from their own list page (stale at another
+fingerprint) and no bytes, patch parts one at a time with Last once the
+count is known, a one-part patch, windows of a long part numbered across
+windows, a hunk header split at every position by a part or window boundary
+numbering as the whole patch does, **Retry page** for a patch and a binary
+page keeping the part on show, busy and gone file pages, a self-pointing or
+wrong-path page, a 409 or another fingerprint for a stale `at` leading to
+Refresh, a part freed by the budget read again at the same `at` and at the
+same part, before the count is known too (by its own cursor, with no Last),
+a 409 on that read, an empty binary file, hex windows paging across a part
+boundary with offsets running on, no Last until the last page's token is
+known, binary bytes freed and read again at the same part, binary page
+checks, an image preview grown into free room and given back first, a
+preview that cannot fit, the Activity and diff views sharing one budget
+without freeing the latest request, `wouldFree` on a scope naming only that
+view's keys with a yielding entry first and admitting as `reserve` does with
+its `pinned` option, the Activity view's growth refit on the shared budget,
+the fingerprint banner (moved, repeated, absent, moved during the load,
+unstable), cancellation of reads in backoff when the fingerprint goes stale,
+the view closes or Hide bytes is pressed, a late answer dropped after a
+stale fingerprint, Refresh and a mode change dropping the old snapshot, a
+token change while a read is held, and the sample checkout end to end with
+markers.

@@ -116,47 +116,70 @@ export function createPartSource({ budget, key, version, partBytes, drawn, first
 
 /**
  * Where a stretch of patch text starts: the old and new line numbers of
- * its next line, and the kind of the line it starts inside, when a page or
- * window boundary split one (else null).
+ * its next line, the kind of the line it starts inside, when a page or
+ * window boundary split one (else null), and `head`, the text before the
+ * boundary of a split line that may yet be a hunk header (else null).
  *
- * @typedef {{old: number, new: number, open: string|null}} PatchStart
+ * @typedef {{old: number, new: number, open: string|null, head: string|null}} PatchStart
  * @type {Readonly<PatchStart>}
  */
-export const PATCH_START = Object.freeze({ old: 0, new: 0, open: null });
+export const PATCH_START = Object.freeze({ old: 0, new: 0, open: null, head: null });
 
 const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+/** The start of a hunk header cut short anywhere before its closing `@@`, from the first `@`. */
+const HUNK_START = /^@(?:@(?: (?:-(?:\d+(?:,(?:\d+)?)?(?: (?:\+(?:\d+(?:,(?:\d+)?)?(?: @?)?)?)?)?)?)?)?)?$/;
+/** The longest a hunk header runs to its closing `@@`, two 16-digit ranges each side; a longer start is not one. */
+const HUNK_HEAD_MAX = 80;
 const lineKind = (line) => (HUNK.test(line) ? "hunk" : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line.startsWith("\\") ? "note" : "ctx");
+/** Whether a line a boundary cut short may still turn out to be a hunk header. */
+const hunkStart = (text) => text.length < HUNK_HEAD_MAX && HUNK_START.test(text);
 
 /**
  * Lines of patch text with their old and new line numbers, from the hunk
  * headers, continuing from `from`. A line split by the boundary before the
  * text continues as its kind with no numbers (`more`), so the parts and
- * windows of one patch number as the whole would. `end` is where the next
- * stretch starts.
+ * windows of one patch number as the whole would. A line cut short where it
+ * may still be a hunk header (`@@ -50,1 +`) shows as one and counts as
+ * nothing; its text so far is carried (`head`, bounded) and the rest, after
+ * the boundary, decides it: a header sets the numbers, anything else counts
+ * once as its kind. `end` is where the next stretch starts.
  */
 export function patchLines(text, from = PATCH_START) {
   if (text === "") return { lines: [], end: from };
   const lines = text.split("\n");
   const ended = lines[lines.length - 1] === "";
   if (ended && lines.length > 1) lines.pop();
+  const lastIndex = lines.length - 1;
   let oldLine = from.old;
   let newLine = from.new;
-  const out = lines.map((line, index) => {
-    if (index === 0 && from.open) return { kind: from.open, text: line, old: null, new: null, more: true };
-    const kind = lineKind(line);
+  let head = null;
+  /** Number a whole line (`whole`) shown as `shown`, `more` when it began before the boundary. */
+  const number = (whole, shown, index, more) => {
+    const tag = more ? { more: true } : {};
+    // Cut short at the end, and may still be a header: count nothing yet.
+    if (index === lastIndex && !ended && !HUNK.test(whole) && hunkStart(whole)) {
+      head = whole;
+      return { kind: "hunk", text: shown, old: null, new: null, ...tag };
+    }
+    const kind = lineKind(whole);
     if (kind === "hunk") {
-      const hunk = HUNK.exec(line);
+      const hunk = HUNK.exec(whole);
       oldLine = Number(hunk[1]);
       newLine = Number(hunk[2]);
-      return { kind, text: line, old: null, new: null };
+      return { kind, text: shown, old: null, new: null, ...tag };
     }
-    if (kind === "add") return { kind, text: line, old: null, new: newLine++ };
-    if (kind === "del") return { kind, text: line, old: oldLine++, new: null };
-    if (kind === "note") return { kind, text: line, old: null, new: null };
-    return { kind, text: line, old: oldLine++, new: newLine++ };
+    if (kind === "add") return { kind, text: shown, old: null, new: newLine++, ...tag };
+    if (kind === "del") return { kind, text: shown, old: oldLine++, new: null, ...tag };
+    if (kind === "note") return { kind, text: shown, old: null, new: null, ...tag };
+    return { kind, text: shown, old: oldLine++, new: newLine++, ...tag };
+  };
+  const out = lines.map((line, index) => {
+    if (index === 0 && typeof from.head === "string") return number(from.head + line, line, index, true);
+    if (index === 0 && from.open) return { kind: from.open, text: line, old: null, new: null, more: true };
+    return number(line, line, index, false);
   });
   const last = out[out.length - 1];
-  return { lines: out, end: { old: oldLine, new: newLine, open: ended ? null : last.kind } };
+  return { lines: out, end: { old: oldLine, new: newLine, open: ended ? null : last.kind, head } };
 }
 
 // ---------- a binary side's bytes ----------

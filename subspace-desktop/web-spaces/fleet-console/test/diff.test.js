@@ -17,8 +17,9 @@ import {
   isDiffFile,
   validateContent,
 } from "../src/diff.js";
-import { createDiffPanel } from "../src/diff-view.js";
-import { base64Length, bytesOf, patchLines } from "../src/diff-parts.js";
+import { createDiffPanel, partWindows } from "../src/diff-view.js";
+import { WINDOW_BYTES } from "../src/document.js";
+import { base64Length, bytesOf, PATCH_START, patchLines } from "../src/diff-parts.js";
 import { crewPanel } from "../src/inspector.js";
 import { isGit } from "../src/contract.js";
 import { createFleetManager, createSampleFleetManager } from "../src/fleet-manager.js";
@@ -378,8 +379,81 @@ test("diff patch: a part draws in windows of at most 1,000 lines, numbered acros
   panel.root.listeners.click({ target: panel.root.findAll((node) => node.attributes["data-diff-lines"] === "next")[0] });
   const second = added(panel);
   assert.equal(second.at(-1), "1500", "the second window numbers on from the first");
-  assert.deepEqual(patchLines("+a\n+b", { old: 4, new: 7, open: null }).end, { old: 4, new: 9, open: "add" }, "a split line carries its kind on");
+  assert.deepEqual(patchLines("+a\n+b", { old: 4, new: 7, open: null }).end, { old: 4, new: 9, open: "add", head: null }, "a split line carries its kind on");
   assert.deepEqual(patchLines("c\n+d\n", { old: 4, new: 9, open: "add" }).lines.map((line) => [line.kind, line.new, line.more ?? false]), [["add", null, true], ["add", 9, false]]);
+});
+
+/** Each line of a patch read in stretches, chained, as [kind, old, new] of the whole lines: a split line is numbered where it is counted. */
+function chainedLines(stretches) {
+  const whole = [];
+  let start = PATCH_START;
+  for (const stretch of stretches) {
+    const { lines, end } = patchLines(stretch, start);
+    for (const line of lines) {
+      if (line.more) Object.assign(whole[whole.length - 1], { text: whole[whole.length - 1].text + line.text, kind: line.kind, old: whole[whole.length - 1].old ?? line.old, new: whole[whole.length - 1].new ?? line.new });
+      else whole.push({ ...line });
+    }
+    start = end;
+  }
+  return whole.map((line) => [line.kind, line.text, line.old, line.new]);
+}
+
+const SPLIT_PATCH = "@@ -1,1 +1,2 @@\n ctx\n+a\n@@ -50,2 +60,1 @@ fn x\n-old\n ctx2\n\\ No newline at end of file\n@@ -90 +80 @@\n+new\n";
+
+test("diff patch: a hunk header split anywhere by a part or window boundary numbers as the whole patch does, never counted as context", () => {
+  const whole = chainedLines([SPLIT_PATCH]);
+  assert.deepEqual(whole, [
+    ["hunk", "@@ -1,1 +1,2 @@", null, null],
+    ["ctx", " ctx", 1, 1],
+    ["add", "+a", null, 2],
+    ["hunk", "@@ -50,2 +60,1 @@ fn x", null, null],
+    ["del", "-old", 50, null],
+    ["ctx", " ctx2", 51, 60],
+    ["note", "\\ No newline at end of file", null, null],
+    ["hunk", "@@ -90 +80 @@", null, null],
+    ["add", "+new", null, 80],
+  ]);
+  for (let i = 1; i < SPLIT_PATCH.length; i += 1) {
+    assert.deepEqual(chainedLines([SPLIT_PATCH.slice(0, i), SPLIT_PATCH.slice(i)]), whole, `split at ${i}: ${JSON.stringify(SPLIT_PATCH.slice(0, i).split("\n").at(-1))}`);
+    for (let j = i + 1; j < SPLIT_PATCH.length; j += 1) {
+      assert.deepEqual(chainedLines([SPLIT_PATCH.slice(0, i), SPLIT_PATCH.slice(i, j), SPLIT_PATCH.slice(j)]), whole, `split at ${i} and ${j}`);
+    }
+  }
+  const cut = patchLines("+a\n@").end;
+  assert.deepEqual(cut, { old: 0, new: 1, open: "hunk", head: "@" }, "cut before the second @: carried, counted as nothing");
+  assert.deepEqual(patchLines("@ x").lines.map((line) => [line.kind, line.old]), [["ctx", 0]], "not a header start: counted as its kind");
+  assert.equal(patchLines(`@@ -${"9".repeat(80)}`).end.head, null, "the carried start is bounded");
+});
+
+test("diff patch: a hunk header split by a 64 KiB gateway page keeps its real line numbers in the next part", async () => {
+  const opening = "@@ -1,0 +1,2 @@\n+start\n+";
+  const partialHeader = "@@ -50,1 +";
+  const prefix = `${opening}${"x".repeat(65_536 - opening.length - partialHeader.length - 1)}\n`;
+  const { watcher } = watch({ list: () => page([file("a.txt", { patch: `${prefix}${partialHeader}`, patchNextPage: "p2" })]), file: () => ({ fingerprint: FP, file: file("a.txt", { patch: "60,1 @@\n-old\n+new\n" }) }) });
+  watcher.start();
+  await flush();
+  await watcher.openPatch(0);
+  const first = patchLines(watcher.view.patch(0).data, watcher.view.patch(0).start).lines.at(-1);
+  assert.deepEqual([first.kind, first.old, first.new], ["hunk", null, null], "the cut header is not context");
+  await watcher.movePatch(0, "next");
+  const { data, start } = watcher.view.patch(0);
+  const lines = patchLines(data, start).lines;
+  assert.equal(lines.find(({ text }) => text === "-old").old, 50);
+  assert.equal(lines.find(({ text }) => text === "+new").new, 60);
+});
+
+test("diff patch: a hunk header split by a 64 KiB window boundary numbers the next window from it", () => {
+  const header = "@@ -50,2 +60,1 @@ fn x\n";
+  for (let k = 1; k < header.length; k += 1) {
+    const filler = `+${"x".repeat(WINDOW_BYTES - k - 2)}\n`;
+    const windows = partWindows(`${filler}${header}-old\n ctx2\n`, { old: 1, new: 1, open: null, head: null });
+    assert.equal(windows.count, 2, `split ${k} into the header`);
+    const cut = windows.lines(0).at(-1);
+    assert.equal(cut.text, header.slice(0, k));
+    assert.deepEqual([cut.kind, cut.old, cut.new], ["hunk", null, null], `split ${k}: not context`);
+    const next = windows.lines(1);
+    assert.deepEqual(next.slice(1).map((line) => [line.text, line.old, line.new]), [["-old", 50, null], [" ctx2", 51, 60]], `split ${k}`);
+  }
 });
 
 test("diff patch: a failed page keeps the part on show and offers Retry page, which reads the same page again", async () => {
