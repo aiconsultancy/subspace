@@ -168,8 +168,10 @@ with what `make check` enforces. In short:
 4. Everything visible is a component: no one-off styled controls in boards or
    the shell. Layout `div`s are not components.
 5. Every shared component and shell surface has an interactive card on the
-   Component gallery board with its copyable name. A new or changed component
-   is not done until its card and its catalogue name are.
+   Component gallery board with its copyable name. Add the card and catalogue
+   entry in the same PR as a new component. Update an existing card in the
+   same PR to demonstrate changed states and interactions with representative
+   fixtures, including new interactions introduced by a board composition.
 
 Existing direct controls are migration candidates, not permission to copy
 them.

@@ -41,7 +41,7 @@ const HIDE_UNUSED_KEY: &str = "component-gallery.hide-unused";
 const SEARCH_PLACEHOLDER: &str = "Search the component gallery";
 
 /// The gallery view. Retained entities are created once in [`Dashboard::new`].
-// qual:allow(srp, god_struct) reason: "One board view owns its retained samples, its navigation state and the repository picker sample's owner state; each group is small and only the view coordinates them."
+// qual:allow(srp, god_struct) reason: "The board coordinates navigation, retained samples and fixture picker state. The samples implement their own interactions."
 pub struct ComponentGallery {
     focus: FocusHandle,
     retained: state::Retained,
@@ -55,6 +55,7 @@ pub struct ComponentGallery {
     search: Rc<ItemSearch>,
     /// The repository picker sample's fixture favourites and open picker.
     repositories: samples::menus::owned::Repositories,
+    trackers: samples::menus::trackers::Trackers,
     _filter_changes: Subscription,
 }
 
@@ -233,6 +234,7 @@ impl Dashboard for ComponentGallery {
             scroll: ScrollHandle::new(),
             search: Rc::new(Self::item_search()),
             repositories: Default::default(),
+            trackers: Default::default(),
             _filter_changes: filter_changes,
         }
     }

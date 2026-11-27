@@ -32,9 +32,10 @@ a Space, and how the Space is laid out, is in the
    (`h_flex`, `v_flex`, `div`) is not a component and needs no wrapper.
 5. **Every component is in the gallery.** Every shared component and every
    shell surface has an interactive card on the Component gallery board,
-   showing its name and source with a button that copies the name. A new or
-   changed component is not done until its card shows it and its name is in
-   [Component gallery names](#component-gallery-names).
+   showing its name and source with a button that copies the name. Add the
+   card and its [catalogue name](#component-gallery-names) in the same PR as a
+   new component. Update an existing card in the same PR when a state or
+   interaction changes, including through a board composition.
 
 `make check` enforces these with tests in `spaces/component-gallery`:
 

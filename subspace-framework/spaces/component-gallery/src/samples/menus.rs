@@ -2,6 +2,7 @@
 //! popover anchor, the standard right-click menu and the repository picker.
 
 pub(crate) mod owned;
+pub(crate) mod trackers;
 
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
@@ -43,7 +44,7 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "menu::MenuAnchors",
         source: "board-kit/dashboard/src/menu/anchors.rs",
-        used_in: "Filterable picker menus behind menu buttons in Actions, Copilot Agents, GitHub and chat.",
+        used_in: "Filterable pickers in Actions, Copilot Agents, GitHub and chat, and the paginated Parent tracker search in Issues.",
         samples: menu_anchors,
         kit: None,
     },
@@ -241,8 +242,11 @@ pub(super) fn menu_anchors(
         false,
     )
     .on_click(cx.listener(|this, _, window, cx| this.open_menu(window, cx)));
-    vec![sample(
-        "Closed; click to open",
-        gallery.menu_anchors.trigger(MENU_ANCHOR, button, cx),
-    )]
+    vec![
+        sample(
+            "Closed; click to open",
+            gallery.menu_anchors.trigger(MENU_ANCHOR, button, cx),
+        ),
+        trackers::sample(gallery, cx),
+    ]
 }
