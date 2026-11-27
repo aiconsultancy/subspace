@@ -313,28 +313,54 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   let failures = 0;
   let pollTimer = null;
 
+  /** True while the inline charge grows: changes the refits publish wait for the caller's one publish. */
+  let refitting = false;
+
   /**
    * Charge the turns held, as their compact JSON: the inline content, which
    * is the floor and is never freed. Pinned, so the snapshot always shows;
    * loaded items are freed for it first.
    */
   function chargeInline() {
+    if (refitting) return;
     let bytes = 0;
     for (const turn of state.turns) bytes += bytesOfTurn(turn);
     const grew = bytes > budget.bytes(INLINE_KEY);
-    if (grew) refitShown(bytes);
-    if (bytes !== budget.bytes(INLINE_KEY) || !budget.has(INLINE_KEY)) budget.reserve(INLINE_KEY, bytes, null, { pinned: true });
-    if (grew) recheckWholes();
+    refitting = grew;
+    try {
+      if (grew) planRefits(bytes);
+      if (bytes !== budget.bytes(INLINE_KEY) || !budget.has(INLINE_KEY)) budget.reserve(INLINE_KEY, bytes, null, { pinned: true });
+      if (grew) recheckWholes();
+    } finally {
+      refitting = false;
+    }
   }
 
   /** Whether `key` is an item read whole whose window the panel draws. */
   const displayed = (key) => full.get(key)?.mode === "whole" && (positions.get(key)?.bytes ?? 0) > 0;
 
   /**
-   * Before the pinned charge grows to `bytes`: each item read whole whose
-   * window is on show and that growth would free reads in parts instead,
-   * its window kept on show and charged until the part arrives (SUB
-   * decision a5275d81). One that is not on show is freed as before.
+   * Before the pinned charge grows to `bytes`, the refits are planned
+   * against that final floor, not the one held now (SUB decision
+   * cf21d510). First the latest request, when it is an item read whole
+   * that will not fit beside the grown charge, reads in parts, so the room
+   * it gives back is counted before anything is freed; then each whole on
+   * show that the growth would still free. Their pagers' changes are not
+   * published meanwhile (`refitting`), so none of them charges the inline
+   * content before the plan is done.
+   */
+  function planRefits(bytes) {
+    const key = budget.requested;
+    const growth = bytes - budget.bytes(INLINE_KEY);
+    if (key !== null && full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key) + growth)) wholeToParts(key);
+    refitShown(bytes);
+  }
+
+  /**
+   * Each item read whole whose window is on show and that growth to
+   * `bytes` would free reads in parts instead, its window kept on show and
+   * charged until the part arrives (SUB decision a5275d81). One that is
+   * not on show is freed as before.
    */
   function refitShown(bytes) {
     for (;;) {
@@ -359,7 +385,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   }
 
   const changed = () => {
-    if (stopped) return;
+    if (stopped || refitting) return;
     chargeInline();
     onChange?.(view());
   };
