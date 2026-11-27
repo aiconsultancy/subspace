@@ -382,9 +382,10 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * fits (above), never to make room for another: it is part of the floor
    * and is never freed (SUB decision 1c19f413). A refit that gives back
    * nothing is not planned; if the floor still needs that whole's room, it
-   * is freed. A refit that keeps no window is dropped: one the growth frees
-   * itself, or one without which it frees no more. Returns the keys to
-   * read in parts, in order.
+   * is freed. A refit that keeps no window is dropped: counting every
+   * window on show the growth frees, a planned refit it frees included,
+   * the one whose dropping loses the fewest goes first, while that loses no
+   * more than keeping it. Returns the keys to read in parts, in order.
    */
   function planRefits(bytes) {
     const sizes = new Map();
@@ -400,12 +401,19 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       sizes.set(best, handover(best));
       planned.push(best);
     }
-    // When the floor still frees a window anyway, a refit planned for it may keep none: the latest planned first, each is dropped
-    // when the growth frees that refit itself, or while dropping it frees no more.
-    for (const each of planned.reverse()) {
-      const without = new Map([...sizes].filter(([other]) => other !== each));
-      const freedItself = budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as: sizes }).includes(each);
-      if (freedItself || freedOnShow(without) <= freedOnShow(sizes)) sizes.delete(each);
+    // When the floor still frees a window anyway, a refit planned for it may keep none. Counting every window on show the growth
+    // frees, a planned handover it would evict included, drop the planned refit whose dropping loses the fewest, the latest
+    // planned on a tie, while that loses no more than keeping it. The latest request's own refit is never dropped.
+    const lostOnShow = (as) => budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as }).filter(displayed).length;
+    for (;;) {
+      let drop = null;
+      let fewest = lostOnShow(sizes);
+      for (const each of planned.filter((other) => sizes.has(other))) {
+        const lost = lostOnShow(new Map([...sizes].filter(([other]) => other !== each)));
+        if (lost <= fewest) [drop, fewest] = [each, lost];
+      }
+      if (drop === null) break;
+      sizes.delete(drop);
     }
     return [...sizes.keys()];
   }

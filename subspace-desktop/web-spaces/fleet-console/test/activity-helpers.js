@@ -247,7 +247,8 @@ async function loadedWhole(snapshot, pages, ids, extra) {
 /**
  * Wholes of `sizes` KiB named `ids`, loaded in order (so the first is the
  * least recently used and the last is the latest request), all with their
- * windows on show, in a view `spare` bytes larger than they need.
+ * windows on show, in a view `spare` bytes larger than they need. Also
+ * returns the snapshot they were read from.
  */
 export async function wholesOnShow(ids, sizes, spare) {
   const { snapshot, pages } = several(ids, sizes);
@@ -258,7 +259,7 @@ export async function wholesOnShow(ids, sizes, spare) {
   const loaded = await loadedWhole(snapshot, pages, ids, held + spare);
   assert.equal(windowsIn(loaded.panel.root).length, ids.length, "every window drawn");
   assert.equal(loaded.watcher.view.budget.requested, keyOf(ids.at(-1)));
-  return loaded;
+  return { ...loaded, snapshot };
 }
 
 /** Each of `ids`' mode, or "Load in full" when it was freed. */

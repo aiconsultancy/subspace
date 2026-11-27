@@ -91,27 +91,31 @@ the desktop side are separate work.
   whole whose window is on show, named or not, the one whose refit gives
   back the most, then asks again. The latest request is never one of
   them: it reads in parts only when it no longer fits itself, never to
-  make room for another. A refit that gives nothing back is not
-  planned, and one that keeps no window on show is dropped: the growth
-  frees that refit itself, or frees as many without it. Only then are the planned pagers opened,
-  their charges set without freeing anything (`fitted`), and the one
-  pinned reservation frees only what the final floor still needs. So one
-  large refit keeps the smaller wholes on show, also a small one the
-  growth would free first, and every window stays when the handovers fit.
-  One not on show is freed as before, so no item read whole is kept for
-  good. Its window stays on show and charged (`carried`) until the first
-  part arrives, and stays with the error and **Try again** if that read
-  fails. The part opened is the one that holds the start of the window on
-  show: the view reports where that window starts in the item's document,
-  the watcher maps it to the item as served (`servedUnit`), pages that the
-  way the gateway does (`servedPart`, 64 KiB pages between code points,
-  four to a part) and opens the part at the window holding it. A reload
-  reads the newest version's first part instead, also once it has failed:
-  the whole entry keeps that intent (`fresh`) until a read of the newest
-  version succeeds, so **Try again** after the handover reads page 0 of
-  the newest version, unpinned. A window the view
-  unmounts (its turn closed, the items window moved off it) owns no bytes:
-  a later refit carries none for it, though the place it showed is kept.
+  make room for another. A refit that gives nothing back is not planned.
+  Then planned refits that keep no window are dropped: counting every
+  window on show the growth would free, a planned refit's own handover
+  included, the watcher drops the planned refit whose dropping loses the
+  fewest, the latest planned on a tie, while that loses no more than
+  keeping it. The latest request's own refit is never dropped. Only then
+  are the planned pagers opened, their charges set without freeing
+  anything (`fitted`), and the one pinned reservation frees only what the
+  final floor still needs. So one large refit keeps the smaller wholes on
+  show, also a small one the growth would free first, and every window
+  stays when the handovers fit. One not on show is freed as before, so no
+  item read whole is kept for good. Its window stays on show and charged
+  (`carried`) until the first part arrives, and stays with the error and
+  **Try again** if that read fails. The part opened is the one that holds
+  the start of the window on show: the view reports where that window
+  starts in the item's document, the watcher maps it to the item as served
+  (`servedUnit`), pages that the way the gateway does (`servedPart`,
+  64 KiB pages between code points, four to a part) and opens the part at
+  the window holding it. A reload reads the newest version's first part
+  instead, also once it has failed: the whole entry keeps that intent
+  (`fresh`) until a read of the newest version succeeds, so **Try again**
+  after the handover reads page 0 of the newest version, unpinned. A
+  window the view unmounts (its turn closed, the items window moved off
+  it) owns no bytes: a later refit carries none for it, though the place
+  it showed is kept.
 - **Floor** (SUB decisions `0c13b784` §4, `8357ec55`, `1c19f413` §1). The
   budget alone owns the floor. `request(key)` names the latest request, the
   one thing last asked for: a **Show**, a **Load** or another part. The
@@ -464,5 +468,10 @@ snapshot again past a read that never settles, after a re-open and after
 the stream ends, and drops that read's late answer; each fails at
 `b2cb71c1`. `test/activity-refit.test.js` drops a planned refit the growth
 frees anyway, reserving no handover for it (Charon's probe A grown by
-1,200,000 bytes); it fails at `7103c1a3`. The refit tests share the
-helpers in `test/activity-helpers.js`.
+1,200,000 bytes); it fails at `7103c1a3`. Its other three tests count
+every window on show the growth frees, a planned refit's handover
+included: Deimos's four-window case, which fails at `ffec732c` and passes
+from `6b26128b`; five wholes where a planned refit looked as if it kept a
+window; and six where dropping the latest planned refit first loses one.
+The last two fail at `f88724d3`. The refit tests share the helpers in
+`test/activity-helpers.js`.
