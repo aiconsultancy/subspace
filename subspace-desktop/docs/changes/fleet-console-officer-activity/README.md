@@ -85,7 +85,9 @@ the desktop side are separate work.
   charges, so nothing changes while it asks) and, while that names an
   item read whole whose window is on show, plans, from every item read
   whole whose window is on show, named or not, the one whose refit gives
-  back the most, then asks again; a refit that gives nothing back is not
+  back the most, then asks again. The latest request is never one of
+  them: it reads in parts only when it no longer fits itself, never to
+  make room for another. A refit that gives nothing back is not
   planned, and one that keeps no window on show, as the growth frees as
   many without it, is dropped. Only then are the planned pagers opened,
   their charges set without freeing anything (`fitted`), and the one

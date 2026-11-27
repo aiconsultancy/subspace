@@ -122,3 +122,24 @@ test("r10 1: a refit that keeps no window is dropped: when the growth frees the 
     watcher.stop();
   }
 });
+
+// ---------- P3-1 (Charon): the latest request is never refitted to make room for another ----------
+
+test("r10 2: growth that frees the small whole refits the large whole on show, never the larger latest request that still fits", async () => {
+  const ids = ["is", "ic", "ir"];
+  const { watcher, panel, requested } = await wholesOnShow(ids, [100, 600, 700], 20_000);
+  try {
+    const { budget } = watcher.view;
+    const size = 40_000;
+    assert.ok(givenBack(watcher, "ir") > givenBack(watcher, "ic"), "R's refit would give back the most");
+    assert.ok(budget.fits(keyOf("ir"), budget.bytes(keyOf("ir")) + size), "R still fits beside the growth");
+    requested.length = 0;
+    await grow(watcher, panel, size);
+    assert.deepEqual(modesOf(watcher, ids), { is: "whole", ic: "parts", ir: "whole" }, "C reads in parts; R, what the person asked for last, stays whole");
+    assert.deepEqual(requested, [["ic", 0], ["ic", 1], ["ic", 2], ["ic", 3]], "only C reads");
+    assert.equal(windowsIn(panel.root).length, 3, "every window stays on show");
+    assert.ok(budget.used <= budget.limit);
+  } finally {
+    watcher.stop();
+  }
+});
