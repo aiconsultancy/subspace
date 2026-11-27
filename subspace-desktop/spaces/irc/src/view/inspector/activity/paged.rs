@@ -148,6 +148,12 @@ const DEFERRED: &str =
 const WITHDRAWN: &str =
     "Moving to another part set the latest version aside: load it again to show it.";
 
+/// Why **Load the latest** is offered again when the room left, shrunk
+/// while its read was under way, no longer held that read beside what is
+/// shown ([`Reload::Squeezed`]).
+const SQUEEZED: &str =
+    "The latest version no longer fitted beside what is shown: load it again to show it.";
+
 /// **Load the latest** when the snapshot names a version `newer` than the
 /// one shown, beside why when it is offered again; while that read is
 /// under way, that it is; when it failed, why, and a retry. What was shown
@@ -167,6 +173,7 @@ fn latest(
         Reload::None => offer(id, (None, newer), action, cx),
         Reload::Deferred => offer(id, (Some(("deferred", DEFERRED)), newer), action, cx),
         Reload::Withdrawn => offer(id, (Some(("withdrawn", WITHDRAWN)), newer), action, cx),
+        Reload::Squeezed => offer(id, (Some(("squeezed", SQUEEZED)), newer), action, cx),
     }
 }
 

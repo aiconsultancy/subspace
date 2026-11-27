@@ -31,10 +31,11 @@
 //! 2). A newer version arriving with no room beside a later request is
 //! not swapped in: what was read stays, and beside **Load the latest** a
 //! caption says why (SUB decision `a884e4c6`), as it does when moving to
-//! another part withdraws that read. What a read draws is never planned
-//! beside the snapshot's bodies: it always draws, within its own
-//! allowance. A new snapshot never lets go of the read the floor keeps:
-//! the part of the item last asked for.
+//! another part, or the room shrinking past it, withdraws that read
+//! ([`Reload`]). What a read draws is never planned beside the snapshot's
+//! bodies: it always draws, within its own allowance. A new snapshot
+//! never lets go of the read the floor keeps: the part of the item last
+//! asked for.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -175,9 +176,11 @@ impl Loaded {
 
     /// Withdraws the read under way that replaces what it shows, or reads
     /// its next part, so what it shows alone stays, charged: a newer
-    /// version waits to be asked for again. A first read under way is all
-    /// it presents, so it stays.
-    pub(super) fn withdraw(&mut self) {
+    /// version waits to be asked for again, and its read under way gives
+    /// way to `why`, the reason **Load the latest** is offered again
+    /// beside, or [`Reload::None`] for the read about to replace it. A
+    /// first read under way is all it presents, so it stays.
+    pub(super) fn withdraw(&mut self, why: Reload) {
         if !self.shows() {
             return;
         }
@@ -185,7 +188,7 @@ impl Loaded {
         self._read = None;
         self.incoming = 0;
         if matches!(self.reload, Reload::Reading(_)) {
-            self.reload = Reload::None;
+            self.reload = why;
         }
         if let Held::Parts(parts) = &mut self.held {
             parts.loading = None;
@@ -245,6 +248,11 @@ pub(super) enum Reload {
     /// shown stays, beside **Load the latest** and a caption, true of
     /// both, that the move set the latest version aside.
     Withdrawn,
+    /// The room left, shrunk while it was read, no longer held it beside
+    /// what is shown, so it was withdrawn ([`super::ledger`], SUB decision
+    /// `084f5236` item 2): what was shown stays, beside why and **Load
+    /// the latest**.
+    Squeezed,
 }
 
 impl Reload {
@@ -331,7 +339,7 @@ fn read_item(
     // stays until the new read arrives, and any read under way for it
     // gives way to this one.
     match selection.loaded.get_mut(&key) {
-        Some(shown) if shown.shows() => shown.withdraw(),
+        Some(shown) if shown.shows() => shown.withdraw(Reload::None),
         _ => {
             selection.loaded.remove(&key);
         }

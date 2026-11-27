@@ -20,6 +20,11 @@ use crate::view::inspector::activity::{ask_for, latest_request, set_room, snapsh
 const WITHDRAWN: &str =
     "Moving to another part set the latest version aside: load it again to show it.";
 
+/// The caption beside **Load the latest** once the room left no longer held
+/// its read beside what is shown.
+const SQUEEZED: &str =
+    "The latest version no longer fitted beside what is shown: load it again to show it.";
+
 /// The bytes the view holds of the captain's activity.
 fn held(board: &Entity<Irc>, cx: &mut VisualTestContext) -> u64 {
     board.read_with(cx, |board, _| {
@@ -231,5 +236,49 @@ fn moving_to_another_part_after_the_latest_failed_says_it_was_set_aside(cx: &mut
     );
     assert!(drawn(&on("loading"), cx).is_empty());
     assert_eq!(drawn(&on("withdrawn"), cx), WITHDRAWN);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+}
+
+/// Round 10 Opus review (outside the delta), SUB decision `084f5236` item
+/// 2: when the room shrinks while a whole **Load the latest** is read, so
+/// that the floor no longer holds it beside what is shown, that read is
+/// withdrawn and its reserve released, and what is shown stays. **Load
+/// the latest** is offered again beside a caption saying why it is back,
+/// never silently.
+#[gpui_kit::test]
+fn a_room_squeeze_withdraws_the_latest_and_says_so(cx: &mut TestAppContext) {
+    let (board, served, cx) = served(cx, 6, &format!("{}FIRST-END", "x".repeat(100_000)));
+    let inline = held(&board, cx);
+    load(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("FIRST-END"), "read whole");
+    served.serve(7, tool(7, &format!("{}SECOND-END", "y".repeat(100_000))));
+    let bytes = served.item.lock().unwrap().1.len();
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(7, bytes))), cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+
+    // The room goes before the newer version can arrive.
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("load")), cx);
+        board.update(cx, |board, _| {
+            let selection = board.inspector_activity.as_mut().unwrap();
+            set_room(selection, 0);
+            snapshot_pruned(selection);
+        });
+        window.render_frame(cx);
+    });
+    let charged = held(&board, cx) - inline;
+    let floor = 2 * PAGE as u64;
+    assert!(charged <= floor, "{charged} past the floor's {floor}");
+    assert!(drawn(&on("loading"), cx).is_empty(), "withdrawn");
+    assert_eq!(drawn(&on("squeezed"), cx), SQUEEZED);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+    settle(cx);
+    let shown = drawn(&on("body"), cx);
+    assert!(
+        shown.contains("xxxx") && !shown.contains("yyyy"),
+        "what was shown stays, the newer read's answer dropped: {shown}"
+    );
+    assert_eq!(drawn(&on("squeezed"), cx), SQUEEZED);
     assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
 }

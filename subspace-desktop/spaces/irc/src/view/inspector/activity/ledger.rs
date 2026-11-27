@@ -19,13 +19,14 @@
 //! floor's steady allowance, a part and its window ([`PAGE_READ`]), beside
 //! at most a page coming in. A read replacing what is shown counts only
 //! what it asks for, a page for a part; a whole one the floor cannot hold
-//! beside what is shown is withdrawn, and what is shown stays (SUB
-//! decision `084f5236` item 2). A read not even the floor holds is let go.
+//! beside what is shown is withdrawn, and what is shown stays, beside why
+//! and **Load the latest** (SUB decision `084f5236` item 2). A read not
+//! even the floor holds is let go.
 
 use std::collections::HashMap;
 
 use super::draw::{Key, MIN_WINDOW, measure};
-use super::load::{PAGE, PAGE_READ, give_back, refit};
+use super::load::{PAGE, PAGE_READ, Reload, give_back, refit};
 use super::parts::PART;
 use super::{Loaded, Selection};
 
@@ -259,7 +260,8 @@ pub(super) fn window_allowance(left: u64) -> u64 {
 /// fits; otherwise its window sized to what is left, or, for the latest
 /// request alone, the floor ([`kept_allowance`]). When that holds what it
 /// shows but not beside the read under way for it, that read is withdrawn
-/// and what it shows stays (SUB decision `084f5236` item 2); it is let go
+/// and what it shows stays, beside why and **Load the latest**
+/// ([`Reload::Squeezed`], SUB decision `084f5236` item 2); it is let go
 /// only when not even that holds what it shows.
 fn fit_kept(selection: &mut Selection, keep: &Key, left: u64) {
     let latest = latest(selection) == Some(keep);
@@ -271,7 +273,7 @@ fn fit_kept(selection: &mut Selection, keep: &Key, left: u64) {
     }
     let fitted = |loaded: &Loaded| kept_allowance(loaded.charges(), (left, latest));
     if fitted(loaded).is_none() {
-        loaded.withdraw();
+        loaded.withdraw(Reload::Squeezed);
     }
     match fitted(loaded) {
         Some(allowance) => refit(selection, keep, allowance),

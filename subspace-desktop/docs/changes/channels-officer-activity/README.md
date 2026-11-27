@@ -57,9 +57,15 @@ item too large to send inline is paged and loads on demand, never hidden.
   dropped, and **Load the latest** is offered again with a caption that
   moving to another part set the latest version aside, true whether its
   read was under way or had failed. A snapshot of a new generation
-  still lets go of it at once. Page counts and sizes are checked before
-  anything is allocated: a size the pages could not carry, or a joined
-  length other than the declared one, is an invalid answer.
+  still lets go of it at once. When the room shrinks while a whole
+  **Load the latest** is read, so that not even the floor holds it
+  beside what is shown, that read is withdrawn and its reserve released:
+  what is shown stays, and **Load the latest** is offered again with a
+  caption that the latest version no longer fitted beside it. No read
+  of the latest is withdrawn without a word. Page counts and sizes are
+  checked before anything is allocated: a size the pages could not
+  carry, or a joined length other than the declared one, is an invalid
+  answer.
 - **One budget.** Everything the view holds counts against 64 MiB: the
   snapshot's inline content (estimated from its strings and values, every
   field and token count this version does not know included, drawn or not)
