@@ -324,4 +324,6 @@ pub(super) fn body(
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-pub(crate) use tests::fixture::{finish_crew_read_for_test, seed_roster_for_test};
+pub(crate) use tests::fixture::{
+    finish_crew_read_for_test, seed_roster_for_test, update_roster_for_test,
+};

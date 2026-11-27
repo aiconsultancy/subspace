@@ -13,6 +13,12 @@ pub(crate) fn seed_roster_for_test(board: &mut Irc, member: CrewMember, cx: &mut
     cx.notify();
 }
 
+pub(crate) fn update_roster_for_test(board: &mut Irc, member: CrewMember, cx: &mut Context<Irc>) {
+    let selection = board.inspector_crew.as_mut().unwrap();
+    assert!(selection.state.update(Roster::Present(Box::new(member)), 0));
+    cx.notify();
+}
+
 pub(crate) fn finish_crew_read_for_test(
     board: &mut Irc,
     detail: CrewDetail,
