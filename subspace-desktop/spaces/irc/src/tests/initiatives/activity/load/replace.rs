@@ -9,6 +9,7 @@ use gpui_kit::{SharedString, TestAppContext, VisualTestContext};
 use serde_json::json;
 
 use super::super::super::super::remove::settle;
+use super::super::mounted;
 use super::growth::{drawn_body, key, ledger, roomed};
 use super::{answer, drawn, load, on, paged, refresh, running, served, tool};
 use crate::view::inspector::activity::{ask_for, latest_request, load_item};
@@ -67,6 +68,15 @@ fn check_replacement_priority(
     assert!(
         drawn(&on("parts"), cx).starts_with("Too large to hold whole"),
         "and shown"
+    );
+    // The older version may be in parts too: only the newer one's bytes
+    // tell the swap from what was shown staying. The page shows whole or,
+    // within a smaller window, a piece at a time, and the newer body may
+    // scroll it out of sight, so what is mounted of either is read.
+    let part = mounted(&on("json-part"), cx) + &mounted(&on("body"), cx);
+    assert!(
+        part.contains("yyyy") && !part.contains("xxxx"),
+        "the newer version shown: {part}"
     );
     assert!(drawn_body(&board, cx) >= newer_body as u64);
     let (_, used) = ledger(&board, cx);
