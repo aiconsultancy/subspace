@@ -92,7 +92,7 @@ impl DiffView {
         self.fleet.loading.remove(&index);
         match result {
             Ok(page) => {
-                self.fleet.unstable |= page.unstable;
+                self.fleet.note_unstable_page(page.unstable);
                 apply_page(&mut self.files[index], page);
                 self.update_partial_line(index);
                 self.highlights.remove(&index);

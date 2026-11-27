@@ -141,7 +141,7 @@ impl DiffView {
             return;
         };
         binary.read = None;
-        self.fleet.unstable |= progress.unstable;
+        self.fleet.note_unstable_page(progress.unstable);
         match result {
             Ok(preview) => {
                 binary.replace_preview(Some(preview), None, cx);

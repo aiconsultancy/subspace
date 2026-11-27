@@ -43,6 +43,7 @@ pub(super) struct FleetState {
     pub live_revision: u64,
     pub live_changed: bool,
     pub unstable: bool,
+    pub unstable_revision: u64,
     pub busy_pages: HashMap<usize, super::pages::PageBusy>,
     pub unavailable: bool,
     pub stale_page: bool,
@@ -55,6 +56,13 @@ pub(super) struct FleetState {
 }
 
 impl FleetState {
+    pub fn note_unstable_page(&mut self, unstable: bool) {
+        if unstable {
+            self.unstable = true;
+            self.unstable_revision += 1;
+        }
+    }
+
     pub fn changed(&self) -> bool {
         self.stale_page || self.live_changed
     }

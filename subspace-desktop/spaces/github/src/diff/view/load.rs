@@ -14,6 +14,7 @@ use super::{DiffSource, DiffView, Text, code_row_height};
 struct RefreshBaseline {
     live: u64,
     stale: u64,
+    unstable: u64,
 }
 
 impl DiffView {
@@ -59,6 +60,7 @@ impl DiffView {
         let baseline = RefreshBaseline {
             live: self.fleet.live_revision,
             stale: self.fleet.stale_revision,
+            unstable: self.fleet.unstable_revision,
         };
         let read = self.fleet.list_read.clone();
         self.error = None;
@@ -151,17 +153,12 @@ impl DiffView {
             Loaded::Fleet(diff) => {
                 let unchanged =
                     self.loaded && self.fleet.fingerprint.as_ref() == Some(&diff.fingerprint);
-                // An unchanged list cannot settle a page conflict that arrived
-                // after this refresh started.
-                if !unchanged || self.fleet.stale_revision == baseline.stale {
-                    self.fleet.stale_page = false;
-                }
+                self.settle_page_notices(unchanged, diff.unstable, &baseline);
                 self.fleet.unavailable = false;
                 self.fleet.comparison = Some(comparison(&diff));
                 self.binary_holds.pin_to(self.fleet.mode, &diff.fingerprint);
                 self.fleet
                     .accept_fingerprint(diff.fingerprint, baseline.live);
-                self.fleet.unstable = diff.unstable;
                 if unchanged {
                     return;
                 }
@@ -173,6 +170,17 @@ impl DiffView {
                 self.fleet.unavailable = true;
                 self.loaded = true;
             }
+        }
+    }
+
+    fn settle_page_notices(&mut self, unchanged: bool, unstable: bool, baseline: &RefreshBaseline) {
+        // An unchanged list cannot settle page evidence that arrived after
+        // this refresh started. A different snapshot replaces all of it.
+        if !unchanged || self.fleet.stale_revision == baseline.stale {
+            self.fleet.stale_page = false;
+        }
+        if !unchanged || self.fleet.unstable_revision == baseline.unstable {
+            self.fleet.unstable = unstable;
         }
     }
 

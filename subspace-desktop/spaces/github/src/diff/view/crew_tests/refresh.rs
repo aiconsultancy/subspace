@@ -163,57 +163,6 @@ fn refresh_clears_the_snapshot_on_confirmed_access_or_checkout_loss(cx: &mut Tes
 }
 
 #[gpui_kit::test]
-fn an_unchanged_refresh_cannot_clear_a_page_conflict_that_arrived_later(cx: &mut TestAppContext) {
-    let (page, page_pending, release_page) = ReadGate::new();
-    let (refresh, refresh_pending, release_refresh) = ReadGate::new();
-    let (page, refresh) = (Mutex::new(page), Mutex::new(refresh));
-    let lists = AtomicUsize::new(0);
-    let mock = Mock::new(move |request| {
-        if request.path.contains("/diff/file?") {
-            page.lock().unwrap().pause();
-            return (409, String::new());
-        }
-        if request.path.contains("/diff?") {
-            if lists.fetch_add(1, Ordering::Relaxed) == 1 {
-                refresh.lock().unwrap().pause();
-            }
-            return (200, fixture(false));
-        }
-        (404, String::new())
-    });
-    let (view, window) = mount(cx, &mock);
-    ThreadedReads::install(window);
-    view.update(window, |view, cx| view.load_more(0, cx));
-    page_pending.recv_timeout(Duration::from_secs(5)).unwrap();
-    view.update(window, |view, cx| view.load(cx));
-    refresh_pending
-        .recv_timeout(Duration::from_secs(5))
-        .unwrap();
-    release_page.send(()).unwrap();
-    ThreadedReads::finish(window, 0);
-    release_refresh.send(()).unwrap();
-    ThreadedReads::finish_last(window);
-    view.update(window, |view, cx| {
-        assert_eq!(view.fleet.banner(), Some("Changed since loaded"));
-        assert!(view.crew_pages_suspended());
-        view.load_more(0, cx);
-    });
-    assert_eq!(
-        mock.requests()
-            .iter()
-            .filter(|r| r.path.contains("/diff/file?"))
-            .count(),
-        1
-    );
-    view.update(window, |view, cx| view.load(cx));
-    ThreadedReads::finish_last(window);
-    view.read_with(window, |view, _| {
-        assert!(view.fleet.banner().is_none());
-        assert!(!view.crew_pages_suspended());
-    });
-}
-
-#[gpui_kit::test]
 fn unchanged_refresh_and_retry_keep_the_open_snapshot(cx: &mut TestAppContext) {
     let reads = AtomicUsize::new(0);
     let mock = Mock::new(move |request| unchanged_response(&request.path, &reads));

@@ -89,7 +89,7 @@ impl DiffView {
         match result {
             Ok((content, unstable)) => {
                 binary.show(content, position, direction);
-                self.fleet.unstable |= unstable;
+                self.fleet.note_unstable_page(unstable);
             }
             Err(Error::Busy(_)) => {
                 self.show_binary_retry(Retry::Bytes(direction), cx);
