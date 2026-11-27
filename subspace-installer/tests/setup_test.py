@@ -1578,6 +1578,11 @@ class AgentDispatchSetupTests(unittest.TestCase):
         _, config, _ = self.config([*self.argv, "--no-agent-dispatch"], self.api)
         self.assertEqual(config["agentDispatch"], {"enabled": False, "answerTimeoutSeconds": 600})
 
+    def test_assignment_requests_can_be_disabled_without_disabling_dispatch(self):
+        answers, config, _ = self.config([*self.argv, "--agent-dispatch", "--no-assignment-requests"], self.api)
+        self.assertIs(answers["assignmentRequests"], False)
+        self.assertEqual(config["agentDispatch"], {"enabled": True, "assignmentRequests": False})
+
     def test_dispatch_needs_the_api(self):
         with self.assertRaisesRegex(fleet_setup.SetupError, "needs the API on this VM"):
             answers_for([*self.argv, "--agent-dispatch", "--no-api"])
@@ -2807,6 +2812,40 @@ class HostedApiSetupTests(unittest.TestCase):
             fleet_setup.check_answers(answers)
         return answers, args
 
+    def test_hosted_fleets_can_enable_dispatch_for_assigned_work_only(self):
+        answers, _ = self.answers("--api-url", "https://subspace.example.com",
+                                  "--agent-dispatch", "--no-ready-for-agents-offers")
+        self.assertFalse(answers["api"])
+        self.assertTrue(answers["agentDispatch"])
+        self.assertFalse(answers["readyOffers"])
+
+    def test_unsupported_hosted_dispatch_leaves_saved_configuration_untouched(self):
+        saved, _ = self.answers("--api-url", "https://subspace.example.com")
+        fleet_setup.save_answers(saved)
+        before = (fleet_setup.INPUTS / "answers.json").read_bytes()
+        _, args = self.answers("--api-url", "https://subspace.example.com", "--agent-dispatch", saved=saved)
+        unsupported = runtime.Invalid("Agent dispatch needs a Stargate revision with assignment requests.")
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "check_outbound"), \
+                patch.object(fleet_setup, "stargate_release", return_value=("pinned", "a" * 40)), \
+                patch.object(fleet_setup, "check_usage_guard_source"), \
+                patch.object(fleet_setup, "check_officer_tool_source", check_officer_tool_source), \
+                patch.object(runtime, "require_assignment_requests_source", side_effect=unsupported):
+            with self.assertRaisesRegex(fleet_setup.SetupError, "assignment requests"):
+                fleet_setup.configure(args)
+        self.assertEqual((fleet_setup.INPUTS / "answers.json").read_bytes(), before)
+        self.assertFalse((fleet_setup.INPUTS / "fleet.json").exists())
+
+    def test_dispatch_switches_in_installed_config_survive_guided_upgrades(self):
+        installed = fleet_setup.INPUTS / "fleet.json"
+        installed.write_text(json.dumps({"agentDispatch": {"assignmentRequests": False, "readyOffers": False}}))
+        saved = {"assignmentRequests": True, "readyOffers": True}
+        upgraded, _ = self.answers(saved=saved)
+        self.assertFalse(upgraded["assignmentRequests"])
+        self.assertFalse(upgraded["readyOffers"])
+        changed, _ = self.answers("--assignment-requests", "--ready-for-agents-offers", saved=saved)
+        self.assertTrue(changed["assignmentRequests"])
+        self.assertTrue(changed["readyOffers"])
+
     def test_the_hosted_api_replaces_one_on_this_vm_and_is_kept(self):
         answers, _ = self.answers("--api-url", "https://Subspace.Example.com/")
         self.assertEqual((answers["apiUrl"], answers["api"], answers["demo"], answers["agentDispatch"]),
@@ -2820,7 +2859,6 @@ class HostedApiSetupTests(unittest.TestCase):
                 (["--api-url", "https://subspace.example.com", "--database-url-file", "/root/fleet/database-url"],
                  "leave out --database-url-file"),
                 (["--api-url", "https://subspace.example.com", "--demo"], "drop --demo"),
-                (["--api-url", "https://subspace.example.com", "--agent-dispatch"], "leave out --agent-dispatch"),
                 (["--api-enrolment-token-file", str(self.token_file)], "pass --api-url too")):
             with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
                 self.answers(*extra)

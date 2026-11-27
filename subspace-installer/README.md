@@ -1087,9 +1087,9 @@ answers a signed-in sender with a notice pointing at its own channel
 sender's SASL account and keeps human authority separate from agent
 requests. Crew are not on IRC: ask the captain, who relays to its crew
 through Stargate's crew tools. Stargate uses IRC message IDs for strict wake
-rules. [Agent dispatch](#agent-dispatch) posts its offers and assignment
-notices to fleet command, each addressed to one captain's nick, so it wakes
-only that captain.
+rules. [Agent dispatch](#agent-dispatch) addresses one captain at a time.
+Ready for agents offers and legacy assignment notices use fleet command.
+Capacity-aware assignment requests go to the captain's ship channel.
 
 ### Local IRC and TLS
 
@@ -1821,7 +1821,7 @@ the run ends.
 
 - **Options.** `--api-url` is the API's HTTPS origin, kept on later runs. It
   excludes `--database-url-file`, `--database-ca-file`, `--migrate`, `--demo`
-  and `--agent-dispatch`, and, on the host, `--api-target`. There is no way
+  and, on the host, `--api-target`. There is no way
   back to an API on the VM. A fleet whose tracker is in an API on its VM, with
   its own PostgreSQL or an existing one, switches only with
   `--switch-to-hosted-api`, which leaves that tracker behind. The token file
@@ -1831,7 +1831,8 @@ the run ends.
 - **Stargate compatibility.** The default release has both the
   `subspaceAgents` section and the usage guard. If you supply a custom pin,
   setup checks that it has the API bridge and, when enabled, the usage guard
-  before saving the configuration.
+  before saving the configuration. Hosted `--agent-dispatch` also requires a
+  pin that supports signed assignment requests.
 - **Checks.** Before setup saves anything, every run, the dry run included,
   checks that the API answers `GET /health` and, when the run is given a
   token, checks it by posting an empty enrolment: the API refuses that for
@@ -1952,8 +1953,8 @@ See [Stargate's usage guide](https://github.com/aiconsultancy/stargate/blob/v0.4
 
 Stargate's dispatcher runs in the rear admiral's gateway and hands out
 Subspace issues: it offers each unassigned issue flagged *Ready for agents*
-to the captains in fleet command, one at a time, and tells a captain in
-fleet command about an issue assigned to it. See the
+to the captains in fleet command, one at a time, and asks captains to take
+assigned work. See the
 [repository README](../README.md#agent-dispatch) for what people see and
 [Stargate's guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/agent-dispatch.md)
 for the details. It needs Stargate v0.43.0 or newer and is off by default.
@@ -1983,7 +1984,23 @@ channel and the timings. Captains are found in the API's fleet roster by
 agent name; an agent named after the captain's member ID or name is mapped to
 its IRC account, and any other name must be the IRC account itself.
 
-**Credential.** The dispatcher calls the API as the rear admiral, so
+With a Stargate version that supports assignment requests, agent dispatch
+asks captains in their ship channels to take Backlog or Todo issues assigned
+to them when they have eligible idle crew. Requests repeat after four hours
+if the work is still waiting and crew are available. Use
+`subspace-setup --no-assignment-requests` or set
+`agentDispatch.assignmentRequests` to `false` in `fleet.json` to turn those
+requests off while keeping Ready for agents offers enabled.
+`assignmentReminderSeconds` sets the reminder interval, from 3,600 to
+604,800 seconds. Older Stargate versions keep their existing one-time
+command-channel notices.
+
+Use `--no-ready-for-agents-offers` to run assigned work requests alone.
+Enrolled fleets use the rear admiral's existing local signing socket on a
+compatible Stargate version. The gateway can make requests as that officer
+without a separate token in the installer secrets.
+
+**Bearer credential for direct API connections.** The dispatcher calls the API as the rear admiral, so
 assignments, comments and flag changes are recorded as the rear admiral's.
 Give it a bearer token for the rear admiral's own API agent identity, not the
 administrator's `apiToken`. The installer registers the rear admiral's agent

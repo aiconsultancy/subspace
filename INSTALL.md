@@ -363,17 +363,15 @@ answer it now.
     admiral to Teams. Both need an app the user creates and its tokens, so
     they follow those guides with the user after the fleet runs. **Default:
     neither.**
-15. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on) With it
-    on, issues flagged *Ready for agents* are offered to the captains in
-    fleet command, and issues assigned to a captain are announced to it
-    there (see [Agent dispatch](README.md#agent-dispatch)). It needs the
-    Subspace API on this VM and repositories, because only a captain with
-    crew can accept an offer. Setup registers the rear admiral and captains
-    as the fleet's API agents in any case; with dispatch on it also gives the
-    rear admiral's gateway a development sign-in token, which lasts eight hours: re-run the installer
-    to renew it, or see
-    [Agent dispatch](subspace-installer/README.md#agent-dispatch) for a
-    long-lived token. An unattended run leaves it off.
+15. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on). The
+    rear admiral offers unassigned *Ready for agents* issues in fleet command.
+    With compatible Stargate, it also asks captains to take their assigned
+    Backlog or Todo issues in their ship channels when crew are available.
+    Use `--no-assignment-requests` or `--no-ready-for-agents-offers` to disable
+    either behavior independently. Dispatch needs a Subspace API and at
+    least one captain with crew. A hosted API uses the enrolled rear
+    admiral's signing socket. For a local API bearer token, see
+    [Agent dispatch](subspace-installer/README.md#agent-dispatch).
 16. **An existing PostgreSQL for the tracker?** (**no**: the API keeps its
     own PostgreSQL on the fleet VM.) If they already run one, for example a
     managed server, the fleet's API can use it instead, with no database on
@@ -398,8 +396,9 @@ answer it now.
     the fleet's enrolment token (`senr1.…`, `chmod 600`; never paste it into
     the chat), which one of that API's administrators issues for this fleet
     after creating it there. Pass `--api-url URL --api-enrolment-token-file
-    FILE`. It excludes question 16 and agent dispatch. The default Stargate
-    release supports both `subspaceAgents` and the usage guard. The VM must
+    FILE`. It excludes question 16. For agent dispatch, use a Stargate
+    revision that supports signed assignment requests. The default Stargate
+    release supports `subspaceAgents` and the usage guard. The VM must
     reach the API over HTTPS. On a VM whose API already keeps a tracker,
     switching needs `--switch-to-hosted-api` and leaves that tracker behind:
     ask first. See

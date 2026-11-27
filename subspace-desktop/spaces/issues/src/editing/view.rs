@@ -144,7 +144,11 @@ fn submit(
         || editor.discard
         || matches!(
             editor.phase,
-            Phase::Conflict(_) | Phase::Unconfirmed | Phase::CheckFailed | Phase::SeveralMatches
+            Phase::Conflict(_)
+                | Phase::ConfirmingChildren(_)
+                | Phase::Unconfirmed
+                | Phase::CheckFailed
+                | Phase::SeveralMatches
         )
         || (editor.editing_existing() && !board.can_edit_issue());
     action_button(

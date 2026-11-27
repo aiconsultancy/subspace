@@ -1,5 +1,6 @@
 //! Retained, in-memory create and edit drafts for the Subspace API connection.
 
+mod confirmation;
 mod draft;
 mod entry;
 mod properties;
@@ -21,6 +22,7 @@ use subspace_api_client::{
 };
 
 use crate::Issues;
+use confirmation::{ChildChanges, TrackerConfirmation};
 use properties::Properties;
 use target::editable_detail;
 use text::{TextValues, input, input_changed};
@@ -54,6 +56,7 @@ pub(crate) struct IssueEditor {
 enum Phase {
     #[default]
     Editing,
+    ConfirmingChildren(TrackerConfirmation),
     Sending,
     LoadingConflict,
     Conflict(Option<Box<IssueDetail>>),
@@ -182,11 +185,46 @@ impl Issues {
         }
     }
 
+    fn answer_tracker_confirmation(
+        &mut self,
+        yes: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        let Phase::ConfirmingChildren(confirmation) = editor.phase else {
+            return;
+        };
+        editor.phase = Phase::Editing;
+        let changes = match confirmation {
+            TrackerConfirmation::Assignment => ChildChanges {
+                assign_children: Some(yes),
+                move_children: false,
+            },
+            TrackerConfirmation::State { assign_children } if yes => ChildChanges {
+                assign_children,
+                move_children: true,
+            },
+            TrackerConfirmation::State { .. } => {
+                cx.notify();
+                return;
+            }
+        };
+        self.save_with_children(changes, window, cx);
+    }
+
     fn cancel_issue_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editor.as_mut() else {
             return;
         };
         if editor.busy() {
+            return;
+        }
+        if matches!(editor.phase, Phase::ConfirmingChildren(_)) {
+            editor.phase = Phase::Editing;
+            cx.notify();
             return;
         }
         if !editor.dirty(cx) {

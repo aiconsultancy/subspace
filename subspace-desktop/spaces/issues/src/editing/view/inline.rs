@@ -65,6 +65,13 @@ impl Issues {
         {
             return;
         }
+        if let Some(editor) = &mut self.editor
+            && matches!(editor.phase, Phase::ConfirmingChildren(_))
+        {
+            editor.phase = Phase::Editing;
+            cx.notify();
+            return;
+        }
         self.close_issue_editor(window, cx);
         self.menu = None;
     }

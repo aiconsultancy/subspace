@@ -113,9 +113,15 @@ rules in brief.
 ## Issues, trackers and sub-issues
 
 An issue has a `type`: `issue` or `tracker`. A tracker groups work: its
-**state follows its direct children** and is set by the server, so it cannot
-take a `stateId`, an assignee or an estimate, and it cannot be marked Ready
-for agents.
+**state follows its direct children** and is set by the server. Trackers can
+have an assignee. They cannot take an estimate or be marked Ready for agents.
+
+- `assigneeId` changes the tracker itself. With a non-null assignee, ask
+  whether to also assign its unassigned, non-archived direct children.
+  Include `assignUnassignedChildren: true` only after confirmation.
+- To move open direct issue children to Backlog or Todo, confirm the move
+  and send the destination `stateId` with `moveOpenChildren: true`. The
+  server recalculates the tracker state from its children.
 
 1. **Look for an existing tracker first**, open, closed and archived:
    `subspace_list_issues` with

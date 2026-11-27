@@ -602,7 +602,8 @@ def agent_dispatch_config(value, api, agents):
 
     Timings default to Stargate's own and use its ranges, so the generated block always passes its check.
     """
-    value = fields(value, "agentDispatch", "enabled pollIntervalSeconds answerTimeoutSeconds retryLadderSeconds")
+    value = fields(value, "agentDispatch", "enabled pollIntervalSeconds answerTimeoutSeconds retryLadderSeconds "
+                   "assignmentRequests assignmentReminderSeconds readyOffers")
     settings = {
         "pollIntervalSeconds": dispatch_seconds(value.get("pollIntervalSeconds", DISPATCH_DEFAULTS["pollIntervalSeconds"]),
                                                 "agentDispatch.pollIntervalSeconds", 30, 3600),
@@ -612,6 +613,10 @@ def agent_dispatch_config(value, api, agents):
     ladder = value.get("retryLadderSeconds", DISPATCH_DEFAULTS["retryLadderSeconds"])
     require(isinstance(ladder, list) and len(ladder) <= 10,
             "agentDispatch.retryLadderSeconds must be an array of at most 10 waits ([] means a single round).")
+    settings["assignmentRequests"] = boolean(value.get("assignmentRequests", True))
+    settings["readyOffers"] = boolean(value.get("readyOffers", True))
+    settings["assignmentReminderSeconds"] = dispatch_seconds(value.get("assignmentReminderSeconds", 14400),
+                                                             "agentDispatch.assignmentReminderSeconds", 3600, 604800)
     settings["retryLadderSeconds"] = [dispatch_seconds(wait, "Each agentDispatch.retryLadderSeconds entry", 60, 604800)
                                       for wait in ladder]
     if not boolean(value.get("enabled", False)):
@@ -1461,7 +1466,7 @@ def validate(config, credentials, check_files=True):
     else:
         require(token == "", "An API token requires API configuration.")
     dispatch_token = private.get("rearAdmiralApiToken") or None
-    if dispatch:
+    if dispatch and (dispatch_token is not None or not api.get("enrolment")):
         require(dispatch_token is not None, "Agent dispatch is on: supply rearAdmiralApiToken in the secrets file, a "
                 "bearer token for the rear admiral's own Subspace API agent identity (rank rearAdmiral, in this fleet).")
         require(isinstance(dispatch_token, str) and len(dispatch_token) <= 16384 and re.fullmatch(JWT, dispatch_token),
@@ -1469,7 +1474,7 @@ def validate(config, credentials, check_files=True):
         # The dispatcher must act as the rear admiral; an administrator's token is refused by Stargate.
         require(dispatch_token != token, "rearAdmiralApiToken must be the rear admiral agent's own token, not apiToken, "
                 "which belongs to an organisation administrator.")
-    else:
+    elif not dispatch:
         require(dispatch_token is None, "rearAdmiralApiToken is only for agent dispatch. Remove it, or switch "
                 "agentDispatch.enabled on.")
     require(not any(repo["private"] for repo in repositories.values()) or len(applications) == len(agents),
@@ -2012,6 +2017,22 @@ def stargate_has_pull_request_repositories(cfg):
         except (OSError, UnicodeDecodeError):
             continue
     return False
+
+
+ASSIGNMENT_REQUESTS_SOURCE = "src/config/composition.ts"
+ASSIGNMENT_REQUESTS_MARKER = "assignmentRequests: Schema.optional"
+
+
+def stargate_has_assignment_requests(cfg):
+    schema = APP / "src" / f"stargate-{cfg['stargate']['ref']}" / ASSIGNMENT_REQUESTS_SOURCE
+    return schema.is_file() and ASSIGNMENT_REQUESTS_MARKER in schema.read_text()
+
+
+def require_assignment_requests_source(ref, repo):
+    check_stargate_source(APP / "src" / f"stargate-{ref}", repo, ref, ASSIGNMENT_REQUESTS_SOURCE,
+                          "Agent dispatch needs a Stargate revision with assignment requests. "
+                          "Select a compatible --stargate-ref or use --no-agent-dispatch.",
+                          False, marker=ASSIGNMENT_REQUESTS_MARKER)
 
 
 def require_subspace_agents(cfg):
@@ -3472,13 +3493,28 @@ def agent_dispatch_settings(cfg):
         for name in (person["id"], person["name"]):
             if re.fullmatch(r"[A-Za-z0-9-]{1,64}", name) and name != person["account"]:
                 accounts[name] = person["account"]
-    return {
+    supports_assignment_requests = stargate_has_assignment_requests(cfg)
+    signed = dispatch["token"] is None
+    if signed or not dispatch["readyOffers"] or not dispatch["assignmentRequests"]:
+        require(supports_assignment_requests, "This agent dispatch configuration needs a Stargate that supports "
+                "assignment requests. Set stargate.ref to a compatible merged revision.")
+    api = {"socketPath": str(agent_socket(rear["id"]))} if signed else {
+        "baseUrl": cfg["api"]["url"], "tokenEnv": DISPATCH_TOKEN_ENV,
+    }
+    block = {
         "enabled": True, "fleet": cfg["slug"],
-        "api": {"baseUrl": cfg["api"]["url"], "tokenEnv": DISPATCH_TOKEN_ENV},
+        "api": api,
         "messaging": {"type": "irc", "registration": rear["id"], "channel": cfg["irc"]["commandChannel"]},
         "captainAccounts": accounts,
         **{key: dispatch[key] for key in DISPATCH_DEFAULTS},
-    }, {DISPATCH_TOKEN_ENV: dispatch["token"]}
+    }
+    if supports_assignment_requests:
+        block["readyOffers"] = dispatch["readyOffers"]
+        block["assignmentRequests"] = {
+            "reminderSeconds": dispatch["assignmentReminderSeconds"],
+            "shipChannels": {person["account"]: person["channel"] for person in captains if person["crew"]},
+        } if dispatch["assignmentRequests"] else None
+    return block, {} if signed else {DISPATCH_TOKEN_ENV: dispatch["token"]}
 
 
 def has_repository_refresh(cfg, person):

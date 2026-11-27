@@ -867,6 +867,20 @@ rows name the integration `Enrolment token` as the actor. No token, secret or
 passphrase is logged, audited or returned after it is issued. A refused agent
 token is logged at debug level with its reason and fingerprint only.
 
+## Updating trackers
+
+A tracker can have an assignee. A normal `assigneeId` write changes its
+assignee only. Include `assignUnassignedChildren: true` with a non-null
+`assigneeId` in `PATCH /api/v1/issues/{reference}` to assign its unassigned,
+non-archived direct children in the same transaction.
+
+Tracker state is derived from direct children. To move open direct issue
+children, send `moveOpenChildren: true` with a Backlog or Todo `stateId`.
+The API skips terminal and archived children. It validates permissions and
+workflow mappings before committing the changes, then calculates the
+tracker's state from the resulting children. Both operations use the
+tracker's current `version`.
+
 ## Ready for agents
 
 Every full issue shape includes `readyForAgents`, a boolean that defaults to

@@ -138,7 +138,11 @@ impl IssueEditor {
         self.busy()
             || matches!(
                 self.phase,
-                Phase::Unconfirmed | Phase::Checked | Phase::CheckFailed | Phase::SeveralMatches
+                Phase::ConfirmingChildren(_)
+                    | Phase::Unconfirmed
+                    | Phase::Checked
+                    | Phase::CheckFailed
+                    | Phase::SeveralMatches
             )
     }
 

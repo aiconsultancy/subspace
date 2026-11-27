@@ -75,6 +75,8 @@
 #   --repositories https://github.com/example/project.git
 #   --agentsview | --no-agentsview (default on)
 #   --agent-dispatch | --no-agent-dispatch (default off)
+#   --assignment-requests | --no-assignment-requests (default on with agent dispatch)
+#   --ready-for-agents-offers | --no-ready-for-agents-offers (default on with agent dispatch)
 #   --mockup-previews | --no-mockup-previews (default on)
 #   --impeccable | --no-impeccable (default on); --preview-url HTTPS_ORIGIN|tunnel
 #   --preview-proxy-user ACCOUNT (for a local private gateway)

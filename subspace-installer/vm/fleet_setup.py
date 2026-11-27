@@ -323,6 +323,10 @@ def parse_args(argv):
     parser.add_argument("--agent-dispatch", dest="agent_dispatch", action="store_true", default=None,
                         help="switch on Stargate's agent dispatch: " + DISPATCH_SUMMARY + " (default off; needs the API)")
     parser.add_argument("--no-agent-dispatch", dest="agent_dispatch", action="store_false")
+    parser.add_argument("--assignment-requests", action=argparse.BooleanOptionalAction, default=None,
+                        help="ask captains to take assigned issues when crew are ready (default on with agent dispatch)")
+    parser.add_argument("--ready-for-agents-offers", action=argparse.BooleanOptionalAction, default=None,
+                        help="offer unassigned Ready for agents issues (default on with agent dispatch)")
     parser.add_argument("--operator", help="Linux login that may SSH in and tunnel (default: the sudo user)")
     parser.add_argument("--access", choices=["ssh", "tailscale", "cloudflare"],
                         help="how you reach the VM; tailscale limits SSH to the tailnet, cloudflare to cloudflared")
@@ -632,6 +636,13 @@ def gather(args, saved):
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
     installed = read_json(INPUTS / "fleet.json", {}) or {}
+    installed_dispatch = installed.get("agentDispatch")
+    for key, flag in (("assignmentRequests", args.assignment_requests),
+                      ("readyOffers", args.ready_for_agents_offers)):
+        if flag is not None:
+            answers[key] = flag
+        elif isinstance(installed_dispatch, dict) and key in installed_dispatch:
+            answers[key] = installed_dispatch[key]
     installed_view = installed.get("agentsview", {})
     if args.agentsview is not None:
         answers["agentsview"] = args.agentsview
@@ -856,8 +867,8 @@ def check_answers(answers):
                 "--fleet-api-url is the address of Stargate's Fleet API, which --stargate-api off turns off. Pass "
                 "--fleet-api-url tunnel, or switch the Fleet API on.")
     require(isinstance(answers.get("agentDispatch", False), bool), "Agent dispatch is on or off.")
-    require(not answers.get("agentDispatch") or answers["api"],
-            "Agent dispatch polls the Subspace API, so it needs the API on this VM: drop --no-api, or pass "
+    require(not answers.get("agentDispatch") or answers["api"] or answers.get("apiUrl"),
+            "Agent dispatch needs the API on this VM or a hosted API URL: drop --no-api, configure --api-url, or pass "
             "--no-agent-dispatch.")
     require(answers["operator"] and answers["operator"] != "root",
             "Run setup with sudo from your own login, or pass --operator with the Linux user that SSHes in.")
@@ -1345,8 +1356,11 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         config["api"] = {"url": answers["apiUrl"], "enrolment": True}
     # Timings someone set by hand stay; the answer switches dispatch on or off. It needs the API block.
     dispatch = previous.get("agentDispatch") if isinstance(previous.get("agentDispatch"), dict) else {}
-    if dispatch or answers.get("agentDispatch"):
-        config["agentDispatch"] = {**dispatch, "enabled": bool(answers.get("agentDispatch") and api_block)}
+    dispatch_options = {key: answers[key] for key in ("assignmentRequests", "readyOffers") if key in answers}
+    if dispatch or answers.get("agentDispatch") or dispatch_options:
+        config["agentDispatch"] = {
+            **dispatch, **dispatch_options, "enabled": bool(answers.get("agentDispatch") and config.get("api")),
+        }
     return config
 
 
@@ -1910,6 +1924,10 @@ def check_officer_tool_source(answers, members, ref):
     # Build the same capabilities as the actual fleet using only public settings.
     planned = fleet_config(answers, members, '0' * 40, planned_api_block(answers), stargate_ref=ref)
     try:
+        dispatch = planned.get("agentDispatch", {})
+        if dispatch.get("enabled") and (answers.get("apiUrl") or dispatch.get("readyOffers") is False
+                                        or dispatch.get("assignmentRequests") is False):
+            runtime.require_assignment_requests_source(ref, STARGATE_REPO)
         api = dict(planned.get("api") or {})
         if api.get("agentUrl"):
             api["agentMcpUrl"] = api["agentUrl"]
@@ -2032,8 +2050,6 @@ def hosted_api(args, answers, saved):
             "--api-url uses an API on another host, which keeps its own database: leave out --database-url-file, "
             "--database-ca-file and --migrate.")
     require(not args.demo, "Demo data is fictional and never goes into a hosted API: drop --demo.")
-    require(not args.agent_dispatch, "Agent dispatch needs a rear admiral token that setup mints from an API on this "
-            "VM; with --api-url, leave out --agent-dispatch.")
     origin = f"https://{parts.netloc.lower()}"
     # The fleet's tracker is in an API on this VM, with its own PostgreSQL or an existing one: switching leaves it.
     tracker = not saved.get("apiUrl") and saved.get("api", True) and (
@@ -3716,7 +3732,7 @@ def configure(args):
         say("the installed Stargate has no Fleet API, so the fleet records no Fleet API address.")
     if answers["agentDispatch"]:
         say(f"agent dispatch is on: {DISPATCH_SUMMARY}.")
-        if api_block:
+        if api_block and dispatch_token:
             say("WARNING: the rear admiral's development sign-in token lasts eight hours. Run setup again to renew "
                 "it, or move the API to WorkOS or Entra and give the rear admiral a long-lived token "
                 "(installer README, 'Agent dispatch').")

@@ -87,6 +87,22 @@ fn errors_never_replay_a_write() {
 }
 
 #[test]
+fn blocked_tracker_children_are_a_validation_error() {
+    let mock = Mock::new(|_| {
+        (
+            400,
+            json!({"errors":{"trackerChildren":["A child belongs to an archived project."]}})
+                .to_string(),
+        )
+    });
+    assert_eq!(
+        client(&mock).update_issue("1", 1, &changes()).unwrap_err(),
+        IssueSaveError::TrackerChildrenBlocked,
+    );
+    assert_eq!(mock.requests().len(), 1);
+}
+
+#[test]
 fn validation_checks_utf16_dates_and_estimate_and_keeps_null_distinct() {
     let mut values = changes();
     values.set(IssueProperty::Title("🙂".repeat(101)));

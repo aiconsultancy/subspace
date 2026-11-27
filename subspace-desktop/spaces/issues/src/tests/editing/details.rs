@@ -112,7 +112,7 @@ fn tracker_state_is_derived_and_archived_issues_offer_no_edits(cx: &mut TestAppC
     board.update(cx, |b, cx| b.open_detail("SUB-1".into(), cx));
     settle_board(&board, cx, |b| b.can_edit_issue());
     render(cx);
-    assert!(!has(cx, "issue-property-edit:State"));
+    assert!(has(cx, "issue-property-edit:State"));
     assert!(has(cx, "issue-property-edit:Priority"));
     board.update(cx, |b, cx| b.open_detail("SUB-3".into(), cx));
     settle_board(&board, cx, |b| {

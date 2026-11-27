@@ -56,6 +56,10 @@ pub enum IssueSaveError {
     NoChanges,
     #[error("Subspace API couldn't save these values. Check the fields and try again.")]
     Invalid,
+    #[error(
+        "A sub-issue is in an archived project or has no matching workflow state. Your draft is still here."
+    )]
+    TrackerChildrenBlocked,
     #[error("This issue or something it links to changed. Read the latest issue before saving.")]
     Conflict,
     #[error(

@@ -188,11 +188,12 @@ out:
   that no captain could take it and clears the flag; flag it again to retry.
   Accepting assigns the issue, which clears the flag, so two captains never
   take the same issue.
-- **Assigned to a captain.** Assign an issue to a captain and the rear
-  admiral asks that captain in chat to pick it up, assign it to a crew
-  member and get it done.
-- **In the open.** Offers, answers and requests go to the fleet's command
-  channel, so people watch them in the Channels Space and can step in.
+- **Assigned to a captain.** With compatible Stargate, the rear admiral asks
+  a captain to take an assigned Backlog or Todo issue when crew are available.
+  The captain replies in the request's ship-channel thread. If the issue is
+  still waiting, reminders default to every four hours when crew are available.
+- **In the open.** Ready for agents offers and answers go to fleet command.
+  In Channels, open a captain's ship to see its assignment requests.
 - **Own fleet only.** The API refuses a fleet agent's assignment or *Ready
   for agents* change on an issue whose project belongs to another fleet,
   even when the project moved after the dispatcher last read it. It also

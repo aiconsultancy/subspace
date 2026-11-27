@@ -1453,6 +1453,33 @@ class AgentDispatchTests(unittest.TestCase):
         self.assertNotIn(FIXTURE_JWT, json.dumps(block))
         self.assertEqual(environment, {"SUBSPACE_DISPATCH_TOKEN": FIXTURE_JWT})
 
+    def test_supported_gateways_get_ship_assignment_requests_by_default_and_can_turn_them_off(self):
+        self.enable()
+        cfg = validate(self.config, self.secrets)
+        [captain] = cfg["members"][1:]
+        with patch.object(runtime, "stargate_has_assignment_requests", return_value=True):
+            block, _ = runtime.agent_dispatch_settings(cfg)
+            self.assertEqual(block["assignmentRequests"], {
+                "reminderSeconds": 14400,
+                "shipChannels": {captain["account"]: captain["channel"]},
+            })
+            self.enable(assignmentRequests=False, assignmentReminderSeconds=7200)
+            block, _ = runtime.agent_dispatch_settings(validate(self.config, self.secrets))
+            self.assertIsNone(block["assignmentRequests"])
+            self.assertTrue(block["enabled"])
+
+    def test_hosted_dispatch_uses_the_existing_rear_admiral_signing_socket(self):
+        self.config["api"]["enrolment"] = True
+        self.config["agentDispatch"] = {"enabled": True, "readyOffers": False}
+        del self.secrets["apiToken"]
+        cfg = validate(self.config, self.secrets)
+        with patch.object(runtime, "stargate_has_assignment_requests", return_value=True):
+            block, environment = runtime.agent_dispatch_settings(cfg)
+        self.assertEqual(block["api"], {"socketPath": str(runtime.agent_socket(cfg["members"][0]["id"]))})
+        self.assertFalse(block["readyOffers"])
+        self.assertTrue(block["assignmentRequests"]["shipChannels"])
+        self.assertEqual(environment, {})
+
     def test_timings_are_overridable_within_stargates_ranges(self):
         self.enable(pollIntervalSeconds=30, answerTimeoutSeconds=600, retryLadderSeconds=[])
         block, _ = runtime.agent_dispatch_settings(validate(self.config, self.secrets))

@@ -10,10 +10,13 @@ use subspace_framework::dashboard::{
 };
 use subspace_framework::lucide::IconName;
 
-use super::super::{IssueEditor, Phase};
+use super::super::{IssueEditor, Phase, TrackerConfirmation};
 use crate::Issues;
 
 pub(super) fn notice(editor: &IssueEditor, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
+    if let Phase::ConfirmingChildren(confirmation) = editor.phase {
+        return tracker_confirmation(confirmation, tokens, cx);
+    }
     if editor.discard {
         return discard(editor, cx);
     }
@@ -56,6 +59,42 @@ pub(super) fn notice(editor: &IssueEditor, tokens: &Tokens, cx: &mut Context<Iss
             )
         },
     )
+}
+
+fn tracker_confirmation(
+    confirmation: TrackerConfirmation,
+    tokens: &Tokens,
+    cx: &mut Context<Issues>,
+) -> Div {
+    let (message, yes, no) = match confirmation {
+        TrackerConfirmation::Assignment => {
+            ("Assign the unassigned child issues as well?", "Yes", "No")
+        }
+        TrackerConfirmation::State { .. } => (
+            "Move the open child issues to this state?",
+            "Move children",
+            "Cancel",
+        ),
+    };
+    v_flex()
+        .gap_2()
+        .child(message_row(div(), message.into(), tokens))
+        .child(
+            h_flex().flex_wrap().gap_2().children(
+                [
+                    ("issue-tracker-children-yes", yes, Intent::Primary, true),
+                    ("issue-tracker-children-no", no, Intent::Neutral, false),
+                ]
+                .into_iter()
+                .map(|(id, text, intent, answer)| {
+                    action_button(id, intent, None, text)
+                        .compact()
+                        .on_click(cx.listener(move |board, _, window, cx| {
+                            board.answer_tracker_confirmation(answer, window, cx);
+                        }))
+                }),
+            ),
+        )
 }
 
 fn message_row(row: Div, message: SharedString, tokens: &Tokens) -> Div {

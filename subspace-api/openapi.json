@@ -18675,6 +18675,26 @@
                       }
                     ]
                   },
+                  "assignUnassignedChildren": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "moveOpenChildren": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "version": {
                     "type": "integer",
                     "minimum": 1,

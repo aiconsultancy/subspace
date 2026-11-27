@@ -18,7 +18,7 @@ import { issuePriorityOrder, issueTimeOrder } from "./issue-order";
 import { localMedia } from "./issue-media";
 import { markdownMentions, mentionPeople, mentionStatuses, validatedMentions } from "./mentions";
 import { byKey, cursorAfter, cursorAnchor, page } from "./paging";
-import { problem } from "./problems";
+import { problem, validationProblem } from "./problems";
 import { person, readProject, takeIssueNumber } from "./projects";
 import {
   comments,
@@ -868,12 +868,9 @@ export const createIssue = (member: Member, payload: typeof NewIssue.Type) =>
         yield* requireFleetOwnership(tx, member, project.id, editable);
         const stateId = editable.stateId ?? project.defaultStateId;
         const state = yield* validateState(tx, member, project.id, stateId);
-        if (
-          payload.type === "tracker" &&
-          (payload.stateId || payload.assigneeId || payload.estimate != null)
-        ) {
+        if (payload.type === "tracker" && (payload.stateId || payload.estimate != null)) {
           return yield* Effect.fail(
-            problem(400, "Trackers derive their state and cannot have an assignee or estimate."),
+            problem(400, "Trackers derive their state and cannot have an estimate."),
           );
         }
         if (
@@ -946,13 +943,109 @@ function terminalAfterEdit(
   });
 }
 
+type TrackerStateChange = { id: string; type: "backlog" | "unstarted" };
+
+function applyTrackerChildren(
+  db: Db,
+  actor: Member,
+  tracker: IssueRow,
+  assigneeId: string | undefined,
+  move: TrackerStateChange | undefined,
+) {
+  return Effect.gen(function* () {
+    if (!assigneeId && !move) return;
+    const children = yield* db
+      .select({ issue: issues, stateType: states.type })
+      .from(issues)
+      .innerJoin(
+        states,
+        and(eq(states.organisationId, issues.organisationId), eq(states.id, issues.stateId)),
+      )
+      .where(and(inOrg(actor), eq(issues.parentId, tracker.id), isNull(issues.archivedAt)));
+    const namedStates = new Map<string, string>(move ? [[tracker.projectId, move.id]] : []);
+    const checkedProjects = new Set([tracker.projectId]);
+
+    for (const { issue, stateType } of children) {
+      const assign = assigneeId && issue.assigneeId === null ? assigneeId : undefined;
+      let stateId: string | undefined;
+
+      if (assign && !checkedProjects.has(issue.projectId)) {
+        yield* requireFleetOwnership(db, actor, issue.projectId, { assigneeId: assign });
+        const { project } = yield* readProject(db, actor, issue.projectId);
+        if (project.archivedAt)
+          return yield* Effect.fail(
+            validationProblem("trackerChildren", "A child belongs to an archived project."),
+          );
+        checkedProjects.add(issue.projectId);
+      }
+      if (move && issue.type === "issue" && !isTerminalState(stateType)) {
+        stateId = namedStates.get(issue.projectId);
+        if (!stateId) {
+          const { project } = yield* readProject(db, actor, issue.projectId);
+          if (project.archivedAt)
+            return yield* Effect.fail(
+              validationProblem("trackerChildren", "A child belongs to an archived project."),
+            );
+          const candidates = yield* db
+            .select({ id: states.id })
+            .from(states)
+            .where(
+              and(
+                eq(states.organisationId, actor.organisationId),
+                eq(states.projectId, issue.projectId),
+                eq(states.type, move.type),
+              ),
+            );
+          stateId = candidates.length === 1 ? candidates[0]?.id : undefined;
+          if (!stateId)
+            return yield* Effect.fail(
+              validationProblem(
+                "trackerChildren",
+                "A child project has no single corresponding workflow state.",
+              ),
+            );
+          namedStates.set(issue.projectId, stateId);
+        }
+        if (stateId === issue.stateId) stateId = undefined;
+      }
+      if (!assign && !stateId) continue;
+      yield* db
+        .update(issues)
+        .set({
+          ...(assign && { assigneeId: assign, readyForAgents: false }),
+          ...(stateId && move && { stateId, ...datesForState(move.type, issue) }),
+          updatedAt: sql`now()`,
+          lastActivityAt: sql`now()`,
+          version: issue.version + 1,
+        })
+        .where(and(inOrg(actor), eq(issues.id, issue.id)));
+
+      yield* addActivity(db, actor, issue.id, "issue.changed", {
+        fields: [
+          ...(assign ? ["assigneeId", ...(issue.readyForAgents ? ["readyForAgents"] : [])] : []),
+          ...(stateId ? ["stateId"] : []),
+        ],
+        ...(stateId && { previousStateId: issue.stateId, stateId }),
+      });
+    }
+  });
+}
+
 export const editIssue = (member: Member, reference: string, payload: typeof EditIssue.Type) =>
   Effect.gen(function* () {
     const db = yield* Database;
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {
         yield* lockIssues(tx, member);
-        const { version, labelIds, parentId, relations, ...editable } = payload;
+        const {
+          version,
+          labelIds,
+          parentId,
+          relations,
+          assignUnassignedChildren,
+          moveOpenChildren,
+          ...editable
+        } = payload;
         const actor = yield* withCrew(member, payload.relayedCrew);
         const issue = yield* readIssue(tx, member, reference);
         const { project } = yield* readProject(tx, member, issue.projectId);
@@ -962,24 +1055,49 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
           );
         if (version !== issue.version)
           return yield* Effect.fail(problem(409, "The issue version is stale.", issue.version));
-        if (Object.keys(payload).length === 1)
-          return yield* Effect.fail(problem(400, "Supply an issue field to update."));
-        yield* requireFleetOwnership(tx, member, issue.projectId, editable);
         if (
-          (editable.type ?? issue.type) === "tracker" &&
-          (editable.stateId ||
-            (editable.assigneeId === undefined ? issue.assigneeId : editable.assigneeId) ||
-            (editable.estimate === undefined
-              ? issue.estimate !== null
-              : editable.estimate !== null))
+          Object.keys(editable).length === 0 &&
+          labelIds === undefined &&
+          parentId === undefined &&
+          relations === undefined
         ) {
+          return yield* Effect.fail(problem(400, "Supply an issue field to update."));
+        }
+        yield* requireFleetOwnership(tx, member, issue.projectId, editable);
+        const tracker = (editable.type ?? issue.type) === "tracker";
+        if (
+          tracker &&
+          (editable.estimate === undefined ? issue.estimate !== null : editable.estimate !== null)
+        ) {
+          return yield* Effect.fail(problem(400, "Trackers cannot have an estimate."));
+        }
+        if (assignUnassignedChildren && (!tracker || !editable.assigneeId)) {
           return yield* Effect.fail(
-            problem(400, "Trackers derive their state and cannot have an assignee or estimate."),
+            problem(400, "Assign the tracker to fill its unassigned children."),
+          );
+        }
+        if (moveOpenChildren && (!tracker || issue.type !== "tracker" || !editable.stateId)) {
+          return yield* Effect.fail(
+            problem(400, "Choose a state for this tracker's open children."),
+          );
+        }
+        if (tracker && editable.stateId && !moveOpenChildren) {
+          return yield* Effect.fail(
+            problem(400, "Tracker state is derived. Confirm moving its open children."),
           );
         }
         const state = editable.stateId
           ? yield* validateState(tx, member, issue.projectId, editable.stateId)
           : undefined;
+        if (moveOpenChildren && state !== "backlog" && state !== "unstarted") {
+          return yield* Effect.fail(
+            problem(400, "Choose a Backlog or Todo state for the open children."),
+          );
+        }
+        const move =
+          moveOpenChildren && editable.stateId && (state === "backlog" || state === "unstarted")
+            ? { id: editable.stateId, type: state }
+            : undefined;
         if (
           editable.estimate != null &&
           editable.estimate !== issue.estimate &&
@@ -987,7 +1105,7 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
         )
           return yield* Effect.fail(problem(400, "Choose an estimate on the project scale."));
         const ready = yield* readyForAgentsAfter(issue, editable, {
-          tracker: (editable.type ?? issue.type) === "tracker",
+          tracker,
           terminal: yield* terminalAfterEdit(tx, member, issue, state, relations?.duplicateOf),
         });
         yield* activePeople(tx, member, editable);
@@ -997,10 +1115,11 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
           .update(issues)
           .set({
             ...editable,
+            ...(tracker && { stateId: undefined }),
             ...(editable.cycleId !== undefined && editable.cycleId !== issue.cycleId
               ? { cycleJoinedAt: editable.cycleId ? new Date() : null }
               : {}),
-            ...(state ? datesForState(state, issue) : {}),
+            ...(!tracker && state ? datesForState(state, issue) : {}),
             readyForAgents: ready.readyForAgents,
             parentId: parent,
             updatedAt: sql`now()`,
@@ -1024,7 +1143,14 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
             relations.remove,
             relations.duplicateOf,
           );
-        const fields = Object.keys(payload).filter((field) => field !== "version");
+        const fields = Object.keys(payload).filter(
+          (field) =>
+            field !== "version" &&
+            field !== "assignUnassignedChildren" &&
+            field !== "moveOpenChildren" &&
+            !(tracker && field === "stateId"),
+        );
+        if (move || assignUnassignedChildren) fields.push("children");
         // An assignment that clears the flag records it as changed although the caller did not send it.
         if (ready.changed && !fields.includes("readyForAgents")) fields.push("readyForAgents");
         yield* addActivity(tx, actor, issue.id, "issue.changed", {
@@ -1039,6 +1165,13 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
             ? { previousStateId: issue.stateId, stateId: updated.stateId }
             : {}),
         });
+        yield* applyTrackerChildren(
+          tx,
+          actor,
+          updated,
+          assignUnassignedChildren ? (editable.assigneeId ?? undefined) : undefined,
+          move,
+        );
         yield* refreshTrackers(tx, actor, [updated.id, updated.parentId, issue.parentId]);
         return yield* detailFrom(tx, member, issue.id);
       }),

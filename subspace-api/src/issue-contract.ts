@@ -175,6 +175,10 @@ export const EditIssue = Schema.Struct({
       duplicateOf: DuplicateTarget,
     }),
   ),
+  /** Confirm filling empty assignees on the tracker's existing direct children. */
+  assignUnassignedChildren: Schema.optional(Schema.Boolean),
+  /** Confirm moving the tracker's open direct issue children to Backlog or Todo. */
+  moveOpenChildren: Schema.optional(Schema.Boolean),
   version: Version,
   ...editable,
   title: Schema.optional(Line(200)),
