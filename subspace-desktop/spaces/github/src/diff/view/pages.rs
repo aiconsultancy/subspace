@@ -97,11 +97,15 @@ impl DiffView {
     }
 
     pub(super) fn invalidate_pages(&mut self) {
+        self.invalidate_patch_pages();
+        self.cancel_binary_read();
+    }
+
+    pub(super) fn invalidate_patch_pages(&mut self) {
         self.fleet.page_read.cancel();
         self.fleet.page_read = Default::default();
         self.fleet.loading.clear();
         self.fleet.busy_pages.clear();
-        self.cancel_binary_read();
     }
 
     pub(super) fn fleet_page_error(&mut self, error: Error, cx: &mut Context<Self>) {

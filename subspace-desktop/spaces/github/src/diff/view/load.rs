@@ -56,7 +56,9 @@ impl DiffView {
             DiffSource::GitHub(_) => None,
         };
         self.cancel_list();
-        self.invalidate_pages();
+        // Keep an active binary read pinned to the displayed fingerprint.
+        // Replacing or clearing the snapshot closes that reader.
+        self.invalidate_patch_pages();
         self.fleet.list_read = DiffRead::default();
         let generation = self.fleet.generation;
         let baseline = self.fleet.live_revision;
@@ -192,11 +194,16 @@ impl DiffView {
                 self.set_files(diff.files.into_iter().map(github_file).collect(), cx);
             }
             Loaded::Fleet(diff) => {
+                let unchanged =
+                    self.loaded && self.fleet.fingerprint.as_ref() == Some(&diff.fingerprint);
                 self.fleet.stale_page = false;
                 self.fleet.unavailable = false;
                 self.binary_holds.pin_to(self.fleet.mode, &diff.fingerprint);
                 self.fleet.accept_fingerprint(diff.fingerprint, baseline);
                 self.fleet.unstable = diff.unstable;
+                if unchanged {
+                    return;
+                }
                 self.total = diff.total;
                 self.replace_crew_files(diff.files.into_iter().map(fleet_file).collect(), cx);
             }

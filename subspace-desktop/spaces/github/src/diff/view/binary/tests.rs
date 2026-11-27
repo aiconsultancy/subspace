@@ -64,6 +64,22 @@ fn pages_both_binary_sides_and_evicts_the_preview_on_close(cx: &mut TestAppConte
 }
 
 #[gpui_kit::test]
+fn an_unchanged_refresh_lets_an_active_binary_read_finish(cx: &mut TestAppContext) {
+    let mock = Mock::new(binary_response);
+    let (view, window) = mount(cx, &mock);
+    click(window, ("crew-diff-bytes", 0usize));
+    view.update(window, |view, cx| {
+        view.read_binary(Move::Next, cx);
+        assert!(view.binary.as_ref().unwrap().read.is_some());
+        view.load(cx);
+        assert!(view.binary.as_ref().unwrap().read.is_some());
+    });
+    window.run_until_parked();
+    assert_page(&view, window, DiffSide::New, 3);
+    assert_eq!(binary_read_count(&mock), 2);
+}
+
+#[gpui_kit::test]
 fn a_binary_page_conflict_keeps_the_displayed_bytes_and_offers_refresh(cx: &mut TestAppContext) {
     let mock = Mock::new(|request| {
         if request.path.contains("&page=png-tail") {

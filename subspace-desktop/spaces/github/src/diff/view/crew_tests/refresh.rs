@@ -1,5 +1,5 @@
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -10,6 +10,8 @@ use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::client_test_support::Mock;
 use tokio::sync::oneshot;
 
+use super::super::super::model::{DiffRow, Layout};
+use super::super::Text;
 use super::{DiffView, ReadGate, fixture, mount};
 
 /// The test dispatcher runs blocking work on the UI thread. Opt in to a real
@@ -196,4 +198,81 @@ fn refresh_clears_the_snapshot_on_confirmed_access_or_checkout_loss(cx: &mut Tes
             assert_eq!(view.error.is_some(), status != 404);
         });
     }
+}
+
+#[gpui_kit::test]
+fn unchanged_refresh_and_retry_keep_the_open_snapshot(cx: &mut TestAppContext) {
+    let reads = AtomicUsize::new(0);
+    let mock = Mock::new(move |request| unchanged_response(&request.path, &reads));
+    let (view, window) = mount(cx, &mock);
+    let first_page_lines = view.update(window, |view, cx| {
+        view.set_layout(Layout::Unified, cx);
+        view.toggle_collapsed(0, cx);
+        // Fleet has no context-fetch action. Seed known text to exercise the
+        // shared hunk expansion state without adding a Fleet UI feature.
+        view.texts
+            .insert(1, Text::Ready(Arc::new(vec!["context".to_owned(); 201])));
+        view.expand(1, 1, cx);
+        view.load_more(1, cx);
+        view.files[1].patch.lines.len()
+    });
+    window.run_until_parked();
+    window.update(|window, cx| window.draw(cx).clear(cx));
+    view.update(window, |view, cx| {
+        view.scroll_by(first_page_lines as f32 + 8., cx)
+    });
+    window.update(|window, cx| window.draw(cx).clear(cx));
+    let (row, line) = view.read_with(window, |view, cx| {
+        let row = top_row(view, cx);
+        let DiffRow::Line { file: 1, line } = view.rows[row + 1] else {
+            panic!("expected a patch row just below the top of the list");
+        };
+        assert!(line > first_page_lines, "scrolled into the continuation");
+        assert!(view.expanded.contains(&(1, 1)));
+        (row, line)
+    });
+    window.update(|window, cx| window.click(("diff-line-left", line), cx));
+    window.update(|window, cx| window.draw(cx).clear(cx));
+    view.read_with(window, |view, _| {
+        assert_eq!(view.full_line.as_ref().unwrap().parts().0, "continuation");
+    });
+    window.update(|window, cx| window.click("crew-diff-refresh", cx));
+    window.run_until_parked();
+    window.update(|window, cx| window.draw(cx).clear(cx));
+    window.update(|window, cx| window.click("crew-diff-refresh-retry", cx));
+    window.run_until_parked();
+    view.read_with(window, |view, cx| {
+        assert!(view.error.is_none());
+        assert_eq!(view.fleet.fingerprint.as_deref(), Some("B"));
+        assert!(
+            view.collapsed.contains(&0),
+            "unchanged refresh unfolded a file"
+        );
+        assert!(view.expanded.contains(&(1, 1)));
+        assert_eq!(view.files[1].patch.lines.len(), first_page_lines + 120);
+        assert!(view.files[1].next_page.is_none());
+        assert_eq!(top_row(view, cx), row);
+        assert_eq!(view.full_line.as_ref().unwrap().parts().0, "continuation");
+    });
+}
+
+fn unchanged_response(path: &str, reads: &AtomicUsize) -> (u16, String) {
+    if path.contains("/diff/file?") {
+        assert!(path.contains("&at=B&page=page-file"));
+        let patch = format!("@@ -1,0 +81,120 @@\n{}", "+continuation\n".repeat(120));
+        let page = json!({"fingerprint": "B", "file": {
+            "path": "target.txt", "status": "modified", "patch": patch,
+        }});
+        return (200, page.to_string());
+    }
+    if !path.contains("/diff?") {
+        return (404, String::new());
+    }
+    if reads.fetch_add(1, Ordering::Relaxed) == 1 {
+        return (500, String::new());
+    }
+    (
+        200,
+        snapshot("branch", "B", &["collapsed.txt", "target.txt"]),
+    )
 }
