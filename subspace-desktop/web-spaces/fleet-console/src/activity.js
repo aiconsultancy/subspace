@@ -328,9 +328,15 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     const grew = bytes > budget.bytes(INLINE_KEY);
     refitting = grew;
     try {
-      if (grew) planRefits(bytes);
+      // Every refit is planned first; then their charges are set as a batch, freeing nothing (SUB decision 8346cf82).
+      if (grew) for (const key of planRefits(bytes)) wholeToParts(key, { fitted: true });
+      // The one reservation that frees: only what the final floor still needs.
       if (bytes !== budget.bytes(INLINE_KEY) || !budget.has(INLINE_KEY)) budget.reserve(INLINE_KEY, bytes, null, { pinned: true });
-      if (grew) recheckWholes();
+      if (grew) {
+        recheckWholes();
+        // A queued whole read starts only now, against the final floor.
+        pump();
+      }
     } finally {
       refitting = false;
     }
@@ -339,36 +345,47 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   /** Whether `key` is an item read whole whose window the panel draws. */
   const displayed = (key) => full.get(key)?.mode === "whole" && (positions.get(key)?.bytes ?? 0) > 0;
 
-  /**
-   * Before the pinned charge grows to `bytes`, the refits are planned
-   * against that final floor, not the one held now (SUB decision
-   * cf21d510). First the latest request, when it is an item read whole
-   * that will not fit beside the grown charge, reads in parts, so the room
-   * it gives back is counted before anything is freed; then each whole on
-   * show that the growth would still free. Their pagers' changes are not
-   * published meanwhile (`refitting`), so none of them charges the inline
-   * content before the plan is done.
-   */
-  function planRefits(bytes) {
-    const key = budget.requested;
-    const growth = bytes - budget.bytes(INLINE_KEY);
-    if (key !== null && full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key) + growth)) wholeToParts(key);
-    refitShown(bytes);
-  }
+  /** What an item read whole holds once it reads in parts, until its part arrives: the window on show and the incoming part. */
+  const handover = (key) => (positions.get(key)?.bytes ?? 0) + PART_MAX_BYTES;
 
   /**
-   * Each item read whole whose window is on show and that growth to
-   * `bytes` would free reads in parts instead, its window kept on show and
-   * charged until the part arrives (SUB decision a5275d81). One that is
-   * not on show is freed as before.
+   * Before the pinned charge grows to `bytes`, every refit is planned
+   * against that final floor, with the charge each will hold, opening and
+   * freeing nothing meanwhile (SUB decisions cf21d510, 8346cf82). First the
+   * latest request, when it is an item read whole that will not fit beside
+   * the grown charge. Then, while the growth would still free an item read
+   * whole whose window is on show, the one of those whose refit gives back
+   * the most, asking again after each: so one large refit can keep the
+   * smaller wholes on show, and no handover is charged before the room it
+   * needs is counted. A refit that gives back nothing is not planned; if
+   * the floor still needs that whole's room, it is freed. Returns the keys
+   * to read in parts, in order.
    */
-  function refitShown(bytes) {
+  function planRefits(bytes) {
+    const sizes = new Map();
+    const key = budget.requested;
+    const growth = bytes - budget.bytes(INLINE_KEY);
+    if (key !== null && full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key) + growth)) sizes.set(key, handover(key));
     for (;;) {
-      // Each switch changes what is held, so what growth would free is asked again.
-      const key = budget.wouldFree(INLINE_KEY, bytes, { pinned: true }).find(displayed);
-      if (key === undefined) return;
-      wholeToParts(key);
+      const named = budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as: sizes }).filter((each) => displayed(each) && !sizes.has(each));
+      const best = mostGivenBack(named);
+      if (best === null) return [...sizes.keys()];
+      sizes.set(best, handover(best));
     }
+  }
+
+  /** Of `keys`, the one whose refit gives back the most bytes, or null when none gives any back. */
+  function mostGivenBack(keys) {
+    let best = null;
+    let most = 0;
+    for (const key of keys) {
+      const back = budget.bytes(key) - handover(key);
+      if (back > most) {
+        best = key;
+        most = back;
+      }
+    }
+    return best;
   }
 
   /**
@@ -659,13 +676,14 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * Show an item too large to hold in parts, from its first part, or, of a
    * version already `known` (an item read whole), from the part `anchor`
    * names ({seq, part, unit}), opening at its window that holds `unit`.
+   * `fitted`: a planned refit, whose charge frees nothing (`planRefits`).
    */
-  function openParts(turnId, itemId, known = null, anchor = null) {
+  function openParts(turnId, itemId, { known = null, anchor = null, fitted = false } = {}) {
     const key = fullKey(turnId, itemId);
     budget.release(key);
     const entry = partsEntry(turnId, itemId, known, anchor);
     full.set(key, entry);
-    const done = entry.pager.open(anchor?.part ?? 0);
+    const done = entry.pager.open(anchor?.part ?? 0, { fitted });
     done.then(() => settle(key));
     return done;
   }
@@ -678,9 +696,11 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * charged, until the part arrives. Resolves once the part's read settles.
    * One whose newest version is being read (Load the latest, Try again)
    * keeps that intent: the fresh version, from its first page, unpinned
-   * (SUB decision cf21d510), never the shown version's part.
+   * (SUB decision cf21d510), never the shown version's part. `fitted`: a
+   * planned refit (`planRefits`), whose charge frees nothing; the next
+   * queued read then waits for the plan to finish.
    */
-  function wholeToParts(key) {
+  function wholeToParts(key, { fitted = false } = {}) {
     const entry = full.get(key);
     const reload = Boolean(entry.item) && (reading?.key === key || queue.includes(key));
     if (reading?.key === key) {
@@ -689,19 +709,19 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     }
     queue = queue.filter((each) => each !== key);
     if (reload) {
-      const done = reloadInParts(key);
-      pump();
+      const done = reloadInParts(key, fitted);
+      if (!refitting) pump();
       return done;
     }
     const shown = positions.get(key);
     positions.delete(key);
-    if (!entry.item || !entry.pages) return openParts(entry.turnId, entry.itemId);
+    if (!entry.item || !entry.pages) return openParts(entry.turnId, entry.itemId, { fitted });
     const count = Math.max(1, Math.ceil(entry.pages / PART_PAGES));
     const known = { version: { seq: entry.seq, bytes: entry.bytes, pages: entry.pages }, count, carried: shown?.bytes ?? 0 };
     const at = servedPart(entry.item, servedUnit(entry.item, shown?.unit ?? 0), { pageBytes: PAGE_DATA_BYTES, partPages: PART_PAGES });
     const part = Math.min(count - 1, at.part);
-    const done = openParts(entry.turnId, entry.itemId, known, { seq: entry.seq, part, unit: part === at.part ? at.unit : 0 });
-    pump();
+    const done = openParts(entry.turnId, entry.itemId, { known, anchor: { seq: entry.seq, part, unit: part === at.part ? at.unit : 0 }, fitted });
+    if (!refitting) pump();
     return done;
   }
 
@@ -713,12 +733,12 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * fails, so it can be tried again (SUB decision a5275d81). One with no
    * window on show reads its first part as any item too large.
    */
-  function reloadInParts(key) {
+  function reloadInParts(key, fitted = false) {
     const entry = full.get(key);
     const shown = positions.get(key);
     positions.delete(key);
     const known = entry.item && shown?.bytes > 0 ? { version: null, count: null, carried: shown.bytes } : null;
-    return openParts(entry.turnId, entry.itemId, known);
+    return openParts(entry.turnId, entry.itemId, { known, fitted });
   }
 
   /**

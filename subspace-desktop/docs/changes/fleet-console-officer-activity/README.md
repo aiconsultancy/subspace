@@ -74,16 +74,23 @@ the desktop side are separate work.
   is read in parts. **Show** on it adds what its window costs beyond that
   base to the same key (`drawWhole`, SUB decision `533c2b29`), and gives it
   back when another body is asked for.
-- **Refit** (SUB decisions `533c2b29`, `a5275d81`). An item read whole
-  that no longer fits reads in parts instead, of the version it read: when
-  **Show** cannot keep it and its window beside the pinned content, when
-  the inline snapshot grows, and when **Load the latest** or a read larger
-  than its placeholder advertised cannot hold the newest version whole.
-  Before the inline charge grows, the watcher asks the budget what the
-  larger charge would free (`wouldFree`) and refits each item read whole
-  among them whose window is on show, before the reservation can evict it;
-  one not on show is freed as before, so no item read whole is kept for
-  good. Its window stays on show and charged (`carried`) until the first
+- **Refit** (SUB decisions `533c2b29`, `a5275d81`, `8346cf82`). An item
+  read whole that no longer fits reads in parts instead, of the version it
+  read: when **Show** cannot keep it and its window beside the pinned
+  content, when the inline snapshot grows, and when **Load the latest** or
+  a read larger than its placeholder advertised cannot hold the newest
+  version whole. Before the inline charge grows, the watcher plans every
+  refit first (`planRefits`): it asks the budget what the larger charge
+  would free (`wouldFree`, with `as` naming the planned refits' handover
+  charges, so nothing changes while it asks) and, while that names an
+  item read whole whose window is on show, plans the one whose refit gives
+  back the most, then asks again; a refit that gives nothing back is not
+  planned. Only then are the planned pagers opened, their charges set
+  without freeing anything (`fitted`), and the one pinned reservation
+  frees only what the final floor still needs. So one large refit keeps
+  the smaller wholes on show, and every window stays when the handovers
+  fit. One not on show is freed as before, so no item read whole is kept
+  for good. Its window stays on show and charged (`carried`) until the first
   part arrives, and stays with the error and **Try again** if that read
   fails. The part opened is the one that holds the start of the window on
   show: the view reports where that window starts in the item's document,
@@ -396,3 +403,12 @@ whose turn closed still shows its part. They:
 - let go of the outgoing window when its turn closes during a handover,
   keeping the read and leaving nothing held when it fails;
 - name nothing in `wouldFree` that `reserve` would refuse.
+
+The round 9 tests are in `test/activity-round9.test.js` (SUB decision
+`8346cf82`); each fails at `e407707c`, except the regression check that
+two refits are planned when one is not enough. They:
+
+- plan every refit before opening any pager, refitting the whole that
+  gives back the most first, so smaller wholes stay whole and every window
+  stays on show when the handovers fit (both reviewers' probes);
+- ask `wouldFree` as if some entries held other sizes, changing nothing.

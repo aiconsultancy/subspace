@@ -27,10 +27,14 @@ export function createBudget(limit) {
   let requested = null;
   /** Whether `key` is never freed for another: pinned, or the latest request. */
   const kept = (key) => key === requested || entries.get(key)?.pinned === true;
+  /** No entry held at another size. */
+  const AS_HELD = new Map();
+  /** What `key` holds, or would hold with `sizes` (key -> bytes) in place of what those keys hold now. */
+  const sizeOf = (key, sizes) => (sizes.has(key) ? sizes.get(key) : (entries.get(key)?.bytes ?? 0));
   /** The bytes that can never be freed for `key`: the pinned entries and the latest request, other than `key` itself. */
-  function fixedBeside(key) {
+  function fixedBeside(key, sizes = AS_HELD) {
     let bytes = 0;
-    for (const [other, entry] of entries) if (other !== key && kept(other)) bytes += entry.bytes;
+    for (const other of entries.keys()) if (other !== key && kept(other)) bytes += sizeOf(other, sizes);
     return bytes;
   }
 
@@ -58,16 +62,20 @@ export function createBudget(limit) {
   /**
    * The entries to free, least recently used first and never a kept one or
    * `key`, for `bytes` under `key` (replacing what it holds) to fit: the one
-   * order both `reserve` and `wouldFree` use.
+   * order both `reserve` and `wouldFree` use. With `sizes`, as if those
+   * entries held those bytes instead, reserved just now in that order.
    */
-  function freeOrder(key, bytes) {
+  function freeOrder(key, bytes, sizes = AS_HELD) {
     let held = total - (entries.get(key)?.bytes ?? 0);
+    const resized = [...sizes.keys()].filter((other) => other !== key && entries.has(other));
+    for (const other of resized) held += sizes.get(other) - entries.get(other).bytes;
+    const used = (other) => (sizes.has(other) ? clock + 1 + resized.indexOf(other) : entries.get(other).used);
     const order = [];
-    const others = [...entries].filter(([other]) => other !== key && !kept(other)).sort((a, b) => a[1].used - b[1].used);
-    for (const [other, entry] of others) {
+    const others = [...entries.keys()].filter((other) => other !== key && !kept(other)).sort((a, b) => used(a) - used(b));
+    for (const other of others) {
       if (held + bytes <= limit) break;
       order.push(other);
-      held -= entry.bytes;
+      held -= sizeOf(other, sizes);
     }
     return order;
   }
@@ -77,7 +85,7 @@ export function createBudget(limit) {
    * freed for it, or `key` is part of that floor (`pinned`, or the latest
    * request). The one rule both `reserve` and `wouldFree` use.
    */
-  const admits = (key, bytes, pinned) => pinned || key === requested || fixedBeside(key) + bytes <= limit;
+  const admits = (key, bytes, pinned, sizes = AS_HELD) => pinned || key === requested || fixedBeside(key, sizes) + bytes <= limit;
 
   /** Free least recently used entries, never a kept one or `keep`, until `bytes` more fit; returns their eviction calls. */
   const makeRoom = (bytes, keep) => freeOrder(keep, bytes).map(take);
@@ -121,14 +129,17 @@ export function createBudget(limit) {
      * used first, freeing nothing: so an owner can let go of an entry in its
      * own way before `reserve` would evict it. None when `reserve` would
      * refuse it, as it then frees nothing (SUB decision cf21d510); `pinned`
-     * as `reserve` takes it.
+     * as `reserve` takes it. `as` (key -> bytes) asks as if those entries
+     * held those bytes instead, each reserved just now in that order: so an
+     * owner can plan several changes before making any (SUB decision
+     * 8346cf82).
      *
      * @param {string} key
      * @param {number} bytes
-     * @param {{pinned?: boolean}} [options]
+     * @param {{pinned?: boolean, as?: Map<string, number>}} [options]
      * @returns {string[]}
      */
-    wouldFree: (key, bytes, { pinned = false } = {}) => (admits(key, bytes, pinned) ? freeOrder(key, bytes) : []),
+    wouldFree: (key, bytes, { pinned = false, as = AS_HELD } = {}) => (admits(key, bytes, pinned, as) ? freeOrder(key, bytes, as) : []),
     /**
      * Hold `bytes` under `key`, replacing what it held, after freeing the
      * least recently used other entries until it fits. Each freed entry's

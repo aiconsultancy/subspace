@@ -212,8 +212,10 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
    * settles, or at once when there is nothing to read. An evicted pager
    * starts again from its first part. `fromLatest` reads the first part of
    * the newest version, unpinned, even when part 0 is on show (`restart`).
+   * `fitted`: the caller planned room for this read's charge itself (a
+   * pressure refit, SUB decision 8346cf82), so reserving it frees nothing.
    */
-  async function open(to = "first", { fromLatest = false } = {}) {
+  async function open(to = "first", { fromLatest = false, fitted = false } = {}) {
     if (state === "dropped") return;
     if (state === "evicted") to = 0;
     const index = fromLatest ? 0 : stepPart(to, state === "idle" ? 0 : part, reach());
@@ -231,7 +233,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     // it arrives, as the outgoing part goes. The budget decides whether this
     // may pass its limit (its latest request); when it refuses, the pager
     // lets go of what it held and reads from the start when opened again.
-    if (!budget.reserve(key, (data === null ? carried : charge(data)) + partBytes, evicted)) {
+    if (!budget.reserve(key, (data === null ? carried : charge(data)) + partBytes, evicted, { makeRoom: !fitted })) {
       evicted();
       return;
     }
