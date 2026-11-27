@@ -639,7 +639,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    */
   function partsEntry(turnId, itemId, known, anchor) {
     const key = fullKey(turnId, itemId);
-    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null, replacing: (known?.carried ?? 0) > 0, anchor };
+    // `refitted`: read in place of an item read whole, kept when an unmount lets go of the window it replaces (`replacing`).
+    const entry = { turnId, itemId, mode: "parts", generation: state.cursor?.generation ?? null, pager: null, replacing: (known?.carried ?? 0) > 0, refitted: known !== null, anchor };
     entry.pager = createPager({
       known,
       budget,
@@ -907,10 +908,12 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     const error = pager.error === null ? null : pager.error instanceof ChangingError ? pager.error.message : readFailure(pager.error);
     // An item read whole whose window stays on show until its first part arrives.
     const replacing = entry.replacing && pager.data === null && pager.state !== "evicted";
+    // One read in place of an item read whole, before its first part arrives, whether or not that window is still drawn.
+    const refitted = entry.refitted && pager.data === null && pager.state !== "evicted";
     // The part read in place of an item read whole opens at the window that holds what that showed.
     const anchor = entry.anchor;
     const opensAt = anchor && pager.data !== null && pager.part === anchor.part && pager.version?.seq === anchor.seq ? anchor.unit : null;
-    return { turnId: entry.turnId, itemId: entry.itemId, mode: "parts", ...pager, seq: pager.version?.seq ?? null, error, replacing, opensAt };
+    return { turnId: entry.turnId, itemId: entry.itemId, mode: "parts", ...pager, seq: pager.version?.seq ?? null, error, replacing, refitted, opensAt };
   }
 
   function view() {

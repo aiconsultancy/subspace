@@ -244,3 +244,35 @@ test("r9 3: the README keeps the shown part only for growth and Show, and puts a
   assert.doesNotMatch(readme, /or its newest version is too large\)/);
   assert.match(readme, /\*\*Load the latest\*\*, also when the newest version is too large to read whole, reads the newest version from its first part/);
 });
+
+test("r9 3: a turn closed and reopened during a pressure refit's read names the part read and why, without a window on show", async () => {
+  const { pages, snapshot } = pagedWith("a".repeat(600 * K), "ia");
+  const { watcher, client, panel } = await prepare(snapshot, 2 * pages[0].bytes + 30 * K);
+  try {
+    client.activityItemPage = async (agent, turn, id, page) => pages[page];
+    await watcher.loadItem(TURN, "ia");
+    panel.update(watcher.view, officer);
+    clickOn(panel, panel.root.findAll((node) => node.attributes["data-activity-item"] === "ia" && node.attributes["data-activity-window"] === "last")[0]);
+    panel.update(watcher.view, officer);
+    const held = [];
+    client.activityItemPage = (agent, turn, id, page, signal) => new Promise((resolve, reject) => held.push({ page, resolve, reject }));
+    watcher.event(growth(1100 * K, 11));
+    await settle();
+    panel.update(watcher.view, officer);
+    assert.equal(watcher.view.full(TURN, "ia").want, 2, "the refit reads the part holding the last window");
+    const details = panel.root.findAll((node) => node.tag === "details")[0];
+    details.removeAttribute("open");
+    details.listeners.toggle();
+    panel.update(watcher.view, officer);
+    details.setAttribute("open", "");
+    details.listeners.toggle();
+    panel.update(watcher.view, officer);
+    const text = panel.root.textContent;
+    assert.match(text, /no longer held whole beside the rest, so it shows a part at a time\. Reading part 3…/);
+    assert.doesNotMatch(text, /Reading its first part/);
+    assert.doesNotMatch(text, /stays on show/);
+    held[0].resolve(pages[held[0].page]);
+  } finally {
+    watcher.stop();
+  }
+});

@@ -343,7 +343,9 @@ function pagedSegments(turnId, item, full, body) {
         ? full.data === null
           ? full.replacing
             ? `Large item (${pages}), no longer held whole beside the rest, so it shows a part at a time. Reading part ${full.want + 1}; the window below stays on show until it arrives…`
-            : `Large item (${pages}), more than this view holds at once. Reading its first part…`
+            : full.refitted
+              ? `Large item (${pages}), no longer held whole beside the rest, so it shows a part at a time. Reading part ${full.want + 1}…`
+              : `Large item (${pages}), more than this view holds at once. Reading its first part…`
           : full.reloading
             ? "Reading the latest version. This part stays on show until it arrives…"
             : `Reading part ${full.want + 1}…`

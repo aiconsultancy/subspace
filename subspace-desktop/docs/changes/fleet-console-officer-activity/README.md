@@ -421,3 +421,6 @@ after growth during a reload reads the newest version. They:
   **Try again** after growth during the reload (the regression check).
 - say in the README that only growth and **Show** keep the shown part, a
   newest version too large to read whole coming under **Load the latest**.
+- name the part read, and that the item is no longer held whole, when its
+  turn is closed and reopened during a refit's read, without claiming a
+  window stays on show.
