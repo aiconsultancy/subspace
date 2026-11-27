@@ -1,6 +1,7 @@
 //! The navigator title follows the app default and the saved choice, and a
 //! navigator without it starts with its body.
 
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     Context, InteractiveElement as _, IntoElement, ParentElement as _, Render, Role, Styled as _,
@@ -12,10 +13,10 @@ use super::{Navigator, Pane, Workspace, nav_section, strip_height};
 use crate::tabs::{TabSpec, pane_tab_bar, tab};
 use subspace_lucide::IconName;
 
-/// A workspace whose navigator has a badge and a header action when
-/// `extras` is set.
+/// A workspace whose navigator may have a badge and a header action.
 struct Shell {
-    extras: bool,
+    badge: bool,
+    action: bool,
 }
 
 impl Render for Shell {
@@ -23,18 +24,18 @@ impl Render for Shell {
         let tabs = pane_tab_bar("title-tabs")
             .selected_index(0)
             .child(tab(TabSpec::new("Runs", IconName::ListChecks)));
-        let navigator = Navigator::new("Runs").child(nav_section("Views", cx));
-        let navigator = if self.extras {
-            navigator.badge("Beta").action(
-                div()
-                    .id("title-action")
-                    .test_support()
-                    .w(px(20.))
-                    .h(px(20.)),
-            )
-        } else {
-            navigator
-        };
+        let navigator = Navigator::new("Runs")
+            .child(nav_section("Views", cx))
+            .when(self.badge, |navigator| navigator.badge("Beta"))
+            .when(self.action, |navigator| {
+                navigator.action(
+                    div()
+                        .id("title-action")
+                        .test_support()
+                        .w(px(20.))
+                        .h(px(20.)),
+                )
+            });
         div().w(px(1000.)).h(px(600.)).child(
             Workspace::new("title-workspace")
                 .navigator(navigator)
@@ -44,15 +45,15 @@ impl Render for Shell {
 }
 
 fn mount(cx: &mut TestAppContext) -> &mut VisualTestContext {
-    mount_with(false, cx)
+    mount_with(false, false, cx)
 }
 
-fn mount_with(extras: bool, cx: &mut TestAppContext) -> &mut VisualTestContext {
+fn mount_with(badge: bool, action: bool, cx: &mut TestAppContext) -> &mut VisualTestContext {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::prefs::init_file(None, cx);
     });
-    let (_, cx) = cx.add_window_view(move |_, _| Shell { extras });
+    let (_, cx) = cx.add_window_view(move |_, _| Shell { badge, action });
     cx
 }
 
@@ -96,9 +97,9 @@ fn a_saved_choice_wins_over_the_app_default(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui_kit::test]
-fn a_hidden_title_keeps_a_strip_height_header_for_a_badge_or_action(cx: &mut TestAppContext) {
-    let cx = mount_with(true, cx);
+/// With the title hidden, the header stays at the strip height, lined up
+/// with the pane's strip, and the tree keeps the Space's name.
+fn assert_kept_header(cx: &mut VisualTestContext) {
     cx.update(|_, cx| install_default(false, cx));
     draw(cx);
     cx.update(|window, cx| {
@@ -107,17 +108,32 @@ fn a_hidden_title_keeps_a_strip_height_header_for_a_badge_or_action(cx: &mut Tes
         assert_eq!(header.size.height, strip_height(window, cx));
         let tabs = window.find("workspace-tab-strip").bounds();
         assert_eq!(header.bottom(), tabs.bottom(), "the strips line up");
-        let action = window.find("title-action").bounds();
-        assert!(
-            header.right() - action.right() < px(16.),
-            "the action stays on the trailing edge"
-        );
         let tree = window.find("workspace-navigator-body");
         assert_eq!(tree.role(), Some(Role::Tree));
         assert_eq!(
             tree.label(),
             Some("Runs"),
             "the tree keeps the Space's name"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_hidden_title_keeps_a_strip_height_header_for_a_badge_alone(cx: &mut TestAppContext) {
+    let cx = mount_with(true, false, cx);
+    assert_kept_header(cx);
+}
+
+#[gpui_kit::test]
+fn a_hidden_title_keeps_a_strip_height_header_for_an_action_alone(cx: &mut TestAppContext) {
+    let cx = mount_with(false, true, cx);
+    assert_kept_header(cx);
+    cx.update(|window, _| {
+        let header = window.find("workspace-navigator-header").bounds();
+        let action = window.find("title-action").bounds();
+        assert!(
+            header.right() - action.right() < px(16.),
+            "the action stays on the trailing edge"
         );
     });
 }
