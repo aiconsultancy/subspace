@@ -1,7 +1,12 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { Effect, Schema } from "effect";
-import { agentTokenAudience, authProviders, reservedUsernames } from "../src/config";
+import {
+  agentTokenAudience,
+  authProviders,
+  pairingAudience,
+  reservedUsernames,
+} from "../src/config";
 import { databaseLayer, databaseUrl } from "../src/db";
 import { BootstrapRefused } from "../src/pairing-owner";
 import { isProblem } from "../src/problems";
@@ -57,8 +62,10 @@ const spec = await readInput(path)
   );
 
 try {
-  if (!authProviders(process.env).has("pairing") || !agentTokenAudience(process.env))
+  const providers = authProviders(process.env);
+  if (!providers.has("pairing") || !agentTokenAudience(process.env))
     fail("Configure AUTH_PROVIDERS with pairing and set AGENT_TOKEN_AUDIENCE before provisioning.");
+  pairingAudience(process.env, providers);
   const result = await Effect.runPromise(
     provisionFleet(spec, reservedUsernames(process.env)).pipe(
       Effect.provide(databaseLayer(databaseUrl())),
