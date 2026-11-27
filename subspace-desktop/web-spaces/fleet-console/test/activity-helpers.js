@@ -3,9 +3,10 @@
 // page reader in the tests stops itself after a few reads.
 
 import assert from "node:assert/strict";
-import { createActivityWatcher, INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
+import { applyChange, createActivityWatcher, INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
 import { createActivityPanel } from "../src/activity-view.js";
 import { HttpError } from "../src/api.js";
+import { jsonBytes } from "../src/document.js";
 import { splitUtf8, utf8Length } from "../src/utf8.js";
 import { activityEvent, activitySnapshot, GENERATION, T0, textItem, toolItem } from "./activity-fixtures.js";
 
@@ -268,11 +269,21 @@ export const modesOf = (watcher, ids) => Object.fromEntries(ids.map((id) => [id,
 /** What a refit of `id` gives back: its charge less its handover (the window on show and an incoming part). */
 export const givenBack = (watcher, id) => watcher.view.budget.bytes(keyOf(id)) - (64 * K + PART_MAX_BYTES);
 
-/** Grow the inline charge by `size` and let every read settle. */
+/** Grow the inline charge by `size` and let every read settle, drawing in `panel` (null when the test reports windows itself). */
 export async function grow(watcher, panel, size) {
   watcher.event(growth(size));
   for (let i = 0; i < 4; i += 1) {
     await settle();
-    panel.update(watcher.view, officer);
+    panel?.update(watcher.view, officer);
   }
+}
+
+/** Grow the inline charge by exactly `bytes` with the item `grow` sends, and let every read settle. */
+export async function growBy(watcher, panel, bytes) {
+  const { budget, turns } = watcher.view;
+  // The item's text adds its own length; the rest of the item and its comma, what an empty one adds.
+  const framing = jsonBytes(applyChange(turns, growth(0))) - jsonBytes(turns);
+  const before = budget.bytes(INLINE_KEY);
+  await grow(watcher, panel, bytes - framing);
+  assert.equal(budget.bytes(INLINE_KEY) - before, bytes, "the inline charge grew by exactly that");
 }

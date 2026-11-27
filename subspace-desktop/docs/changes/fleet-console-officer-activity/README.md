@@ -493,4 +493,6 @@ proves: the planned refit dropped first is the one whose dropping loses
 the fewest windows. In `test/pager.test.js`, a budget plan answers as
 `wouldFree` does as entries are resized, set again and left out, also when
 the latest request in a reservation's floor is resized, and changes
-nothing.
+nothing. `growBy`, which grows the inline charge by an exact number of
+bytes, moved next to `grow` in `test/activity-helpers.js`, so it measures
+the framing of the very item `grow` sends (Charon's round 11 P3-1).

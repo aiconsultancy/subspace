@@ -5,14 +5,11 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyChange, INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
-import { jsonBytes } from "../src/document.js";
-import { activityEvent, textItem } from "./activity-fixtures.js";
-import { givenBack, grow, keyOf, modesOf, officer, pagedWith, prepare, settle, wholesOnShow, windowsIn } from "./activity-helpers.js";
+import { INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
+import { textItem } from "./activity-fixtures.js";
+import { givenBack, grow, growBy, keyOf, modesOf, officer, pagedWith, prepare, settle, wholesOnShow, windowsIn } from "./activity-helpers.js";
 
 const K = 1024;
-/** The live item `grow` sends, `size` bytes of text. */
-const growth = (size) => activityEvent(10, { type: "item", item: textItem("growth-10", 10, "g".repeat(size)) });
 
 /** Every `reserve` the budget is asked for, as [key, options]. */
 function reservesOf(budget) {
@@ -105,16 +102,6 @@ test("Deimos's case: when either planned refit or both free more wholes than non
     watcher.stop();
   }
 });
-
-/** Grow the inline charge by exactly `bytes` with one live item, and let every read settle. */
-async function growBy(watcher, panel, bytes) {
-  const { budget, turns } = watcher.view;
-  // The item's text adds its own length; the rest of the item and its comma, what an empty one adds.
-  const framing = jsonBytes(applyChange(turns, growth(0))) - jsonBytes(turns);
-  const before = budget.bytes(INLINE_KEY);
-  await grow(watcher, panel, bytes - framing);
-  assert.equal(budget.bytes(INLINE_KEY) - before, bytes, "the inline charge grew by exactly that");
-}
 
 /** Wholes of `sizes` KiB, the last the latest request, in a view `spare` bytes larger than they need, grown by `bytes`: what each ends as and which read in parts. */
 async function grownBy(sizes, spare, bytes) {
@@ -212,7 +199,7 @@ test("a growth orders what it frees once and weighs every refit plan against tha
   // the budget sorts them once.
   const { ids, watcher, requested } = await placedWholes(41, 161, 20_000);
   try {
-    const { budget, turns } = watcher.view;
+    const { budget } = watcher.view;
     const bytes = 200_000;
     assert.ok(givenBack(watcher, "w0") > 0, "each refit gives something back, so each is planned");
     assert.ok(20_000 + 40 * givenBack(watcher, "w0") < bytes, "together they still cannot keep the oldest whole");
@@ -232,11 +219,7 @@ test("a growth orders what it frees once and weighs every refit plan against tha
       counted.wouldFree += 1;
       return wouldFree(...args);
     };
-    const framing = jsonBytes(applyChange(turns, growth(0))) - jsonBytes(turns);
-    const before = budget.bytes(INLINE_KEY);
-    watcher.event(growth(bytes - framing));
-    await settle();
-    assert.equal(budget.bytes(INLINE_KEY) - before, bytes);
+    await growBy(watcher, null, bytes);
     assert.deepEqual({ orders: counted.orders, wouldFree: counted.wouldFree }, { orders: 1, wouldFree: 0 }, "one order for every plan weighed");
     assert.ok(counted.weighed > 40, `every candidate drop is still weighed (${counted.weighed})`);
     const modes = modesOf(watcher, ids);
