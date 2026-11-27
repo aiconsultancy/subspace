@@ -142,8 +142,8 @@ test("diff api: list and file routes carry only the query given, and error bodie
   });
   await client.diff("ga lactica", "star/buck", { project: null, mode: "branch" }).catch(() => {});
   assert.equal(seen[0].url, "https://fleet.example.com/api/v1/ships/ga%20lactica/crew/star%2Fbuck/diff?mode=branch");
-  await client.diff("g", "s", { project: "subspace", mode: "working", cursor: "c 2" }).catch(() => {});
-  assert.equal(seen[1].url, "https://fleet.example.com/api/v1/ships/g/crew/s/diff?mode=working&project=subspace&cursor=c+2");
+  await client.diff("g", "s", { project: "subspace", mode: "working", page: "c 2" }).catch(() => {});
+  assert.equal(seen[1].url, "https://fleet.example.com/api/v1/ships/g/crew/s/diff?mode=working&project=subspace&page=c+2");
   const error = await client.diffFile("g", "s", { project: "p", mode: "branch", path: "a b/c.png", page: "2", at: "fp", side: "new" }).catch((e) => e);
   assert.equal(seen[2].url, "https://fleet.example.com/api/v1/ships/g/crew/s/diff/file?mode=branch&project=p&path=a+b%2Fc.png&page=2&at=fp&side=new");
   assert.ok(error instanceof HttpError && error.status === 409);
@@ -185,7 +185,7 @@ test("diff status: 503 retries the same request after Retry-After, then offers R
   assert.equal(timers.pending(), 0);
   assert.equal(watcher.view.status, "failed");
   assert.equal(watcher.view.error.message, "Stargate is busy. Wait 2 seconds, then select Refresh.");
-  assert.ok(lists().every((call) => call.query.cursor === undefined), "the identical request");
+  assert.ok(lists().every((call) => call.query.page === undefined), "the identical request");
 });
 
 test("diff status: 503 with no Retry-After waits a second; over ten seconds stops at once", async () => {
@@ -214,26 +214,47 @@ test("diff status: an empty snapshot is no changes, not an error", async () => {
 
 // ---------- list paging ----------
 
-test("diff list: reads every page by cursor until the total is listed", async () => {
+test("diff list: reads every page by its nextPage token until the total is listed", async () => {
   const all = [file("a"), file("b"), file("c"), file("d"), file("e")];
   const { watcher, lists } = watch({
     list: (query) => {
-      const start = query.cursor ? Number(query.cursor) : 0;
+      const start = query.page ? Number(query.page) : 0;
       const next = start + 2 < all.length ? String(start + 2) : undefined;
-      return page(all.slice(start, start + 2), { total: all.length, ...(next ? { nextCursor: next } : {}) });
+      return page(all.slice(start, start + 2), { total: all.length, ...(next ? { nextPage: next } : {}) });
     },
   });
   watcher.start();
   await flush();
   assert.equal(watcher.view.status, "ready");
   assert.deepEqual(watcher.view.files.map((entry) => entry.file.path), ["a", "b", "c", "d", "e"]);
-  assert.deepEqual(lists().map((call) => call.query.cursor), [undefined, "2", "4"]);
+  assert.deepEqual(lists().map((call) => call.query.page), [undefined, "2", "4"]);
   assert.ok(lists().every((call) => call.query.project === "subspace" && call.query.mode === "branch"));
+});
+
+test("diff list: the real client follows an opaque nextPage token with page= (STAR-5), never cursor=", async () => {
+  const seen = [];
+  const client = createApiClient({
+    endpoint: "https://fleet.example.com",
+    token: "fixture",
+    fetch: async (url) => {
+      const query = new URL(url).searchParams;
+      seen.push(query.get("page"));
+      if (query.has("cursor")) return new Response(null, { status: 400 });
+      const second = query.get("page") === "opaque+/=";
+      return Response.json(second ? page([file("b.txt")], { total: 2 }) : page([file("a.txt")], { total: 2, nextPage: "opaque+/=" }));
+    },
+  });
+  const watcher = createDiffWatcher({ client, target: TARGET, onChange() {} });
+  watcher.start();
+  await settle();
+  assert.equal(watcher.view.status, "ready", watcher.view.error?.message);
+  assert.deepEqual(watcher.view.files.map(({ file }) => file.path), ["a.txt", "b.txt"]);
+  assert.deepEqual(seen, [null, "opaque+/="], "the token goes back byte for byte, encoded once");
 });
 
 test("diff list: a later page with another fingerprint, or a 404, means the checkout moved on", async () => {
   for (const later of [() => page([file("b")], { total: 2, fingerprint: "fp-2" }), () => Promise.reject(new HttpError(404))]) {
-    const { watcher } = watch({ list: (query) => (query.cursor ? later() : page([file("a")], { total: 2, nextCursor: "1" })) });
+    const { watcher } = watch({ list: (query) => (query.page ? later() : page([file("a")], { total: 2, nextPage: "1" })) });
     watcher.start();
     await flush();
     assert.equal(watcher.view.status, "failed");
@@ -242,13 +263,13 @@ test("diff list: a later page with another fingerprint, or a 404, means the chec
   }
 });
 
-test("diff list: a repeated cursor, a page past the total, an empty later page or a short list is refused", async () => {
+test("diff list: a repeated page token, a page past the total, an empty later page or a short list is refused", async () => {
   const bad = [
-    (query) => page([file(query.cursor ?? "a")], { total: 3, nextCursor: "same" }),
-    (query) => (query.cursor ? page([file("b")], { total: 1 }) : page([file("a")], { total: 1, nextCursor: "1" })),
-    (query) => (query.cursor ? page([], { total: 2 }) : page([file("a")], { total: 2, nextCursor: "1" })),
+    (query) => page([file(query.page ?? "a")], { total: 3, nextPage: "same" }),
+    (query) => (query.page ? page([file("b")], { total: 1 }) : page([file("a")], { total: 1, nextPage: "1" })),
+    (query) => (query.page ? page([], { total: 2 }) : page([file("a")], { total: 2, nextPage: "1" })),
     () => page([file("a")], { total: 2 }),
-    (query) => (query.cursor ? page([file("b")], { total: 2, member: "apollo" }) : page([file("a")], { total: 2, nextCursor: "1" })),
+    (query) => (query.page ? page([file("b")], { total: 2, member: "apollo" }) : page([file("a")], { total: 2, nextPage: "1" })),
   ];
   for (const list of bad) {
     const { watcher, lists } = watch({ list });
@@ -267,7 +288,7 @@ test("diff list: an unknown status or kind is kept and shown, never dropped", ()
 
 // ---------- patch parts (SUB decision 75c3ed93 §1, §4) ----------
 
-/** Pages of a patch by cursor: `p2`, `p3`, ... each a hunk, the last naming no next page. */
+/** Pages of a patch by page token: `p2`, `p3`, ... each a hunk, the last naming no next page. */
 const PATCH_PAGES = {
   p2: { patch: "@@ -10,1 +10,1 @@\n-x\n+y\n", next: "p3" },
   p3: { patch: "@@ -20,1 +20,1 @@\n-z\n+w\n" },
@@ -509,7 +530,7 @@ test("diff binary: hex windows page across a part boundary; Previous lands on th
   for (let i = 0; i < perPart - 1; i += 1) watcher.moveBinary("next");
   assert.equal(files().length, 1, "windows within a part read nothing");
   await watcher.moveBinary("next");
-  assert.equal(files()[1].query.page, String(BINARY_PAGE_BYTES), "the gateway's cursor");
+  assert.equal(files()[1].query.page, String(BINARY_PAGE_BYTES), "the gateway's page token");
   assert.equal(view().offset, BINARY_PAGE_BYTES);
   assert.equal(view().window, 0);
   assert.equal(view().part.count, 2, "the page ending exactly at the size is the last");
@@ -523,7 +544,7 @@ test("diff binary: hex windows page across a part boundary; Previous lands on th
   assert.equal(view().window, perPart - 1, "and lands on its last window");
   panel.update(watcher.view, { name: "Starbuck" });
   assert.equal(rows().at(-1).slice(0, 16), (BINARY_PAGE_BYTES - HEX_ROW_BYTES).toString(16).padStart(16, "0"));
-  assert.equal(panel.root.findAll((node) => node.attributes["data-diff-bytes"] === "last").length, 1, "Last, as the last page's cursor is known");
+  assert.equal(panel.root.findAll((node) => node.attributes["data-diff-bytes"] === "last").length, 1, "Last, as the last page's token is known");
   await watcher.moveBinary("last");
   assert.equal(view().part.part, 1);
   assert.equal(view().window, perPart - 1, "Last lands on the last window");

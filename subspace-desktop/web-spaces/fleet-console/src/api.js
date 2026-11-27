@@ -75,10 +75,11 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
     crew: (ship, member, signal) => getJson(`/ships/${encodeURIComponent(ship)}/crew/${encodeURIComponent(member)}`, signal),
     /**
      * One page of a crew worktree's changed files (`V1Diff`). `project` null
-     * is the member's default project and is left out of the query. 404 when
+     * is the member's default project and is left out of the query; `page` is
+     * the opaque `nextPage` of the page before. 404 when
      * the gateway lacks the route or the member has no such checkout.
      */
-    diff: (ship, member, { project = null, mode, cursor } = {}, signal) => getJson(diffPath(ship, member, false, { mode, project, cursor }), signal, MAX_DIFF_BODY_BYTES),
+    diff: (ship, member, { project = null, mode, page } = {}, signal) => getJson(diffPath(ship, member, false, { mode, project, page }), signal, MAX_DIFF_BODY_BYTES),
     /** One page of one file (`{fingerprint, file, content?}`), pinned to the snapshot `at`. */
     diffFile: (ship, member, { project = null, mode, path, page, at, side } = {}, signal) =>
       getJson(diffPath(ship, member, true, { mode, project, path, page, at, side }), signal, MAX_DIFF_FILE_BODY_BYTES),

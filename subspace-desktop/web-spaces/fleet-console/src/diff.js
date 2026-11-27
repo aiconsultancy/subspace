@@ -153,7 +153,7 @@ export function createRead({ setTimer, clearTimer }, parent = null) {
 
 /**
  * Run `request(signal)`, retrying the identical request while the gateway
- * answers 503: never a newer cursor or fingerprint.
+ * answers 503: never a newer page token or fingerprint.
  */
 export async function retryBusy(read, request) {
   for (let attempt = 1; ; attempt += 1) {
@@ -247,7 +247,7 @@ function checkDiffPage(page, target, mode) {
     orNull(isStr)(page.head ?? null) &&
     isCount(page.total) &&
     Array.isArray(page.files) &&
-    optional(isStr)(page.nextCursor ?? undefined);
+    optional(isStr)(page.nextPage ?? undefined);
   if (!ok) throw new InvalidResponseError("A page of the file list is not a valid diff.");
   if (!page.files.every(isDiffFile)) throw new InvalidResponseError("A file in the list is not a valid diff file.");
 }
@@ -255,13 +255,14 @@ function checkDiffPage(page, target, mode) {
 const sameCheckout = (a, b) => a.ship === b.ship && a.member === b.member && (a.project ?? null) === (b.project ?? null) && a.mode === b.mode && a.total === b.total;
 
 /**
- * Read every page of the file list for one snapshot. Each page must carry the
- * first page's fingerprint (else the snapshot moved on: stale) and checkout,
- * add files, and never repeat a cursor; the pages must list exactly `total`
- * files. Nothing is cut: it returns the whole list or throws.
+ * Read every page of the file list for one snapshot, following each page's
+ * opaque `nextPage` token (STAR-5's `page` parameter). Each page must carry
+ * the first page's fingerprint (else the snapshot moved on: stale) and
+ * checkout, add files, and never repeat a token; the pages must list exactly
+ * `total` files. Nothing is cut: it returns the whole list or throws.
  */
 export async function loadDiffList(client, target, mode, read) {
-  const query = (cursor) => ({ project: target.project, mode, cursor });
+  const query = (page) => ({ project: target.project, mode, page });
   let first;
   try {
     first = await retryBusy(read, (signal) => client.diff(target.ship, target.member, query(undefined), signal));
@@ -271,23 +272,23 @@ export async function loadDiffList(client, target, mode, read) {
   checkDiffPage(first, target, mode);
   const files = [...first.files];
   let unstable = first.unstable === true;
-  let cursor = first.nextCursor ?? null;
+  let token = first.nextPage ?? null;
   const seen = new Set();
-  while (cursor !== null) {
+  while (token !== null) {
     read.check();
-    if (files.length >= first.total || seen.has(cursor)) throw new InvalidResponseError("The file list repeats a page or runs past its total.");
-    seen.add(cursor);
+    if (files.length >= first.total || seen.has(token)) throw new InvalidResponseError("The file list repeats a page or runs past its total.");
+    seen.add(token);
     // A 404 here means the snapshot moved on: diffError reads it as stale.
-    const page = await retryBusy(read, (signal) => client.diff(target.ship, target.member, query(cursor), signal));
+    const page = await retryBusy(read, (signal) => client.diff(target.ship, target.member, query(token), signal));
     checkDiffPage(page, target, mode);
     if (page.fingerprint !== first.fingerprint) throw new StaleError();
     if (!page.files.length || !sameCheckout(first, page)) throw new InvalidResponseError("A later page of the file list is for another checkout or is empty.");
     files.push(...page.files);
     unstable ||= page.unstable === true;
-    cursor = page.nextCursor ?? null;
+    token = page.nextPage ?? null;
   }
   if (files.length !== first.total) throw new InvalidResponseError(`The file list has ${files.length} files, not ${first.total}.`);
-  const { nextCursor: _, files: __, ...rest } = first;
+  const { nextPage: _, files: __, ...rest } = first;
   return { ...rest, unstable, files };
 }
 

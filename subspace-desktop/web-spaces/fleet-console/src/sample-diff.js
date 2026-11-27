@@ -66,11 +66,11 @@ export function createSampleDiffClient({ fingerprintFor, now = Date.now }) {
   const inMode = (mode) => all.filter((file) => mode === "branch" || file.mode === mode);
   const missing = () => Promise.reject(new HttpError(404));
   return {
-    diff(ship, member, { project = null, mode, cursor } = {}) {
+    diff(ship, member, { project = null, mode, page: token } = {}) {
       const fingerprint = fingerprintFor(ship, member, project);
       if (!fingerprint) return missing();
       const files = inMode(mode);
-      const start = cursor ? Number(cursor.slice(5)) : 0;
+      const start = token ? Number(token.slice(5)) : 0;
       if (!Number.isInteger(start) || start < 0 || start >= Math.max(1, files.length)) return Promise.reject(new HttpError(400));
       const page = files.slice(start, start + SAMPLE_LIST_PAGE);
       const next = start + SAMPLE_LIST_PAGE < files.length ? `from-${start + SAMPLE_LIST_PAGE}` : undefined;
@@ -88,7 +88,7 @@ export function createSampleDiffClient({ fingerprintFor, now = Date.now }) {
         additions: files.reduce((sum, file) => sum + (file.additions ?? 0), 0),
         deletions: files.reduce((sum, file) => sum + (file.deletions ?? 0), 0),
         files: page.map(wire),
-        ...(next ? { nextCursor: next } : {}),
+        ...(next ? { nextPage: next } : {}),
       });
     },
     diffFile(ship, member, { project = null, mode, path, page, at, side } = {}) {

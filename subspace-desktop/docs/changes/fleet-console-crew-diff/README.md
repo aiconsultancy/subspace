@@ -18,7 +18,7 @@ one shows, and the differences are listed below with their reasons.
   `git` is present with no `error`. An older gateway lists no such feature
   and shows nothing new.
 - **Routes.** `src/api.js` adds `diff(ship, member, {project, mode,
-  cursor})` for `GET /api/v1/ships/{id}/crew/{member}/diff` and
+  page})` for `GET /api/v1/ships/{id}/crew/{member}/diff` and
   `diffFile(ship, member, {project, mode, path, page, at, side})` for
   `…/diff/file`. Only the parameters given are sent; the default project
   sends no `project`. A list page body is capped at 400 MiB and a file page
@@ -35,10 +35,11 @@ one shows, and the differences are listed below with their reasons.
   "Stargate is busy. Wait N seconds, then select Refresh." (or **Retry
   page** for a page). A successful empty snapshot is "No changes.",
   including on an unborn branch.
-- **List paging.** `src/diff.js` `loadDiffList` reads every page by
-  `nextCursor` before showing the list. Each later page must have the first
+- **List paging.** `src/diff.js` `loadDiffList` reads every page before
+  showing the list, sending each page's opaque `nextPage` back as `?page=`,
+  as STAR-5 names them (Stargate #380). Each later page must have the first
   page's fingerprint (else stale) and the same ship, member, project, mode
-  and total, and add files; a repeated cursor, a cursor after `total` files
+  and total, and add files; a repeated token, a token after `total` files
   or a list that does not add up to `total` is an invalid response. Nothing
   is cut.
 - **Patch parts.** Each file's patch is one `createPager` (`src/pager.js`,
@@ -186,7 +187,8 @@ Each carries the assumption this change makes; none blocked the work.
 feature gate on the crew card (on, off, absent, Git error, no worktree), the
 fingerprint on `isGit`, the routes' query strings and unread error bodies,
 each status code of the first page, busy retries with `Retry-After`, the
-default wait and the ten-second cap, an empty snapshot, cursor paging,
+default wait and the ten-second cap, an empty snapshot, list paging by
+`nextPage` through the real client with an opaque token,
 stale and invalid list pages, patch parts one at a time with Last once the
 count is known, a one-part patch, windows of a long part numbered across
 windows, **Retry page** for a patch and a binary page keeping the part on
