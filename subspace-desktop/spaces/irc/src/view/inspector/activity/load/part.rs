@@ -12,13 +12,14 @@
 //! dropped, the page it reserved is no longer counted, and **Load the
 //! latest** is offered again beside why ([`Reload::Withdrawn`]).
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
-use gpui_kit::{AppContext as _, Context};
+use gpui_kit::Context;
 use subspace_client_fleet::activity::{ItemPart, PartFailed};
 
-use super::{Held, PAGE, Reload, client, current, make_room, next_read, place, restamp, stamp};
+use super::{
+    Held, PAGE, Reload, current, make_room, next_read, place, reader, restamp, spawn_read, stamp,
+};
 use crate::Irc;
 
 /// Shows part `page` of an item read part by part, pinned to the version
@@ -29,11 +30,7 @@ pub(in super::super) fn show_page(
     page: u32,
     cx: &mut Context<Irc>,
 ) {
-    let client = board
-        .inspector_activity
-        .as_ref()
-        .and_then(|selection| client(selection, cx));
-    let Some((selection, client)) = board.inspector_activity.as_mut().zip(client) else {
+    let Some((selection, client)) = reader(board, cx) else {
         return;
     };
     let Some(loaded) = selection.loaded.get_mut(key) else {
@@ -66,24 +63,15 @@ pub(in super::super) fn show_page(
     let pinned = parts.page.version();
     // The part read before, if any, asks for nothing more.
     loaded.cancel.store(true, Ordering::Release);
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (read_key, flag) = (key.clone(), cancel.clone());
+    let ((turn, item), read_key) = (key.clone(), key.clone());
+    let (cancel, task) = spawn_read(
+        cx,
+        move |cancel| client.activity_item_part(&agent, &turn, &item, (page, Some(pinned)), cancel),
+        move |board, result, cx| publish_part(board, (&read_key, read), result, cx),
+    );
     loaded.cancel = cancel;
     loaded.read = read;
-    loaded._read = Some(cx.spawn(async move |board, cx| {
-        let (turn, item) = read_key.clone();
-        let result = cx
-            .background_spawn(async move {
-                client.activity_item_part(&agent, &turn, &item, (page, Some(pinned)), &flag)
-            })
-            .await;
-        let Some(result) = result else {
-            return;
-        };
-        _ = board.update(cx, |board, cx| {
-            publish_part(board, (&read_key, read), result, cx);
-        });
-    }));
+    loaded._read = Some(task);
     super::super::draw::replan(selection);
     cx.notify();
 }

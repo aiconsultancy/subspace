@@ -322,11 +322,7 @@ fn read_item(
     (bytes, origin): (u64, Origin),
     cx: &mut Context<Irc>,
 ) {
-    let client = board
-        .inspector_activity
-        .as_ref()
-        .and_then(|selection| client(selection, cx));
-    let Some((selection, client)) = board.inspector_activity.as_mut().zip(client) else {
+    let Some((selection, client)) = reader(board, cx) else {
         return;
     };
     // A first read still in flight, or failed, goes first; what was read
@@ -343,22 +339,12 @@ fn read_item(
     }
     let read = next_read(selection);
     let (reserve, allowance) = admit(selection, &key, bytes);
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (agent, read_key, flag) = (selection.agent.clone(), key.clone(), cancel.clone());
-    let task = cx.spawn(async move |board, cx| {
-        let (turn, item) = read_key.clone();
-        let result = cx
-            .background_spawn(
-                async move { client.activity_item(&agent, &turn, &item, reserve, &flag) },
-            )
-            .await;
-        let Some(result) = result else {
-            return;
-        };
-        _ = board.update(cx, |board, cx| {
-            publish(board, (&read_key, read), result, cx)
-        });
-    });
+    let (agent, (turn, item), read_key) = (selection.agent.clone(), key.clone(), key.clone());
+    let (cancel, task) = spawn_read(
+        cx,
+        move |cancel| client.activity_item(&agent, &turn, &item, reserve, cancel),
+        move |board, result, cx| publish(board, (&read_key, read), result, cx),
+    );
     match selection.loaded.get_mut(&key) {
         Some(shown) if shown.shows() => {
             shown.reload((reserve, allowance), (read, origin), (cancel, task));
@@ -420,6 +406,33 @@ fn part_read(selection: &Selection, key: &Key) -> (u64, u64) {
 /// item, and at least its page 0, beside its drawn copy.
 fn whole_reserve(room: u64, bytes: u64) -> u64 {
     bytes.max(PAGE.min(room.saturating_sub(bytes)))
+}
+
+/// The open turns, and the client to read the captain's fleet with.
+fn reader<'a>(board: &'a mut Irc, cx: &App) -> Option<(&'a mut Selection, FleetClient)> {
+    let client = client(board.inspector_activity.as_ref()?, cx)?;
+    Some((board.inspector_activity.as_mut()?, client))
+}
+
+/// Starts a read: `read` runs in the background, asking for no page once
+/// the cancel flag returned beside the task is set, and its answer is
+/// handed to `publish` unless it was cancelled first. A whole read and a
+/// part read are both started here.
+fn spawn_read<T: Send + 'static>(
+    cx: &mut Context<Irc>,
+    read: impl FnOnce(&AtomicBool) -> Option<T> + Send + 'static,
+    publish: impl FnOnce(&mut Irc, T, &mut Context<Irc>) + 'static,
+) -> (Arc<AtomicBool>, Task<()>) {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancel);
+    let task = cx.spawn(async move |board, cx| {
+        let answer = cx.background_spawn(async move { read(&flag) }).await;
+        let Some(answer) = answer else {
+            return;
+        };
+        _ = board.update(cx, |board, cx| publish(board, answer, cx));
+    });
+    (cancel, task)
 }
 
 /// The client to read the captain's fleet with.
