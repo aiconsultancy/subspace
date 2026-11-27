@@ -246,6 +246,84 @@ class UsageGuardAnswersTests(unittest.TestCase):
                     fleet_setup.usage_guard_answers(args, {})
 
 
+class GuidedQuestionsTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        inputs = patch.object(fleet_setup, "INPUTS", Path(directory.name))
+        inputs.start()
+        self.addCleanup(inputs.stop)
+        self.fleet = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                      "--operator", "operator", "--repositories", ""]
+
+    def gather(self, flags=(), replies=(), saved=None):
+        args = fleet_setup.parse_args([*self.fleet, *flags])
+        remaining = iter(replies)
+        with patch.object(fleet_setup.sys.stdin, "isatty", return_value=True), \
+                patch("builtins.input", side_effect=lambda _: next(remaining, "")) as asked, \
+                patch.object(fleet_setup, "say"):
+            answers = fleet_setup.gather(args, saved or {})
+        return answers, [call.args[0] for call in asked.call_args_list]
+
+    def test_single_vm_and_tunnel_are_recommended_before_identity_and_irc_account(self):
+        answers, asked = self.gather(replies=["", "", "y", "operator@example.com", "example"])
+        self.assertEqual([label.partition(":")[0] for label in asked[:3]],
+                         ["Topology", "Private network for workstations", "Identity"])
+        self.assertTrue(asked[5].startswith("Fleet ID"))
+        self.assertTrue(asked[6].startswith("Your IRC account name"))
+        self.assertEqual((answers["topology"], answers["irc"], answers["api"]), ("single", "local", True))
+        self.assertEqual((answers["privateNetwork"], answers["access"]), ("off", "ssh"))
+        self.assertEqual((answers["adminEmail"], answers["organisation"]), ("operator@example.com", "example"))
+        self.assertNotIn("databaseUrlFile", answers)
+        fleet_setup.save_answers(answers)
+        kept, asked = self.gather(saved=fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+        self.assertEqual(asked, [])
+        self.assertEqual((kept["adminEmail"], kept["organisation"]), ("operator@example.com", "example"))
+
+    def test_fresh_interactive_local_api_requires_accepting_the_legacy_bootstrap(self):
+        with self.assertRaisesRegex(fleet_setup.SetupError, "production sign-in first"):
+            self.gather(replies=["", "", "n"])
+        self.assertFalse((fleet_setup.INPUTS / "answers.json").exists())
+        answers, asked = self.gather(["--non-interactive"])
+        self.assertEqual(asked, [])
+        self.assertEqual((answers["api"], answers["adminEmail"], answers["organisation"]),
+                         (True, "developer@example.com", "local"))
+
+    def test_existing_sso_and_private_route_are_reused_without_changing_ssh_access(self):
+        api_env = fleet_setup.INPUTS / "api.env"
+        settings = "NODE_ENV=production\nAUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\nWORKOS_CLIENT_ID=example\n"
+        api_env.write_text(settings)
+        network = "fleet.example.com,eth0,10.20.1.4,10.21.0.0/24"
+        answers, asked = self.gather(["--access", "tailscale"], ["several", network])
+        self.assertFalse(any(label.startswith("Development sign-in") for label in asked))
+        path = fleet_setup.INPUTS / "answers.json"
+        fleet_setup.save_answers(answers)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn("WORKOS_CLIENT_ID", path.read_text())
+        kept, asked = self.gather(saved=fleet_setup.read_json(path))
+        self.assertEqual(asked, [])
+        self.assertEqual((kept["topology"], kept["privateNetwork"], kept["access"]),
+                         ("several", network, "tailscale"))
+        off, _ = self.gather(["--private-network", "off"], saved=kept)
+        self.assertEqual((off["privateNetwork"], off["access"]), ("off", "tailscale"))
+        self.assertEqual(api_env.read_text(), settings)
+
+    def test_join_uses_existing_flags_and_does_not_save_enrolment_input(self):
+        with self.assertRaisesRegex(fleet_setup.SetupError, "To join, use shared IRC"):
+            self.gather(replies=["join"])
+        answers, asked = self.gather(["--topology", "join", "--irc", "remote", "--irc-host", "irc.example.com",
+                                      "--api-url", "https://subspace.example.com", "--api-enrolment-token-file",
+                                      "/run/fixture-enrolment"])
+        self.assertFalse(any(label.startswith(("Topology", "Development sign-in")) for label in asked))
+        fleet_setup.save_answers(answers)
+        path = fleet_setup.INPUTS / "answers.json"
+        self.assertNotIn("fixture-enrolment", path.read_text())
+        kept, asked = self.gather(saved=fleet_setup.read_json(path))
+        self.assertEqual(asked, [])
+        self.assertEqual((kept["topology"], kept["ircHost"], kept["apiUrl"], kept["api"]),
+                         ("join", "irc.example.com", "https://subspace.example.com", False))
+
+
 class SetupInputsTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -1608,8 +1686,13 @@ class AgentDispatchSetupTests(unittest.TestCase):
         self.assertNotIn("agentDispatch", config)
         prompts = []
         args = fleet_setup.parse_args(["--operator", "operator", *self.argv])
+
+        def respond(text):
+            prompts.append(text)
+            return "y" if text.startswith("Identity:") else ""
+
         with patch.object(fleet_setup.sys.stdin, "isatty", return_value=True), \
-                patch("builtins.input", side_effect=lambda text: prompts.append(text) or ""):
+                patch("builtins.input", side_effect=respond):
             answers = fleet_setup.gather(args, {})
         # Asked once, with what switching it on does, and an empty answer keeps the default: off.
         [question] = [text for text in prompts if "agent dispatch" in text]

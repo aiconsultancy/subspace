@@ -143,7 +143,73 @@ Ask all of these before running anything, then confirm the plan once.
 Defaults are in bold. Each question says what to do if the user cannot
 answer it now.
 
-1. **Where should the fleet run?** Explain the choice. For real use we
+1. **Will this be one fleet, the first of several, or a fleet joining an
+   existing installation?** For a fresh single fleet, recommend **one VM**,
+   whether local or cloud. It runs Stargate and the officers, the Subspace
+   API, Ergo and one PostgreSQL instance. The API and Ergo history have
+   separate databases and roles; Ergo's account and channel data has its own
+   volume. If they are unsure, start here: no extra services or VMs are needed.
+   - **First of several fleets:** plan one shared Ergo and one shared API.
+     They can start on the first fleet VM or run on separate private hosts.
+     See [One fleet or several](#one-fleet-or-several-shared-irc) for the
+     supported arrangements. Moving to a shared Ergo later keeps the fleet
+     but not its IRC history.
+   - **Joining an existing installation:** get the shared IRC endpoint and
+     the API origin before setup. For Ergo managed by this installer, use
+     `--irc-server TARGET`. For another server, get its DNS name, TLS port,
+     CA certificate and someone to provision the IRC accounts. Use
+     `--irc remote --irc-host HOST`; see
+     [IRC sign-in](subspace-installer/README.md#irc-sign-in) for certificate
+     registration and operator options. Password sign-in is for servers
+     that cannot take certificates.
+
+   If the organisation has a hosted API, ask for its HTTPS origin and a
+   mode-0600 file on this computer holding the fleet's enrolment token. The
+   hosted API's administrator creates the fleet and issues the token; never
+   paste it into chat. Pass `--api-url URL --api-enrolment-token-file FILE`.
+   With a hosted API, there is no local API or PostgreSQL; this excludes
+   question 17. For agent dispatch, use a Stargate revision that supports
+   signed assignment requests. The default Stargate release supports
+   `subspaceAgents` and the usage guard. The VM must reach the API over HTTPS.
+   Switching an existing VM requires `--switch-to-hosted-api` and leaves its
+   tracker behind: ask first. See
+   [A hosted Subspace API](subspace-installer/README.md#a-hosted-subspace-api).
+   An API on another fleet installed from this computer can also be named
+   with `--api-target TARGET`; that path still uses its current development
+   sign-in. Neither enrolment path pairs a human owner.
+
+   For an unattended run, `--topology single|several|join` records the plan;
+   the existing IRC and API flags control where the services actually run.
+2. **Which private network connects workstations, fleets and shared services?**
+   Use the organisation's existing ZTNA, VPN or routed network if available.
+   For a local VM, **use an SSH tunnel if unsure**; it needs no extra network.
+   For a cloud VM, plan a private route before creating it. If the user has
+   no private network, offer [Tailscale or Cloudflare Zero Trust](#set-up-the-private-network)
+   for SSH. Ask whether they can sign in and approve the needed devices now.
+   If they cannot, offer a local VM or stop and leave the steps. Guided setup
+   does not deploy Headscale yet.
+
+   Decide separately whether workstations should use the SSH tunnel or
+   [direct private HTTPS and IRC](docs/private-access.md#an-existing-private-network).
+   For direct access to an API and Ergo on this VM, get the private DNS name,
+   ingress interface, VM address and client CIDR, plus a trusted TLS
+   certificate. Use `--private-network NAME,INTERFACE,ADDRESS,CLIENT-CIDR`;
+   it requires production SSO. `--private-network off` keeps or restores
+   tunnel-only access to those services. **Keep SSH for administration**:
+   `--access ssh|tailscale|cloudflare` and `--ssh-from` govern that route,
+   not workstation sign-in. Do not open public inbound ports.
+3. **How will people sign in?** A network route does not identify a person.
+   For an API that already has [WorkOS or Entra configured](subspace-api/README.md#external-sign-in),
+   use that provider and check that the owner has an administrator membership.
+   For a local API reached only through SSH, guided setup can still use
+   development sign-in to register the fleet: ask explicitly whether to use
+   it, and for the `--admin-email` and `--organisation`. An existing database
+   needs an administrator already known to it, unless the database is empty.
+   Unattended runs retain today's development defaults where applicable.
+   Never expose the development API on a direct network endpoint. Setup
+   does not configure an identity provider, pair the owner, or create an
+   owner invite yet. Ask for their IRC account name separately (question 8).
+4. **Where should the fleet VM run?** Explain the choice. For real use we
    recommend a VM in the user's cloud, reached over a private network:
    Subspace is meant to be multiplayer, and a cloud VM keeps the agents'
    builds off their machine. A VM on this computer is the quickest way to try
@@ -158,8 +224,8 @@ answer it now.
      which region and which size (as for a local VM, below), and confirm that
      its cost is theirs to accept. Ask whether you may use that CLI; if it is
      missing or not signed in, they install it and sign in themselves, or let
-     you install it as part of the plan. Settle the private network in
-     question 11.
+     you install it as part of the plan. Settle the private network first
+     (question 2).
    - **A new local VM on this computer (the quickest way to try it).** On
      macOS it uses Apple's Virtualization framework through
      [Lima](https://lima-vm.io); on Linux,
@@ -179,53 +245,7 @@ answer it now.
      host key fingerprint from a trusted channel. Ask whether you may use
      their cloud account to read that fingerprint (for example
      `az vm run-command`); if not, they give it to you. Never run without it.
-2. **Where should the IRC server run?** Ask whether they intend to run more
-   than one fleet, and explain [the difference](#one-fleet-or-several-shared-irc).
-   For real use we recommend **one IRC server (Ergo) for the whole setup,
-   however many fleets there are, running in a container** on the private
-   network. Every fleet and every desktop shares it, and it is never
-   reachable from the internet.
-   - **A local VM to try Subspace out (question 1):** Ergo runs on the fleet
-     VM, beside the API and one PostgreSQL that holds the API's database and
-     IRC's history. That is the installer's default; there is nothing to
-     choose.
-   - **A cloud fleet that will only ever be one fleet:** Ergo on the same VM
-     is fine, exactly as for a local VM.
-   - **A cloud install of more than one fleet, or one that may grow:** run one
-     shared IRC server first, then point every fleet at it. On Azure we
-     recommend [Azure Container Apps](#example-azure-container-apps), which
-     you set up with the Azure CLI by following
-     [Run the shared IRC server in a container](#run-the-shared-irc-server-in-a-container);
-     the installer does not deploy it. Ask for the subscription, region and
-     virtual network (the fleet VMs' network, or permission to create one),
-     and confirm that the cost of the environment, its PostgreSQL server for
-     history and its storage is theirs to accept. On any cloud, the installer
-     can instead set up a small dedicated VM that runs Ergo in Docker
-     (`./install.sh irc-server`); collect that VM's details as in question 1.
-     Switching fleet in the desktop then loads that fleet's IRC channels, so
-     they work across fleets while seeing only the channels and captains of
-     the fleet they are in.
-   - **An IRC server they already run:** collect its DNS name, TLS port and
-     CA certificate, and who can add the fleets' accounts to it. Officers sign
-     in to it by certificate (`--irc remote --irc-host NAME`): setup makes one
-     per officer and prints its account, fingerprint and the two NickServ
-     lines (`/NS SAREGISTER`, `/NS CERT ADD`) that the server's operator runs.
-     If the user holds an IRC operator credential with NickServ's `accreg`
-     capability, pass `--irc-operator NAME --irc-operator-password-file FILE`
-     (a `chmod 600` file on this computer, removed from the VM after the run)
-     and setup registers the accounts and checks each sign-in itself; it
-     never prints or keeps the password. If the server lets only signed-in
-     accounts connect (Ergo's `require-sasl`), also pass
-     `--irc-operator-account NAME --irc-operator-account-password-file FILE`
-     for the account the operator signs in to first. Use `--irc-auth password` only for a
-     server that cannot take certificates, and then its operator sets each
-     officer's password. See
-     [IRC sign-in](subspace-installer/README.md#irc-sign-in).
-
-   **If the user cannot answer, put Ergo on the fleet VM**: it creates no
-   extra cloud resources and costs nothing more. Tell them that moving to a
-   shared server later keeps the fleet but not its IRC history.
-3. **Names.** Ask for the fleet and rear admiral names and the names for
+5. **Names.** Ask for the fleet and rear admiral names and the names for
    each ship and crew member. New fleets default to four captains with
    names based on the fleet ID. The user can choose a different roster with
    `--captains`. Suggest a theme for the names and let the user accept or
@@ -253,7 +273,7 @@ answer it now.
      fleet command channels, `#example-fleet-starbase` and
      `#example-fleet-command`; a captain whose name would give one of those
      is refused.
-4. **Which GitHub repositories should the captains have checked out?** List
+6. **Which GitHub repositories should the captains have checked out?** List
    them in order, as HTTPS URLs; the first is where each captain starts. Every
    captain gets every repository in the list (`--repositories`, at most
    nine). The answer drives:
@@ -282,7 +302,7 @@ answer it now.
    [Add private repositories later](subspace-installer/README.md#add-private-repositories-later)).
    **Default: no repositories, so no crew yet.** With repositories, also ask
    question 21, about the toolchains they need.
-5. **Crew per captain** (**2 Claude, 2 Codex**; 0 to 10 each,
+7. **Crew per captain** (**2 Claude, 2 Codex**; 0 to 10 each,
    `--crew-claude`, `--crew-codex`). Explain that crew run inside their
    captain's OpenCode server as the captain's Linux user: they share the
    captain's files, credentials and GitHub App, commit as the captain, and
@@ -295,11 +315,11 @@ answer it now.
    admiral `claude-fable-5-2` at `high`, which needs a Claude account. If the
    user has only a ChatGPT account, choose models it serves, for example
    `--captain-model gpt-5.4 --rear-admiral-model gpt-5.4`.
-6. **Their IRC account name** (**admiral**), used as their nickname. The
+8. **Their IRC account name** (**admiral**), used as their nickname. The
    agents only take orders from this account.
-7. **Demo data?** (**yes**) Fictional fleets, initiatives and issues so they can
+9. **Demo data?** (**yes**) Fictional fleets, initiatives and issues so they can
    look around the desktop app straight away.
-8. **Agent harness** (**OpenCode, recommended**). Stargate also supports the
+10. **Agent harness** (**OpenCode, recommended**). Stargate also supports the
    Claude Agent SDK and the OpenAI Codex SDK. OpenCode is the most tested,
    and crew need an OpenCode captain. To use the Claude Agent SDK for the
    rear admiral or a captain without crew, set its `harness` to `claude-sdk`
@@ -307,12 +327,12 @@ answer it now.
    [fleet installer's guide](subspace-installer/README.md#crew-and-repositories)).
    The Codex SDK is configured in Stargate directly; the installer does not
    set it up yet.
-9. **Which provider accounts** will power the agents, for example a ChatGPT
+11. **Which provider accounts** will power the agents, for example a ChatGPT
    (Codex) or Claude subscription. They sign them in to CLIProxyAPI after the
    install, in their browser; see [Bring the agents online](#bring-the-agents-online).
    Ask whether they will be there at the end to do it. If not, finish the
    install and leave them the sign-in commands.
-10. **Which limits should the usage guard use?** (**On, 20% warning and
+12. **Which limits should the usage guard use?** (**On, 20% warning and
     10% cutoff** for Claude and Codex, or **off**.) At the warning, the
     rear admiral asks captains in their own ship channels to stand down
     extra crew of the affected provider. At the cutoff, Stargate blocks
@@ -320,45 +340,19 @@ answer it now.
     checkpoint and push. Use `--usage-guard-warning PERCENT`,
     `--usage-guard-cutoff PERCENT`, or `--no-usage-guard`. Prefix a value
     with `claude=` or `codex=` to change only that provider.
-11. **How they reach the VM.** For a cloud VM a private network is required:
-    we recommend **Tailscale** or Cloudflare Zero Trust (free for up to 50
-    users), which you set up for them as in
-    [Set up the private network](#set-up-the-private-network), with
-    `--access tailscale` or `--access cloudflare`. If they have no
-    preference, use Tailscale: it needs no domain of their own. For a local
-    VM the default is the **SSH tunnel**, which needs nothing else. Either
-    way the desktop's ports normally travel through the SSH tunnel. If
-    workstations and the VM already share the organisation's ZTNA, VPN or
-    routed network, offer [direct private HTTPS and IRC](docs/private-access.md#an-existing-private-network)
-    instead (`--private-network`). This requires configured production SSO
-    and a trusted certificate for the private name; it is not available with
-    the default development sign-in. Ask for any addresses that alone may
-    use SSH (`--ssh-from`). Keep the SSH route for administration.
-    Also offer nginx with internal host names if they want browser-friendly
-    addresses.
-
-    The private network needs the user in their browser: signing in to
-    Tailscale or Cloudflare, approving this computer, and creating a one-off
-    auth key or a tunnel token. Ask whether they are there to do it now.
-    Do it together before the unattended run starts, because that run
-    cannot reach a VM with no public IP without it: before you confirm the
-    plan, or straight after its yes for any step that needs Tailscale or
-    `cloudflared` installed on this computer first. If they cannot, do not
-    create the cloud VM: offer the local VM instead, or stop and leave them
-    the steps.
-12. **Secrets.** (**On the VM**, as root-only and per-agent files.) On Azure,
+13. **Secrets.** (**On the VM**, as root-only and per-agent files.) On Azure,
     they can also keep the generated secrets in Key Vault (`--key-vault`), so
     a rebuilt VM gets the same ones. That needs the VM's managed identity to
     have access to the vault, which they set up or allow you to set up in
     their cloud account; if neither, keep the secrets on the VM.
-13. **Local agent skills.** Should their own coding agents (Claude Code,
+14. **Local agent skills.** Should their own coding agents (Claude Code,
     Codex, OpenCode) get Subspace skills in their user profile, so they can
     use the tracker and talk to the fleet? Which agents, and what name should
     those agents use for them? You install them at the end. See
     [Use your local agents with the fleet](#use-your-local-agents-with-the-fleet).
     A deployment repository (question 20) carries the skills for its own
     folder; these are for working from any folder. **Default: no.**
-14. **Slack or Teams** (optional). Should stakeholders reach the rear admiral
+15. **Slack or Teams** (optional). Should stakeholders reach the rear admiral
     in Slack or Microsoft Teams? Slack works with a private VM as is
     ([Slack](docs/slack.md)). Teams needs an Azure VM and one public callback
     path ([Teams](docs/teams.md)). Teams bots cannot talk to each other, so
@@ -366,16 +360,16 @@ answer it now.
     admiral to Teams. Both need an app the user creates and its tokens, so
     they follow those guides with the user after the fleet runs. **Default:
     neither.**
-15. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on). The
+16. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on). The
     rear admiral offers unassigned *Ready for agents* issues in fleet command.
     With compatible Stargate, it also asks captains to take their assigned
     Backlog or Todo issues in their ship channels when crew are available.
     Use `--no-assignment-requests` or `--no-ready-for-agents-offers` to disable
-    either behavior independently. Dispatch needs a Subspace API and at
+    either behaviour independently. Dispatch needs a Subspace API and at
     least one captain with crew. A hosted API uses the enrolled rear
     admiral's signing socket. For a local API bearer token, see
     [Agent dispatch](subspace-installer/README.md#agent-dispatch).
-16. **An existing PostgreSQL for the tracker?** (**no**: the API keeps its
+17. **An existing PostgreSQL for the tracker?** (**no**: the API keeps its
     own PostgreSQL on the fleet VM.) If they already run one, for example a
     managed server, the fleet's API can use it instead, with no database on
     the VM. Ask for a file on this computer holding its
@@ -391,21 +385,6 @@ answer it now.
     is no demo data in a database the installer did not create, and no way
     back to a database on the VM. See
     [An existing PostgreSQL](subspace-installer/README.md#an-existing-postgresql).
-17. **A Subspace API on another host?** (**no**: the API runs on the fleet
-    VM.) If their organisation already runs one for several fleets, the
-    fleet can use it instead, with no API or database on the VM and no
-    administrator token there. Ask for its HTTPS origin (for example
-    `https://subspace.example.com`) and for a file on this computer holding
-    the fleet's enrolment token (`senr1.…`, `chmod 600`; never paste it into
-    the chat), which one of that API's administrators issues for this fleet
-    after creating it there. Pass `--api-url URL --api-enrolment-token-file
-    FILE`. It excludes question 16. For agent dispatch, use a Stargate
-    revision that supports signed assignment requests. The default Stargate
-    release supports `subspaceAgents` and the usage guard. The VM must
-    reach the API over HTTPS. On a VM whose API already keeps a tracker,
-    switching needs `--switch-to-hosted-api` and leaves that tracker behind:
-    ask first. See
-    [A hosted Subspace API](subspace-installer/README.md#a-hosted-subspace-api).
 18. **An existing initiative for the fleet's work?** (**no**: setup finds
     or creates one named after the fleet.) If the tracker already holds the
     fleet's projects under an initiative, ask for its UUID and pass
@@ -661,13 +640,13 @@ whichever ports sshd listens on), and
 [Private access](docs/private-access.md#cloudflare-zero-trust) instead. Leave
 `--access` out only for an existing VM you reach another private way.
 
-For a hosted API (question 17), add `--api-url URL --api-enrolment-token-file
+For a hosted API (question 1), add `--api-url URL --api-enrolment-token-file
 FILE`; the dry run checks that the API answers,
 that the token is valid (without using it) and that the Stargate commit has
 `subspaceAgents`. Later runs need no token unless an officer is added or a key
 replaced; then ask the API's administrator for a fresh one.
 
-For an existing PostgreSQL (question 16), add `--database-url-file FILE`
+For an existing PostgreSQL (question 17), add `--database-url-file FILE`
 (`--database-ca-file FILE` for a private CA, `--migrate` to apply missing
 migrations), and the `--organisation` and `--admin-email` of an
 administrator already in that database. Run it with `--dry-run` first: the
@@ -707,7 +686,7 @@ joins such an array with commas again, but other commands may not.)
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
 optionally `ID=URL`), their crew counts as `--crew-claude N --crew-codex N`,
 the crew's names as `--crew-names 'Orion=Rigel,Deneb,Mira,Sirius;Vega=...'`
-(question 3; needed once captains have repositories, and so crew; later runs keep them, and an installed crew member's name cannot change this way), the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`, and
+(question 5; needed once captains have repositories, and so crew; later runs keep them, and an installed crew member's name cannot change this way), the crew models as `--crew-claude-model MODEL --crew-codex-model MODEL`, and
 the officers' as `--captain-model MODEL --rear-admiral-model MODEL` (with
 `--captain-effort` and `--rear-admiral-effort`), on this command and on the cloud VM one above. Leave out `--install-deps`
 to stop and ask instead of installing Lima, QEMU or Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first
@@ -879,7 +858,7 @@ you create; and delete nothing without asking.
 ### Seed the accounts and channels
 
 The server's accounts are the humans' accounts (at least the user's own,
-from question 6) plus every fleet's agents; its channels are every fleet's
+from question 8) plus every fleet's agents; its channels are every fleet's
 channels. Each fleet needs at least its
 [standard channels](subspace-installer/README.md#channels):
 `#<fleet>-starbase`, `#<fleet>-command` and `#<fleet>-<captain>` for each

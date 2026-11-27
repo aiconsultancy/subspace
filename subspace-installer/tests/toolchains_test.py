@@ -1544,7 +1544,7 @@ class SetupRecordTests(unittest.TestCase):
             self.assertEqual(fleet_setup.gather(args, saved)["toolchains"], "derive")
             # Asked interactively, pressing Enter gives the documented default, none.
             args = fleet_setup.parse_args(["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
-                                           "--operator", "operator", "--repositories",
+                                           "--operator", "operator", "--no-api", "--repositories",
                                            "https://github.com/example/project.git"])
             asked = []
 

@@ -43,6 +43,14 @@ VM, generate this installer's inputs with [`vm/setup.sh`](vm/setup.sh)
 (`subspace-setup` on the VM), add the Subspace API, lock the VM down and
 connect the desktop. The rest of this page describes the installer itself.
 
+Guided setup starts with [topology, private network and identity](../INSTALL.md#decide-with-the-user).
+A fresh single fleet fits on one VM, local or cloud. Setup keeps the topology
+plan, service endpoints, private-network options and any legacy development
+administrator details in `/root/fleet/answers.json`. Omit those options on
+reruns to reuse them. This file does not hold tokens or TLS keys. SSH
+administration is separate from direct API and IRC access. Guided setup keeps
+the API's existing sign-in; it does not pair the owner yet.
+
 Use a fresh Ubuntu 24.04 LTS or Debian 12 VM, on amd64 or arm64. Copy the
 `subspace-installer/` directory onto the VM. Store the fleet files outside
 the repository.

@@ -219,6 +219,8 @@ def run(*args, check=True, capture=False, env=None, input_text=None, timeout=Non
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(prog="subspace-setup", description="Set up a Subspace fleet on this VM.")
+    parser.add_argument("--topology", choices=["single", "several", "join"],
+                        help="one fleet, the first of several, or joining an existing installation; kept on reruns")
     parser.add_argument("--name", help="fleet display name, for example 'Example Fleet'")
     parser.add_argument("--slug", help="stable fleet ID; defaults to the name in lower case")
     parser.add_argument("--rear-admiral", help="the rear admiral's name, for example Atlas")
@@ -400,6 +402,76 @@ def yes_no(label, default, interactive):
     return str(answer).lower().startswith("y")
 
 
+def gather_topology(args, answers, saved, interactive):
+    """Choose the fleet layout; use the existing options to place its services."""
+    hosted_api(args, answers, saved)
+    remote_irc = (args.irc or saved.get("irc", "local")) == "remote"
+    shared_api = args.shared_api_target or bool(answers.get("apiUrl"))
+    suggested = "join" if remote_irc and shared_api else "several" if remote_irc or shared_api else "single"
+    choice = args.topology or saved.get("topology")
+    if choice is None and interactive and not saved:
+        choice = prompt("Topology: single (recommended: this VM runs the fleet, API, Ergo and PostgreSQL), "
+                        "several (first of several fleets), or join (use existing services)", suggested)
+    require(choice is None or choice in ("single", "several", "join"), "Choose single, several or join for topology.")
+    if choice == "join" and (args.topology or not saved.get("topology")):
+        require(remote_irc and shared_api,
+                "To join, use shared IRC (--irc-server or --irc remote) and a shared API (--api-target or --api-url).")
+    answers["topology"] = choice or suggested
+    answers["irc"] = "remote" if remote_irc else "local"
+    if remote_irc:
+        if args.irc_host is not None:
+            answers["ircHost"] = args.irc_host
+        elif "ircHost" not in answers:
+            answers["ircHost"] = prompt("Shared IRC server's DNS name", interactive=interactive)
+    if args.shared_api_target:
+        require(not answers.get("apiUrl"), "--api-target cannot replace an explicit or saved hosted API (--api-url).")
+        hostname = answers.get("ircHost")
+        require(remote_irc and hostname and not loopback_irc_host(hostname),
+                "--api-target needs remote IRC: use --irc-server NAME or --irc remote --irc-host HOST.")
+        args.api = False
+    if answers.get("apiUrl"):
+        answers["api"] = False  # The hosted API replaces one on this VM.
+    elif args.api is not None:
+        answers["api"] = args.api
+    elif args.database_url_file and answers.get("api") is False:
+        # A fleet set up with --no-api: asking for an existing PostgreSQL asks for the API that uses it.
+        answers["api"] = True
+    answers.setdefault("api", True)
+
+
+def gather_workstation_network(args, answers, saved, interactive):
+    # SSH controls administration, separately from whether workstations use direct endpoints.
+    answers["access"] = args.access or saved.get("access", "ssh")
+    choice = args.private_network if args.private_network is not None else saved.get("privateNetwork")
+    if choice is None and not saved and interactive:
+        choice = prompt("Private network for workstations: off (keep the SSH tunnel), or use an existing private "
+                        "route (NAME,INTERFACE,ADDRESS,CLIENT-CIDR; requires local API and Ergo, configured SSO and TLS)",
+                        "off")
+    network = private_network.Network.parse(choice)
+    answers["privateNetwork"] = network.choice if network else "off"
+
+
+def gather_identity(args, answers, saved, interactive):
+    # Until SUB-76 supplies owner bootstrap, keep the configured sign-in or the existing development path.
+    environment = api_environment(answers, {})[0] if interactive and answers["api"] else {}
+    development = dev_sign_in(environment)
+    if development and answers["privateNetwork"] != "off":
+        private_network.require_sso(environment)
+    if development and (not saved or not saved.get("api", True)):
+        require(yes_no("Identity: use development sign-in to register this fleet on its local API for now? "
+                       "Owner device pairing is not available in setup yet", False, interactive),
+                "Set up the API's production sign-in first (see INSTALL.md), use a hosted API, or pass --no-api.")
+    elif interactive and not saved:
+        say("Identity: setup leaves sign-in to the configured API, if any. It does not pair an owner.")
+    for key, flag, label, default in (
+            ("adminEmail", args.admin_email, "Development sign-in email", "developer@example.com"),
+            ("organisation", args.organisation, "Development sign-in organisation", "local")):
+        if flag is not None:
+            answers[key] = flag
+        elif key not in answers:
+            answers[key] = prompt(label, default) if development else default
+
+
 def gather(args, saved):
     interactive = sys.stdin.isatty() and not args.non_interactive
     answers = dict(saved)
@@ -412,6 +484,9 @@ def gather(args, saved):
             answers[key] = prompt(label, default, interactive) if interactive else default
         return answers[key]
 
+    gather_topology(args, answers, saved, interactive)
+    gather_workstation_network(args, answers, saved, interactive)
+    gather_identity(args, answers, saved, interactive)
     pick("name", args.name, "Fleet name (shown in the desktop and on IRC)")
     require(answers.get("name"), "Choose a fleet name with --name.")
     default_slug = re.sub(r"[^a-z0-9]+", "-", answers["name"].lower()).strip("-")[:20].strip("-")
@@ -437,8 +512,6 @@ def gather(args, saved):
         # A fleet set up before plain names keeps its fleet-prefixed accounts until 'rename-officers' changes them.
         answers["officerNames"] = "prefixed" if saved.get("slug") else "plain"
     pick("admin", args.admin, "Your IRC account name", "admiral")
-    pick("adminEmail", args.admin_email, "Development sign-in email", "developer@example.com")
-    pick("organisation", args.organisation, "Development sign-in organisation", "local")
     # Repositories live in fleet.json, beside hand-added private ones, so only this run's answer applies.
     if args.repositories is not None:
         answers["repositories"] = parse_repositories(args.repositories)
@@ -564,13 +637,11 @@ def gather(args, saved):
         except memory.Refused as error:
             raise SetupError(f"{error} 'auto' is the installer's own sizing.") from None
         chosen[key] = value
-    answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
         if args.managed_shared_irc:
             answers["managedSharedIrc"] = True
         elif args.irc_host and args.irc_host != saved.get("ircHost"):
             answers.pop("managedSharedIrc", None)
-        pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
         if args.irc_port is not None:
             answers["ircPort"] = args.irc_port
         answers.setdefault("ircPort", IRC_TLS)
@@ -599,13 +670,6 @@ def gather(args, saved):
             "Pass --irc-operator-account and --irc-operator-account-password-file together.")
     require(not args.irc_operator_account or args.irc_operator,
             "--irc-operator-account is the account the operator's connection signs in to: pass --irc-operator too.")
-    hosted_api(args, answers, saved)
-    if args.shared_api_target:
-        require(not answers.get("apiUrl"), "--api-target cannot replace an explicit or saved hosted API (--api-url).")
-        hostname = answers.get("ircHost")
-        require(answers["irc"] == "remote" and hostname and not loopback_irc_host(hostname),
-                "--api-target needs remote IRC: use --irc-server NAME or --irc remote --irc-host HOST.")
-        args.api = False
     if args.vm_host == "":
         answers.pop("vmHost", None)
     elif args.vm_host is not None:
@@ -613,14 +677,6 @@ def gather(args, saved):
             answers["vmHost"] = runtime.host(args.vm_host.strip().lower())
         except runtime.Invalid:
             raise SetupError("--vm-host must be a DNS name or an IP address, such as fleet.example.com.") from None
-    if answers.get("apiUrl"):
-        answers["api"] = False  # The hosted API replaces one on this VM.
-    elif args.api is not None:
-        answers["api"] = args.api
-    elif args.database_url_file and answers.get("api") is False:
-        # A fleet set up with --no-api: asking for an existing PostgreSQL asks for the API that uses it.
-        answers["api"] = True
-    answers.setdefault("api", True)
     require(args.agent_listener is not True or answers["api"],
             "--agent-listener requires a Subspace API on this VM.")
     answers["agentListener"] = args.agent_listener
@@ -718,16 +774,12 @@ def gather(args, saved):
     elif args.stargate_ref is not None:
         answers["stargateRef"] = args.stargate_ref
     answers["operator"] = args.operator or answers.get("operator") or os.environ.get("SUDO_USER") or ""
-    answers["access"] = args.access or answers.get("access", "ssh")
     if args.ssh_from is not None:
         answers["sshFrom"] = [value.strip() for value in args.ssh_from.split(",") if value.strip()]
     answers.setdefault("sshFrom", [])
     if args.allow_port is not None:
         answers["allowPorts"] = [value.strip() for value in args.allow_port.split(",") if value.strip()]
     answers.setdefault("allowPorts", [])
-    if args.private_network is not None:
-        network = private_network.Network.parse(args.private_network)
-        answers["privateNetwork"] = network.choice if network else "off"
     if args.agent_egress is not None:
         answers["agentEgress"] = list(dict.fromkeys(value for value in args.agent_egress if value))
     if args.key_vault is not None:
@@ -991,7 +1043,7 @@ def check_crew_answers(answers, ids):
                and set(named.get(captain_id, {})) != set(slots)]
     require(not missing, f"Name every crew member of {', '.join(missing)}: pass --crew-names with "
             f"{len(slots)} names per captain, in slot order ({', '.join(slot_label(slot) for slot in slots)}), "
-            "such as 'Orion=Rigel,Deneb,Mira,Sirius' (INSTALL.md, question 3). Crew names are unique in the fleet.")
+            "such as 'Orion=Rigel,Deneb,Mira,Sirius' (INSTALL.md, question 5). Crew names are unique in the fleet.")
 
 
 # Secrets ---------------------------------------------------------------------
@@ -2914,6 +2966,15 @@ def existing_administrator(answers, token):
             "Pass an administrator's email with --admin-email.")
 
 
+def bootstrap_local_owner(answers):
+    """SUB-76 seam: currently obtain the administrator token through development sign-in only."""
+    # The first development sign-in to a new organisation becomes its administrator.
+    token = api_token(answers)
+    if external_database(answers):
+        existing_administrator(answers, token)
+    return token
+
+
 def api_call(token, method, path, body=None):
     data = None if body is None else json.dumps(body).encode()
     request = Request(f"http://{LOOPBACK}:{API_PORT}/api/v1{path}", data=data, method=method, headers={
@@ -3772,10 +3833,7 @@ def configure(args):
         elif local_irc:
             say("Ergo keeps IRC history in its own SQLite file on this VM, not in the existing PostgreSQL")
         if dev_auth:
-            # The first sign-in to an organisation becomes its administrator, so sign the admin in first.
-            token = api_token(answers)
-            if external_database(answers):
-                existing_administrator(answers, token)
+            token = bootstrap_local_owner(answers)
             # An existing database may already hold an officer's name: stop before anything is registered.
             require_names(local_name_problems(answers, members, token))
             # Only --initiative on this run adopts an initiative, and only one that exists: checked before any
