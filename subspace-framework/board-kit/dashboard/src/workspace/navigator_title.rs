@@ -2,9 +2,11 @@
 //! (Settings › Layout) wins; without one, the app's default applies, and
 //! without an app default the title shows.
 //!
-//! The host app installs the default and Settings saves the choice; a Space
-//! reads it only through the navigator, so it cannot override the person's
-//! choice. The setters are public for the host app alone.
+//! The host app installs the default and Settings saves the choice. The
+//! setters and `preview` are public only because those callers live in
+//! other crates: they are reserved for the host app and the Component
+//! gallery, and hidden from the docs. Nothing stops a Space calling them,
+//! so a Space must leave the choice to the person.
 
 use gpui_kit::{App, Global};
 
@@ -19,8 +21,8 @@ struct NavigatorTitleDefault(bool);
 
 impl Global for NavigatorTitleDefault {}
 
-/// Installs the app's default for people who have not chosen. The host
-/// app's start-up calls it from `ProductBuild::navigator_title`.
+/// Installs the app's default for people who have not chosen. Reserved for
+/// the host app's start-up, which calls it from `ProductBuild::navigator_title`.
 #[doc(hidden)]
 pub fn install_default(shown: bool, cx: &mut App) {
     cx.set_global(NavigatorTitleDefault(shown));
@@ -34,16 +36,16 @@ pub fn shown(cx: &App) -> bool {
     decide(prefs::get(cx, KEY).as_deref(), default)
 }
 
-/// Records the person's choice in the preferences; Settings Save calls it
-/// inside its state file write.
+/// Records the person's choice in the preferences. Reserved for Settings
+/// Save, which calls it inside its state file write.
 #[doc(hidden)]
 pub fn set_shown(shown: bool, cx: &mut App) {
     prefs::set(cx, KEY, if shown { "1" } else { "0" });
 }
 
 /// Draws `navigator` as the title setting would, whatever the person chose.
-/// For the Component gallery's samples only: a Space must not call it, as
-/// the choice is the person's.
+/// Reserved for the Component gallery's samples; a Space should not call
+/// it, as the choice is the person's.
 #[doc(hidden)]
 pub fn preview(mut navigator: super::Navigator, shown: bool) -> super::Navigator {
     navigator.title_preview = Some(shown);

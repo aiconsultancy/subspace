@@ -32,9 +32,11 @@ for people to choose for themselves.
   restores the preferences if the write fails, and accepts the draft only
   after the write succeeds.
 - **Who sets it.** The default global and the saved key are private. The
-  setters are public for the host app only and hidden from the docs, so a
-  Space cannot override the person's choice. The Component gallery uses a
-  hidden `navigator_title::preview` to show both hidden-title states.
+  setters and `navigator_title::preview` are public only because the host
+  app and the Component gallery live in other crates. They are reserved for
+  those callers and hidden from the docs, but not enforced: a Cargo feature
+  would be switched on for every crate in a build with the gallery. The
+  gallery uses `preview` to show the hidden-title states.
 - **Breaking.** `ProductBuild` gains a public field, so an app that builds it
   field by field must set `navigator_title`; `true` keeps the old
   behaviour. The Framework README has an upgrade note.
