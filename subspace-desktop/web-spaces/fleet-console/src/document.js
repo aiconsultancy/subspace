@@ -299,8 +299,10 @@ export const shownBytes = (text) => measurePieces([String(text ?? "")], { maxByt
  * served, its compact JSON (`JSON.stringify`, the item being parsed JSON):
  * the UTF-16 offset there of the character shown at `at`, or of the start of
  * the value a label or punctuation belongs to; the end of the JSON past the
- * document's end. A text part's other fields map to the part's start. One
- * pass over the item, stopping at `at`, building nothing whole.
+ * document's end. A text part's other fields, shown before its text, map
+ * to where each is served in the part (SUB decision cf21d510): the shown
+ * order is kept only to count the document's units. One pass over the
+ * item, stopping at `at`, building nothing whole.
  */
 export function servedUnit(item, at) {
   let doc = 0;
@@ -386,12 +388,14 @@ export function servedUnit(item, at) {
           value(part, 0);
           continue;
         }
-        // The part as served, and where its text starts in it.
+        // The part as served: where its text starts, and the `{` or `,` before each field.
         const start = raw;
         let units = 1;
         let textAt = 0;
+        const fieldAt = new Map();
         for (const field of Object.keys(part)) {
           if (skipped(part[field])) continue;
+          fieldAt.set(field, units > 1 ? units : 0);
           units += (units > 1 ? 1 : 0) + compactUnits(field) + 1;
           if (field === "text") textAt = units;
           units += compactUnits(part[field]);
@@ -402,12 +406,23 @@ export function servedUnit(item, at) {
             label(block.label);
             span(0, 1);
             chars(block.text, true);
-          } else {
-            label(block.label);
-            let shown = 0;
-            for (const piece of shownJsonPieces(block.json)) shown += piece.length;
-            span(shown, 0);
+            continue;
           }
+          // The other fields, shown as one object in their own order, each mapped to where the part serves it.
+          const fields = Object.keys(block.json);
+          raw = start + fieldAt.get(fields[0]);
+          label(block.label);
+          for (const field of fields) {
+            if (found !== null) break;
+            raw = start + fieldAt.get(field);
+            // `{` or `,`, a newline, the indent and `"`, against `{` or `,` and `"`; the key; `": ` against `":`.
+            span(5, 2);
+            chars(field, false);
+            span(3, 2);
+            value(block.json[field], 1);
+          }
+          raw = start + units;
+          span(2, 1);
         }
         if (found === null) raw = start + units + 1;
       }
