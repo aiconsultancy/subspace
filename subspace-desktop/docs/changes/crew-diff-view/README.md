@@ -13,8 +13,11 @@ The `open-crew-diff` navigation request identifies the fleet, ship, crew member
 and project. The PRs Space resolves the fleet connection and displays **All
 changes**, **Committed only** or **Uncommitted only**. It reads file-list pages
 for one snapshot; **Load next page** continues a long patch at that snapshot’s
-fingerprint. The shared Fleet feed can also report a new fingerprint for
-that checkout. A change observed during a load or after it can mark the
+fingerprint. The toolbar shows the base ref, short base commit and short head,
+or says that the diff starts from an empty tree when there is no base. File
+headers label untracked files, submodules and symlinks. A submodule without a
+patch has its own note, not a binary reader. The shared Fleet feed can also
+report a new fingerprint for that checkout. A change observed during a load or after it can mark the
 snapshot stale; the feed value already known when the load started cannot.
 The viewer checks for changes again when the Space becomes active. A conflict
 or missing list continuation also asks for **Refresh**. If a list or file

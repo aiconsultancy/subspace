@@ -8,7 +8,7 @@ use super::super::model::{
     FileView, RowOptions, VIEWED_KEY, ViewedStore, build_rows, file_at, tree_order, viewed_id,
 };
 use super::read_executor::{LoadError, ReadExecutor, ReadResult, diff_error, read_diff};
-use super::source::{Loaded, fleet_file, github_file};
+use super::source::{Loaded, comparison, fleet_file, github_file};
 use super::{DiffSource, DiffView, Text, code_row_height};
 
 struct RefreshBaseline {
@@ -110,6 +110,7 @@ impl DiffView {
     pub(super) fn clear_snapshot(&mut self, cx: &mut Context<Self>) {
         self.invalidate_patch_pages();
         self.fleet.fingerprint = None;
+        self.fleet.comparison = None;
         self.binary_holds = Default::default();
         self.fleet.unavailable = false;
         self.fleet.stale_page = false;
@@ -156,6 +157,7 @@ impl DiffView {
                     self.fleet.stale_page = false;
                 }
                 self.fleet.unavailable = false;
+                self.fleet.comparison = Some(comparison(&diff));
                 self.binary_holds.pin_to(self.fleet.mode, &diff.fingerprint);
                 self.fleet
                     .accept_fingerprint(diff.fingerprint, baseline.live);

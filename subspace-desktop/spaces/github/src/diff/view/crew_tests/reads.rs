@@ -17,7 +17,8 @@ fn the_gateway_list_contract_loads_two_pages_or_an_empty_snapshot(cx: &mut TestA
         let mock = Mock::new(move |request| {
             let mut response = json!({
                 "ship": super::SHIP, "member": super::CREW, "project": null, "mode": "branch",
-                "fingerprint": "B", "unstable": false, "branch": "example", "base": null,
+                "fingerprint": "B", "unstable": false, "branch": "example",
+                "base": if empty { Value::Null } else { json!({"ref": "origin/main", "commit": "abcdef0123456789"}) },
                 "head": "0123456789abcdef", "total": if empty { 0 } else { 2 },
                 "additions": 0, "deletions": 0, "files": [],
             });
@@ -38,6 +39,11 @@ fn the_gateway_list_contract_loads_two_pages_or_an_empty_snapshot(cx: &mut TestA
             (200, response.to_string())
         });
         let (view, window) = mount(cx, &mock);
+        let comparison = if empty {
+            "No base; the diff starts from an empty tree."
+        } else {
+            "origin/main @ abcdef0 → 0123456"
+        };
         view.read_with(window, |view, _| {
             assert_eq!(view.fleet.fingerprint.as_deref(), Some("B"));
             assert!(view.error.is_none());
@@ -53,6 +59,14 @@ fn the_gateway_list_contract_loads_two_pages_or_an_empty_snapshot(cx: &mut TestA
                 } else {
                     &["first.txt", "second.txt"]
                 }
+            );
+            assert_eq!(view.fleet.comparison.as_deref(), Some(comparison));
+        });
+        window.update(|window, _| {
+            assert!(
+                gpui_kit::base::test_support::texts(window)
+                    .iter()
+                    .any(|text| text.visible() && text.text() == comparison)
             );
         });
     }

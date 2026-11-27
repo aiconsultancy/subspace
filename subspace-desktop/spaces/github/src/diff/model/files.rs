@@ -68,6 +68,7 @@ pub struct FileView {
     pub next_page: Option<String>,
     pub binary: bool,
     pub binary_size: Option<u64>,
+    pub tags: &'static [&'static str],
 }
 
 impl FileView {
@@ -81,6 +82,7 @@ impl FileView {
             next_page: None,
             binary: false,
             binary_size: None,
+            tags: &[],
         }
     }
 

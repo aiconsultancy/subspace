@@ -61,6 +61,11 @@ impl DiffView {
                 )
                 .text_color(tokens.fg_strong),
             )
+            .children(
+                view.tags
+                    .iter()
+                    .map(|&tag| div().text_color(tokens.muted).child(tag)),
+            )
             .when(!view.binary, |row| {
                 row.child(
                     div()

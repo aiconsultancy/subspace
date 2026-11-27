@@ -5,7 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui_kit::Subscription;
-use subspace_client_fleet::diff::{DiffMode, DiffRead, DiffStatus, DiffTarget, V1Diff, V1DiffFile};
+use subspace_client_fleet::diff::{
+    DiffKind, DiffMode, DiffRead, DiffStatus, DiffTarget, V1Diff, V1DiffFile,
+};
 use subspace_client_fleet::navigation::OpenCrewDiff;
 use subspace_client_fleet::{Error, FleetAccess, FleetApi, FleetClient, FleetFollow};
 use subspace_framework::client_github::Client;
@@ -36,6 +38,7 @@ pub(super) struct FleetState {
     pub mode: DiffMode,
     pub access: Option<FleetAccess>,
     pub fingerprint: Option<String>,
+    pub comparison: Option<String>,
     pub live_fingerprint: Option<String>,
     pub live_revision: u64,
     pub live_changed: bool,
@@ -209,6 +212,8 @@ pub(super) fn github_file(file: GhDiffFile) -> FileView {
 }
 
 pub(super) fn fleet_file(file: V1DiffFile) -> FileView {
+    let tags = file_tags(file.untracked, file.kind);
+    let submodule = file.kind == Some(DiffKind::Submodule);
     let mut view = FileView::new(DiffFile {
         path: file.path,
         previous_path: file.previous_path,
@@ -217,8 +222,11 @@ pub(super) fn fleet_file(file: V1DiffFile) -> FileView {
         deletions: file.deletions.unwrap_or_default(),
         patch: file.patch,
     });
-    view.binary = file.binary;
-    if file.binary {
+    view.tags = tags;
+    view.binary = file.binary && !submodule;
+    if submodule && view.file.patch.is_none() {
+        view.reason = Some("Submodule has no patch");
+    } else if view.binary {
         view.binary_size = file.size;
         view.reason = Some("Binary file");
     } else {
@@ -228,6 +236,32 @@ pub(super) fn fleet_file(file: V1DiffFile) -> FileView {
         }
     }
     view
+}
+
+fn file_tags(untracked: bool, kind: Option<DiffKind>) -> &'static [&'static str] {
+    match (untracked, kind) {
+        (false, None) => &[],
+        (true, None) => &["Untracked"],
+        (false, Some(DiffKind::Submodule)) => &["Submodule"],
+        (true, Some(DiffKind::Submodule)) => &["Untracked", "Submodule"],
+        (false, Some(DiffKind::Symlink)) => &["Symlink"],
+        (true, Some(DiffKind::Symlink)) => &["Untracked", "Symlink"],
+    }
+}
+
+pub(super) fn comparison(diff: &V1Diff) -> String {
+    let Some(base) = &diff.base else {
+        return "No base; the diff starts from an empty tree.".to_owned();
+    };
+    let commit: String = base.commit.chars().take(7).collect();
+    let head: String = diff
+        .head
+        .as_deref()
+        .unwrap_or("HEAD")
+        .chars()
+        .take(7)
+        .collect();
+    format!("{} @ {commit} → {head}", base.r#ref)
 }
 
 #[cfg(test)]
@@ -243,6 +277,28 @@ mod tests {
             FileStatus::from(GhFileStatus::Changed),
             FileStatus::Modified
         );
+    }
+
+    #[test]
+    fn fleet_files_keep_kind_and_tracking_labels_even_without_hunks() {
+        for (kind, tags) in [
+            ("submodule", ["Untracked", "Submodule"]),
+            ("symlink", ["Untracked", "Symlink"]),
+        ] {
+            let file = fleet_file(
+                serde_json::from_value(json!({
+                    "path": "example", "status": "added", "kind": kind, "untracked": true,
+                    "additions": 0, "deletions": 0, "patch": null,
+                }))
+                .unwrap(),
+            );
+            assert_eq!(file.tags, tags);
+            assert!(!file.binary);
+            assert_eq!(
+                file.reason == Some("Submodule has no patch"),
+                kind == "submodule"
+            );
+        }
     }
 
     fn load_pages(

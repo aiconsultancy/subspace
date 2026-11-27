@@ -2,7 +2,9 @@
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{Context, Div, Entity, ParentElement as _, Styled as _, Window, px};
+use gpui_kit::{
+    Context, Div, Entity, ParentElement as _, Styled as _, Window, base::TestTextExt as _, px,
+};
 use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::feedback;
@@ -79,6 +81,22 @@ impl DiffView {
                     .border_color(tokens.line)
                     .child(self.mode_control(tokens, cx)),
             )
+            .when_some(self.fleet.comparison.as_ref(), |bar, comparison| {
+                bar.child(
+                    h_flex()
+                        .px(px(BAR_PAD_PX))
+                        .py_1()
+                        .border_b_1()
+                        .border_color(tokens.line)
+                        .text_size(tokens.row_font)
+                        .text_color(tokens.muted)
+                        .child(
+                            truncated::text("crew-diff-comparison", comparison.clone())
+                                .min_w_0()
+                                .test_text(comparison.clone()),
+                        ),
+                )
+            })
             .children(self.fleet_notice(tokens, cx))
             .children(self.refresh_error(tokens, cx))
     }
