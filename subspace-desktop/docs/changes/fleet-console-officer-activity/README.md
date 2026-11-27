@@ -74,14 +74,15 @@ the desktop side are separate work.
   is read in parts. **Show** on it adds what its window costs beyond that
   base to the same key (`drawWhole`, SUB decision `533c2b29`), and gives it
   back when another body is asked for.
-- **Refit** (SUB decisions `533c2b29`, `a5275d81`, `8346cf82`). An item
-  read whole that no longer fits reads in parts instead: of the version it
-  read when **Show** cannot keep it and its window beside the pinned
-  content or the inline snapshot grows, and of the newest version, from
-  its first part, when **Load the latest** or a read larger than its
-  placeholder advertised cannot hold that version whole. Before the inline charge grows, the watcher plans every
-  refit first (`planRefits`): it asks the budget what the larger charge
-  would free (`wouldFree`, with `as` naming the planned refits' handover
+- **Refit** (SUB decisions `533c2b29`, `a5275d81`, `8346cf82`,
+  `fbc47f97`). An item read whole that no longer fits reads in parts
+  instead: of the version it read when **Show** cannot keep it and its
+  window beside the pinned content or the inline snapshot grows, and of
+  the newest version, from its first part, when **Load the latest** or a
+  read larger than its placeholder advertised cannot hold that version
+  whole. Before the inline charge grows, the watcher plans every refit
+  first (`planRefits`): it asks the budget what the larger charge would
+  free (`wouldFree`, with `as` naming the planned refits' handover
   charges, so nothing changes while it asks) and, while that names an
   item read whole whose window is on show, plans, from every item read
   whole whose window is on show, named or not, the one whose refit gives
@@ -420,14 +421,27 @@ after growth during a reload reads the newest version. They:
 - plan every refit before opening any pager, refitting the whole that
   gives back the most first, so smaller wholes stay whole and every window
   stays on show when the handovers fit (both reviewers' probes);
-- ask `wouldFree` as if some entries held other sizes, changing nothing.
+- ask `wouldFree` as if some entries held other sizes, changing nothing;
 - read the newest version from page 0, unpinned, on a pressure handover
   after a failed whole reload and on **Try again** after it, and on
-  **Try again** after growth during the reload (the regression check).
+  **Try again** after growth during the reload (the regression check);
 - say in the README that only growth and **Show** keep the shown part, a
-  newest version too large to read whole coming under **Load the latest**.
+  newest version too large to read whole coming under **Load the latest**;
 - name the part read, and that the item is no longer held whole, when its
   turn is closed and reopened during a refit's read, without claiming a
-  window stays on show.
+  window stays on show;
 - lower a loading pager's charge to its part when its outgoing window
   unmounts, even when the budget would refuse that part now (`shrink`).
+
+The round 10 tests are in `test/activity-round10.test.js` (SUB decision
+`fbc47f97`); each fails at `631987f1`, except the check that a refit
+keeping no window is dropped, which fails at `ba82fafd`, before its fix.
+They:
+
+- refit the large whole on show when the growth names only a small one
+  whose refit gives nothing back, so every window stays (Charon's probes
+  A and A2);
+- drop a planned refit that keeps no window, when the growth frees the
+  small whole anyway;
+- never refit the latest request to make room for another, though its
+  refit would give back the most.
