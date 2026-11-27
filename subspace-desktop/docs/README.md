@@ -204,6 +204,7 @@ record. [Change records](changes/README.md) explains the convention.
 - [Public repository examples](changes/public-repository-examples/README.md):
   fictional deployment settings, tracker references and fixture identifiers.
 - [Markdown issue descriptions](changes/markdown-description-editor/README.md): formatted editing and highlighted Source in the issue form.
+- [Markdown compatibility with GPUI Fast](changes/markdown-gpui-fast/README.md) restores the editor build and scrolling after the Framework upgrade.
 - [Tracker parent picker in the Component gallery](changes/gallery-tracker-picker/README.md) shows search, paging and selection using local fixtures.
 - [Wider issue editor](changes/wider-issue-editor/README.md): a larger issue form with Markdown and Plain text editing.
 - [Issue Activity data](changes/issue-activity-data/README.md) and

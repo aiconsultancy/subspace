@@ -443,13 +443,6 @@ struct EditorRoot {
     caret_was_visible: bool,
 }
 
-impl IntoElement for EditorRoot {
-    type Element = Self;
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 pub(crate) struct Prepaint {
     hitbox: Hitbox,
 }

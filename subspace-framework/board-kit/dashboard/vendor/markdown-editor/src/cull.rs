@@ -1,3 +1,5 @@
+// Modified by the Subspace project. See the bundled editor README for details.
+
 //! Off-screen culling of top-level blocks (light virtualization).
 //!
 //! Each frame, rendered top-level blocks are wrapped in a pass-through
@@ -239,7 +241,13 @@ impl CullState {
         }
         let top = (mask.top() - editor.top()).max(px(0.));
         let bottom = (mask.bottom() - editor.top()).min(editor.size.height);
+        // GPUI Fast can reuse this frame. Request a follow-up after the
+        // first measurement so rendering can use the visible span.
+        let unculled = self.visible.is_none();
         self.visible = Some((top, bottom.max(top)));
+        if unculled && !measured.is_empty() {
+            return true;
+        }
         match (self.rendered_span, measured.first(), measured.last()) {
             (_, Some(first), Some(last)) => {
                 let span = (first.2 - editor.top(), last.3 - editor.top());
@@ -256,13 +264,6 @@ pub(crate) struct Measured {
     pub(crate) index: usize,
     pub(crate) state: Rc<RefCell<CullState>>,
     pub(crate) child: Option<AnyElement>,
-}
-
-impl IntoElement for Measured {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
-    }
 }
 
 impl Element for Measured {

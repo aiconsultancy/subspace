@@ -53,6 +53,8 @@ fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| {
         let _ = window.draw(cx);
+        // Deliver follow-up frames scheduled for culling and caret reveal.
+        window.simulate_next_frame(cx);
     });
 }
 
