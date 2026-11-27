@@ -240,12 +240,13 @@ closes it, as does moving to another tier; focus returns to the button.
   it draws, at most 64 KiB as shown. What is drawn is charged as it shows,
   markers included. An item read whole must fit beside the rest with both
   copies; otherwise it is read in parts. One already on show that stops
-  fitting (the snapshot grew, **Show** needs more, or its newest version is
-  too large) is read in parts from the part holding what it shows, and its
-  section stays on show until that part arrives. **Load the latest** reads
-  the newest version from its first part instead, also when the snapshot
-  grows while it reads or after it failed, and so does **Try again**;
-  closing the turn meanwhile lets go of the section but not of the read. Past the budget, the least recently opened item
+  fitting (the snapshot grew or **Show** needs more) is read in parts from
+  the part holding what it shows, and its section stays on show until that
+  part arrives. **Load the latest**, also when the newest version is too
+  large to read whole, reads the newest version from its first part
+  instead, also when the snapshot grows while it reads or after it failed,
+  and so does **Try again**; closing the turn meanwhile lets go of the
+  section but not of the read. Past the budget, the least recently opened item
   read is freed and offers **Load in full** again; this frees only the
   view's copy, never the item on the gateway.
   A body with no room left shows "Not drawn, to stay within the view's

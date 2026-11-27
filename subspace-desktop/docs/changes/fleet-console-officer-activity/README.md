@@ -75,11 +75,11 @@ the desktop side are separate work.
   base to the same key (`drawWhole`, SUB decision `533c2b29`), and gives it
   back when another body is asked for.
 - **Refit** (SUB decisions `533c2b29`, `a5275d81`, `8346cf82`). An item
-  read whole that no longer fits reads in parts instead, of the version it
-  read: when **Show** cannot keep it and its window beside the pinned
-  content, when the inline snapshot grows, and when **Load the latest** or
-  a read larger than its placeholder advertised cannot hold the newest
-  version whole. Before the inline charge grows, the watcher plans every
+  read whole that no longer fits reads in parts instead: of the version it
+  read when **Show** cannot keep it and its window beside the pinned
+  content or the inline snapshot grows, and of the newest version, from
+  its first part, when **Load the latest** or a read larger than its
+  placeholder advertised cannot hold that version whole. Before the inline charge grows, the watcher plans every
   refit first (`planRefits`): it asks the budget what the larger charge
   would free (`wouldFree`, with `as` naming the planned refits' handover
   charges, so nothing changes while it asks) and, while that names an
@@ -419,3 +419,5 @@ after growth during a reload reads the newest version. They:
 - read the newest version from page 0, unpinned, on a pressure handover
   after a failed whole reload and on **Try again** after it, and on
   **Try again** after growth during the reload (the regression check).
+- say in the README that only growth and **Show** keep the shown part, a
+  newest version too large to read whole coming under **Load the latest**.

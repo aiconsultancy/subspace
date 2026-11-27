@@ -4,6 +4,7 @@
 // checks.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { PART_MAX_BYTES } from "../src/activity.js";
 import { createBudget } from "../src/budget.js";
@@ -233,4 +234,13 @@ test("r9 2: growth during a whole reload, then a failed part read: Try again rea
   } finally {
     watcher.stop();
   }
+});
+
+// ---------- P3s ----------
+
+test("r9 3: the README keeps the shown part only for growth and Show, and puts a too-large newest version under Load the latest", () => {
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+  assert.match(readme, /One already on show that stops fitting \(the snapshot grew or \*\*Show\*\* needs more\) is read in parts from the part holding what it shows/);
+  assert.doesNotMatch(readme, /or its newest version is too large\)/);
+  assert.match(readme, /\*\*Load the latest\*\*, also when the newest version is too large to read whole, reads the newest version from its first part/);
 });
