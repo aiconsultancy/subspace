@@ -86,8 +86,9 @@ pub(in super::super) fn show_page(
 /// Shows the part read once it arrives, unless its item went or another
 /// part was asked for meanwhile, and lets go of the part shown before, its
 /// window and the page of room held for it, counting the new part and its
-/// window. A failed read is tried again at the page it names: page 0 once the
-/// item is known to have changed.
+/// window. A failed read keeps the part shown, beside the error and **Try
+/// again** for the page it names: page 0 once the item is known to have
+/// changed.
 fn publish_part(
     board: &mut Irc,
     (key, read): (&(String, String), u64),
