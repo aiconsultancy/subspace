@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { Database, databaseLayer } from "../src/db";
+import { bootstrapOwner } from "../src/pairing-owner";
 import { assignProject, createProject } from "../src/projects";
 import { FleetProvisionSpec, provisionFleet } from "../src/provisioning";
 import { projectRepositories, users } from "../src/schema";
@@ -58,6 +59,14 @@ test("the specification does not accept key material or account subjects", () =>
     expect(() =>
       decode({ ...input, rearAdmiral: { ...input.rearAdmiral, [field]: "not accepted" } }),
     ).toThrow();
+});
+
+test("the specification accepts only pairing organisation IDs", () => {
+  const decode = Schema.decodeUnknownSync(FleetProvisionSpec);
+  for (const id of ["a", "example-fleet.2", "x".repeat(63)])
+    expect(decode(spec(id)).organisation).toBe(id);
+  for (const id of ["", "pairing:example", "Example", "-example", "example\n", "x".repeat(64)])
+    expect(() => decode(spec(id))).toThrow();
 });
 
 describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
@@ -170,7 +179,7 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
 
     const audit = (
       await database.client.query(
-        `SELECT action, source, "actorType" AS actor_type, actor_id, changes
+        `SELECT action, source, "actorType" AS actor_type, actor_id, actor_display_name, changes
        FROM audit_logs WHERE organisation_id = $1 AND source = 'cli'`,
         [first.organisationId],
       )
@@ -186,7 +195,12 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
       "shipCreated",
     ]);
     expect(
-      audit.every((event) => event.actor_type === "integration" && event.actor_id === null),
+      audit.every(
+        (event) =>
+          event.actor_type === "integration" &&
+          event.actor_id === null &&
+          event.actor_display_name === "Fleet provisioning",
+      ),
     ).toBe(true);
     expect(audit.some((event) => JSON.stringify(event).includes("senr1."))).toBe(false);
     expect(
@@ -248,6 +262,39 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
     expect(captainReplay.status).toBe(200);
     expect(await captainReplay.json()).toMatchObject(captainRegistration);
     expect(await captainProfile()).toEqual(updatedProfile);
+  });
+
+  test("leaves reactivation and an existing owner invite to the owner command", async () => {
+    const input = spec("inactive-owner");
+    const existing = await run(
+      bootstrapOwner({
+        externalOrganisation: input.organisation,
+        displayName: input.owner.name,
+        lifetime: 600,
+        reserved,
+      }),
+    );
+    const { client } = database;
+    await client.query("UPDATE users SET active = false WHERE id = $1", [existing.owner.id]);
+
+    await expect(provision(input)).rejects.toThrow("Use auth:owner with --reactivate");
+
+    const { rows } = await client.query(
+      `SELECT users.active, pairing_invites.revoked_at, audit_logs.actor_display_name
+       FROM users JOIN pairing_invites ON pairing_invites.user_id = users.id
+       JOIN audit_logs ON audit_logs.organisation_id = users.organisation_id
+        AND audit_logs.entity_id = users.id::text AND audit_logs.action = 'memberRegistered'
+       WHERE users.id = $1 AND pairing_invites.id = $2`,
+      [existing.owner.id, existing.invite.id],
+    );
+    expect(rows).toEqual([
+      { active: false, revoked_at: null, actor_display_name: "Owner bootstrap" },
+    ]);
+    const grants = await client.query(
+      "SELECT id FROM enrolment_tokens WHERE organisation_id = $1",
+      [existing.organisationId],
+    );
+    expect(grants.rows).toEqual([]);
   });
 
   test("refuses to move, rerank or reactivate a conflicting officer", async () => {

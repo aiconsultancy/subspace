@@ -17,7 +17,12 @@ import {
 import { repositoryProjectReferences, SetRepos } from "./github";
 import { type Member } from "./identity";
 import { assignFleet, createInitiative, initiativePlacements } from "./initiatives";
-import { BootstrapRefused, ensureOrganisation, ensureOwner } from "./pairing-owner";
+import {
+  BootstrapRefused,
+  ensureOrganisation,
+  ensureOwner,
+  PairingOrganisationId,
+} from "./pairing-owner";
 import { problem } from "./problems";
 import { auditLogs } from "./schema";
 import { ReservedUsernames } from "./usernames";
@@ -30,7 +35,7 @@ const fleetSpec = Schema.Struct({
   commandChannel: IrcChannel,
 });
 export const FleetProvisionSpec = Schema.Struct({
-  organisation: Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9.-]{0,62}$/u)),
+  organisation: PairingOrganisationId,
   owner: Schema.optional(Schema.Struct({ name: Name, email: Schema.optional(Email) })),
   fleet: fleetSpec,
   rearAdmiral: Schema.Struct(officer),
@@ -245,11 +250,13 @@ export const provisionFleet = (spec: Spec, reserved: ReadonlySet<string>) =>
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {
         const organisation = yield* ensureOrganisation(tx, spec.organisation);
-        const { owner } = yield* ensureOwner(tx, organisation.id, {
+        const { owner, registered } = yield* ensureOwner(tx, organisation.id, {
+          command: "auth:provision-fleet",
           displayName: spec.owner?.name,
           email: spec.owner?.email,
           reserved,
         });
+        if (registered) yield* audit(tx, organisation.id, registered);
         const fleet = yield* reconcileFleet(tx, owner, spec.fleet);
         const officers = yield* reconcileRoster(tx, owner, fleet, spec);
         const initiativeId = yield* reconcileInitiative(tx, owner, fleet, spec);
