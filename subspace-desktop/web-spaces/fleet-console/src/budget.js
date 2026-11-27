@@ -136,15 +136,17 @@ export function createBudget(limit) {
      * The keys that holding `bytes` under `key` would free, least recently
      * used first, freeing nothing: so an owner can let go of an entry in its
      * own way before `reserve` would evict it. None when `reserve` would
-     * refuse it, as it then frees nothing (SUB decision cf21d510); `pinned`
-     * as `reserve` takes it.
+     * refuse it, as it then frees nothing (SUB decision cf21d510), and none
+     * for `makeRoom: false`, which `reserve` holds without freeing anything.
+     * It takes `reserve`'s options as `reserve` does (`yields` changes what
+     * is held, not what is freed for it).
      *
      * @param {string} key
      * @param {number} bytes
-     * @param {{pinned?: boolean}} [options]
+     * @param {{pinned?: boolean, makeRoom?: boolean, yields?: boolean}} [options]
      * @returns {string[]}
      */
-    wouldFree: (key, bytes, { pinned = false } = {}) => (admits(key, bytes, pinned) ? freeOrder(key, bytes) : []),
+    wouldFree: (key, bytes, { pinned = false, makeRoom: free = true } = {}) => (free && admits(key, bytes, pinned) ? freeOrder(key, bytes) : []),
     /**
      * Hold `bytes` under `key`, replacing what it held, after freeing the
      * least recently used other entries until it fits. Each freed entry's

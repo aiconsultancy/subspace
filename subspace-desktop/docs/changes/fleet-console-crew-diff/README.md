@@ -105,22 +105,22 @@ one shows, and the differences are listed below with their reasons.
   freed, never the latest request; a freed part says so and is read again,
   at the same `at`, when next shown (**Show it again**), at the part shown
   before, by the cursor already learned for it, whether or not the part
-  count is known yet (Last still waits for the count). A 409
-  or another fingerprint on that read shows the Refresh banner. The image
-  preview is a whole read (SUB decision feb0d839): once its first page
-  gives its size, it is charged that size only in room no other read holds,
-  frees nothing, and gives its room back before any other entry when a
-  later read needs it (**Show image again**). An image that does not fit
-  says so with its size and the free room, and keeps Show bytes; one too
-  large gives its room back. The
-  Activity view's refit (#115 round 7, SUB a5275d81) asks its own scope
-  what a larger inline charge would free (`wouldFree`, as a pinned
+  count is known yet (Last still waits for the count). A 409 or another
+  fingerprint on that read shows the Refresh banner. The image preview is a
+  whole read (SUB decision feb0d839): once its first page gives its size, it
+  is charged that size only in room no other read holds, frees nothing, and
+  gives its room back before any other entry when a later read needs it
+  (**Show image again**). An image that does not fit says so with its size
+  and the free room, and keeps Show bytes; one too large gives its room
+  back. The Activity view's refit (#115 round 7, SUB a5275d81) asks its own
+  scope what a larger inline charge would free (`wouldFree`, as a pinned
   reservation); a scope names only its own keys, in the order `reserve`
   frees them, and admits as `reserve` does, passing on its options (#115
-  round 8, SUB cf21d510), so the Activity view hands its displayed items
-  read whole to parts and leaves the diff view's entries to be freed, or
-  kept, by the reservation itself. The budget is a cache budget only:
-  nothing is hidden or cut to keep within it.
+  round 8, SUB cf21d510); like `reserve`, it frees nothing, so names
+  nothing, for `makeRoom: false`, scoped or not. So the Activity view hands
+  its displayed items read whole to parts and leaves the diff view's entries
+  to be freed, or kept, by the reservation itself. The budget is a cache
+  budget only: nothing is hidden or cut to keep within it.
 - **Banners.** `unstable: true` on any list page shows "Changed while
   loading · Refresh". The `ship` event's
   `crewMembers[].contexts[].git.fingerprint` is passed to the view on each
@@ -242,12 +242,13 @@ once as the `Blob` the panel shows, too large past 16 small pages with its
 room given back, a preview that cannot fit, the Activity and diff views
 sharing one budget without freeing the latest request, `wouldFree` on a
 scope naming only that view's keys with a yielding entry first and admitting
-as `reserve` does with its `pinned` option, the Activity view's growth refit
-on the shared budget, the fingerprint banner (moved, repeated, absent, moved
-during the load, unstable, the cached value as the baseline before the first
-read, kept until Refresh when the fingerprint comes back, with reads off and
-what was read on show), cancellation of reads in backoff when the
-fingerprint goes stale, the view closes or Hide bytes is pressed, a late
-answer dropped after a stale fingerprint, Refresh and a mode change dropping
-the old snapshot, a token change while a read is held, and the sample
-checkout end to end with markers.
+as `reserve` does with its `pinned` option and naming nothing for one that
+makes no room, scoped or not, the Activity view's growth refit on the shared
+budget, the fingerprint banner (moved, repeated, absent, moved during the
+load, unstable, the cached value as the baseline before the first read, kept
+until Refresh when the fingerprint comes back, with reads off and what was
+read on show), cancellation of reads in backoff when the fingerprint goes
+stale, the view closes or Hide bytes is pressed, a late answer dropped after
+a stale fingerprint, Refresh and a mode change dropping the old snapshot, a
+token change while a read is held, and the sample checkout end to end with
+markers.

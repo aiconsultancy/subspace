@@ -1384,6 +1384,21 @@ test("diff budget: wouldFree on a view's scope admits as reserve does, with rese
   assert.deepEqual(freed, ["activity:old", "diff:patch"], "reserve frees what the two scopes named");
 });
 
+test("diff budget: wouldFree names nothing for makeRoom: false, scoped or not, as reserve then frees nothing", () => {
+  for (const scoped of [true, false]) {
+    const root = createBudget(10);
+    const budget = scoped ? root.scope("diff\u0000") : root;
+    const freed = [];
+    budget.reserve("part", 8, () => freed.push("part"));
+    for (const options of [{ makeRoom: false }, { makeRoom: false, yields: true }, { makeRoom: false, pinned: true }]) {
+      assert.deepEqual(budget.wouldFree("preview", 6, options), [], `${scoped ? "scoped" : "unscoped"} ${JSON.stringify(options)}`);
+    }
+    assert.deepEqual(budget.wouldFree("preview", 6, { yields: true }), ["part"], "one that makes room still names what it frees");
+    assert.equal(budget.reserve("preview", 6, null, { makeRoom: false, yields: true }), true);
+    assert.deepEqual(freed, [], "and reserve frees nothing");
+  }
+});
+
 test("diff budget: on the console's budget, inline growth refits the Activity view's displayed whole, which makes the room before the diff view's older part is freed", async () => {
   const a = pagedWith("a".repeat(600 * 1024), "ia");
   const b = pagedWith("b".repeat(70 * 1024), "ib");
