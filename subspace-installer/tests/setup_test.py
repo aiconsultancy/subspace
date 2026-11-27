@@ -100,6 +100,26 @@ CREW = ["--crew-names", "Orion=Rigel,Deneb,Mira,Sirius"]
 
 
 class UsageGuardAnswersTests(unittest.TestCase):
+    def test_mockup_choices_persist_and_tunnel_restores_the_default_origin(self):
+        selected = fleet_setup.parse_args([
+            "--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+            "--rear-admiral", "Atlas", "--captains", "Orion", *CREW, "--preview-url",
+            "https://previews.example.com/", "--no-impeccable",
+        ])
+        rerun = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        loopback = fleet_setup.parse_args([
+            "--non-interactive", "--operator", "operator", "--preview-url", "tunnel",
+            "--no-mockup-previews", "--impeccable",
+        ])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            saved = fleet_setup.gather(selected, {})
+            self.assertEqual(saved["mockupPreviews"]["url"], "https://previews.example.com")
+            self.assertFalse(saved["impeccable"])
+            self.assertEqual(fleet_setup.gather(rerun, saved)["mockupPreviews"], saved["mockupPreviews"])
+            changed = fleet_setup.gather(loopback, saved)
+        self.assertEqual(changed["mockupPreviews"], {"url": None, "enabled": False})
+        self.assertTrue(changed["impeccable"])
+
     def test_an_incompatible_pin_without_a_local_api_is_refused_before_saving(self):
         with tempfile.TemporaryDirectory() as root:
             args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
@@ -145,7 +165,7 @@ class UsageGuardAnswersTests(unittest.TestCase):
             }}}))
             args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
                                            "--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
-                                           *CREW, "--no-api", "--stargate-ref", "a" * 40])
+                                           *CREW, "--no-api", "--no-mockup-previews", "--stargate-ref", "a" * 40])
             before = config.read_bytes()
             listing = f"100644 blob {'b' * 40}\tscripts/officer-tools-contract.json"
             replies = [subprocess.CompletedProcess([], 0, stdout=output)

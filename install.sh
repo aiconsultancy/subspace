@@ -75,6 +75,9 @@
 #   --repositories https://github.com/example/project.git
 #   --agentsview | --no-agentsview (default on)
 #   --agent-dispatch | --no-agent-dispatch (default off)
+#   --mockup-previews | --no-mockup-previews (default on)
+#   --impeccable | --no-impeccable (default on); --preview-url HTTPS_ORIGIN|tunnel
+#   --preview-proxy-user ACCOUNT (for a local private gateway)
 #   --usage-guard | --no-usage-guard (default on)
 #   --usage-guard-warning | --usage-guard-cutoff [PROVIDER=]PERCENT
 #   --toolchains derive|none|node@24,pnpm@9.12.3 --system-packages zsh,clang
@@ -577,7 +580,7 @@ read_summary() {
     [ -f "$state/summary.env" ] || die "No fleet summary yet; run the install first."
     SUBSPACE_PORTS='' SUBSPACE_IRC_MODE='' SUBSPACE_STARGATE_API='' SUBSPACE_FLEET_NAME='' SUBSPACE_FLEET_SLUG=''
     SUBSPACE_ADMIN_ACCOUNT='' SUBSPACE_CHANNELS='' SUBSPACE_IRC_HOST='' SUBSPACE_IRC_PORT=''
-    SUBSPACE_AGENTSVIEW='' SUBSPACE_AGENTSVIEW_PORT=''
+    SUBSPACE_AGENTSVIEW='' SUBSPACE_AGENTSVIEW_PORT='' SUBSPACE_PREVIEW_URL=''
     SUBSPACE_LOCKDOWN='' SUBSPACE_LOCKDOWN_ID=''
     local key value
     while IFS='=' read -r key value; do
@@ -1050,6 +1053,12 @@ do_install() {
     if "$hosted"; then rm -f "$state/api-target"; fi
     IRC_TARGET=$irc_target write_desktop_config
     say "Done. Fleet '$SUBSPACE_FLEET_NAME' is running on a private VM."
+    if [ -n "$SUBSPACE_PREVIEW_URL" ]; then
+        note "Captain live previews use $SUBSPACE_PREVIEW_URL."
+        case $SUBSPACE_PREVIEW_URL in
+            http://127.0.0.1:*) note "Open previews on the workstation running ./install.sh tunnel --target $target --background." ;;
+        esac
+    fi
     note "1. Sign in to the fleet's shared CLIProxyAPI for the models you chose:"
     note "   Claude: ./install.sh providers login claude --target $target"
     note "   Codex:  ./install.sh providers login codex-device --target $target"
@@ -1095,6 +1104,9 @@ do_tunnel() {
         note "AgentsView http://127.0.0.1:${SUBSPACE_AGENTSVIEW_PORT:-8080}"
     fi
     [ "$SUBSPACE_STARGATE_API" = 1 ] && note "Stargate Fleet API http://127.0.0.1:8484 (token in $state/stargate-api.token)"
+    if [ -n "$SUBSPACE_PREVIEW_URL" ]; then
+        note "Captain live previews $SUBSPACE_PREVIEW_URL"
+    fi
     local -a extra=()
     [ "$background" = true ] && extra+=(-f)
     exec ssh -N ${extra[@]+"${extra[@]}"} -o ExitOnForwardFailure=yes -o ControlMaster=no -o ControlPath=none \

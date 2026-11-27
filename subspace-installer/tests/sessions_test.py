@@ -355,6 +355,7 @@ def secrets_for(*accounts):
 def crew_fleet(*captains):
     config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
     config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+    config.update(mockupPreviews={"enabled": False}, impeccable=False)
     config["irc"]["auth"] = "password"
     # Without captainTools, as a fleet installed before it existed: captains keep the standard policy.
     config.pop("captainTools")
@@ -396,6 +397,8 @@ class InstalledFleet(unittest.TestCase):
             self.start(patch.object(runtime, name, value))
         self.start(patch.object(runtime, "OFFICER_EXPORT_TMPFILES",
                                 root / "tmpfiles.d" / runtime.OFFICER_EXPORT_TMPFILES.name))
+        self.start(patch.object(runtime.mockups, "TMPFILES", root / "tmpfiles.d" / "preview.conf"))
+        self.start(patch.object(runtime.mockups, "SOCKETS", root / "run" / "previews"))
         self.start(patch.object(runtime, "write", side_effect=write))
         self.start(patch.object(runtime.sessions, "write_durable", side_effect=durable))
         for name in ("directory", "run", "configure_git", "install_toolchains", "install_screenshots"):
@@ -425,6 +428,40 @@ class InstalledFleet(unittest.TestCase):
     def render(self, config, secrets):
         self.events.clear()
         runtime.render(runtime.validate(config, secrets), {"tokens": MANAGEMENT_KEY, "cloud": {}})
+
+    def test_default_mockups_and_impeccable_are_wired_and_retire_independently(self):
+        config, secrets = crew_fleet("orion")
+        config.pop("mockupPreviews")
+        config.pop("impeccable")
+        self.render(config, secrets)
+
+        preview_unit = "subspace-fleet-preview.service"
+        broker_unit = "subspace-fleet-preview-publisher.service"
+        units = (self.etc / "units").read_text().splitlines()
+        self.assertIn(preview_unit, units)
+        self.assertIn(broker_unit, units)
+        self.assertIn("bind 127.0.0.1", (self.etc / "preview.Caddyfile").read_text())
+        self.assertIn("http://127.0.0.1:8090/", (self.systemd / broker_unit).read_text())
+        engine = json.loads((self.etc / "opencode-orion.json").read_text())
+        self.assertIn("officer-previews.ts", json.dumps(engine))
+        self.assertIn("stargate_serve", json.dumps(engine))
+        self.assertIn("impeccable", json.dumps(engine))
+        rear = (self.etc / "opencode-atlas.json").read_text()
+        self.assertNotIn("officer-previews.ts", rear)
+
+        config["mockupPreviews"] = {"url": "https://previews.example.com"}
+        config["impeccable"] = False
+        self.render(config, secrets)
+        self.assertIn("https://previews.example.com/", (self.systemd / broker_unit).read_text())
+        self.assertNotIn("impeccable", (self.etc / "opencode-orion.json").read_text())
+
+        config["mockupPreviews"]["enabled"] = False
+        config["impeccable"] = True
+        self.render(config, secrets)
+        retired = (self.etc / "retired-units").read_text().splitlines()
+        self.assertCountEqual(retired, [preview_unit, broker_unit])
+        self.assertNotIn("stargate_serve", (self.etc / "opencode-orion.json").read_text())
+        self.assertIn("impeccable", (self.etc / "opencode-orion.json").read_text())
 
     def pin(self, captain="orion"):
         server = FakeOpenCode()
@@ -963,6 +1000,7 @@ class InstalledFleet(unittest.TestCase):
         # The same fleet as a new one is set up now: plain officer names and named crew.
         plain = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
         plain.update(repositories=config["repositories"], irc={**plain["irc"], "auth": "password"},
+                     mockupPreviews={"enabled": False}, impeccable=False,
                      captains=[plain["captains"][0], {"id": "vega", "name": "Vega", **{
                          key: config["captains"][1][key] for key in ("harness", "crew")}}])
         return {"local-api": ({**config, "api": api}, {**secrets, "apiToken": "aaa.bbb.admin"}),

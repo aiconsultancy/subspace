@@ -57,6 +57,7 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 import fleet_records  # noqa: E402
 import irc_accounts  # noqa: E402
 import memory  # noqa: E402
+import mockups  # noqa: E402
 import postgres_check  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
@@ -66,13 +67,13 @@ API_DIR = Path("/opt/subspace/api")
 FLEET_APP = Path("/opt/subspace-fleet")
 FLEET_ETC = Path("/etc/subspace-fleet")
 API_PROJECT = "subspace-api"
-API_PORT = 3000
+API_PORT = runtime.SUBSPACE_API_PORT
 API_IRC_MOUNT = "/run/subspace-managed-irc"
 API_IRC_HOOK_SETTINGS = {"IRC_AUTH_ORGANISATION", "IRC_AUTH_SERVERS", "IRC_AUTH_HOOK_TOKEN",
                          "IRC_AUTH_HOOK_TOKEN_FILE", "IRC_CREDENTIAL_SECRET", "IRC_CREDENTIAL_SECRET_FILE"}
 # The API's agent-only listener: a fleet agent names itself in a header there and needs no token. It serves no
 # sign-in or administrator route, so unlike API_PORT the agents' Linux users may reach it.
-AGENT_API_PORT = 3001
+AGENT_API_PORT = runtime.SUBSPACE_AGENT_API_PORT
 SIGNED_LOCAL_API = "# subspace-setup: signed local officer access selected"
 STARGATE_API_PORT = 8484
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
@@ -306,6 +307,12 @@ def parse_args(argv):
                         help=f"block crew starts and resumptions at this quota (default {runtime.USAGE_GUARD_DEFAULTS['cutoff']})")
     parser.add_argument("--stargate-api", choices=["auto", "on", "off"],
                         help="enable Stargate's Fleet API (default auto: when the pinned Stargate has it)")
+    parser.add_argument("--mockup-previews", action=argparse.BooleanOptionalAction, default=None,
+                        help="install Caddy and the captain preview tool (default on; keeps the saved choice)")
+    parser.add_argument("--impeccable", action=argparse.BooleanOptionalAction, default=None,
+                        help="install the Impeccable skill for captains (default on; keeps the saved choice)")
+    parser.add_argument("--preview-url", help="dedicated private HTTPS preview origin; 'tunnel' restores the SSH default")
+    parser.add_argument("--preview-proxy-user", help="Linux account of the local private gateway, allowed to reach Caddy")
     parser.add_argument("--fleet-api-url", help="the HTTPS address at which a desktop reaches Stargate's Fleet API, "
                         "such as a Tailscale or Cloudflare name, recorded in the Subspace API; 'tunnel' (the default) "
                         "records the SSH tunnel's end on the desktop, http://127.0.0.1:8484")
@@ -624,13 +631,31 @@ def gather(args, saved):
         # Off unless asked: an unattended run never switches it on.
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
-    installed_view = (read_json(INPUTS / "fleet.json", {}) or {}).get("agentsview", {})
+    installed = read_json(INPUTS / "fleet.json", {}) or {}
+    installed_view = installed.get("agentsview", {})
     if args.agentsview is not None:
         answers["agentsview"] = args.agentsview
     elif "enabled" in installed_view:
         answers["agentsview"] = installed_view["enabled"]
     elif "agentsview" not in answers:
         answers["agentsview"] = yes_no("Install the AgentsView session browser (recommended)?", True, interactive)
+    preview = {**installed.get("mockupPreviews", {}), **answers.get("mockupPreviews", {})}
+    if args.mockup_previews is not None:
+        preview["enabled"] = args.mockup_previews
+    if args.preview_url == "tunnel":
+        preview["url"] = None
+    elif args.preview_url is not None:
+        try:
+            preview["url"] = mockups.https_origin(args.preview_url)
+        except fleet_records.Refused as error:
+            raise SetupError(str(error)) from None
+    if args.preview_proxy_user is not None:
+        preview["proxyUser"] = args.preview_proxy_user or None
+    answers["mockupPreviews"] = preview
+    if args.impeccable is not None:
+        answers["impeccable"] = args.impeccable
+    elif "impeccable" not in answers:
+        answers["impeccable"] = installed.get("impeccable", True)
     answers["usageGuard"] = usage_guard_answers(args, answers)
     answers["stargateApi"] = args.stargate_api or answers.get("stargateApi", "auto")
     if args.fleet_api_url == "tunnel":
@@ -1213,6 +1238,12 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 "githubPolicy", "dashboard", "proxy", "agentsview", "screenshots", "memory"):
         if key in previous:
             config[key] = previous[key]
+    preview = {**previous.get("mockupPreviews", {}), **answers.get("mockupPreviews", {})}
+    for key in ("url", "proxyUser"):
+        if preview.get(key) is None:
+            preview.pop(key, None)
+    config["mockupPreviews"] = {**preview, "enabled": preview.get("enabled", True) and len(members) > 1}
+    config["impeccable"] = answers.get("impeccable", previous.get("impeccable", True))
     view = config.get("agentsview", {})
     if not answers.get("agentsview", True) or "enabled" in view:
         config["agentsview"] = {**view, "enabled": answers.get("agentsview", True)}
@@ -3367,7 +3398,10 @@ def irc_bundle(answers, members, secret_store, certificates=None):
 
 def summary(answers, members, stargate_api, lockdown_id=""):
     local = answers["irc"] == "local"
-    view = (read_json(INPUTS / "fleet.json", {}) or {}).get("agentsview", {})
+    installed = read_json(INPUTS / "fleet.json", {}) or {}
+    view = installed.get("agentsview", {})
+    previews = {"port": mockups.PORT, **installed.get("mockupPreviews", answers.get("mockupPreviews", {}))}
+    previews_on = len(members) > 1 and previews.get("enabled", True)
     agentsview = view.get("enabled", answers.get("agentsview", True))
     view_port = view.get("port", AGENTSVIEW)
     ports = [DASHBOARD]
@@ -3379,6 +3413,8 @@ def summary(answers, members, stargate_api, lockdown_id=""):
         ports.insert(0, API_PORT)
     if stargate_api:
         ports.append(STARGATE_API_PORT)
+    if previews_on:
+        ports.append(previews["port"])
     values = {
         "SUBSPACE_FLEET_SLUG": answers["slug"],
         "SUBSPACE_FLEET_NAME": answers["name"],
@@ -3397,6 +3433,7 @@ def summary(answers, members, stargate_api, lockdown_id=""):
         "SUBSPACE_AGENTSVIEW": "1" if agentsview else "0",
         "SUBSPACE_AGENTSVIEW_PORT": str(view_port),
         "SUBSPACE_PORTS": " ".join(str(port) for port in ports),
+        "SUBSPACE_PREVIEW_URL": mockups.address(previews) if previews_on else "",
         "SUBSPACE_OPERATOR": answers["operator"],
         "SUBSPACE_ACCESS": answers["access"],
         "SUBSPACE_LOCKDOWN": "1" if answers["lockdown"] else "0",
@@ -3718,7 +3755,7 @@ def isolation_args(answers):
         # and still after a switch to --no-api in case stopping them failed.
         args += ["--operator-only-port", str(API_PORT)]
         if not answers.get("databaseUrlFile"):
-            args += ["--operator-only-port", "5432"]  # The API's own PostgreSQL; an existing one is elsewhere.
+            args += ["--operator-only-port", str(runtime.SUBSPACE_DATABASE_PORT)]  # Bundled PostgreSQL.
         try:
             pwd.getpwnam(GATEWAY_USER)
             gateway = answers.get("agentDispatch") or (answers["api"] and local_signed_api(

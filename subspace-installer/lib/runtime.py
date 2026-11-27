@@ -28,6 +28,7 @@ from agent_files import collect_cloud, private_directory, private_file, provisio
 import fleet_records
 from github_policy import github_repository, officer_github_repositories
 import memory
+import mockups
 import network
 from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions
 from roles import github_officer_operations, provision_role, role_documents
@@ -84,8 +85,8 @@ STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 # Stargate's latest release and the commit its tag names; every install gets exactly that commit. Agent
 # dispatch on the rear admiral's gateway needs v0.43.0 or later. scripts/stargate-pin.py checks the two
 # against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
-STARGATE_RELEASE = "v0.50.1"
-STARGATE_REF = "e586240d7f2dc2c495623fe2667cf23f019a5bb0"
+STARGATE_RELEASE = "v0.51.0"
+STARGATE_REF = "902646782d9b547597add50a582699ce9256c36d"
 # A hosted Subspace API (api.enrolment): Stargate's subspaceAgents section, its signing proxy and its MCP bridge,
 # first in this commit; a checkout has them when it has SUBSPACE_AGENTS_FILE. Releases up to v0.43 lack them.
 SUBSPACE_AGENTS_COMMIT = "5630a5ce9ca1e7cd533bc7a5ab951bb4681757be"
@@ -103,6 +104,9 @@ ENROLMENT_TOKEN_TEXT = r"senr1\.[A-Za-z0-9_-]{64}"
 FLEET_API_ORIGINS = ["subspace://*", "https://subspace.fleet-console"]
 SUBSPACE_REPO = "https://github.com/aiconsultancy/subspace.git"
 LOOPBACK = "127.0.0.1"
+SUBSPACE_API_PORT = 3000
+SUBSPACE_AGENT_API_PORT = 3001
+SUBSPACE_DATABASE_PORT = 5432
 # Matches the Ergo container's service group in subspace-irc/Dockerfile.
 ERGO_GID = 10001
 ACCOUNT = r"[a-zA-Z][a-zA-Z0-9_-]{0,31}"
@@ -1105,6 +1109,9 @@ def require_officer_tool_sources(cfg, installed_only=False):
                      ("officer", "operations", "review", "wire", "local-app", "officer-mcp"))
         paths.append("scripts/officer-stdio.ts")
     teams = cfg.get("integrations", {}).get("teams") or {}
+    if cfg.get("mockupPreviews", {}).get("enabled"):
+        capabilities["mockupPreviews"] = 1
+        paths.extend(mockups.SCRIPTS)
     if teams.get("attachmentFileHosts"):
         capabilities["teamsAttachmentFiles"] = 1
     if not capabilities:
@@ -1131,7 +1138,9 @@ def require_officer_tool_sources(cfg, installed_only=False):
 
     def missing(available):
         first = next((path for path in paths if path not in available), None)
-        require(first is None, f"Stargate {ref[:12]} lacks {first}. Select a newer compatible --stargate-ref.")
+        hint = (" Use --no-mockup-previews to keep a pin without preview support."
+                if first == f"scripts/{mockups.SCRIPT}" else "")
+        require(first is None, f"Stargate {ref[:12]} lacks {first}. Select a newer compatible --stargate-ref.{hint}")
 
     if installed_only:
         missing(present)
@@ -1246,7 +1255,7 @@ def usage_guard_settings(cfg, home):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch agentEgress operatorUsers toolchains systemPackages screenshots maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch agentEgress operatorUsers toolchains systemPackages screenshots mockupPreviews impeccable maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
     naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
@@ -1354,8 +1363,30 @@ def validate(config, credentials, check_files=True):
         listeners.append(stargate_api["port"])
     if irc["mode"] == "local":
         listeners += [6667 if irc["tls"] else irc["port"], irc["compose"]["tlsPort"], 8097]
-    require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
     api = api_config(cfg["api"]) if "api" in cfg else None
+    memory_options = memory_config(memory.config, cfg.get("memory", {}))
+    previews = fields(cfg.get("mockupPreviews", {}), "mockupPreviews", "enabled port url proxyUser")
+    previews = {**previews, "enabled": boolean(previews.get("enabled", True)) and bool(cfg["captains"]),
+                "port": port(previews.get("port", mockups.PORT))}
+    if "url" in previews:
+        try:
+            previews["url"] = mockups.https_origin(previews["url"])
+        except fleet_records.Refused as error:
+            raise Invalid(str(error)) from None
+    if "proxyUser" in previews:
+        pattern(previews["proxyUser"], ACCOUNT, "preview proxy Linux user")
+    if previews["enabled"]:
+        occupied = ({SUBSPACE_API_PORT, SUBSPACE_AGENT_API_PORT, SUBSPACE_DATABASE_PORT}
+                    if memory_options["localApi"] else set())
+        for key in ("url", "agentMcpUrl"):
+            if endpoint := (api or {}).get(key):
+                parts = urlsplit(endpoint)
+                if parts.hostname in {"localhost", LOOPBACK, "::1"}:
+                    occupied.add(parts.port or (443 if parts.scheme == "https" else 80))
+        require(previews["port"] >= 1024, "The unprivileged preview port must be at least 1024.")
+        require(previews["port"] not in occupied, "The preview port conflicts with a local Subspace API service.")
+        listeners.append(previews["port"])
+    require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
     require(not (api or {}).get("fleetApiUrl") or stargate_api,
             "api.fleetApiUrl is the address of Stargate's Fleet API, which is off: set stargate.api, or remove it.")
     peer_messages = boolean(cfg.get("captainPeerMessages", False))
@@ -1487,6 +1518,7 @@ def validate(config, credentials, check_files=True):
         "systemPackages": toolchains.package_config(cfg.get("systemPackages", [])),
         # The base screenshot tools (lib/screenshots.py): on unless fleet.json says "screenshots": false.
         "screenshots": boolean(cfg.get("screenshots", True)),
+        "mockupPreviews": previews, "impeccable": boolean(cfg.get("impeccable", True)),
         "maintenance": maintenance_config(cfg.get("maintenance", {})),
         "stargate": {**source({key: stargate[key] for key in ("repo", "ref") if key in stargate},
                               "Stargate source", STARGATE_REPO, STARGATE_REF), "api": stargate_api},
@@ -1498,7 +1530,7 @@ def validate(config, credentials, check_files=True):
         "historyPassword": history_password(irc, private),
         "captainTools": captain_tools,
         "captainPeerMessages": peer_messages,
-        "memory": memory_config(memory.config, cfg.get("memory", {})),
+        "memory": memory_options,
     }
 
 
@@ -1906,6 +1938,11 @@ def officer_upload_command(cfg, person):
             *officer_media_target(cfg, person)]
 
 
+def mockup_command(cfg, person):
+    home = STATE / "agents" / person["id"]
+    return [*stargate_tool(cfg, mockups.SCRIPT), "mcp", str(mockups.socket(person["id"])), str(mockups.staging(home))]
+
+
 def officer_file_exports(person):
     return STATE / "file-exports" / person["id"]
 
@@ -2027,7 +2064,18 @@ def harness_permissions(cfg, person, starter_grants=(), *, flint=False):
     any operator rule that matches the command, such as a deny of `subspace-*`, decides.
     """
     permissions = person["harness"]["permissions"]
+    if permissions is None:
+        return permissions
     commands = list(starter_grants)
+    if mockups.enabled(cfg, person):
+        staging = mockups.staging(STATE / "agents" / person["id"])
+        commands.extend((
+            {"action": f"{mockups.MCP}_*", "resource": "*", "effect": "allow"},
+            {"action": "external_directory", "resource": f"{staging}/*", "effect": "allow"},
+        ))
+    if cfg.get("impeccable") and person["role"] == "captain":
+        commands.append({"action": "shell", "resource": f"{mockups.IMPECCABLE_PATH}/scripts/impeccable context*",
+                         "effect": "allow"})
     if flint:
         commands.extend((
             {"action": "flint_*", "resource": "*", "effect": "allow"},
@@ -2401,6 +2449,10 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         engine.setdefault("mcp", {"servers": {}})["servers"]["flint"] = {
             "type": "local", "command": [str(screenshots.FLINT_MCP)],
         }
+    if mockups.enabled(cfg, person):
+        engine.setdefault("mcp", {"servers": {}})["servers"][mockups.MCP] = {
+            "type": "local", "command": mockup_command(cfg, person), "timeout": 35_000,
+        }
     if has_repository_refresh(cfg, person):
         servers = engine.setdefault("mcp", {"servers": {}})["servers"]
         servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(cfg), "timeout": 110000}
@@ -2531,6 +2583,9 @@ def claude_backend(cfg, person, workspace, documents):
         backend["mcpServers"]["subspace_files"] = {"type": "stdio", "command": command, "args": args}
         command, *args = officer_publish_command(cfg, person)
         backend["mcpServers"]["subspace_publish"] = {"type": "stdio", "command": command, "args": args}
+    if mockups.enabled(cfg, person):
+        command, *args = mockup_command(cfg, person)
+        backend.setdefault("mcpServers", {})[mockups.MCP] = {"type": "stdio", "command": command, "args": args}
     if documents.get("flint"):
         backend.setdefault("mcpServers", {})["flint"] = {"type": "stdio", "command": str(screenshots.FLINT_MCP)}
     if person["role"] == "captain" and github_officer_operations(cfg, person):
@@ -2780,6 +2835,40 @@ def render_view(cfg, session_roots, home):
     )
 
 
+def render_mockups(cfg):
+    options = cfg["mockupPreviews"]
+    if not options["enabled"]:
+        mockups.TMPFILES.unlink(missing_ok=True)
+        return []
+    home = account(mockups.USER, STATE / "previews")
+    caddy_state = home / "caddy"
+    directory(caddy_state, 0o700, mockups.USER)
+    sockets = mockups.SOCKETS
+    directory(sockets.parent, 0o711)
+    directory(sockets, 0o711)
+    tmpfiles = [f"d {sockets.parent} 0711 root root -", f"d {sockets} 0711 root root -"]
+    captains = [person["id"] for person in cfg["members"] if mockups.enabled(cfg, person)]
+    private_sockets = []
+    for captain in captains:
+        path = mockups.socket(captain).parent
+        group = f"ss-{captain}"
+        directory(path, 0o2750, mockups.USER, group)
+        tmpfiles.append(f"d {path} 2750 {mockups.USER} {group} -")
+        private_sockets.append(path)
+    write(mockups.TMPFILES, "\n".join(tmpfiles) + "\n", 0o644)
+
+    broker = [*stargate_tool(cfg, mockups.SCRIPT), "broker", str(home), str(sockets),
+              mockups.address(options) + "/", *captains]
+    publisher = serve_unit("preview-publisher", "Stargate mockup publisher", " ".join(broker), mockups.USER,
+                           user_paths=[home, *private_sockets], toolchain=False)
+    config = ETC / "preview.Caddyfile"
+    write(config, mockups.caddyfile(home, options["port"]), 0o644)
+    command = f"{APP}/bin/caddy run --adapter caddyfile --config {config}"
+    caddy = serve_unit("preview", "Caddy mockup preview server", command, mockups.USER, [publisher],
+                       user_paths=[caddy_state], toolchain=False)
+    return [publisher, caddy]
+
+
 def agent_egress(values):
     require(isinstance(values, list) and all(isinstance(value, str) for value in values),
             "agentEgress must be an array of HOST:PORT entries.")
@@ -2816,9 +2905,24 @@ def render_firewall(cfg):
         ports["agentsview"] = cfg["agentsview"]["port"]
     if cfg["stargate"]["api"]:
         ports["stargate-api"] = cfg["stargate"]["api"]["port"]
+    preview_clients = set()
+    previews = cfg["mockupPreviews"]
+    if previews["enabled"]:
+        ports["previews"] = previews["port"]
+        preview_clients = {officers[person["id"]] for person in cfg["members"] if mockups.enabled(cfg, person)}
+        for uid in preview_clients:
+            allowed.update(network.destinations(LOOPBACK, ports["previews"], uid))
+        if proxy_user := previews.get("proxyUser"):
+            try:
+                proxy_uid = pwd.getpwnam(proxy_user).pw_uid
+            except KeyError:
+                raise Invalid("mockupPreviews.proxyUser must name an existing Linux account.") from None
+            require(proxy_uid not in service_ids, "mockupPreviews.proxyUser cannot be a fleet service account.")
+            preview_clients.add(proxy_uid)
     config = ETC / "firewall.nft"
     write(config, network.rules(ports, admins, clients, pwd.getpwnam(VIEW).pw_uid,
-                                officers=officers.values(), dns=dns, allowed=allowed), 0o600)
+                                officers=officers.values(), dns=dns, allowed=allowed,
+                                preview_clients=preview_clients), 0o600)
     write(SYSTEMD / FIREWALL, "\n".join([
         "[Unit]", "Description=Subspace fleet local service firewall",
         "After=nftables.service",
@@ -3521,6 +3625,8 @@ def render(cfg, extra, prune=False):
             run("mkdir", "-p", "-m", "700", "--", home / "outbox", user=user)
             directory(STATE / "file-exports", 0o711)
             directory(officer_file_exports(person), 0o2750, user, GATEWAY)
+        if mockups.enabled(cfg, person):
+            run("mkdir", "-p", "-m", "700", "--", mockups.staging(home), user=user)
         references = STATE / "references" / agent_id if cfg["repositories"] else None
         documents[agent_id] = role_documents(cfg, person, references, home, flint=flint)
         if enrolled(cfg):
@@ -3689,6 +3795,7 @@ def render(cfg, extra, prune=False):
     units.append(serve_unit("dashboard", "Stargate dashboard", f"{APP}/lib/dashboard.py {bind} {dash['port']} {dashboard_socket}", dashboard_user, [f"{PREFIX}gateway.service"]))
     if cfg["agentsview"]["enabled"]:
         units.append(render_view(cfg, databases, view_home))
+    units.extend(render_mockups(cfg))
     units.insert(0, render_firewall(cfg))
     write(ETC / "toolchains.toml", toolchains.mise_config(cfg["toolchains"]), 0o644)
     install_toolchains(cfg, homes)
@@ -3945,6 +4052,10 @@ def main(args):
             (stage / "screenshot-packages").write_text("".join(f"{name}\n" for name in wanted))
             if not cfg["agentsview"]["enabled"]:
                 (stage / "skip-agentsview").touch()
+            if not cfg["mockupPreviews"]["enabled"]:
+                (stage / "skip-caddy").touch()
+            if not cfg["impeccable"] or len(cfg["members"]) == 1:
+                (stage / "skip-impeccable").touch()
             sources = [cfg["stargate"]["repo"], cfg["stargate"]["ref"], cfg["irc"]["mode"]]
             if cfg["irc"]["mode"] == "local":
                 sources.extend(cfg["irc"]["compose"][key] for key in ("repo", "ref"))
@@ -4020,6 +4131,10 @@ def main(args):
                 print(line)
             for line in screenshots.plan_lines(cfg["screenshots"], screenshots.pins(), screenshots.release()):
                 print(line)
+            preview = cfg["mockupPreviews"]
+            print(f"Captain previews: Caddy on loopback port {preview['port']}; links use {mockups.address(preview)}."
+                  if preview["enabled"] else "Captain previews are off.")
+            print("Captain Impeccable skill is " + ("on." if cfg["impeccable"] else "off."))
             for line in memory_lines(cfg, managed=managed):
                 print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))

@@ -717,6 +717,44 @@ virtual environments, and the [screenshot tools](#screenshots). Mise installs
 Node 24 by default; the [toolchains](#toolchains) the repositories need come
 on top.
 
+### Live mockup previews
+
+Ask a captain in its ship conversation to make a mockup and show it. The
+captain or its crew builds a static site in the captain's staging directory.
+The captain uses its `fleet-mockup` skill and the `stargate_serve` MCP server
+to publish a copy and reply with the browser link. The same name updates
+the same URL. Each publication lasts seven days and can be withdrawn early.
+
+The installer runs Caddy on `127.0.0.1:8090` by default. It adds the port to
+`./install.sh tunnel --target example-fleet --background`. Open loopback links
+on the workstation running that tunnel. Restart an existing tunnel after an
+upgrade to pick up the new forward. On a fleet installed directly on the VM,
+forward its preview port over your authorised SSH connection.
+
+For links that work across an authorised team, ask the operator which private
+hostname and viewer access policy to use. Set up a dedicated HTTPS origin on
+the team's private access gateway and proxy it to the loopback Caddy listener.
+Pass `--preview-url https://previews.example.com` to publish that address, or
+`--preview-url tunnel` to switch back. The private gateway authenticates
+viewers. When the proxy runs on the fleet VM, pass
+`--preview-proxy-user www-data` (or the actual service account) to permit access
+to Caddy's port.
+
+Both features are on by default. `--no-mockup-previews` skips Caddy and withdraws
+the service, tool and fleet skill on reruns. It keeps staged and published
+files on disk. `--no-impeccable` removes the installer-managed Impeccable skill
+from captains while allowing mockup previews. Re-enable with
+`--mockup-previews` or `--impeccable`. The installer pins the Caddy binary and the
+upstream Impeccable skill and engine. Fleet-managed Impeccable uses the design
+skill without automatic hooks. OpenCode keeps an existing operator-provided skill.
+
+For hand-written `fleet.json`, use `"mockupPreviews": {"enabled": false}` and
+`"impeccable": false`. `mockupPreviews.port` overrides the default loopback
+port, `mockupPreviews.url` sets the private HTTPS origin, and
+`mockupPreviews.proxyUser` grants a local proxy account access. The preview
+service requires a Stargate revision with the mockup publishing contract.
+Use `--no-mockup-previews` when keeping an older, incompatible Stargate pin.
+
 ### Screenshots
 
 Agents always need to take screenshots, of web pages and of desktop apps, so

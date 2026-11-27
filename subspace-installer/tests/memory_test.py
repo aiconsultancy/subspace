@@ -47,6 +47,7 @@ def shape(limits):
 def fleet(captains=1, **changes):
     """fleet.example.json with the given captains (crew-less, so no repositories are needed), validated."""
     config = json.loads(EXAMPLE.read_text())
+    config.update(mockupPreviews={"enabled": False}, impeccable=False)
     config["captains"] = [{"id": name, "name": name.title()} for name in CAPTAINS[:captains]]
     config.update(changes)
     return config

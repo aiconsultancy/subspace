@@ -9,6 +9,7 @@ import sys
 from agent_files import MAX_BYTES, agent_directory, write_private
 from github_policy import officer_github_repositories
 import screenshots
+import mockups
 
 
 ROLES = Path(__file__).parent / "roles"
@@ -19,7 +20,7 @@ API_SKILL_SOURCES = (
     Path(__file__).parent / "agent-skills" / API_SKILL / "SKILL.md",
     Path(__file__).resolve().parents[2] / "agent-skills" / "opencode" / API_SKILL / "SKILL.md",
 )
-SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew", API_SKILL)
+SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew", API_SKILL, mockups.SKILL)
 
 
 API_SKILL_MISSING = ("The Subspace API skill agent-skills/opencode/subspace-tracker/SKILL.md is missing, and "
@@ -426,9 +427,21 @@ def role_documents(cfg, person, references, home, *, flint=False):
                 "model": worker["model"], "family": worker["family"].title(), "worktrees": worktrees,
                 "pullRequests": crew_prs,
             })
+            if mockups.enabled(cfg, person):
+                crew[worker["id"]] += ("\nWhen your captain asks you to stage a mockup, build in your worktree "
+                                        f"and copy only the finished static files into a named directory under "
+                                        f"`{mockups.staging(Path(home))}`. Leave all source files in your worktree.\n")
     if has_tracker:
         # The officer reaches the API through its MCP server at the agent listener; its crew share the skill.
         skills[API_SKILL] = api_skill()
+    if mockups.enabled(cfg, person):
+        skills[mockups.SKILL] = render("captain", "MOCKUP.md", {"staging": str(mockups.staging(Path(home)))})
+        instructions += "\nUse the fleet-mockup skill when asked to build, show, revise or withdraw a live mockup.\n"
+    impeccable = role == "captain" and cfg.get("impeccable", False)
+    if impeccable:
+        instructions += "\n## Interface design\n\nLoad Impeccable for frontend design work.\n"
+        if claude:
+            instructions += f"Read `{mockups.IMPECCABLE_PATH}/SKILL.md` for the installed skill and its references.\n"
     procedure = skills[f"fleet-{role}"].partition("\n---\n")
     if not procedure[1]:
         raise ValueError("Fleet skill templates need Markdown front matter.")
@@ -436,6 +449,8 @@ def role_documents(cfg, person, references, home, *, flint=False):
     if API_SKILL in skills:
         # Stargate's Claude backend loads no skill files, so a Claude officer gets the API skill in its prompt.
         claude_prompt += "\n" + skills[API_SKILL].partition("\n---\n")[2]
+    if mockups.SKILL in skills:
+        claude_prompt += "\n" + skills[mockups.SKILL].partition("\n---\n")[2]
     return {
         "role": role,
         "instructions": instructions,
@@ -443,6 +458,7 @@ def role_documents(cfg, person, references, home, *, flint=False):
         "crew": crew,
         "claudePrompt": claude_prompt,
         **({"flint": True} if flint else {}),
+        **({"impeccable": True} if impeccable else {}),
     }
 
 
@@ -623,6 +639,13 @@ def provision_role(documents):
         raise ValueError("Unknown fleet role.")
     directory = agent_directory(".config", "opencode")
     write_private(directory / "AGENTS.md", documents["instructions"].encode())
+    destination = agent_directory(".config", "opencode", "skills") / mockups.IMPECCABLE
+    managed = destination.is_symlink() and Path(os.readlink(destination)) == mockups.IMPECCABLE_PATH
+    if documents.get("impeccable") and not os.path.lexists(destination):
+        destination.symlink_to(mockups.IMPECCABLE_PATH, target_is_directory=True)
+    elif managed and not documents.get("impeccable"):
+        destination.unlink()
+
     skills = documents["skills"]
     if not set(skills) <= set(SKILLS):
         raise ValueError("Unknown fleet skill.")

@@ -1001,6 +1001,7 @@ class ScreenshotTests(unittest.TestCase):
 
     def test_it_is_on_unless_fleet_json_turns_it_off(self):
         config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        config["mockupPreviews"] = {"enabled": False}
         secrets = {"proxyKey": "fixture-model-proxy-key"}
         self.assertIs(runtime.validate(config, secrets, check_files=False)["screenshots"], True)
         self.assertIs(runtime.validate({**config, "screenshots": False}, secrets, check_files=False)["screenshots"],

@@ -63,6 +63,7 @@ def example_config():
     config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
     # These tests sign officers in with passwords; IrcCertificateTests covers the default, certificates.
     config["irc"]["auth"] = "password"
+    config.update(mockupPreviews={"enabled": False}, impeccable=False)
     return config
 
 
@@ -79,6 +80,22 @@ def officer_secrets(*extra):
 
 
 class FleetPolicyTests(unittest.TestCase):
+    def test_preview_port_cannot_displace_local_api_listeners(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        for port in (3000, 3001):
+            config["mockupPreviews"] = {"port": port}
+            with self.assertRaisesRegex(Invalid, "preview port conflicts"):
+                validate(config, api_secrets())
+        config.pop("api")
+        config["memory"] = {"localApi": True}
+        for port in (3000, 3001, 5432):
+            config["mockupPreviews"] = {"port": port}
+            with self.assertRaisesRegex(Invalid, "preview port conflicts"):
+                validate(config, officer_secrets())
+        config["mockupPreviews"] = {"port": 8090, "proxyUser": "www-data"}
+        self.assertEqual(validate(config, officer_secrets())["mockupPreviews"]["proxyUser"], "www-data")
+
     def test_teams_attachment_file_hosts_render_only_on_a_configured_registration(self):
         config = example_config()
         teams = {
@@ -2662,6 +2679,7 @@ class IrcCertificateTests(unittest.TestCase):
 
     def setUp(self):
         self.config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
+        self.config.update(mockupPreviews={"enabled": False}, impeccable=False)
         # The example names the default explicitly; these tests check the default itself.
         del self.config["irc"]["auth"]
         temporary = tempfile.TemporaryDirectory()

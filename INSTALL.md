@@ -119,6 +119,23 @@ logins for your user, and keeps the agents' Linux users away from operator
 services, including the API's main port, and from the cloud's metadata
 service, so they cannot use the VM's cloud identity.
 
+## Captain mockup previews
+
+The fleet installs browser previews and the Impeccable design skill by
+default. When you install a fleet for someone, use the fleet's existing SSH
+tunnel for previews. Start or restart the tunnel on the operator's workstation
+so captain links work there.
+
+If the team needs shared links, ask the operator for its private preview
+hostname and who can view it. Set up and test the dedicated HTTPS route using
+the operator's private gateway, then pass its origin to `--preview-url`. The
+usual SSH path is available while the shared route is being set up. Offer the
+independent `--no-mockup-previews` and `--no-impeccable` switches if the operator
+wants to disable either feature.
+
+See [live mockup previews](subspace-installer/README.md#live-mockup-previews)
+for ports and reruns.
+
 ## Decide with the user
 
 Ask all of these before running anything, then confirm the plan once.

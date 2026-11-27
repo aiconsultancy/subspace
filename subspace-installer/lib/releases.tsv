@@ -11,3 +11,5 @@ agentsview amd64 0.47.0 kenn-io/agentsview agentsview_0.47.0_linux_amd64.tar.gz 
 agentsview arm64 0.47.0 kenn-io/agentsview agentsview_0.47.0_linux_arm64.tar.gz 587936c600ecef1a0b18ecabf384c75c4ea503c37f9032ef1117c023544edeaa agentsview
 mesij amd64 0.1.0 withakay/mesij mesij_0.1.0_linux_amd64.tar.gz 1d384f032e2a92ec61b53a22085365fb902837f79256a66a57c7200478be28ec mesij
 mesij arm64 0.1.0 withakay/mesij mesij_0.1.0_linux_arm64.tar.gz 586d97a7be9de57ad618fb189673906070e6f92968470f1946b45eec03d75e37 mesij
+caddy amd64 2.11.9 caddyserver/caddy caddy_2.11.9_linux_amd64.tar.gz 5b8cb7faf8726a2028ad96a66e54e6e81e8f361bc6175e5d22bbd997cc5177fb caddy
+caddy arm64 2.11.9 caddyserver/caddy caddy_2.11.9_linux_arm64.tar.gz 5e377cff994fc9362a6fcf695c53f226cfca3a3ef85bd3a3687cf252d6310165 caddy
