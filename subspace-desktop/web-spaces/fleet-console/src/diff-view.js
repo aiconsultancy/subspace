@@ -147,7 +147,7 @@ function partNotes(entry, patch, view) {
     if (view.changed || problem.kind === "cancelled" || problem.kind === "stale") notes.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read this part."));
     else notes.push(h("p", { class: "act-warn" }, txt(problem.message)), button("data-diff-retry", "Retry page"));
   } else if (view.changed && patch.hasNext) notes.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read the rest of this patch."));
-  if (entry.shared && entry.more && patch.data !== null) notes.push(h("p", { class: "act-note" }, DIFF_MESSAGES.sharedPatch));
+  if (entry.unaddressable && entry.more && patch.data !== null) notes.push(h("p", { class: "act-note" }, DIFF_MESSAGES[`${entry.unaddressable}Patch`]));
   return notes.length ? h("div", { class: "act-messages" }, notes) : null;
 }
 
@@ -256,7 +256,7 @@ function previewTree(preview, changed) {
 
 function binaryTree(view, entry) {
   const size = Number.isInteger(entry.file.size) ? `, ${formatBytes(entry.file.size)}` : "";
-  if (entry.shared) return h("p", { class: "act-note" }, `Binary file${size}. ${DIFF_MESSAGES.sharedBytes}`);
+  if (entry.unaddressable) return h("p", { class: "act-note" }, `Binary file${size}. ${DIFF_MESSAGES[`${entry.unaddressable}Bytes`]}`);
   const facts = h("p", { class: "act-note" }, `Binary file${size}. Its bytes are read a page at a time.`);
   const sides = binarySides(entry.file);
   const actions = sides.map((side) => h("button", { class: "btn", type: "button", "data-diff-binary": side, ...(view.changed ? { "aria-disabled": "true" } : {}) }, `${SIDE[side]} bytes`));

@@ -62,17 +62,22 @@ one shows, and the differences are listed below with their reasons.
   carry patch text and not point back at the page asked for. The part on
   show stays on show until its replacement arrives; a failed read keeps it
   and offers **Retry page** for the same page.
-- **Rows sharing a display path.** Git can show two byte paths as one
-  display path, and the file route answers a path with the first file that
-  has it, so it cannot address either row on its own (STAR-5). No read by
-  such a path is made. A shared row's patch is one part: its inline patch,
-  read again from the list page that listed it, by that page's token (the
-  first page with none), which must be at the snapshot's fingerprint (else
-  stale) and list the same path in the same place. If the patch runs on, the
-  view says plainly that the gateway cannot address the file yet and the
-  rest cannot be read here; a shared binary row says its bytes cannot be
-  read here, with no bytes or preview buttons. Another file's bytes never
-  show.
+- **Rows the file route cannot read.** The file route cannot address two
+  kinds of row (STAR-5). Git can show two byte paths as one display path,
+  and the route answers a path with the first file that has it, so it
+  cannot address either row on its own. And it refuses some paths Git
+  allows: `diffPathAllowed` in `src/diff.js` mirrors its rule (an empty,
+  `.` or `..` component, NUL, a backslash or control character such as a
+  tab, or more than 4,096 code points). No read by such a path is made.
+  Such a row's patch is one part: its inline patch, read again from the
+  list page that listed it, by that page's token (the first page with
+  none), which must be at the snapshot's fingerprint (else stale) and list
+  the same path in the same place. A complete inline patch shows whole. If
+  the patch runs on, the view says why the gateway cannot read the file
+  (the shared display path, or the path it does not accept) and that the
+  rest cannot be read here; such a binary row says why its bytes cannot be
+  read here, with no bytes or preview buttons. Neither offers a retry that
+  would always fail, and another file's bytes never show.
 - **Binary files.** **Old bytes** and **New bytes** (an added file only
   New, a removed one only Old) open a hex and ASCII view: a 16-digit offset
   in the file, 8 bytes a row and `.` for bytes outside printable ASCII, as
@@ -226,7 +231,10 @@ default wait and the ten-second cap, an empty snapshot, list paging by
 list pages, a 17-page list keeping no patch text outside the budget and
 reading an opened patch at the snapshot, charged, rows sharing a display
 path each showing their own patch from their own list page (stale at another
-fingerprint) and no bytes, patch parts one at a time with Last once the
+fingerprint) and no bytes, the file route's path rule, a unique path it
+refuses (a tab) showing its whole inline patch from its list page with no
+file request, or its inline part with the reason the rest cannot be read,
+and no bytes, patch parts one at a time with Last once the
 count is known, a one-part patch, windows of a long part numbered across
 windows, a hunk header split at every position by a part or window boundary
 numbering as the whole patch does, **Retry page** for a patch and a binary

@@ -8,6 +8,7 @@ import {
   canViewDiff,
   createDiffWatcher,
   DIFF_MESSAGES,
+  diffPathAllowed,
   diffsEnabled,
   hexRows,
   HEX_ROW_BYTES,
@@ -600,6 +601,87 @@ test("diff binary: rows sharing a display path offer no bytes or preview, and sa
   panel.update(watcher.view, { name: "Starbuck" });
   assert.ok(panel.root.textContent.includes(DIFF_MESSAGES.sharedBytes));
   assert.deepEqual(buttonsIn(panel.root, "New bytes"), []);
+});
+
+test("diffPathAllowed mirrors STAR-5's file route path rule: no empty, . or .. component, NUL, backslash or control character, at most 4096 code points", () => {
+  for (const path of ["src/a.ts", "a", "name\uFFFD.txt", ".hidden/x", "a..b", "\u{1F600}".repeat(4096), "é".repeat(4096)]) assert.equal(diffPathAllowed(path), true, JSON.stringify(path.slice(0, 20)));
+  for (const path of ["", "/a", "a/", "a//b", "./a", "a/.", "../a", "a/../b", "a\u0000b", "a\\b", "only\tfile.txt", "a\nb", "a\u007fb", "a\u0085b", "\u{1F600}".repeat(4097), "a".repeat(4097)])
+    assert.equal(diffPathAllowed(path), false, JSON.stringify(path.slice(0, 20)));
+});
+
+/**
+ * One row whose unique path the file route refuses (a tab, as Git allows),
+ * beside one it accepts, as a gateway that answers such a path 400 would.
+ * `extra` adds to the refused row.
+ */
+function refusedPath(extra = {}) {
+  const path = "only\tfile.txt";
+  const patch = "@@ -1 +1 @@\n-old\n+new\n";
+  return {
+    path,
+    patch,
+    ...watch({
+      list: () => page([file(path, { patch, ...extra }), file("other.txt")]),
+      first: (query) => (diffPathAllowed(query.path) ? { fingerprint: FP, file: file(query.path) } : Promise.reject(new HttpError(400))),
+    }),
+  };
+}
+
+test("diff patch: a unique path the file route refuses (a tab) shows its intact inline patch, read again from its list page, with no /diff/file request", async () => {
+  const { watcher, files, lists, path, patch } = refusedPath();
+  watcher.start();
+  await flush();
+  await watcher.openPatch(0);
+  assert.equal(watcher.view.patch(0).state, "ready");
+  assert.equal(watcher.view.patch(0).data, patch, "the whole patch the list gave");
+  assert.equal(watcher.view.patch(0).count, 1);
+  assert.deepEqual(files(), [], "no read by a path the file route refuses");
+  assert.deepEqual(lists().map((call) => call.query.page), [undefined, undefined], "read again from the list page that listed it");
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.ok(panel.root.textContent.includes("+new"));
+  assert.ok(!panel.root.textContent.includes(DIFF_MESSAGES.pathPatch), "nothing is missing, so nothing to explain");
+  assert.deepEqual(buttonsIn(panel.root, "Retry page"), []);
+  await selectRow(panel, watcher, 1);
+  assert.deepEqual(files().map((call) => call.query.path), ["other.txt"], "a path the route accepts is read from it");
+  assert.equal(entryPath(watcher, 0), path);
+});
+
+const entryPath = (watcher, index) => watcher.view.files[index].file.path;
+
+test("diff patch: a refused path whose patch runs past its inline part shows that part and says why the rest cannot be read, never a retry that always fails", async () => {
+  const { watcher, files, patch } = refusedPath({ patchNextPage: "c2" });
+  watcher.start();
+  await flush();
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(watcher.view.patch(0).data, patch);
+  assert.equal(watcher.view.patch(0).count, 1);
+  assert.deepEqual(files(), []);
+  assert.ok(panel.root.textContent.includes(DIFF_MESSAGES.pathPatch));
+  assert.ok(!panel.root.textContent.includes(DIFF_MESSAGES.sharedPatch), "its own reason, not another's");
+  assert.deepEqual(buttonsIn(panel.root, "Next part"), []);
+  assert.deepEqual(buttonsIn(panel.root, "Retry page"), []);
+});
+
+test("diff binary: a refused path offers no bytes or preview and says why; nothing is read by that path", async () => {
+  const { watcher, files } = refusedPath({ binary: true, size: 3, additions: null, deletions: null, patch: null });
+  watcher.start();
+  await flush();
+  await watcher.openBinary(0, "new");
+  await watcher.openPreview(0, "new");
+  assert.equal(watcher.view.binary, null);
+  assert.equal(watcher.view.preview, null);
+  assert.deepEqual(files(), []);
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.ok(panel.root.textContent.includes(DIFF_MESSAGES.pathBytes));
+  assert.deepEqual(buttonsIn(panel.root, "New bytes"), []);
+  assert.deepEqual(buttonsIn(panel.root, "Retry page"), []);
 });
 
 function twoPatches(fileRoute) {

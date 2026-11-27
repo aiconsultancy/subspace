@@ -61,7 +61,25 @@ export const DIFF_MESSAGES = {
   changed: "Changed since loaded",
   sharedPatch: "Another file in this diff has the same display path, and the gateway cannot address this one on its own yet. This is the part of its patch the file list gave; the rest cannot be read here.",
   sharedBytes: "Another file in this diff has the same display path, and the gateway cannot address this one on its own yet, so its bytes cannot be read here.",
+  pathPatch: "The gateway's file route does not accept this file's path (it has a control character, a backslash or an empty, . or .. part, or is over 4,096 characters). This is the part of its patch the file list gave; the rest cannot be read here.",
+  pathBytes: "The gateway's file route does not accept this file's path (it has a control character, a backslash or an empty, . or .. part, or is over 4,096 characters), so its bytes cannot be read here.",
 };
+
+/**
+ * Whether the gateway's file route accepts `path`, as STAR-5's
+ * `diffPathAllowed` (crew-diff.ts at 36775bff): repository-relative, with no
+ * empty, `.` or `..` component, NUL, backslash or control character, and at
+ * most 4096 code points. Git allows paths it refuses; such a row is read
+ * only from its list page.
+ */
+export function diffPathAllowed(path) {
+  return (
+    path.length > 0 &&
+    Array.from(path).length <= 4096 &&
+    !/[\p{Cc}\\]/u.test(path) &&
+    path.split("/").every((part) => part !== "" && part !== "." && part !== "..")
+  );
+}
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const isStr = (v) => typeof v === "string";
@@ -491,15 +509,17 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
   }
 
   /**
-   * The rows of the list, by their place in it. A row whose display path
-   * another row shares is `shared`: the file route answers a path with the
-   * first file that has it, so it cannot address such a row on its own
-   * (STAR-5), and no read by path is made for one.
+   * The rows of the list, by their place in it. `unaddressable` says why the
+   * file route cannot read a row (STAR-5), or is null when it can: "path"
+   * when it refuses the row's path (`diffPathAllowed`), "shared" when
+   * another row has the same display path, as the route answers a path with
+   * the first file that has it. No read by path is made for such a row.
    */
   function entriesFor(rows) {
     const paths = new Map();
     for (const row of rows) paths.set(row.file.path, (paths.get(row.file.path) ?? 0) + 1);
-    return rows.map((row, index) => ({ index, ...row, shared: paths.get(row.file.path) > 1 }));
+    const why = (path) => (!diffPathAllowed(path) ? "path" : paths.get(path) > 1 ? "shared" : null);
+    return rows.map((row, index) => ({ index, ...row, unaddressable: why(row.file.path) }));
   }
 
   async function load() {
@@ -585,9 +605,10 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
   const patchKey = (entry) => ["patch", fingerprint, mode, String(entry.index)].join("\u0000");
 
   /**
-   * The inline patch of a shared row, read again from the list page that
-   * listed it, by that page's token: the same snapshot's page (else stale),
-   * with the same path in the same place. It is the patch's one part here.
+   * The inline patch of a row the file route cannot read, read again from
+   * the list page that listed it, by that page's token: the same snapshot's
+   * page (else stale), with the same path in the same place. It is the
+   * patch's one part here.
    */
   async function readListedPatch(snapshot, at, entry, signal) {
     const token = snapshot.child();
@@ -614,8 +635,9 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
    * at the snapshot's fingerprint. One sequence of pages: the list's inline
    * preview (64 KiB) ends elsewhere than the file route's first page (1 MiB),
    * so its token is never followed here. A patch with no next page is one
-   * part. A shared row's patch is the one part its list page gives, read
-   * again from that page: the file route would answer with another file's.
+   * part. The patch of a row the file route cannot read (`unaddressable`)
+   * is the one part its list page gives, read again from that page: the
+   * route would refuse its path or answer with another file's.
    */
   function patchSource(index) {
     const entry = files[index];
@@ -637,7 +659,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       onChange: emit,
       read: ({ part, cursor, start, signal }) =>
         partRead(gen, async () => {
-          if (entry.shared) {
+          if (entry.unaddressable) {
             const text = await readListedPatch(snapshot, at, entry, signal);
             return { data: text, next: null, after: patchLines(text, start).end };
           }
@@ -700,7 +722,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
 
   function openBinary(index, side) {
     const entry = files[index];
-    if (status !== "ready" || !entry?.file.binary || entry.shared || !binarySides(entry.file).includes(side) || changed()) return;
+    if (status !== "ready" || !entry?.file.binary || entry.unaddressable || !binarySides(entry.file).includes(side) || changed()) return;
     // Bytes the budget let go are read again where they were, at the same snapshot.
     if (binary?.index === index && binary.side === side && binary.source.view?.evicted) return binary.source.show();
     closeBinary();
@@ -772,7 +794,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
    */
   async function openPreview(index, side) {
     const entry = files[index];
-    if (status !== "ready" || !entry?.file.binary || entry.shared || !binarySides(entry.file).includes(side) || changed()) return;
+    if (status !== "ready" || !entry?.file.binary || entry.unaddressable || !binarySides(entry.file).includes(side) || changed()) return;
     closeBinary();
     const key = ["preview", fingerprint, mode, entry.file.path, side].join("\u0000");
     const view = { index, path: entry.file.path, side, key, state: "loading", error: null, type: null, blob: null, size: null, room: null, read: read.child(), version: 0 };
