@@ -764,17 +764,22 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
    * read holds: it frees nothing, and gives its room back before anything
    * else when a later read needs it. If its size does not fit, the view
    * says so; Show bytes still pages through it.
+   *
+   * The image is held once, as the Blob the panel shows (`blob`): each page
+   * is decoded and joined to it, never gathered into a second whole copy,
+   * so the size charged is all it keeps. More than PREVIEW_MAX_PAGES pages
+   * read, whatever their size, is too large: the room goes back.
    */
   async function openPreview(index, side) {
     const entry = files[index];
     if (status !== "ready" || !entry?.file.binary || entry.shared || !binarySides(entry.file).includes(side) || changed()) return;
     closeBinary();
     const key = ["preview", fingerprint, mode, entry.file.path, side].join("\u0000");
-    const view = { index, path: entry.file.path, side, key, state: "loading", error: null, type: null, bytes: null, size: null, room: null, read: read.child(), version: 0 };
+    const view = { index, path: entry.file.path, side, key, state: "loading", error: null, type: null, blob: null, size: null, room: null, read: read.child(), version: 0 };
     // The room given back to a later read: stop reading, let the bytes go.
     const giveBack = () => {
       view.read.cancel();
-      view.bytes = null;
+      view.blob = null;
       view.state = "given-back";
       view.version += 1;
       emit();
@@ -784,7 +789,9 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     const gen = generation;
     emit();
     try {
-      const parts = [];
+      /** The image so far: one Blob, each page joined to it as read. */
+      let held = null;
+      let type = null;
       let cursor;
       let offset = 0;
       let size = null;
@@ -808,23 +815,24 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
           budget.reserve(key, size, giveBack, { makeRoom: false, yields: true });
         }
         const bytes = decodeBase64(content.data);
-        if (number === 0 && !imageType(bytes)) {
+        if (number === 0) type = imageType(bytes);
+        if (!type) {
           view.state = "unsupported";
           budget.release(key);
           break;
         }
-        parts.push(bytes);
+        held = new Blob(held ? [held, bytes] : [bytes], { type });
         offset += bytes.length;
         if (!content.nextPage) {
-          const bytes = new Uint8Array(offset);
-          let at = 0;
-          for (const part of parts) {
-            bytes.set(part, at);
-            at += part.length;
-          }
-          view.bytes = bytes;
-          view.type = imageType(bytes);
+          view.blob = held;
+          view.type = type;
           view.state = "ready";
+          break;
+        }
+        // Pages smaller than the gateway's largest: the reads made count, not the size.
+        if (number + 1 >= PREVIEW_MAX_PAGES) {
+          view.state = "too-large";
+          budget.release(key);
           break;
         }
         cursor = content.nextPage;

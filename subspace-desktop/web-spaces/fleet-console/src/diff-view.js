@@ -393,11 +393,12 @@ export function createDiffPanel({ doc, watcher, onClose, urls = globalThis.URL }
     dropImage();
     const holder = detail.querySelector?.("[data-diff-image]");
     if (!holder) return;
-    if (!urls?.createObjectURL || typeof Blob !== "function") {
+    if (!urls?.createObjectURL || !preview.blob) {
       holder.appendChild(doc.createTextNode("Image previews need the app's web view."));
       return;
     }
-    imageUrl = urls.createObjectURL(new Blob([preview.bytes], { type: preview.type }));
+    // The watcher's Blob itself: the image is held once.
+    imageUrl = urls.createObjectURL(preview.blob);
     const image = doc.createElement("img");
     image.setAttribute("alt", `${SIDE[preview.side]} side of ${preview.path}`);
     image.addEventListener("load", () => {

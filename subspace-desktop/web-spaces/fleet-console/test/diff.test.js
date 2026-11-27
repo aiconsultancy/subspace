@@ -844,7 +844,7 @@ test("diff preview: an image grows only into free room, charged its size, and gi
   activity.request("newer");
   activity.reserve("newer", 40 * 1024, null);
   assert.equal(watcher.view.preview.state, "given-back", "the image's room went first");
-  assert.equal(watcher.view.preview.bytes, null);
+  assert.equal(watcher.view.preview.blob, null);
   assert.ok(activity.has("older"), "though the Activity view's entry is older");
   assert.equal(budget.used, 60 * 1024);
   const panel = createDiffPanel({ doc: fakeDoc, watcher });
@@ -853,6 +853,48 @@ test("diff preview: an image grows only into free room, charged its size, and gi
   assert.equal(panel.root.findAll((node) => node.tag === "button" && node.textContent === "Show image again").length, 1);
   watcher.closeBinary();
   assert.equal(budget.used, 60 * 1024);
+});
+
+test("diff preview: the image is held once, as the Blob the panel shows, never gathered into a second whole copy", async () => {
+  const budget = createBudget(64 * 1024);
+  const { watcher, files } = watch(binaryRoutes({ new: PNG }, { pageBytes: 3000 }), { budget: budget.scope("diff\u0000") });
+  watcher.start();
+  await flush();
+  await watcher.openPreview(0, "new");
+  const { preview } = watcher.view;
+  assert.equal(preview.state, "ready");
+  assert.equal(files().length, 3);
+  assert.ok(preview.blob instanceof Blob);
+  assert.equal(preview.blob.type, "image/png");
+  assert.deepEqual(new Uint8Array(await preview.blob.arrayBuffer()), PNG, "every page, in order");
+  assert.equal(Object.values(preview).filter((value) => value instanceof Uint8Array).length, 0, "no assembled copy beside it");
+  assert.equal(budget.used, PNG.length, "the one copy is what is charged");
+  const shown = [];
+  const urls = { createObjectURL: (blob) => (shown.push(blob), "blob:preview"), revokeObjectURL: () => {} };
+  const querySelector = function (selector) {
+    const name = selector.slice(1, -1);
+    return this.findAll((node) => name in node.attributes)[0] ?? null;
+  };
+  const doc = { ...fakeDoc, createElement: (tag) => Object.assign(fakeDoc.createElement(tag), { querySelector }) };
+  const panel = createDiffPanel({ doc, watcher, urls });
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0], preview.blob, "the panel shows the watcher's Blob itself, not a copy");
+  assert.equal(panel.root.findAll((node) => node.tag === "img")[0].attributes.src, "blob:preview");
+});
+
+test("diff preview: more than 16 pages is too large however small each is; its room goes back and Show bytes still works", async () => {
+  const budget = createBudget(64 * 1024);
+  const { watcher, files } = watch(binaryRoutes({ new: PNG }, { pageBytes: 256 }), { budget: budget.scope("diff\u0000") });
+  watcher.start();
+  await flush();
+  await watcher.openPreview(0, "new");
+  assert.equal(watcher.view.preview.state, "too-large");
+  assert.equal(files().length, 16, "the 16 reads it may make, no more");
+  assert.equal(watcher.view.preview.blob, null);
+  assert.equal(budget.used, 0, "its room went back");
+  await watcher.openBinary(0, "new");
+  assert.equal(watcher.view.binary.state, "ready", "Show bytes pages through it instead");
 });
 
 test("diff preview: an image that cannot fit in the free room says so with its size, and keeps Show bytes", async () => {

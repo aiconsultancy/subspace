@@ -90,8 +90,11 @@ one shows, and the differences are listed below with their reasons.
   last, even if it names a next page. An empty file is one page of size 0.
   A failed page keeps the part on show and offers **Retry page**. PNG,
   JPEG, GIF and WebP paths also offer **Preview image** for each side,
-  which assembles the side in memory (at most 10 MiB in 16 pages) and
-  shows it through a `blob:` URL, refusing images over 4,096 pixels a side;
+  which assembles the side in memory (at most 10 MiB, and at most 16 pages
+  read, whatever their size) and shows it through a `blob:` URL, refusing
+  images over 4,096 pixels a side. The image is held once: each page is
+  joined to one `Blob` as it is read, and the panel's object URL is made
+  from that `Blob` itself, so the size charged is all it keeps;
   **Show bytes** stays available. Submodules and symbolic links say what
   their patch shows; a link is never followed.
 - **One budget for the console.** The crew diff view and the Activity view
@@ -108,7 +111,8 @@ one shows, and the differences are listed below with their reasons.
   gives its size, it is charged that size only in room no other read holds,
   frees nothing, and gives its room back before any other entry when a
   later read needs it (**Show image again**). An image that does not fit
-  says so with its size and the free room, and keeps Show bytes. The
+  says so with its size and the free room, and keeps Show bytes; one too
+  large gives its room back. The
   Activity view's refit (#115 round 7, SUB a5275d81) asks its own scope
   what a larger inline charge would free (`wouldFree`, as a pinned
   reservation); a scope names only its own keys, in the order `reserve`
@@ -233,16 +237,17 @@ same part, before the count is known too (by its own cursor, with no Last),
 a 409 on that read, an empty binary file, hex windows paging across a part
 boundary with offsets running on, no Last until the last page's token is
 known, binary bytes freed and read again at the same part, binary page
-checks, an image preview grown into free room and given back first, a
-preview that cannot fit, the Activity and diff views sharing one budget
-without freeing the latest request, `wouldFree` on a scope naming only that
-view's keys with a yielding entry first and admitting as `reserve` does with
-its `pinned` option, the Activity view's growth refit on the shared budget,
-the fingerprint banner (moved, repeated, absent, moved during the load,
-unstable, the cached value as the baseline before the first read, kept until
-Refresh when the fingerprint comes back, with reads off and what was read on
-show), cancellation of reads in backoff when the fingerprint goes stale, the
-view closes or Hide bytes is pressed, a late answer dropped after a stale
-fingerprint, Refresh and a mode change dropping the old snapshot, a token
-change while a read is held, and the sample checkout end to end with
-markers.
+checks, an image preview grown into free room and given back first, held
+once as the `Blob` the panel shows, too large past 16 small pages with its
+room given back, a preview that cannot fit, the Activity and diff views
+sharing one budget without freeing the latest request, `wouldFree` on a
+scope naming only that view's keys with a yielding entry first and admitting
+as `reserve` does with its `pinned` option, the Activity view's growth refit
+on the shared budget, the fingerprint banner (moved, repeated, absent, moved
+during the load, unstable, the cached value as the baseline before the first
+read, kept until Refresh when the fingerprint comes back, with reads off and
+what was read on show), cancellation of reads in backoff when the
+fingerprint goes stale, the view closes or Hide bytes is pressed, a late
+answer dropped after a stale fingerprint, Refresh and a mode change dropping
+the old snapshot, a token change while a read is held, and the sample
+checkout end to end with markers.
