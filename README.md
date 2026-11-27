@@ -55,8 +55,8 @@ same room.
   the whole interface is drawn on the GPU. Its Channels Space is a custom IRC
   client that shows live tiles for the issues and pull requests people
   mention, so you can follow their status, and what the agents are talking
-  about, at a glance. Other Spaces cover Issues, Decisions, pull requests and
-  the Fleet Console.
+  about, at a glance. Other Spaces cover Issues, Projects, Decisions, pull
+  requests, the Fleet Console and the optional AgentsView session browser.
 - **An API** in TypeScript. It holds the issue tracker, with images and
   documents on issues, plus initiatives, the decision log and the fleets, and
   gives agents an MCP endpoint. The API is headless: it has no web interface
@@ -241,12 +241,12 @@ them: IRC, Slack or Teams. Which of them is connected to what is configurable
 per fleet.
 
 - **Desktop app** ([`subspace-desktop/`](subspace-desktop/README.md)). A Rust and
-  GPUI app with Spaces for Channels (IRC), Issues, Decisions, GitHub pull
-  requests, Actions, Copilot agents, a terminal and web Spaces. Every Space
-  shares one layout: a navigator on the left, tabs and a toolbar above the
-  content, and an inspector on the right. Decisions lists every decision
-  people and agents record against issues: what was decided, who made it,
-  when, and whether a later decision superseded it. It is built from the
+  GPUI app with Spaces for Channels (IRC), Issues, Projects, Decisions, GitHub
+  pull requests, Actions, AgentsView, Copilot agents, a terminal and web
+  Spaces. Every Space shares a layout with a navigator on the left, tabs and
+  a toolbar above the content, and an inspector on the right. Decisions shows
+  what people and agents decided on issues, who made each decision and when,
+  and whether a later decision superseded it. The app is built from the
   reusable [Subspace Framework](subspace-framework/README.md), which is
   published on crates.io as `subspace-framework`. Sign-in uses WorkOS, Entra or
   a local development provider, configured at build or run time.
@@ -314,6 +314,15 @@ Select an image to see it full size.
 <tr>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-issue-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-issue-page-twilight-two.png" width="440" alt="A tracker issue open in a tab, with an image, an attachment, its sub-issues and linked pull requests, and its properties in the inspector"></a><br><b>An issue.</b> A tracker with an image, an attached document, sub-issues and its pull requests.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-decisions-twilight-two.png"><img src="docs/assets/screenshots/desktop-decisions-twilight-two.png" width="440" alt="The Decisions Space listing decisions by status, with filters for people and agents and the selected decision's maker, linked issues and evidence in the inspector"></a><br><b>Decisions.</b> What was decided, by a person or an agent, and what superseded it.</td>
+</tr>
+</table>
+
+### Projects and agent sessions
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-projects-twilight-two.png"><img src="docs/assets/screenshots/desktop-projects-twilight-two.png" width="440" alt="The Projects Space showing a demo project's status, health, lead, dates, timeline, next milestone and latest update"></a><br><b>Projects.</b> Follow a project's status, timeline and latest update.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-agentsview-twilight-two.png"><img src="docs/assets/screenshots/desktop-agentsview-twilight-two.png" width="440" alt="The AgentsView Space showing fictional Claude and Codex sessions, project totals and activity charts in Twilight Two"></a><br><b>AgentsView.</b> Browse agent sessions and review activity across projects.</td>
 </tr>
 </table>
 
