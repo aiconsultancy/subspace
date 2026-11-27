@@ -100,8 +100,10 @@ pub(in crate::samples) fn navigators(
     cx: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
     let cx = &*cx;
-    let views = views_navigator(cx);
-    let networks = networks_navigator(tokens, cx);
+    // Pinned to the shown title, so the card shows both states whatever the
+    // app's default or the person's choice.
+    let views = navigator_title::preview(views_navigator(cx), true);
+    let networks = navigator_title::preview(networks_navigator(tokens, cx), true);
     vec![
         sample(
             "A badge, a header action and two sections: selected, plain, counted and quiet rows",
