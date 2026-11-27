@@ -28,7 +28,9 @@
 //! shown and counted until the newer version arrives, or beside its error,
 //! and counts beside it only what it asks for: a page for a part, the
 //! whole item only when both fit the room (SUB decision `084f5236` item
-//! 2). What a read draws is never planned beside the snapshot's bodies: it
+//! 2). A newer version arriving with no room beside a later request is
+//! not swapped in: what was read stays, and beside **Load the latest** a
+//! caption says why (SUB decision `a884e4c6`). What a read draws is never planned beside the snapshot's bodies: it
 //! always draws, within its own allowance. A new snapshot never lets go of
 //! the read the floor keeps: the part of the item last asked for.
 
@@ -233,6 +235,10 @@ pub(super) enum Reload {
     Reading(u64),
     /// It failed: what was shown stays, beside the error and a retry.
     Failed(Error),
+    /// It arrived with no room beside a later request, so it was not
+    /// swapped in: what was shown stays, beside why and **Load the
+    /// latest** (SUB decision `a884e4c6`).
+    Deferred,
 }
 
 /// What a read draws within its allowance.
@@ -456,7 +462,8 @@ fn publish(
 /// replacing what is shown is swapped in only within the `room` it may
 /// take letting go of nothing newer, beside whether it is the latest
 /// request ([`swap_allowance`]); otherwise what is shown stays, and the
-/// newer version waits to be asked for again (SUB decision `a884e4c6`).
+/// newer version waits to be asked for again, beside why
+/// ([`Reload::Deferred`], SUB decision `a884e4c6`).
 fn receive(
     selection: &mut Selection,
     key: &Key,
@@ -469,12 +476,13 @@ fn receive(
         // What was shown stays, beside the error and a retry.
         (Err(error), Reload::Reading(_)) => loaded.reload = Reload::Failed(error),
         (Err(error), _) => (loaded.held, loaded.raw) = (Held::Failed(error), 0),
-        (Ok(read), Reload::Reading(granted)) => {
-            if let Some(allowance) = swap_allowance(granted, read.1, room) {
+        (Ok(read), Reload::Reading(granted)) => match swap_allowance(granted, read.1, room) {
+            Some(allowance) => {
                 (loaded.held, loaded.raw) = read;
                 loaded.allowance = allowance;
             }
-        }
+            None => loaded.reload = Reload::Deferred,
+        },
         (Ok(read), _) => (loaded.held, loaded.raw) = read,
     }
     loaded.incoming = 0;

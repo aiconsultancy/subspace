@@ -11,8 +11,10 @@ use serde_json::json;
 use super::super::super::super::remove::settle;
 use super::super::mounted;
 use super::growth::{drawn_body, key, ledger, roomed};
-use super::{answer, drawn, load, on, paged, refresh, running, served, tool};
-use crate::view::inspector::activity::{ask_for, latest_request, load_item};
+use super::{answer, drawn, label, load, on, paged, refresh, running, served, tool};
+use crate::view::inspector::activity::{
+    ask_for, held_bytes, inline_bytes, latest_request, load_item,
+};
 
 /// `i3` read whole or in parts with `old` bytes of output within `room`,
 /// then named at a newer version, declared `declared` bytes and served
@@ -162,4 +164,71 @@ fn a_grown_read_does_not_displace_a_newer_read_and_its_placeholder(cx: &mut Test
     );
     let (_, used) = ledger(&board, cx);
     assert!(used <= ROOM, "{used} past the room");
+}
+
+/// Round 9 thermo (P3 1), SUB decision `a884e4c6` and rule `469f1320`:
+/// with 66,000 bytes of room, a small result shown whole, a replacement
+/// declared 9,000 whose page 0 claims 90,000, and a newer reply of 3,000
+/// asked for while it is read. Page 0 and a part of its window do not fit
+/// the room the newer reply leaves, so the swap is refused: what was shown
+/// stays, charged as before, the newer reply stays the latest request, and
+/// beside **Load the latest**, offered again, a caption says why. Loading
+/// it again, now the latest request, shows it.
+#[gpui_kit::test]
+fn a_refused_replacement_keeps_what_is_shown_and_says_so(cx: &mut TestAppContext) {
+    const ROOM: u64 = 66_000;
+    let (board, served, cx) = served(cx, 6, &"x".repeat(1_000));
+    load(cx);
+    served.serve(7, tool(7, &"y".repeat(90_000)));
+    let mut items = paged(7, 9_000);
+    items.as_array_mut().unwrap().push(json!({
+        "id": "i1", "seq": 4, "startedAt": 1, "updatedAt": 2,
+        "kind": "text", "status": "completed", "text": "a".repeat(3_000)
+    }));
+    refresh(&board, cx);
+    answer(&board, Ok(running(items)), cx);
+    roomed(&board, ROOM, cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+    let charge = |cx: &mut VisualTestContext| {
+        board.read_with(cx, |board, _| {
+            let selection = board.inspector_activity.as_ref().unwrap();
+            held_bytes(selection) - inline_bytes(selection)
+        })
+    };
+    let shown = charge(cx);
+
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("load")), cx);
+        board.update(cx, |board, cx| {
+            ask_for(board.inspector_activity.as_mut().unwrap(), "t-now", "i1");
+            cx.notify();
+        });
+    });
+    assert_eq!(ledger(&board, cx).0, vec![key("i3")], "both fit during I/O");
+    settle(cx);
+    assert!(
+        drawn(&on("out:0"), cx).contains("xxxx"),
+        "what was shown stays; gateway saw {:?}",
+        served.asked()
+    );
+    assert!(drawn(&on("parts"), cx).is_empty(), "page 0 not swapped in");
+    assert_eq!(charge(cx), shown, "charged as before");
+    let latest = board.read_with(cx, |board, _| {
+        latest_request(board.inspector_activity.as_ref().unwrap())
+    });
+    assert_eq!(latest, Some(key("i1")), "the newer reply stays the latest");
+    assert_eq!(
+        drawn(&on("deferred"), cx),
+        "The newer version did not fit beside a later request: load it again to show it."
+    );
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+    let (_, used) = ledger(&board, cx);
+    assert!(used <= ROOM, "{used} past the room");
+
+    load(cx);
+    assert!(drawn(&on("deferred"), cx).is_empty());
+    assert!(
+        drawn(&on("parts"), cx).starts_with("Too large to hold whole"),
+        "the newer version shown in parts"
+    );
 }

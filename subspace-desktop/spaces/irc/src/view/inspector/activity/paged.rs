@@ -137,10 +137,15 @@ pub(super) fn load_parts(
     }
 }
 
+/// Why **Load the latest** is offered again when the newer version
+/// arrived with no room beside a later request ([`Reload::Deferred`]).
+const DEFERRED: &str =
+    "The newer version did not fit beside a later request: load it again to show it.";
+
 /// **Load the latest** when the snapshot names a version `newer` than the
-/// one shown; while that read is under way, that it is; when it failed,
-/// why, and a retry. What was shown stays meanwhile (SUB decision
-/// `4311830a` item 2).
+/// one shown, beside why when it is offered again; while that read is
+/// under way, that it is; when it failed, why, and a retry. What was shown
+/// stays meanwhile (SUB decision `4311830a` item 2).
 fn latest(
     id: &str,
     (reload, newer): (&Reload, bool),
@@ -153,11 +158,25 @@ fn latest(
             caption(&format!("{id}:failed"), &error.to_string(), cx),
             action("Try again"),
         ],
-        Reload::None => newer
-            .then(|| action("Load the latest"))
-            .into_iter()
-            .collect(),
+        Reload::None => offer(id, (None, newer), action, cx),
+        Reload::Deferred => offer(id, (Some(("deferred", DEFERRED)), newer), action, cx),
     }
+}
+
+/// **Load the latest** when the snapshot names a version `newer` than the
+/// one shown, beside `why`, by its element's part, when it is offered
+/// again; nothing when what is shown is the latest.
+fn offer(
+    id: &str,
+    (why, newer): (Option<(&str, &str)>, bool),
+    action: &dyn Fn(&'static str) -> AnyElement,
+    cx: &Context<Irc>,
+) -> Vec<AnyElement> {
+    if !newer {
+        return Vec::new();
+    }
+    let why = why.map(|(part, why)| caption(&format!("{id}:{part}"), why, cx));
+    why.into_iter().chain([action("Load the latest")]).collect()
 }
 
 /// The load action's label: how the item will be read.
