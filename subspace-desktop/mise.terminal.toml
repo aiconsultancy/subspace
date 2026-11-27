@@ -1,2 +1,6 @@
 [tools]
 zig = "0.16.0"
+
+# Use the offline Ghostty cache from `mise run terminal-deps` when present.
+[env]
+_.source = "{{config_root}}/scripts/ghostty-offline-env.sh"

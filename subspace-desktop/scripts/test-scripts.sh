@@ -12,7 +12,6 @@ bash "$root/scripts/test-gallery-browser-session.sh"
 bash "$root/scripts/test-generate-icons.sh"
 bash "$root/scripts/test-product-icon-resources.sh"
 bash "$root/scripts/test-prepare-onnx-runtime.sh"
-bash "$root/scripts/test-prefetch-zig-deps.sh"
 bash "$root/scripts/test-release-signing-allowed.sh"
 case "$(uname -s)" in
 MINGW* | MSYS* | CYGWIN* | Windows_NT)
@@ -23,8 +22,13 @@ MINGW* | MSYS* | CYGWIN* | Windows_NT)
 	# The version stamp also runs in the Windows build, where a failure stops
 	# the run before anything is published.
 	echo "release asset and pre-release fixtures skipped on $(uname -s)"
+	# The offline Ghostty cache is off on Windows, so is its package step.
+	echo "offline Ghostty cache fixtures skipped on $(uname -s)"
 	;;
 *)
+    bash "$root/scripts/test-prefetch-zig-deps.sh"
+    bash "$root/scripts/test-ghostty-offline-env.sh"
+    bash "$root/scripts/test-terminal-deps.sh"
     python3 "$root/scripts/test-prereleases.py"
     python3 -B "$root/scripts/test-release-files.py"
     bash "$root/scripts/test-check-licences.sh"

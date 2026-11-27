@@ -54,11 +54,14 @@ save at once; Settings applies on Save. Maximize is not stored.
 
 ## Enable and build
 
-The Cargo feature is named `terminal`. Only debug builds enable it for now:
-`make run` and `make install-macos` build with it by default (`FEATURES=`
-builds without it), and `make capture` builds with it when Zig is available
-through the Terminal mise environment. Release scripts do not enable it and do
-not install Zig. The Terminal mise environment installs Zig 0.16.0:
+The Cargo feature is named `terminal`. `make run`, `make run-unreleased` and
+`make install-macos` build with it by default (`FEATURES=` builds without
+it), and `make capture` builds with it when Zig is available through the
+Terminal mise environment. The packaging targets (`package`, `package-macos`,
+`release-macos` and `package-macos-ci`) build without it unless
+`SUBSPACE_BUILD_FEATURES` names `terminal`, which their scripts pass to
+Cargo. No script installs Zig: it comes from the Terminal mise environment,
+which installs Zig 0.16.0:
 
 ```sh
 MISE_ENV=terminal mise run build -- --features terminal
@@ -102,19 +105,123 @@ runs the ConPTY session tests. The GPUI view tests run on macOS and Linux only.
 
 ### Offline Zig dependencies
 
-Machines behind a TLS-intercepting proxy can prefetch the Ghostty source and
-all Zig packages with:
+`MISE_ENV=terminal mise run terminal-deps` fills an offline cache with the
+pinned Ghostty source and every Zig package its build needs, downloaded with
+curl. Builds then use the cache instead of Zig's own downloader, which fails
+behind TLS-intercepting proxies with `TlsInitializationFailed` or
+`HttpConnectionClosing`, and they keep working through a
+`deps.files.ghostty.org` outage.
+
+The make targets that build the terminal run the task first: `run`,
+`run-unreleased` and `install-macos` unless `FEATURES` leaves out
+`terminal`, and `capture` and `check-terminal`. If it fails, because there is
+no network or GitHub is down, the target prints `offline Ghostty cache could
+not be filled; building without it` and builds as before, from Cargo's and
+Zig's own caches or your `GHOSTTY_*` variables. The task run by itself fails
+with the reason. A command that goes through mise directly, such as
+`mise run install-macos`, uses the cache but does not fill it.
+
+`build` does not build the terminal. The packaging targets (`package`,
+`package-macos`, `release-macos` and `package-macos-ci`) leave it out unless
+`SUBSPACE_BUILD_FEATURES` names `terminal`, and they never run the task, even
+then. To package with the terminal from the cache, fill it first and build
+in the terminal environment:
 
 ```sh
 MISE_ENV=terminal mise run terminal-deps
+MISE_ENV=terminal SUBSPACE_BUILD_FEATURES=terminal make package-macos
 ```
 
-The task downloads Ghostty commit
-`3425025e585a3403340d4dc6d65132f42e05e605`, follows every `build.zig.zon`
-manifest, and stores the packages under `target/zig-deps`. It prints export
-commands for `GHOSTTY_SOURCE_DIR` and `GHOSTTY_ZIG_SYSTEM_DIR`. Evaluate those
-commands before building offline. This is also the fallback when
-`deps.files.ghostty.org` is unavailable.
+**The pin.** `scripts/ghostty-pin` holds three lines: the libghostty-rs rev,
+`d2036baeb605d31d09a9e2ba6d0c923e04c34d54`; the Ghostty commit that rev's
+`libghostty-vt-sys` build script builds (`GHOSTTY_COMMIT`),
+`3425025e585a3403340d4dc6d65132f42e05e605`; and the SHA-256 of GitHub's
+archive of that commit. When you bump libghostty-rs, update all three, the
+"This rev pins Ghostty" comment in `terminal/runtime/Cargo.toml` and the
+commit in this page and `licenses/terminal/README.md`.
+`scripts/test-ghostty-offline-env.sh` fails when the pin's rev differs from
+the terminal manifests or lockfiles or when the commit differs from that
+comment. Take the digest from two downloads that agree:
+
+```sh
+curl -fsSL https://github.com/ghostty-org/ghostty/archive/<commit>.tar.gz | shasum -a 256
+```
+
+The task checks the archive against the digest before it unpacks it, also
+when it reuses one it downloaded earlier. On a mismatch it deletes the
+archive and fails with both digests. GitHub generates these archives on
+demand, so a change on its side can change their bytes. If the digest
+changes without a new commit, check that the new archive's files match the
+commit (for example against a `git clone` at it) before you record the new
+digest.
+
+**The cache** is `~/.cache/subspace/zig-deps`
+(`$XDG_CACHE_HOME/subspace/zig-deps` when set; `SUBSPACE_ZIG_DEPS_DIR`
+overrides it). It must be an absolute path on a file system with hard
+links: the task refuses a relative path, builds ignore it, and the task
+stops before downloading anything where hard links fail. It is outside `target/`, which a build cache can sweep,
+and every checkout and worktree shares it. Everything a pin produces is
+named by its commit and archive digest, so checkouts pinning different
+digests of one commit, as while a regenerated archive's digest is recorded,
+never share a path. It holds:
+
+- `ghostty-<commit>-<sha256>.tar.gz`, the archive;
+- `ghostty-<commit>-<sha256>`, the source tree, unpacked from the verified
+  archive;
+- `zig-packages`, the Zig packages, each in a directory named by its Zig
+  package hash, which covers its contents, so pins share them safely and a
+  build never picks up another pin's packages. `tarballs` and `cache` (Zig's
+  own) hold what they were unpacked from. A download that is not an
+  archive at all, such as an error page a proxy served, is removed so that
+  the next fill downloads it again;
+- `.complete-<commit>-<sha256>`, the marker the task writes last. Its first
+  line names the archive digest, and each further line one package in
+  `zig-packages` that the source's manifests name, directly or through
+  another package.
+
+Only this version of the task writes the archive, the tree, the marker and
+`zig-packages`, and the archive and the tree only from bytes with the
+pinned digest, so what an earlier version left, such as an unverified tree
+or a half-unpacked package in its `system` store, is never used. The task
+takes its own hard link to the cached archive, verifies that and unpacks
+that, so the bytes it unpacks are the bytes it checked whatever another run
+does meanwhile. A cached archive without its digest is damaged, since the
+task publishes none: it is removed and downloaded again. A source tree
+without `build.zig` is damaged too, but another run may be using it, so the
+task fails and names it; remove it and run the task again. A downloaded
+archive without the pinned digest fails the task with both digests.
+
+The cache is ready for the pin when the marker names the pinned digest, the
+source tree has its `build.zig` and every package the marker lists is in
+`zig-packages`. Anything else, such as a missing package or a malformed
+line, means not ready. The task does nothing when the cache is ready and
+fills it again otherwise, from the archive when it is still there.
+
+Several checkouts can run the task at once and the cache stays whole. Each
+run unpacks and downloads into `.stage-<pid>-…` names of its own and
+publishes each archive with a hard link and each tree and package with a
+rename, neither of which replaces or nests in what another run published
+first; the loser keeps the other run's copy, which holds the same verified
+bytes. A marker is replaced only
+when it does not show the cache ready. A run removes, as far as it can, only
+staging whose process has exited. A lock, `.lock` in the cache holding its
+holder's pid, saves a second run the same downloads: it waits up to a minute
+(`SUBSPACE_ZIG_DEPS_LOCK_WAIT` seconds) and then fills the cache alongside
+the first, and it takes over a lock whose process has gone without waiting.
+Publishing uses Perl, which macOS and the usual Linux distributions
+include. The offline cache is off on Windows for now: the task stops at once
+and builds fetch as before. To start again, or after a damaged source tree,
+remove the cache, `rm -rf ~/.cache/subspace/zig-deps`, or just the tree the
+task names.
+
+**Using the cache.** `mise.terminal.toml` sources
+`scripts/ghostty-offline-env.sh` for every command run with
+`MISE_ENV=terminal`. When the cache is ready for the pinned commit it sets
+`GHOSTTY_SOURCE_DIR` to the cached source and `GHOSTTY_ZIG_SYSTEM_DIR` to
+the package store, unless you set it. It never uses another commit's source,
+because the crate's bindings are generated for the pinned one. If you set
+`GHOSTTY_SOURCE_DIR` yourself it sets nothing: the cached packages belong to
+the pinned source, not yours.
 
 
 ## Keys

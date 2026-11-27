@@ -199,35 +199,7 @@ run = "cargo clean"
 
 [tasks.terminal-deps]
 description = "Download Ghostty and prefetch its Zig dependencies for offline Terminal builds"
-shell = "bash -c"
-run = '''
-set -euo pipefail
-root="$(pwd)"
-deps="${SUBSPACE_ZIG_DEPS_DIR:-$root/target/zig-deps}"
-commit=3425025e585a3403340d4dc6d65132f42e05e605
-source="$deps/ghostty-$commit"
-archive="$deps/ghostty-$commit.tar.gz"
-mkdir -p "$deps"
-if [[ ! -d "$source" ]]; then
-  if [[ ! -f "$archive" ]]; then
-    curl --fail --silent --show-error --location \
-      --connect-timeout 10 --max-time 45 --retry 2 --retry-delay 2 \
-      --retry-max-time 100 --retry-all-errors \
-      -o "$archive.partial" "https://github.com/ghostty-org/ghostty/archive/$commit.tar.gz"
-    mv "$archive.partial" "$archive"
-  fi
-  tmp="$deps/.ghostty-$commit.$$"
-  rm -rf "$tmp"
-  mkdir "$tmp"
-  tar -xzf "$archive" -C "$tmp" --strip-components=1
-  mv "$tmp" "$source"
-fi
-bash scripts/prefetch-zig-deps.sh "$source" "$deps"
-# Resolve the actual library build graph offline before publishing this cache.
-# Optional platform packages may be unavailable, but required packages may not.
-(cd "$source" && zig build --system "$deps/system" --global-cache-dir "$deps/cache" \
-  -Demit-lib-vt=true -Demit-xcframework=false -Dapp-runtime=none --help >/dev/null)
-'''
+run = "bash scripts/terminal-deps.sh"
 
 [tasks.check-terminal]
 description = "Check the excluded Terminal crates with Zig enabled"

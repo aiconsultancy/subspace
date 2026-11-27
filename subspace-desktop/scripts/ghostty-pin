@@ -1,0 +1,8 @@
+# The Ghostty build the terminal pins, read by scripts/ghostty-cache.sh: the
+# libghostty-rs rev in terminal/runtime/Cargo.toml and the lockfiles, the
+# Ghostty commit its libghostty-vt-sys build script builds (GHOSTTY_COMMIT),
+# and the SHA-256 of GitHub's archive of that commit. Update all three
+# together; scripts/test-ghostty-offline-env.sh fails when they drift.
+libghostty-rs d2036baeb605d31d09a9e2ba6d0c923e04c34d54
+ghostty 3425025e585a3403340d4dc6d65132f42e05e605
+ghostty-sha256 268760f13121b4f4cd33456e1b216415a8c0c5a8c62ff2b87a14ee4f74bd7590

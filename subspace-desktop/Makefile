@@ -5,6 +5,10 @@ KEYCHAIN_PROFILE ?= subspace-notary
 FEATURES ?=
 OUT ?=
 STEPS ?= wait:5000;shot:main
+# Fill the offline Ghostty cache before a build with the terminal. A failure
+# (no network, GitHub down) does not stop the build, which can still use
+# Cargo's and Zig's caches or the caller's own GHOSTTY_* variables.
+TERMINAL_DEPS = MISE_ENV=terminal mise run terminal-deps || echo "offline Ghostty cache could not be filled; building without it" >&2
 
 .PHONY: help build update-deps test interfaces run capture check check-terminal format fmt-check lint package package-macos release-macos package-macos-ci install-macos generate-icons check-icons cache-stats clean
 
@@ -35,15 +39,18 @@ interfaces: ## Check the product CLI without a GUI or live services
 
 run: FEATURES = terminal
 run: ## Run the debug desktop app with the terminal (FEATURES= without it)
+	$(if $(findstring terminal,$(FEATURES)),$(TERMINAL_DEPS))
 	MISE_ENV=$(if $(findstring terminal,$(FEATURES)),terminal) SUBSPACE_BUILD_FEATURES="$(FEATURES)" mise run run -- $(ARGS)
 
 .PHONY: run-unreleased
 run-unreleased: FEATURES = terminal unreleased-spaces
 run-unreleased: ## Run the debug app with the terminal and the unreleased Spaces, Space Lab and the Component gallery (off until turned on)
+	$(if $(findstring terminal,$(FEATURES)),$(TERMINAL_DEPS))
 	MISE_ENV=$(if $(findstring terminal,$(FEATURES)),terminal) SUBSPACE_BUILD_FEATURES="$(FEATURES)" mise run run -- $(ARGS)
 
 capture: ## macOS/Linux screenshots from an isolated fixture build, with the terminal (OUT=dir STEPS='wait:5000;shot:main')
 	@test -n "$(OUT)" || { echo "usage: make capture OUT=<dir> [STEPS='...']" >&2; exit 2; }
+	$(TERMINAL_DEPS)
 	MISE_ENV=terminal mise run capture -- "$(OUT)" '$(STEPS)'
 
 check: ## Architecture, format check, lint, Rust tests and script fixtures
@@ -54,6 +61,7 @@ licence-check: ## Check Rust release licences and copied notices
 	mise run licence-check
 
 check-terminal: ## Check the excluded Terminal crates with Zig enabled
+	$(TERMINAL_DEPS)
 	MISE_ENV=terminal mise run check-terminal
 
 format: ## Format the Rust sources
@@ -99,6 +107,7 @@ package-macos-ci: ## Build a signed release app from CI secrets, reading missing
 
 install-macos: FEATURES = terminal
 install-macos: ## Build and install the app with the terminal (FEATURES= without it, TARGET=...)
+	$(if $(findstring terminal,$(FEATURES)),$(TERMINAL_DEPS))
 	MISE_ENV=$(if $(findstring terminal,$(FEATURES)),terminal) SUBSPACE_BUILD_FEATURES="$(FEATURES)" mise run install-macos -- $(if $(TARGET),"$(TARGET)")
 
 generate-icons: ## Generate native application icons from the canonical SVG
