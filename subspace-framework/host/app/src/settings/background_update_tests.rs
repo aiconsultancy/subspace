@@ -151,7 +151,10 @@ fn failed_settings_save_keeps_background_preferences(cx: &mut TestAppContext) {
         .update(cx, |settings, window, cx| {
             assert!(settings.save(window, cx).is_err());
             assert_eq!(refresh::preferences("future", cx), Preferences::default());
-            assert!(super::background_updates::save(&mut settings.background_updates, cx).is_err());
+            assert!(
+                super::background_updates::save(&mut settings.background_updates, |_| {}, cx)
+                    .is_err()
+            );
             assert_eq!(refresh::preferences("future", cx), Preferences::default());
             settings.restore_preview(window, cx).unwrap();
             assert_eq!(refresh::preferences("future", cx), Preferences::default());

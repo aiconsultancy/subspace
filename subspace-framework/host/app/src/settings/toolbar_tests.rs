@@ -186,6 +186,35 @@ fn the_navigator_title_switch_is_a_draft_until_save(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_failed_save_keeps_the_live_navigator_title(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let settings = open_settings(root.path(), cx);
+    // The state file cannot be written over a folder.
+    let state_file = root.path().join("state.json");
+    let _ = std::fs::remove_file(&state_file);
+    std::fs::create_dir(&state_file).unwrap();
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.board_navigation.navigator_title = false;
+            assert!(settings.save(window, cx).is_err());
+            assert!(navigator_title::shown(cx), "the live title is unchanged");
+            // The write Save stages the title in, failing on its own.
+            let stage = settings.board_navigation.stage_title();
+            assert!(super::background_updates::save(&mut [], stage, cx).is_err());
+            assert!(
+                navigator_title::shown(cx),
+                "a failed write restores the title"
+            );
+            assert_eq!(prefs::get(cx, "layout.navigator-title"), None);
+            assert!(
+                !settings.board_navigation.navigator_title,
+                "the draft is kept"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui_kit::test]
 fn cancelled_navigation_draft_does_not_change_preferences(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();
     let settings = open_settings(root.path(), cx);

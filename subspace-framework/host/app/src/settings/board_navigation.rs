@@ -1,7 +1,7 @@
 use super::Settings;
 use super::form::{Choice, choice};
 use crate::app::navigation::{self, NavigationMode};
-use gpui_kit::{Context, Window};
+use gpui_kit::{App, Context, Window};
 use subspace_dashboard::workspace::navigator_title;
 
 pub(super) struct NavigationDraft {
@@ -56,10 +56,24 @@ impl NavigationDraft {
             navigation::save_collapsed(cx, self.collapsed);
             self.initial_collapsed = self.collapsed;
         }
-        if self.navigator_title != self.initial_navigator_title {
-            navigator_title::set_shown(self.navigator_title, cx);
-            self.initial_navigator_title = self.navigator_title;
+    }
+
+    /// Applies the drafted navigator title choice, if it changed. Settings
+    /// runs it inside the state file write, which restores the preferences
+    /// if the write fails, so a failed write keeps the live title.
+    pub(super) fn stage_title(&self) -> impl FnOnce(&mut App) + use<> {
+        let change =
+            (self.navigator_title != self.initial_navigator_title).then_some(self.navigator_title);
+        move |cx| {
+            if let Some(shown) = change {
+                navigator_title::set_shown(shown, cx);
+            }
         }
+    }
+
+    /// Records that the state file now holds the drafted title choice.
+    pub(super) fn title_saved(&mut self) {
+        self.initial_navigator_title = self.navigator_title;
     }
 }
 
