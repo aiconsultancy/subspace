@@ -460,6 +460,23 @@ class FleetPolicyTests(unittest.TestCase):
             self.assertIn(runtime.SUBSPACE_MCP_GRANT, backend["permissions"])
             self.assertEqual(backend["permissions"].count(runtime.SUBSPACE_MCP_GRANT), 1)
 
+    def test_subspace_filing_guidance_is_in_both_officer_prompts(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        plain_cfg = validate(dict(config, api={"url": "http://127.0.0.1:3000"}), api_secrets())
+        for person in cfg["members"]:
+            with self.subTest(role=person["role"]):
+                documents = roles.role_documents(cfg, person, None, Path("/home"))
+                for prompt in (documents["instructions"], documents["claudePrompt"]):
+                    filing = prompt.split("## Filing Subspace issues\n", 1)[1].split("\n## ", 1)[0]
+                    self.assertIn("includeArchived: true", filing)
+                    self.assertIn("filters.parent", filing)
+                    self.assertIn("agree which officer will file it", filing)
+                plain = roles.role_documents(plain_cfg, person, None, Path("/home"))
+                self.assertNotIn("## Filing Subspace issues", plain["instructions"])
+                self.assertNotIn("## Filing Subspace issues", plain["claudePrompt"])
+
     def test_claude_officers_get_the_api_server_and_skill_in_their_prompt(self):
         config = example_config()
         config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
