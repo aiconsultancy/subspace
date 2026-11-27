@@ -239,13 +239,18 @@ closes it, as does moving to another tier; focus returns to the button.
   freed for the other. It is a cache budget
   only: nothing is hidden or cut to keep within it. The snapshot's own
   content is charged first and is never freed. Items read whole are charged
-  twice (the item and the copy drawn from it); a part is charged with the
-  one section it draws, at most 64 KiB as shown. What is drawn is charged
-  as it shows, markers included. An item read whole must fit beside the rest
-  with both copies; otherwise it is read in parts. Past the budget, the
+  twice (the item and the copy drawn from it), plus, after **Show**, what
+  their section costs beyond that; a part is charged with the one section
+  it draws, at most 64 KiB as shown. What is drawn is charged as it shows,
+  markers included. An item read whole must fit beside the rest with both
+  copies; otherwise it is read in parts. One already on show that stops
+  fitting (the snapshot grew, **Show** needs more, or its newest version is
+  too large) is read in parts from the part holding what it shows, and its
+  section stays on show until that part arrives. Past the budget, the
   least recently opened item read is freed and offers **Load in full**
-  again. A body with no room left shows "Not drawn, to stay within the
-  view's memory budget" with its size and **Show**; its turn stays open.
+  again; this frees only the view's copy, never the item on the gateway.
+  A body with no room left shows "Not drawn, to stay within the view's
+  memory budget" with its size and **Show**; its turn stays open.
   Bodies are drawn in this order: those asked for with **Show** (the latest
   first), then those of turns opened by hand (the turn opened last first),
   then those of the running turn, which opens by default. The latest thing
@@ -254,13 +259,17 @@ closes it, as does moving to another tier; focus returns to the button.
   goes back to its caption. A body still larger than the room draws one
   section at a time. The view can go past 64 MiB only by its floor: the
   snapshot's content, plus one incoming part (at most 256 KiB) and one
-  drawn section (at most 64 KiB). A loaded item is not read again
+  drawn section (at most 64 KiB), which, while the part is read, is the
+  one it replaces. A loaded item is not read again
   by itself when it changes, as a running tool changes often: it says a
   newer version is on the gateway and offers **Load the latest**; its body
-  stays as it is, so a selection in it survives. Items read belong to the
-  stream's generation: when it changes, they are dropped and their reads
-  stop. When a tool call has both parsed
-  and streamed input, both show. Fields an item, its error or an output
+  stays as it is, so a selection in it survives. While the latest is read,
+  even in parts, the body on show stays, charged as before beside the
+  incoming part, and stays with the error and **Try again** if the read
+  fails. Items read belong to the stream's generation: when it changes,
+  they are dropped and their reads stop; a snapshot read again in the same
+  generation keeps them. When a tool call has both parsed and streamed
+  input, both show. Fields an item, its error or an output
   part carries beyond those laid out show as **Other fields**, beside a
   text part's text in a long one's sections too. An item or content of a
   kind this console doesn't know, or that fails its checks, shows as JSON.

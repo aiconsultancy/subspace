@@ -36,15 +36,18 @@ export function createBudget(limit) {
   }
 
   /**
-   * The least recently used entry that may be freed and that `skip` does
-   * not name, or null. An entry that yields (a whole read grown into free
-   * room) goes before any other.
+   * An entry's place in the order entries are freed in, lowest first: least
+   * recently used first, except that an entry that yields (a whole read
+   * grown into free room) goes before any other.
    */
+  const age = (entry) => (entry.yields ? entry.used - Number.MAX_SAFE_INTEGER : entry.used);
+
+  /** The first entry in that order that may be freed and that `skip` does not name, or null. */
   function oldestKey(skip) {
     let oldest = null;
     let oldestUsed = Infinity;
     for (const [key, entry] of entries) {
-      const used = entry.yields ? entry.used - Number.MAX_SAFE_INTEGER : entry.used;
+      const used = age(entry);
       if (!kept(key) && !skip(key) && used < oldestUsed) {
         oldest = key;
         oldestUsed = used;
@@ -61,16 +64,25 @@ export function createBudget(limit) {
     return () => entry.evict?.(key);
   }
 
-  /** Free least recently used entries, never a kept one or `keep`, until `bytes` more fit; returns their eviction calls. */
-  function makeRoom(bytes, keep) {
-    const freed = [];
-    while (total + bytes > limit) {
-      const oldest = oldestKey((key) => key === keep);
-      if (oldest === null) break;
-      freed.push(take(oldest));
+  /**
+   * The entries to free, in `age` order and never a kept one or `key`, for
+   * `bytes` under `key` (replacing what it holds) to fit: the one order both
+   * `reserve` and `wouldFree` use.
+   */
+  function freeOrder(key, bytes) {
+    let held = total - (entries.get(key)?.bytes ?? 0);
+    const order = [];
+    const others = [...entries].filter(([other]) => other !== key && !kept(other)).sort((a, b) => age(a[1]) - age(b[1]));
+    for (const [other, entry] of others) {
+      if (held + bytes <= limit) break;
+      order.push(other);
+      held -= entry.bytes;
     }
-    return freed;
+    return order;
   }
+
+  /** Free least recently used entries, never a kept one or `keep`, until `bytes` more fit; returns their eviction calls. */
+  const makeRoom = (bytes, keep) => freeOrder(keep, bytes).map(take);
 
   function release(key) {
     const entry = entries.get(key);
@@ -106,6 +118,16 @@ export function createBudget(limit) {
     },
     /** Whether `bytes` under `key` fit within `limit` beside what is never freed for it. */
     fits: (key, bytes) => fixedBeside(key) + bytes <= limit,
+    /**
+     * The keys that holding `bytes` under `key` would free, least recently
+     * used first, freeing nothing: so an owner can let go of an entry in its
+     * own way before `reserve` would evict it.
+     *
+     * @param {string} key
+     * @param {number} bytes
+     * @returns {string[]}
+     */
+    wouldFree: (key, bytes) => freeOrder(key, bytes),
     /**
      * Hold `bytes` under `key`, replacing what it held, after freeing the
      * least recently used other entries until it fits. Each freed entry's
@@ -170,8 +192,9 @@ export function createBudget(limit) {
      * limit, room, order and latest request as every other view's, its keys
      * kept apart under `prefix`. Each view frees the others' least recently
      * used entries as it frees its own, and never the latest request,
-     * whichever view made it. `clear` gives up this view's keys only, and
-     * its claim to the latest request.
+     * whichever view made it. `wouldFree` names only this view's keys: the
+     * others' entries are refitted or freed by their own views. `clear`
+     * gives up this view's keys only, and its claim to the latest request.
      *
      * @param {string} prefix
      */
@@ -192,6 +215,7 @@ export function createBudget(limit) {
         bytes: (key) => budget.bytes(outer(key)),
         request: (key) => budget.request(outer(key)),
         fits: (key, bytes) => budget.fits(outer(key), bytes),
+        wouldFree: (key, bytes) => budget.wouldFree(outer(key), bytes).filter(own).map(inner),
         reserve: (key, bytes, evict, options) => budget.reserve(outer(key), bytes, evictOf(evict), options),
         freeOldest: (skip) => budget.freeOldest((key) => own(key) && skip(inner(key))),
         touch: (key) => budget.touch(outer(key)),
