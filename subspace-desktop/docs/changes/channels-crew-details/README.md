@@ -67,7 +67,8 @@ its usual handling. Fleet and ship reads still allow 8 MiB.
   keyboard focus, clearing detail on a buffer change, and paging to the end
   of a 64,000-code-point progress field at the minimum inspector width
   without losing control markers. The detail render tests check the cut marks
-  and notes, and that unconfirmed replies keep the supplied text pageable.
+  and notes, their removal on receipt of full text, and paging of unchanged
+  text returned by gateways that don't confirm completeness.
 
 ### Captures
 
@@ -76,18 +77,22 @@ the fictional Fleet API and loopback IRC fixtures described in
 [Desktop capture](../../capture.md). The Ship tab stays beside the open
 conversation as the inspector moves from the roster to a crew member.
 
-![The Ship tab with Lyra’s crew roster beside the conversation](evidence/ship-crew-roster.png)
+![Lyra’s crew roster with the shared crew rows beside the conversation](evidence/ship-crew-roster.png)
 
-![Quill’s crew details with a compact progress pager](evidence/crew-detail-quill.png)
+![Quill’s confirmed crew detail, with the pager below Progress](evidence/crew-detail-quill.png)
+
+![An older successful reply shows all the text it supplied and one note about completeness](evidence/crew-detail-legacy.png)
+
+![A missing crew-detail route falls back to roster data and marks the cut side of the progress tail](evidence/crew-detail-roster-preview.png)
 
 ![The open crew view shows the Settings › Fleets hint after the fleet token is cleared and the roster is unavailable](evidence/crew-detail-no-token.png)
 
-Quill's capture shows the updated pager using a progress field that exceeds
-one page. The Fleet API fixture ran with `--tick 0` so the task did not advance
-during the capture. The roster and missing-token captures show unchanged
-states. The target branch has no crew detail view to capture. The Fleet API
-fixture defaults to confirmed detail and can also simulate an older HTTP 200
-reply (`--crew-detail-mode old-200`) or a missing route (`not-found`).
+Quill's confirmed progress exceeds one page. The Fleet API fixture ran with
+`--tick 0` so the task did not advance during the capture. The missing-token
+view did not change. The target branch has no crew detail view to capture.
+The Fleet API fixture defaults to confirmed detail and can also simulate an
+older HTTP 200 reply (`--crew-detail-mode old-200`) or a missing route
+(`not-found`).
 
 ## Space checklist
 
