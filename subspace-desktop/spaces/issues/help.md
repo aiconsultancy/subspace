@@ -208,8 +208,12 @@ value inline, keeping the issue page visible. Pencils show when the pointer is
 over their row or section, or when you Tab to them. Choose the checkmark to save or
 × to cancel. Command/Ctrl+Enter saves; Escape closes a picker before cancelling
 the field. The Description pencil opens the full editor.
-Choose **Markdown** for syntax highlighting or **Plain text** to edit the same
-description without highlighting. Switching views preserves your draft.
+
+Edit the description as formatted text in **Markdown**. Switch to **Source**
+to edit the same draft with the Markdown characters visible and highlighted.
+Formatted edits can normalise the document’s Markdown syntax. Use **Source**
+when you want to keep its exact punctuation and spacing. Tab moves to the
+next form control.
 
 A new issue needs a **Summary**: one line of plain text, up to 300 characters,
 which explains the problem the issue solves. The count below the field updates

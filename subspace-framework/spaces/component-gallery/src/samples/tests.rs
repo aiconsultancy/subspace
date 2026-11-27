@@ -166,6 +166,7 @@ fn choice_and_input_builders_caption_every_state(cx: &mut TestAppContext) {
             inputs::role_inputs(g, t, w, cx),
             inputs::labelled_inputs(g, t, w, cx),
             inputs::code_editor(g, t, w, cx),
+            inputs::markdown_field(g, t, w, cx),
             inputs::forms::form_fields(g, t, w, cx),
             inputs::forms::headings(g, t, w, cx),
             inputs::forms::notes(g, t, w, cx),

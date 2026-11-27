@@ -1,17 +1,17 @@
 //! Retained issue draft construction and projections.
 use super::target::{NewSubissue, chosen_project, editable_detail};
 use super::{
-    DESCRIPTION_MARKDOWN, IssueDetail, IssueEditor, IssueWriteScope, Issues, Phase, Properties,
+    IssueDetail, IssueEditor, IssueWriteScope, Issues, MarkdownEditor, Phase, Properties,
     TextValues, input, input_changed,
 };
-use gpui_kit::component::input::{EditorState, InputEvent};
-use gpui_kit::{App, AppContext as _, Context, Entity, ScrollHandle, Window};
+use gpui_kit::{App, AppContext as _, Context, Entity, ScrollHandle, Subscription, Window};
 use std::collections::HashMap;
 use subspace_api_client::{
     hub::HubSnapshot,
     issue_writes::{CreateKey, IssueChanges},
     model::Project,
 };
+use subspace_framework::dashboard::markdown_editor::MarkdownEditorEvent;
 
 pub(super) struct Opening {
     scope: IssueWriteScope,
@@ -79,16 +79,13 @@ impl IssueEditor {
         );
         let due = input(&initial.due, "YYYY-MM-DD", window, cx);
         let parent = input(&initial.parent, "Issue identifier, e.g. SUB-42", window, cx);
-        let description = description_input(initial.description.clone(), window, cx);
+        let (description, description_subscription) =
+            description_editor(initial.description.clone(), window, cx);
         let mut subscriptions: Vec<_> = [&title, &summary, &due, &parent]
             .into_iter()
             .map(|state| cx.subscribe_in(state, window, input_changed))
             .collect();
-        subscriptions.push(cx.subscribe(&description, |this, _, event, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.editor_changed(cx);
-            }
-        }));
+        subscriptions.push(description_subscription);
         let previous_focus = window.focused(cx);
         title.update(cx, |input, cx| input.focus(window, cx));
         Self {
@@ -250,20 +247,15 @@ fn opening_properties(issues: &Issues, project: &str, basis: Option<&IssueDetail
     properties
 }
 
-fn description_input(
+fn description_editor(
     value: String,
     window: &mut Window,
     cx: &mut Context<Issues>,
-) -> Entity<EditorState> {
-    cx.new(|cx| {
-        EditorState::new(window, cx)
-            .language(DESCRIPTION_MARKDOWN)
-            .line_number(false)
-            .folding(false)
-            .indent_guides(false)
-            .auto_close(false)
-            .smart_indent(false)
-            .placeholder("Write an issue description")
-            .default_value(value)
-    })
+) -> (Entity<MarkdownEditor>, Subscription) {
+    let editor = cx.new(|cx| MarkdownEditor::new(value, "Write an issue description", window, cx));
+    let subscription = cx.subscribe_in(&editor, window, |this, _, event, window, cx| match event {
+        MarkdownEditorEvent::Changed => this.editor_changed(cx),
+        MarkdownEditorEvent::SubmitRequested => this.submit_issue_editor(window, cx),
+    });
+    (editor, subscription)
 }

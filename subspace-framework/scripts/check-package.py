@@ -47,6 +47,10 @@ THIRD_PARTY = {
         "assets/opencode.svg": "assets/PROVENANCE.md",
         "assets/gemini.svg": "assets/PROVENANCE.md",
     },
+    "subspace-dashboard": {
+        "vendor/markdown-editor/src/*.rs": "vendor/markdown-editor/LICENSE-APACHE",
+        "vendor/markdown-editor/assets/icons/*.svg": "vendor/markdown-editor/assets/icons/LICENSE-LUCIDE",
+    },
     "subspace-lucide": {
         "build.rs": "LICENSE",
         "src/lib.rs": "LICENSE-LUCIDE",

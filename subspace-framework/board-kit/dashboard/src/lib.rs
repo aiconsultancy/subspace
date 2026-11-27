@@ -43,6 +43,12 @@ pub mod icon_button;
 pub mod images;
 pub mod links;
 pub mod list;
+pub mod markdown_editor;
+// Keep the bundled editor's upstream API intact for its own tests and updates.
+#[allow(dead_code, unused_imports)]
+#[path = "../vendor/markdown-editor/src/lib.rs"]
+mod markdown_engine;
+extern crate gpui_kit as gpui;
 pub mod measure;
 pub mod media;
 pub mod menu;

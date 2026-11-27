@@ -1,5 +1,6 @@
 use super::{
-    board_with_hub, has, issue, offline_with, open_editor, patch_bodies, render, settle_board,
+    board_with_hub, has, issue_edit_route, offline_with, open_editor, patch_bodies, render,
+    settle_board,
 };
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{TestAppContext, VisualTestContext};
@@ -69,11 +70,7 @@ pub(super) fn wait_for_option(cx: &mut VisualTestContext, ix: usize) {
 
 #[gpui_kit::test]
 fn description_and_due_edits_send_sparse_fields_and_keep_mentions(cx: &mut TestAppContext) {
-    let fixture = offline_with(|r| match (r.method.as_str(), r.path.as_str()) {
-        ("PATCH", "/api/v1/issues/2") => Some((200, issue("Original", 2))),
-        ("GET", "/api/v1/issues/SUB-2" | "/api/v1/issues/2") => Some((200, issue("Original", 1))),
-        _ => None,
-    });
+    let fixture = offline_with(issue_edit_route);
     let (board, cx) = open_editor(&fixture, cx);
     let description =
         "## Outcome\n\nKeep @[Ada Fixture](member:12345678-1234-1234-1234-123456789abc)";
@@ -119,8 +116,38 @@ fn description_and_due_edits_send_sparse_fields_and_keep_mentions(cx: &mut TestA
     );
 }
 
+#[gpui_kit::test]
+fn the_default_markdown_editor_saves_a_formatted_description(cx: &mut TestAppContext) {
+    let fixture = offline_with(issue_edit_route);
+    let (board, cx) = open_editor(&fixture, cx);
+    cx.update(|w, cx| {
+        assert_eq!(
+            w.find(("issue-description-mode", 0_usize)).checked(),
+            Some(true)
+        );
+        w.click("issue-description-mode:formatted", cx);
+        w.press(subspace_framework::dashboard::secondary!("a"), cx);
+        w.input("A formatted outcome", cx);
+        w.press(subspace_framework::dashboard::secondary!("a"), cx);
+        w.press(subspace_framework::dashboard::secondary!("b"), cx);
+        let editing = w.focused(cx).expect("Markdown editor has focus");
+        w.press("tab", cx);
+        assert_ne!(w.focused(cx).as_ref(), Some(&editing));
+        w.click("issue-description-mode:formatted", cx);
+        assert_eq!(w.focused(cx), Some(editing));
+    });
+    render(cx);
+    cx.update(|w, cx| w.press(subspace_framework::dashboard::secondary!("enter"), cx));
+    settle_board(&board, cx, |b| b.editor.is_none());
+    assert_eq!(
+        patch_bodies(&fixture),
+        [json!({"version": 1, "description": "**A formatted outcome**"})]
+    );
+}
+
 pub(super) fn tab_to_visible_field(cx: &mut VisualTestContext, id: &'static str) {
-    for _ in 0..16 {
+    // The editor toolbar adds Tab stops before the issue properties.
+    for _ in 0..32 {
         if cx.update(|window, _| window.find(id).focused() == Some(true)) {
             render(cx);
             cx.update(|window, _| {

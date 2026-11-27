@@ -202,6 +202,7 @@ record. [Change records](changes/README.md) explains the convention.
 
 - [Public repository examples](changes/public-repository-examples/README.md):
   fictional deployment settings, tracker references and fixture identifiers.
+- [Markdown issue descriptions](changes/markdown-description-editor/README.md): formatted editing and highlighted Source in the issue form.
 - [Wider issue editor](changes/wider-issue-editor/README.md): a larger issue form with Markdown and Plain text editing.
 - [Issue Activity data](changes/issue-activity-data/README.md) and
   [Issue Activity pane](changes/issue-activity-pane/README.md): data retrieval,

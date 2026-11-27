@@ -3,9 +3,10 @@
 
 pub(crate) mod forms;
 
-use gpui_kit::{Context, Window, px};
+use gpui_kit::{Context, Styled as _, Window, px};
 use subspace_dashboard::Tokens;
 use subspace_dashboard::fields::{self, FieldLayout, InputRole, LabelledInput};
+use subspace_dashboard::markdown_editor::MarkdownField;
 
 use super::{Sample, bounded, sample, sized};
 use crate::ComponentGallery;
@@ -15,6 +16,7 @@ const FIELDS: &str = "board-kit/dashboard/src/fields.rs";
 const INPUT_WIDTH: f32 = 240.;
 const LABELLED_WIDTH: f32 = 320.;
 const LABEL_WIDTH: f32 = 96.;
+const MARKDOWN_WIDTH: f32 = 560.;
 const EDITOR_SIZE: (f32, f32) = (320., 120.);
 
 pub(crate) const ITEMS: &[Item] = &[
@@ -35,8 +37,15 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "fields::code_editor",
         source: FIELDS,
-        used_in: "A code editor for structured text such as JSON; no board uses it at present.",
+        used_in: "Structured text such as JSON and the Markdown editor’s Source mode.",
         samples: code_editor,
+        kit: None,
+    },
+    Item {
+        name: "markdown_editor::MarkdownField",
+        source: "board-kit/dashboard/src/markdown_editor/view.rs",
+        used_in: "Issue descriptions. Edit formatted Markdown or switch to highlighted Source.",
+        samples: markdown_field,
         kit: None,
     },
     Item {
@@ -211,5 +220,25 @@ pub(super) fn code_editor(
             tokens,
             fields::code_editor(&gallery.retained.editor, "JSON sample"),
         ),
+    )]
+}
+
+pub(super) fn markdown_field(
+    gallery: &ComponentGallery,
+    _: &Tokens,
+    _: &mut Window,
+    _: &mut Context<ComponentGallery>,
+) -> Vec<Sample> {
+    vec![sample(
+        "Markdown and Source",
+        sized(
+            MARKDOWN_WIDTH,
+            MarkdownField::new(
+                &gallery.retained.markdown,
+                "gallery-markdown-mode",
+                "Description",
+            ),
+        )
+        .max_w_full(),
     )]
 }

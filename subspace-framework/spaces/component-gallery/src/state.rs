@@ -5,6 +5,7 @@ use gpui_kit::component::color_picker::ColorPickerState;
 use gpui_kit::component::input::{EditorState, InputState};
 use gpui_kit::component::select::{SearchableVec, SelectState};
 use gpui_kit::{App, AppContext as _, Entity, Window};
+use subspace_dashboard::markdown_editor::MarkdownEditor;
 use subspace_dashboard::native_grid::{GridCell, GridSnapshot, NativeGrid};
 use subspace_dashboard::slider::{NumericSliderSpec, NumericSliderState};
 
@@ -63,6 +64,7 @@ pub(crate) struct Retained {
     pub(crate) disclosure: subspace_dashboard::animated_collapsible::Disclosure,
     pub(crate) inputs: Inputs,
     pub(crate) editor: Entity<EditorState>,
+    pub(crate) markdown: Entity<MarkdownEditor>,
     pub(crate) sliders: Sliders,
     pub(crate) selects: Selects,
     pub(crate) grid: Option<Entity<NativeGrid>>,
@@ -104,6 +106,14 @@ impl Retained {
                 error: text(window, cx, ""),
             },
             editor: editor(window, cx),
+            markdown: cx.new(|cx| {
+                MarkdownEditor::new(
+                    "## Release notes\n\nEdit **formatted text** directly.\n\n- Check the draft\n- Share it with the team",
+                    "Write release notes",
+                    window,
+                    cx,
+                )
+            }),
             sliders: Sliders {
                 value: slider(window, cx, false),
                 disabled: slider(window, cx, true),

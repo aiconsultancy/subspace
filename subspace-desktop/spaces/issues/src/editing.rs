@@ -12,7 +12,7 @@ mod target;
 mod text;
 pub(crate) mod view;
 
-use gpui_kit::component::input::{EditorState, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::{App, Context, Entity, FocusHandle, ScrollHandle, Subscription, Window};
 use std::collections::HashMap;
 use subspace_api_client::{
@@ -27,8 +27,7 @@ use properties::Properties;
 use target::{NewSubissue, editable_detail};
 use text::{TextValues, input, input_changed};
 
-const DESCRIPTION_MARKDOWN: &str = "markdown";
-const DESCRIPTION_PLAIN: &str = "text";
+use subspace_framework::dashboard::markdown_editor::MarkdownEditor;
 
 pub(crate) struct IssueEditor {
     inline: Option<EditTarget>,
@@ -41,7 +40,7 @@ pub(crate) struct IssueEditor {
     title: Entity<InputState>,
     summary: Entity<InputState>,
     summary_validation: bool,
-    description: Entity<EditorState>,
+    description: Entity<MarkdownEditor>,
     scroll: ScrollHandle,
     due: Entity<InputState>,
     parent: Entity<InputState>,

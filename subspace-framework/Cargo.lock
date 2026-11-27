@@ -8576,6 +8576,7 @@ dependencies = [
 name = "subspace-dashboard"
 version = "0.8.0"
 dependencies = [
+ "anyhow",
  "base64 0.23.1",
  "chrono",
  "gpui-kit",
@@ -8593,6 +8594,7 @@ dependencies = [
  "subspace-product",
  "subspace-search",
  "tempfile",
+ "unicode-segmentation",
  "url",
 ]
 

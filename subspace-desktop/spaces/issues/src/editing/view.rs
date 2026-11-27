@@ -72,9 +72,7 @@ pub(crate) fn render(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) 
             },
         ))
         .on_action(cx.listener(|board, _: &SubmitIssueEditor, window, cx| {
-            if board.menu.is_none() {
-                board.save_issue_editor(window, cx);
-            }
+            board.submit_issue_editor(window, cx);
         }))
         .bg(tokens.bg)
         .text_color(tokens.fg)
@@ -203,7 +201,7 @@ fn form(board: &Issues, editor: &IssueEditor, tokens: &Tokens, cx: &mut Context<
                 ))
             },
         )
-        .child(description::render(editor, locked, tokens, cx))
+        .child(description::render(editor, locked))
         .child(properties(board, editor, locked, tokens, cx))
 }
 

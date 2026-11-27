@@ -1,0 +1,9 @@
+subspace-dashboard third-party notices
+
+- vendor/markdown-editor/src/*.rs comes from GPUI Kit Markdown editor 0.2.0
+  under the Apache License 2.0. The compatibility changes are described in
+  vendor/markdown-editor/README.md.
+  Licence text: vendor/markdown-editor/LICENSE-APACHE.
+- vendor/markdown-editor/assets/icons/*.svg are Lucide icons shipped by the
+  Markdown editor. ISC License, Copyright (c) Lucide Icons and Contributors.
+  Licence text: vendor/markdown-editor/assets/icons/LICENSE-LUCIDE.

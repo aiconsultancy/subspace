@@ -10,6 +10,10 @@ keywords.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[package.metadata.cargo-shear]
+# Cargo Shear skips the bundled editor under vendor/.
+ignored = ["anyhow", "unicode-segmentation"]
+
 [features]
 gpui-kit-text-patch = []
 test-support = ["gpui-kit/test-support"]
@@ -32,8 +36,10 @@ image.workspace = true
 markdown = "=1.0.0"
 serde_json.workspace = true
 url.workspace = true
+unicode-segmentation = "1.12.0"
 
 [dev-dependencies]
+anyhow = "1"
 gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 

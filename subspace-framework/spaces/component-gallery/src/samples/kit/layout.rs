@@ -183,11 +183,11 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "gpui_kit::component::toolbar::Toolbar",
         source: kit_source!("toolbar.rs"),
-        used_in: "Not used in Subspace; toolbars use overflow_toolbar::OverflowToolbar.",
+        used_in: "Hosts the Markdown editor’s formatting controls.",
         samples: regions::toolbars,
         kit: Some(Kit {
             paths: &["toolbar::Toolbar"],
-            used: false,
+            used: true,
             prefer: Some("overflow_toolbar::OverflowToolbar"),
         }),
     },

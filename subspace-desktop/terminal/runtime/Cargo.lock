@@ -7328,6 +7328,7 @@ dependencies = [
  "subspace-lucide",
  "subspace-product",
  "subspace-search",
+ "unicode-segmentation",
  "url",
 ]
 

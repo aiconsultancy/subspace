@@ -102,6 +102,12 @@ impl Issues {
         cx.notify();
     }
 
+    pub(super) fn submit_issue_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.is_none() {
+            self.save_issue_editor(window, cx);
+        }
+    }
+
     pub(super) fn save_issue_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_with_children(ChildChanges::default(), window, cx);
     }

@@ -26,6 +26,14 @@ fn issue(title: &str, version: u32) -> String {
     value.to_string()
 }
 
+fn issue_edit_route(r: &Request) -> Option<(u16, String)> {
+    match (r.method.as_str(), r.path.as_str()) {
+        ("PATCH", "/api/v1/issues/2") => Some((200, issue("Original", 2))),
+        ("GET", "/api/v1/issues/SUB-2" | "/api/v1/issues/2") => Some((200, issue("Original", 1))),
+        _ => None,
+    }
+}
+
 fn open_editor<'a>(
     fixture: &Offline,
     cx: &'a mut TestAppContext,

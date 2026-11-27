@@ -1,7 +1,7 @@
 use super::properties::{tab_to_visible_field, wait_for_option};
 use super::{
-    board_with_hub, has, issue, offline_with, open_editor, open_page, patch_bodies, render, row,
-    settle_board,
+    board_with_hub, has, issue_edit_route, offline_with, open_editor, open_page, patch_bodies,
+    render, row, settle_board,
 };
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt as _;
@@ -67,11 +67,7 @@ fn search_route(r: &Request) -> Option<(u16, String)> {
         };
         return Some((200, value.to_string()));
     }
-    match (r.method.as_str(), r.path.as_str()) {
-        ("PATCH", "/api/v1/issues/2") => Some((200, issue("Original", 2))),
-        ("GET", "/api/v1/issues/SUB-2" | "/api/v1/issues/2") => Some((200, issue("Original", 1))),
-        _ => None,
-    }
+    issue_edit_route(r)
 }
 
 #[gpui_kit::test]

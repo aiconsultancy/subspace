@@ -308,11 +308,11 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "gpui_kit::component::separator::Separator",
         source: kit_source!("separator.rs"),
-        used_in: "Not used in Subspace yet; regions use token hairlines.",
+        used_in: "Separates format groups in the Markdown editor toolbar.",
         samples: text::separators,
         kit: Some(Kit {
             paths: &["separator::Separator"],
-            used: false,
+            used: true,
             prefer: None,
         }),
     },
@@ -407,11 +407,11 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "gpui_kit::component::button::Toggle",
         source: kit_source!("button/toggle.rs"),
-        used_in: "Not used in Subspace; toolbar on/off modes use icon_button::latched.",
+        used_in: "Toggles bold, italic and other formatting in the Markdown editor.",
         samples: choices::toggles,
         kit: Some(Kit {
             paths: &["button::Toggle", "button::ToggleGroup"],
-            used: false,
+            used: true,
             prefer: Some("icon_button::latched"),
         }),
     },

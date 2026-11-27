@@ -55,7 +55,7 @@ impl TextValues {
         Self {
             title: editor.title.read(cx).value().to_string(),
             summary: editor.summary.read(cx).value().to_string(),
-            description: editor.description.read(cx).value().to_string(),
+            description: editor.description.read(cx).value(cx).to_string(),
             due: editor.due.read(cx).value().trim().to_owned(),
             parent: editor.parent.read(cx).value().trim().to_owned(),
         }
