@@ -114,8 +114,10 @@ nothing to this control.
    time go through `Dashboard::status`. There is no large Space heading and
    no line of context above the content; the Space's name is the
    navigator's title. **Show the Space title in the navigator**
-   (Settings › Layout, saved as `layout.navigator-title`) can hide it; the
-   Space tab and the window title still name the Space. An app sets the
+   (Settings › Layout, saved as `layout.navigator-title`) can hide it,
+   keeping any badge or header actions. The window title still names the
+   Space, and so does its Space tab, or only the tab's tooltip in the
+   icon-only vertical rail. An app sets the
    default with `ProductBuild::navigator_title` (`true` in
    `ProductBuild::new`); a saved choice wins. Always pass the title to
    `Navigator::new`: it is the navigator tree's accessible name.

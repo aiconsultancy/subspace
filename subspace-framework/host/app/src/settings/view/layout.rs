@@ -109,7 +109,7 @@ fn navigator_title(settings: &Settings, tokens: &Tokens, cx: &mut Context<Settin
         ))
         .child(note(
             tokens,
-            "The navigator lists a Space's views at the left. With this off, it starts with its first section; the window title and the Space tab still name the Space.",
+            "The navigator lists a Space's views at the left. With this off, it no longer shows the Space's name: it starts with its first section, or keeps its header for a badge or header buttons. The window title still names the Space, and so does its Space tab, or the tab's tooltip in the icon-only rail.",
         ))
 }
 

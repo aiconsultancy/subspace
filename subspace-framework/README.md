@@ -188,6 +188,12 @@ fn main() -> ExitCode {
 }
 ```
 
+**Upgrading: `ProductBuild::navigator_title`.** An app that builds
+`ProductBuild` field by field, as above, must now set `navigator_title`.
+`navigator_title: true` keeps the old behaviour: navigators show the
+Space's title until someone hides it in Settings › Layout.
+`ProductBuild::new` sets `true` for you.
+
 ## Requirements for an app
 
 ```toml
