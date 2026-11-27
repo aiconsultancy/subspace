@@ -2,38 +2,28 @@
 
 use std::time::{Duration, Instant};
 
-use gpui_kit::{App, AppContext as _, Context, Task};
+use gpui_kit::{App, Context, Task};
 use subspace_client_fleet::{
-    Error,
-    diff::{DiffFilePage, V1DiffFilePage},
+    Error, FleetClient,
+    diff::{DiffFilePage, DiffRead, DiffTarget, V1DiffFilePage},
 };
 use subspace_framework::dashboard::Toast;
 
 use super::super::model::{FileView, parse_patch};
+use super::read_executor::ReadExecutor;
 use super::{DiffEvent, DiffSource, DiffView};
+
+pub(super) type PageResult = Result<V1DiffFilePage, Error>;
 
 impl DiffView {
     pub(super) fn load_more(&mut self, index: usize, cx: &mut Context<Self>) {
-        let (DiffSource::Fleet(source), Some(file), Some(at)) = (
+        let (DiffSource::Fleet(source), Some(page), Some(at)) = (
             self.source.clone(),
-            self.files.get(index),
+            self.patch_cursor(index, cx).map(str::to_owned),
             self.fleet.fingerprint.clone(),
         ) else {
             return;
         };
-        let Some(page) = file.next_page.clone() else {
-            return;
-        };
-        if self.crew_pages_suspended()
-            || self.fleet.loading.contains(&index)
-            || self
-                .fleet
-                .busy_pages
-                .get(&index)
-                .is_some_and(|busy| busy.remaining(cx) > 0)
-        {
-            return;
-        }
         let client = match source.client(cx) {
             Ok(client) => client,
             Err(help) => {
@@ -43,41 +33,56 @@ impl DiffView {
         };
         self.fleet.loading.insert(index);
         self.fleet.busy_pages.remove(&index);
-        let (mode, generation) = (self.fleet.mode, self.fleet.generation);
+        let mode = self.fleet.mode;
         let read = self.fleet.page_read.clone();
         let guard = read.clone();
-        let path = file.file.path.clone();
+        let pinned = at.clone();
+        let path = self.files[index].file.path.clone();
+        let worker = ReadExecutor::start(
+            cx,
+            Box::new(move || {
+                let request = DiffFilePage {
+                    path: &path,
+                    page: Some(&page),
+                    at: &at,
+                    side: None,
+                };
+                read_patch(&client, source.request(mode), request, &read)
+            }),
+        );
         cx.spawn(async move |view, cx| {
-            let result = cx
-                .background_spawn(async move {
-                    let request = DiffFilePage {
-                        path: &path,
-                        page: Some(&page),
-                        at: &at,
-                        side: None,
-                    };
-                    let result = read.retry(|| client.diff_file(source.request(mode), request))?;
-                    validate_page(result, &request)
-                })
-                .await;
+            let result = worker.await;
             _ = view.update(cx, |view, cx| {
-                if guard.check().is_ok() {
-                    view.finish_page(generation, index, result, cx);
-                }
+                view.finish_page(&guard, &pinned, index, result, cx);
             });
         })
         .detach();
         cx.notify();
     }
 
+    fn patch_cursor(&self, index: usize, cx: &App) -> Option<&str> {
+        if self.crew_pages_suspended()
+            || self.fleet.loading.contains(&index)
+            || self
+                .fleet
+                .busy_pages
+                .get(&index)
+                .is_some_and(|busy| busy.remaining(cx) > 0)
+        {
+            return None;
+        }
+        self.files.get(index)?.next_page.as_deref()
+    }
+
     pub(super) fn finish_page(
         &mut self,
-        generation: u64,
+        guard: &DiffRead,
+        at: &str,
         index: usize,
-        result: Result<V1DiffFilePage, Error>,
+        result: PageResult,
         cx: &mut Context<Self>,
     ) {
-        if self.fleet.generation != generation {
+        if guard.check().is_err() || self.fleet.fingerprint.as_deref() != Some(at) {
             return;
         }
         self.fleet.loading.remove(&index);
@@ -102,25 +107,35 @@ impl DiffView {
     }
 
     pub(super) fn invalidate_patch_pages(&mut self) {
-        self.fleet.page_read.cancel();
-        self.fleet.page_read = Default::default();
+        self.fleet.page_read.cancel_and_reset();
         self.fleet.loading.clear();
         self.fleet.busy_pages.clear();
+    }
+
+    pub(super) fn mark_crew_stale(&mut self) {
+        self.fleet.stale_page = true;
+        self.invalidate_pages();
     }
 
     pub(super) fn fleet_page_error(&mut self, error: Error, cx: &mut Context<Self>) {
         match error {
             Error::DiffReadCancelled => {}
-            Error::StaleDiff => {
-                self.fleet.stale_page = true;
-                self.invalidate_pages();
-            }
+            Error::StaleDiff => self.mark_crew_stale(),
             Error::NotFound => cx.emit(DiffEvent::Toast(Toast::error(
                 "This file is no longer available. Refresh the diff.",
             ))),
             other => cx.emit(DiffEvent::Toast(Toast::error(other.to_string()))),
         }
     }
+}
+
+fn read_patch(
+    client: &FleetClient,
+    target: DiffTarget<'_>,
+    request: DiffFilePage<'_>,
+    read: &DiffRead,
+) -> PageResult {
+    validate_page(read.retry(|| client.diff_file(target, request))?, &request)
 }
 
 #[derive(Clone, Copy)]

@@ -49,9 +49,6 @@ impl DiffView {
             DiffSource::GitHub(_) => None,
         };
         self.cancel_list();
-        // Keep an active binary read pinned to the displayed fingerprint.
-        // Replacing or clearing the snapshot closes that reader.
-        self.invalidate_patch_pages();
         self.fleet.list_read = DiffRead::default();
         let generation = self.fleet.generation;
         let baseline = self.fleet.live_revision;
@@ -91,7 +88,6 @@ impl DiffView {
             return false;
         }
         self.cancel_list();
-        self.invalidate_pages();
         self.clear_snapshot(cx);
         self.fleet.access = access;
         true
@@ -125,8 +121,8 @@ impl DiffView {
             Err(LoadError::Fleet(error)) => {
                 if matches!(error, Error::TokenRefused | Error::Forbidden) {
                     self.set_access(None, cx);
-                } else {
-                    self.fleet.stale_page |= error == Error::StaleDiff;
+                } else if error == Error::StaleDiff {
+                    self.mark_crew_stale();
                 }
                 self.error = Some(diff_error(error));
             }
@@ -134,6 +130,7 @@ impl DiffView {
     }
 
     pub(super) fn clear_snapshot(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_patch_pages();
         self.fleet.fingerprint = None;
         self.binary_holds = Default::default();
         self.fleet.unavailable = false;
@@ -196,6 +193,7 @@ impl DiffView {
 
     fn replace_crew_files(&mut self, files: Vec<FileView>, cx: &mut Context<Self>) {
         let location = Location::capture(self, cx);
+        self.invalidate_patch_pages();
         self.close_binary(None, cx);
         self.full_line = None;
         self.set_files(files, cx);

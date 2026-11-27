@@ -6,33 +6,35 @@ use std::time::Duration;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{App, Entity, Global, Task, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
-use subspace_client_fleet::{Error, diff::DiffMode};
+use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::client_test_support::Mock;
 use tokio::sync::oneshot;
 
 use super::super::super::model::{DiffRow, Layout};
 use super::super::Text;
-use super::super::read_executor::{LoadError, ReadExecutor, ReadResult, ReadWork};
+use super::super::pages::PageResult;
+use super::super::read_executor::{ReadExecutor, ReadResult, ReadWork};
 use super::{DiffView, ReadGate, fixture, mount};
 
 /// The test dispatcher runs blocking work on the UI thread. Opt in to a real
 /// worker so the test can draw and interact while an HTTP response is gated.
 #[derive(Default)]
-struct ThreadedReads(Vec<JoinHandle<DeliverRead>>);
+pub(super) struct ThreadedReads(Vec<JoinHandle<DeliverRead>>);
 
 type DeliverRead = Box<dyn FnOnce() + Send>;
 
 impl Global for ThreadedReads {}
 
 impl ThreadedReads {
-    fn install(window: &mut VisualTestContext) {
+    pub(super) fn install(window: &mut VisualTestContext) {
         window.update(|_, cx| {
             cx.set_global(Self::default());
-            cx.set_global(ReadExecutor(Self::start));
+            cx.set_global(ReadExecutor::<ReadResult>(Self::start));
+            cx.set_global(ReadExecutor::<PageResult>(Self::start));
         });
     }
 
-    fn start(cx: &mut App, work: ReadWork) -> Task<ReadResult> {
+    fn start<T: Send + 'static>(cx: &mut App, work: ReadWork<T>) -> Task<T> {
         let (tx, rx) = oneshot::channel();
         cx.global_mut::<Self>()
             .0
@@ -42,13 +44,10 @@ impl ThreadedReads {
                     _ = tx.send(result);
                 })
             }));
-        cx.spawn(async move |_| {
-            rx.await
-                .unwrap_or(Err(LoadError::Fleet(Error::DiffReadCancelled)))
-        })
+        cx.spawn(async move |_| rx.await.expect("test worker delivers its result"))
     }
 
-    fn finish_last(window: &mut VisualTestContext) {
+    pub(super) fn finish_last(window: &mut VisualTestContext) {
         // Only the UI test thread can wake its deterministic scheduler.
         let deliver =
             window.update(|_, cx| cx.global_mut::<Self>().0.pop().unwrap().join().unwrap());

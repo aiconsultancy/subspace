@@ -1,4 +1,4 @@
-//! Scheduling the blocking diff-list read outside the UI executor.
+//! Scheduling blocking diff reads outside the UI executor.
 
 use gpui_kit::{App, AppContext as _, Global, Task};
 use subspace_client_fleet::{
@@ -14,16 +14,16 @@ pub(super) enum LoadError {
 }
 
 pub(super) type ReadResult = Result<Loaded, LoadError>;
-pub(super) type ReadWork = Box<dyn FnOnce() -> ReadResult + Send>;
+pub(super) type ReadWork<T> = Box<dyn FnOnce() -> T + Send>;
 
-/// The diff-list worker. Tests can supply a runner that leaves the UI scheduler
+/// A diff worker. Tests can supply a runner that leaves the UI scheduler
 /// free while an HTTP fixture holds the response.
-pub(super) struct ReadExecutor(pub(super) fn(&mut App, ReadWork) -> Task<ReadResult>);
+pub(super) struct ReadExecutor<T>(pub(super) fn(&mut App, ReadWork<T>) -> Task<T>);
 
-impl Global for ReadExecutor {}
+impl<T: 'static> Global for ReadExecutor<T> {}
 
-impl ReadExecutor {
-    pub(super) fn start(cx: &mut App, work: ReadWork) -> Task<ReadResult> {
+impl<T: Send + 'static> ReadExecutor<T> {
+    pub(super) fn start(cx: &mut App, work: ReadWork<T>) -> Task<T> {
         if let Some(&Self(spawn)) = cx.try_global() {
             spawn(cx, work)
         } else {

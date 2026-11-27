@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui_kit::TestAppContext;
@@ -9,7 +9,7 @@ use serde_json::json;
 use subspace_client_fleet::{Error, diff::DiffFilePage};
 use subspace_framework::client_test_support::Mock;
 
-use super::{DiffSource, fixture, mount};
+use super::{DiffSource, fixture, mount, refresh::ThreadedReads};
 
 /// Blocking HTTP runs on a real thread so the visual test can deliver a feed
 /// update while the simulated GPUI executor is otherwise idle.
@@ -192,6 +192,86 @@ fn text_retry_after_ten_disables_retry_and_blocks_reads_until_due(cx: &mut TestA
     });
     window.run_until_parked();
     assert_eq!(file_requests(&mock).len(), 4);
+}
+
+#[gpui_kit::test]
+fn unchanged_refresh_keeps_the_pending_patch_page(cx: &mut TestAppContext) {
+    let (gate, waiting, release) = ReadGate::new();
+    let gate = Mutex::new(gate);
+    let mock = Mock::new(move |request| {
+        if request.path.contains("/diff/file?") {
+            assert!(request.path.contains("&at=B&page=page-file"));
+            gate.lock().unwrap().pause();
+            return (200, patch_page("+AFTER-REFRESH\n", None));
+        }
+        (200, fixture(false))
+    });
+    let (view, window) = mount(cx, &mock);
+    ThreadedReads::install(window);
+    window.update(|window, cx| window.click(("crew-diff-more", 0usize), cx));
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    window.update(|window, cx| window.click("crew-diff-refresh", cx));
+    ThreadedReads::finish_last(window);
+    release.send(()).unwrap();
+    ThreadedReads::finish_last(window);
+    view.read_with(window, |view, _| {
+        assert_eq!(view.fleet.fingerprint.as_deref(), Some("B"));
+        assert!(view.fleet.loading.is_empty());
+        assert!(
+            view.files[0].next_page.is_none(),
+            "refresh lost the pending patch page"
+        );
+        assert!(
+            view.files[0]
+                .file
+                .patch
+                .as_deref()
+                .unwrap()
+                .contains("AFTER-REFRESH")
+        );
+    });
+    assert_eq!(file_requests(&mock).len(), 1);
+}
+
+#[gpui_kit::test]
+fn unchanged_refresh_keeps_the_patch_retry_countdown(cx: &mut TestAppContext) {
+    let mock = Mock::with_headers(|request| {
+        if request.path.contains("/diff/file?") {
+            return (
+                429,
+                vec![("Retry-After".into(), "30".into())],
+                String::new(),
+            );
+        }
+        (200, vec![], fixture(false))
+    });
+    let (view, window) = mount(cx, &mock);
+    ThreadedReads::install(window);
+    window.update(|window, cx| window.click(("crew-diff-more", 0usize), cx));
+    ThreadedReads::finish_last(window);
+    let remaining = |view: &super::DiffView, cx: &gpui_kit::App| {
+        view.fleet.busy_pages.get(&0).map(|busy| busy.remaining(cx))
+    };
+    assert_eq!(view.read_with(window, remaining), Some(30));
+    window.executor().advance_clock(Duration::from_secs(5));
+    window.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        window.click("crew-diff-refresh", cx);
+    });
+    ThreadedReads::finish_last(window);
+    assert_eq!(
+        view.read_with(window, remaining),
+        Some(25),
+        "refresh lost the patch retry countdown"
+    );
+    window.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        assert_eq!(
+            window.find(("crew-diff-retry-page", 0usize)).disabled(),
+            Some(true)
+        );
+    });
+    assert_eq!(file_requests(&mock).len(), 1);
 }
 
 fn patch_page(patch: &str, next: Option<&str>) -> String {

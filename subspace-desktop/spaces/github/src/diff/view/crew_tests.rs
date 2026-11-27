@@ -219,19 +219,25 @@ fn mode_changes_discard_old_file_pages_and_crew_marks_do_not_touch_prefs(cx: &mu
         }
     });
     let (view, window) = mount(cx, &mock);
-    view.update(window, |view, cx| {
+    let previous = view.update(window, |view, cx| {
         prefs::set(cx, VIEWED_KEY, r#"{"example": ["example.txt"]}"#.to_owned());
         let before = prefs::get(cx, VIEWED_KEY);
         view.toggle_viewed_file(0, true, cx);
         assert_eq!(prefs::get(cx, VIEWED_KEY), before);
         assert!(view.viewed.is_empty());
         assert!(!view.collapsed.contains(&0));
-        let previous = view.fleet.generation;
+        let previous = view.fleet.page_read.clone();
         view.fleet.loading.insert(0);
         view.set_mode(DiffMode::Working, None, cx);
         assert!(view.fleet.loading.is_empty());
+        previous
+    });
+    window.run_until_parked();
+    view.update(window, |view, cx| {
+        assert_eq!(view.fleet.fingerprint.as_deref(), Some("B"));
         view.finish_page(
-            previous,
+            &previous,
+            "B",
             0,
             Err(subspace_client_fleet::Error::StaleDiff),
             cx,
