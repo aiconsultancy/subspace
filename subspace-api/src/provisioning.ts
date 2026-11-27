@@ -20,10 +20,11 @@ import {
   ShipName,
   updateFleet,
 } from "./fleets";
-import { repositoryProjects, SetRepos } from "./github";
+import { repositoryProjectReferences, SetRepos } from "./github";
 import { type Member } from "./identity";
-import { assignFleet, createInitiative, getInitiative, listInitiatives } from "./initiatives";
+import { assignFleet, createInitiative, initiativePlacements } from "./initiatives";
 import { BootstrapRefused, ensureOrganisation, ensureOwner } from "./pairing-owner";
+import { problem } from "./problems";
 import { auditLogs, users } from "./schema";
 import { ReservedUsernames } from "./usernames";
 import { Email, Line, Name, Uuid } from "./validation";
@@ -180,81 +181,74 @@ function reconcileRoster(tx: Db, owner: Member, fleet: Fleet, spec: Spec) {
   });
 }
 
-function findInitiative(tx: Db, owner: Member, fleet: Fleet, name: string) {
+function selectInitiative(tx: Db, fleet: Fleet, spec: Spec) {
   return Effect.gen(function* () {
-    let cursor: string | undefined;
-    const assigned: string[] = [],
-      unassigned: string[] = [];
-    do {
-      const page = yield* listInitiatives(owner, { search: name, limit: 200, cursor });
-      for (const row of page.items) {
-        if (row.name !== name) continue;
-        const effectiveFleet = yield* lockInitiativeFleet(tx, fleet.organisationId, row.id);
-        if (effectiveFleet === fleet.id) assigned.push(row.id);
-        if (effectiveFleet === null) unassigned.push(row.id);
-      }
-      cursor = page.nextCursor ?? undefined;
-    } while (cursor);
-    const candidates = assigned.length ? assigned : unassigned;
+    if (spec.initiative) {
+      const [row] = yield* initiativePlacements(tx, fleet.organisationId, {
+        id: spec.initiative.id,
+      });
+      if (!row) return yield* Effect.fail(problem(404, "Initiative not found."));
+      if (row.archived)
+        return yield* Effect.fail(
+          new BootstrapRefused("Unarchive the initiative branch before provisioning."),
+        );
+      return row.id;
+    }
+    const matches = yield* initiativePlacements(tx, fleet.organisationId, {
+      name: spec.fleet.name,
+    });
+    const active = matches.filter((row) => !row.archived);
+    const assigned = active.filter((row) => row.fleetId === fleet.id);
+    const candidates = assigned.length ? assigned : active.filter((row) => row.fleetId === null);
     if (candidates.length > 1)
       return yield* Effect.fail(
         new BootstrapRefused("Several initiatives match. Supply the intended initiative ID."),
       );
-    return candidates[0];
+    return candidates[0]?.id;
   });
 }
 
 function reconcileInitiative(tx: Db, owner: Member, fleet: Fleet, spec: Spec) {
   return Effect.gen(function* () {
-    const id = spec.initiative?.id ?? (yield* findInitiative(tx, owner, fleet, spec.fleet.name));
-    const row = id
-      ? yield* getInitiative(owner, id)
-      : yield* createInitiative(owner, {
-          name: spec.fleet.name,
-          ownerId: owner.id,
-          status: "active",
-          description: `Work for the ${spec.fleet.name} fleet. Talk to the rear admiral in ${spec.fleet.starbaseChannel}.`,
-          channelConfiguration: { memberUserIds: [owner.id] },
-        });
-    if (row.archived || row.ancestorArchived)
-      return yield* Effect.fail(
-        new BootstrapRefused("Unarchive the initiative branch before provisioning."),
-      );
-    const previousFleetId = yield* lockInitiativeFleet(tx, fleet.organisationId, row.id);
-    if (previousFleetId === fleet.id) return row.id;
+    const id = yield* selectInitiative(tx, fleet, spec);
+    const initiativeId =
+      id ??
+      (yield* createInitiative(owner, {
+        name: spec.fleet.name,
+        ownerId: owner.id,
+        status: "active",
+        description: `Work for the ${spec.fleet.name} fleet. Talk to the rear admiral in ${spec.fleet.starbaseChannel}.`,
+        channelConfiguration: { memberUserIds: [owner.id] },
+      })).id;
+    const previousFleetId = yield* lockInitiativeFleet(tx, fleet.organisationId, initiativeId);
+    if (previousFleetId === fleet.id) return initiativeId;
     if (previousFleetId !== null && !spec.initiative?.adopt)
       return yield* Effect.fail(
         new BootstrapRefused(
           "This initiative belongs to another fleet. Explicitly adopt it to move it.",
         ),
       );
-    yield* assignFleet(owner, row.id, fleet.id);
+    yield* assignFleet(owner, initiativeId, fleet.id);
     yield* audit(tx, fleet.organisationId, {
       action: id ? "initiativeFleetAssigned" : "fleetInitiativeCreated",
       entityType: "Initiative",
-      entityId: row.id,
+      entityId: initiativeId,
       summary: id
         ? "Assigned an initiative on the API host."
         : "Created the fleet initiative on the API host.",
       changes: { fleetId: fleet.id, previousFleetId },
     });
-    return row.id;
+    return initiativeId;
   });
 }
 
-function checkProjects(tx: Db, owner: Member, repositories: readonly string[]) {
+function checkProjects(tx: Db, organisationId: string, repositories: readonly string[]) {
   return Effect.gen(function* () {
+    const references = yield* repositoryProjectReferences(tx, organisationId, repositories);
     const checks = [];
-    for (const repository of new Set(repositories.map(lower))) {
-      let cursor: string | undefined;
-      do {
-        const page = yield* repositoryProjects(owner, { repository, cursor, limit: 200 });
-        for (const project of page.items) {
-          const fleetId = yield* lockProjectFleet(tx, owner.organisationId, project.id);
-          checks.push({ repository, id: project.id, key: project.key, fleetId });
-        }
-        cursor = page.nextCursor ?? undefined;
-      } while (cursor);
+    for (const project of references) {
+      const fleetId = yield* lockProjectFleet(tx, organisationId, project.id);
+      checks.push({ ...project, fleetId });
     }
     return checks;
   });
@@ -276,7 +270,7 @@ export const provisionFleet = (spec: Spec, reserved: ReadonlySet<string>) =>
         const fleet = yield* reconcileFleet(tx, owner, spec.fleet);
         const officers = yield* reconcileRoster(tx, owner, fleet, spec);
         const initiativeId = yield* reconcileInitiative(tx, owner, fleet, spec);
-        const projects = yield* checkProjects(tx, owner, spec.repositories ?? []);
+        const projects = yield* checkProjects(tx, organisation.id, spec.repositories ?? []);
         const grant = yield* insertEnrolmentToken(tx, {
           organisationId: organisation.id,
           fleetId: fleet.id,

@@ -291,4 +291,33 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
       ).rows,
     ).toEqual([{ changes: { previousFleetId: first.fleetId, fleetId: second.fleetId } }]);
   });
+
+  test("prefers exact-name initiatives on its own fleet and ignores archived branches", async () => {
+    const input = spec("initiative-placement");
+    const first = await provision(input);
+    const { client } = database;
+    const add = async (name: string, parentId: string | null = null, archived = false) =>
+      (
+        await client.query<{ id: string }>(
+          `INSERT INTO initiatives (organisation_id, owner_id, name, parent_id, archived)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          [first.organisationId, first.ownerId, name, parentId, archived],
+        )
+      ).rows[0]!.id;
+    await client.query("UPDATE initiatives SET name = 'Fleet root' WHERE id = $1", [
+      first.initiativeId,
+    ]);
+    const target = await add(input.fleet.name, first.initiativeId);
+    await add(input.fleet.name);
+    await add(input.fleet.name.toUpperCase(), first.initiativeId);
+    const archived = await add("Archived parent", first.initiativeId, true);
+    const archivedChild = await add(input.fleet.name, archived);
+
+    expect((await provision(input)).initiativeId).toBe(target);
+    await expect(provision({ ...input, initiative: { id: archivedChild } })).rejects.toThrow(
+      "Unarchive the initiative branch",
+    );
+    await add(input.fleet.name, first.initiativeId);
+    await expect(provision(input)).rejects.toThrow("Several initiatives match");
+  });
 });

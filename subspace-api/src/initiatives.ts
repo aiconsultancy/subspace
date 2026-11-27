@@ -26,6 +26,7 @@ import { dateTime, today } from "./validation";
 
 type Row = typeof initiatives.$inferSelect;
 type Db = (typeof Database)["Service"];
+const maxAncestorDepth = 5;
 
 export const stakeholderDto = (row: typeof initiativeStakeholders.$inferSelect) => ({
   id: row.id,
@@ -82,7 +83,7 @@ type Joined = Effect.Success<ReturnType<typeof loadRows>> extends Map<string, in
 function ancestors(row: Row, rows: ReadonlyMap<string, Joined>) {
   const result: Row[] = [];
   let id = row.parentId;
-  while (id && result.length < 5) {
+  while (id && result.length < maxAncestorDepth) {
     const parent = rows.get(id)?.initiative;
     if (!parent) break;
     result.unshift(parent);
@@ -300,6 +301,33 @@ function readInitiative(db: Db, member: Member, id: string) {
 
 export const getInitiative = (member: Member, id: string) =>
   Effect.flatMap(Database, (db) => readInitiative(db, member, id));
+
+/** Read placement facts inside a write transaction holding the organisation lock. */
+export function initiativePlacements(
+  db: Db,
+  organisationId: string,
+  selector: { name: string } | { id: string },
+) {
+  const match =
+    "id" in selector ? eq(initiatives.id, selector.id) : eq(initiatives.name, selector.name);
+  return db
+    .execute<{ id: string; archived: boolean; fleetId: string | null }>(sql`
+    with recursive lineage(candidate_id, id, parent_id, fleet_id, archived, depth) as (
+      select id, id, parent_id, fleet_id, archived, 0
+      from ${initiatives}
+      where ${and(eq(initiatives.organisationId, organisationId), match)}
+      union all
+      select child.candidate_id, parent.id, parent.parent_id, parent.fleet_id, parent.archived, child.depth + 1
+      from lineage child
+      join ${initiatives} parent on parent.id = child.parent_id and parent.organisation_id = ${organisationId}
+    ) cycle id set cyclic using traversal
+    select candidate_id as id,
+      bool_or(archived) filter (where depth <= ${maxAncestorDepth}) as archived,
+      (array_agg(fleet_id order by depth) filter (where fleet_id is not null))[1] as "fleetId"
+    from lineage where not cyclic group by candidate_id
+  `)
+    .pipe(Effect.map(({ rows }) => rows));
+}
 
 function activeUsers(db: Db, organisationId: string, ids: readonly string[]) {
   if (!ids.length) return Effect.succeed(true);
