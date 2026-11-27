@@ -1,7 +1,7 @@
 //! Seed selected crew data for inspector render tests without network I/O.
 
 use gpui_kit::Context;
-use subspace_client_fleet::{CrewDetail, model::CrewMember};
+use subspace_client_fleet::{CrewDetail, Error, model::CrewMember};
 
 use crate::Irc;
 
@@ -21,12 +21,12 @@ pub(crate) fn update_roster_for_test(board: &mut Irc, member: CrewMember, cx: &m
 
 pub(crate) fn finish_crew_read_for_test(
     board: &mut Irc,
-    detail: CrewDetail,
+    result: Result<CrewDetail, Error>,
     cx: &mut Context<Irc>,
 ) {
     let selection = board.inspector_crew.as_mut().unwrap();
     selection.state.probe();
     let read = selection.state.begin().unwrap();
-    selection.state.finish_read(read, Ok(detail.into()));
+    selection.state.finish_read(read, result.map(Into::into));
     cx.notify();
 }

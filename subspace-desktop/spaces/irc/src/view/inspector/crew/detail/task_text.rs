@@ -215,7 +215,7 @@ fn field_value(
             &Tokens::current(cx),
             format!("irc-crew-preview:{project}:{}", field.key()),
             format!(
-                "Showing the {edge} {} characters until the full detail loads.",
+                "Showing the {edge} {} characters from the ship's roster; this may be incomplete.",
                 field.limit()
             ),
         ))

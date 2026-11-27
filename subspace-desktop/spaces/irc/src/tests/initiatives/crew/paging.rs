@@ -1,10 +1,12 @@
 //! Task paging in the narrowest Ship inspector.
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{App, ScrollDelta, TestAppContext, Window, point, px, size};
+use gpui_kit::{App, Bounds, Pixels, ScrollDelta, TestAppContext, Window, point, px, size};
 
 use super::{BACK, ROW, install_fleet_api, live, set_fleet, settle, ship, view};
 use crate::tests::remove::choose;
+
+mod roster;
 
 #[gpui_kit::test]
 fn a_successful_crew_read_warns_until_stargate_confirms_full_text(cx: &mut TestAppContext) {
@@ -35,7 +37,7 @@ fn a_successful_crew_read_warns_until_stargate_confirms_full_text(cx: &mut TestA
             }
             let detail: CrewDetail = serde_json::from_value(reply.clone()).unwrap();
             board.update(cx, |board, cx| {
-                view::inspector::crew::finish_crew_read_for_test(board, detail, cx)
+                view::inspector::crew::finish_crew_read_for_test(board, Ok(detail), cx)
             });
             window.render_frame(cx);
             assert_eq!(
@@ -54,116 +56,6 @@ fn a_successful_crew_read_warns_until_stargate_confirms_full_text(cx: &mut TestA
             );
         }
     });
-}
-
-#[gpui_kit::test]
-fn capped_roster_text_marks_the_cut_side_without_altering_the_value(cx: &mut TestAppContext) {
-    use gpui_kit::base::test_support::texts;
-
-    let (board, hub, cx) = ship(cx);
-    let mut member = crate::live::tests::snapshot().ships["aurora-lyra"]
-        .crew_members
-        .iter()
-        .find(|member| member.id == "wren")
-        .unwrap()
-        .clone();
-    let task = member.contexts[0].current.as_mut().unwrap();
-    task.summary = "s".repeat(180);
-    task.progress = "p".repeat(390) + " Done now.";
-    let summary = task.summary.clone();
-    let progress = task.progress.clone();
-    set_fleet(&hub, live(), cx);
-    install_fleet_api(cx);
-    cx.update(|window, cx| {
-        window.render_frame(cx);
-        window.click(ROW, cx);
-        board.update(cx, |board, cx| {
-            view::inspector::crew::seed_roster_for_test(board, member, cx)
-        });
-        window.render_frame(cx);
-        let drawn = texts(window);
-        let index = |value: &str| drawn.iter().position(|text| text.text() == value).unwrap();
-        assert_eq!(
-            drawn[index(&summary) + 1].text(),
-            "…",
-            "summary marker follows the head"
-        );
-        assert!(
-            window
-                .try_find(plain_note("irc-crew-preview:named:nav:summary"))
-                .is_some()
-        );
-        assert_tail_preview(window, &progress);
-    });
-}
-
-#[gpui_kit::test]
-fn a_changed_roster_tail_marks_its_cut_until_full_text_returns(cx: &mut TestAppContext) {
-    use gpui_kit::base::test_support::texts;
-    use serde_json::json;
-
-    let (board, hub, cx) = ship(cx);
-    let tail = "🌊".repeat(392) + "Complete";
-    let old = "The original full progress";
-    let updated = format!("New full text: {tail}");
-    let reply = |at: i64, progress: &str| {
-        json!({"ship":"aurora-lyra", "taskText":"full", "member": {
-            "id":"wren", "name":"Wren", "contexts":[{"project":"nav", "current":{
-                "id":"task-1", "summary":"Chart a coast", "progress":progress, "updatedAt":at,
-            }}],
-        }})
-    };
-    set_fleet(&hub, live(), cx);
-    install_fleet_api(cx);
-    cx.update(|window, cx| {
-        window.render_frame(cx);
-        window.click(ROW, cx);
-        let member = |at, text| serde_json::from_value(reply(at, text)["member"].clone()).unwrap();
-        board.update(cx, |board, cx| {
-            view::inspector::crew::seed_roster_for_test(board, member(1, old), cx);
-            let fetched = serde_json::from_value(reply(1, old)).unwrap();
-            view::inspector::crew::finish_crew_read_for_test(board, fetched, cx);
-        });
-        window.render_frame(cx);
-        assert!(texts(window).iter().any(|text| text.text() == old));
-
-        board.update(cx, |board, cx| {
-            view::inspector::crew::update_roster_for_test(board, member(2, &tail), cx);
-        });
-        window.render_frame(cx);
-        assert_tail_preview(window, &tail);
-        assert!(!texts(window).iter().any(|text| text.text() == old));
-
-        board.update(cx, |board, cx| {
-            let fetched = serde_json::from_value(reply(2, &updated)).unwrap();
-            view::inspector::crew::finish_crew_read_for_test(board, fetched, cx);
-        });
-        window.render_frame(cx);
-        let drawn = texts(window);
-        assert!(drawn.iter().any(|text| text.text() == updated));
-        assert!(
-            window
-                .try_find(plain_note("irc-crew-preview:named:nav:progress"))
-                .is_none()
-        );
-    });
-}
-
-fn assert_tail_preview(window: &Window, progress: &str) {
-    use gpui_kit::base::test_support::texts;
-
-    let drawn = texts(window);
-    let index = drawn
-        .iter()
-        .position(|text| text.text() == progress)
-        .unwrap();
-    let predecessor = index.checked_sub(1).map(|index| drawn[index].text());
-    assert_eq!(predecessor, Some("…"), "the tail is cut at the start");
-    assert!(
-        window
-            .try_find(plain_note("irc-crew-preview:named:nav:progress"))
-            .is_some()
-    );
 }
 
 // The shared selectable text registers its context-menu host with this ID.
@@ -263,12 +155,16 @@ fn exercise_progress_page_steps(window: &mut Window, cx: &mut App, first: &str, 
 fn reveal_progress_pager(window: &mut Window, cx: &mut App) {
     // At 260 px a long page can reach below the inspector fold. Reach its
     // controls the same way a reader does, via the existing inspector scroll.
-    let body = window.find(BODY).bounds();
     let next = window.within(PROGRESS_PAGER).find("next").bounds();
-    let delta = if next.bottom() > body.bottom() {
-        body.bottom() - next.bottom() - px(12.)
-    } else if next.top() < body.top() {
-        body.top() - next.top() + px(12.)
+    reveal_in_inspector(window, cx, next);
+}
+
+fn reveal_in_inspector(window: &mut Window, cx: &mut App, target: Bounds<Pixels>) {
+    let body = window.find(BODY).bounds();
+    let delta = if target.bottom() > body.bottom() {
+        body.bottom() - target.bottom() - px(12.)
+    } else if target.top() < body.top() {
+        body.top() - target.top() + px(12.)
     } else {
         return;
     };
