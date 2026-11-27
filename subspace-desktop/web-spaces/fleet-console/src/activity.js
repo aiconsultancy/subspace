@@ -356,9 +356,10 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * freeing nothing meanwhile (SUB decisions cf21d510, 8346cf82). First the
    * latest request, when it is an item read whole that will not fit beside
    * the grown charge. Then, while the growth would still free an item read
-   * whole whose window is on show, the one of those whose refit gives back
-   * the most, asking again after each: so one large refit can keep the
-   * smaller wholes on show, and no handover is charged before the room it
+   * whole whose window is on show, the item read whole on show, named or
+   * not, whose refit gives back the most, asking again after each: so one
+   * large refit can keep the smaller wholes on show, also a small one that
+   * would be freed first, and no handover is charged before the room it
    * needs is counted. A refit that gives back nothing is not planned; if
    * the floor still needs that whole's room, it is freed. Returns the keys
    * to read in parts, in order.
@@ -368,12 +369,14 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     const key = budget.requested;
     const growth = bytes - budget.bytes(INLINE_KEY);
     if (key !== null && full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key) + growth)) sizes.set(key, handover(key));
-    for (;;) {
-      const named = budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as: sizes }).filter((each) => displayed(each) && !sizes.has(each));
-      const best = mostGivenBack(named);
-      if (best === null) return [...sizes.keys()];
+    /** How many windows on show the growth would free with the refits in `as`. */
+    const freedOnShow = (as) => budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as }).filter((each) => displayed(each) && !as.has(each)).length;
+    while (freedOnShow(sizes) > 0) {
+      const best = mostGivenBack([...full.keys()].filter((each) => displayed(each) && budget.has(each) && !sizes.has(each)));
+      if (best === null) break;
       sizes.set(best, handover(best));
     }
+    return [...sizes.keys()];
   }
 
   /** Of `keys`, the one whose refit gives back the most bytes, or null when none gives any back. */

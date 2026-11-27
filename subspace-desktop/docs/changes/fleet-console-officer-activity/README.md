@@ -83,15 +83,17 @@ the desktop side are separate work.
   refit first (`planRefits`): it asks the budget what the larger charge
   would free (`wouldFree`, with `as` naming the planned refits' handover
   charges, so nothing changes while it asks) and, while that names an
-  item read whole whose window is on show, plans the one whose refit gives
+  item read whole whose window is on show, plans, from every item read
+  whole whose window is on show, named or not, the one whose refit gives
   back the most, then asks again; a refit that gives nothing back is not
   planned. Only then are the planned pagers opened, their charges set
   without freeing anything (`fitted`), and the one pinned reservation
   frees only what the final floor still needs. So one large refit keeps
-  the smaller wholes on show, and every window stays when the handovers
-  fit. One not on show is freed as before, so no item read whole is kept
-  for good. Its window stays on show and charged (`carried`) until the first
-  part arrives, and stays with the error and **Try again** if that read
+  the smaller wholes on show, also a small one the growth would free
+  first, and every window stays when the handovers fit. One not on show
+  is freed as before, so no item read whole is kept for good. Its window
+  stays on show and charged (`carried`) until the first part arrives,
+  and stays with the error and **Try again** if that read
   fails. The part opened is the one that holds the start of the window on
   show: the view reports where that window starts in the item's document,
   the watcher maps it to the item as served (`servedUnit`), pages that the
