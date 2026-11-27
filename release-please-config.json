@@ -7,6 +7,7 @@
   "tag-separator": "-",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
+  "commit-search-depth": 1000,
   "pull-request-header": "A release pull request from the release workflow. See docs/ways-of-working.md#releases in subspace-desktop.",
   "packages": {
     "subspace-framework": {

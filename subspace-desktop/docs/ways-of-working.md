@@ -182,6 +182,16 @@ pull request per project against `main`:
 | Framework | `chore(framework): release X.Y.Z` | `[workspace.package] version`, the internal `=X.Y.Z` pins, and the app's requirement on the Framework in `Cargo.toml` and both terminal manifests | Merged by the workflow every night when one is open. Tagged, released and published to crates.io by `publish-framework.yml` ([publishing](../../subspace-framework/docs/publishing.md)) |
 | App | `chore(subspace): release X.Y.Z` | `[workspace.package] version` and both terminal manifests | Merged by hand. Tagged, with a draft release; `make release-macos` publishes it |
 
+Release Please reads the commits since each project's last release to
+choose its version and write its notes. `commit-search-depth` in
+`release-please-config.json` sets at most how many of the newest commits on
+`main` it reads (1000), counting every project's commits and those that
+integration merges bring in. A release whose range exceeds that leaves its
+oldest changes out of both, and Release Please only logs a warning, so
+release the app before its range nears the limit. Raising the limit costs
+API requests and makes long notes, which Release Please moves into a file
+once they pass 65,536 characters.
+
 Each pull request also updates its project's `CHANGELOG.md` and carries the
 four lockfiles: Release Please cannot run Cargo, so the workflow commits
 what `scripts/sync-lockfiles.py` changes (only local packages' versions)
