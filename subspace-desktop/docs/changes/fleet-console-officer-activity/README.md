@@ -424,3 +424,5 @@ after growth during a reload reads the newest version. They:
 - name the part read, and that the item is no longer held whole, when its
   turn is closed and reopened during a refit's read, without claiming a
   window stays on show.
+- lower a loading pager's charge to its part when its outgoing window
+  unmounts, even when the budget would refuse that part now (`shrink`).

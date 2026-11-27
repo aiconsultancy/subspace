@@ -279,13 +279,14 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
     /**
      * The window on show from before the pager is gone (its body
      * unmounted): stop charging it (SUB decision cf21d510). A read in
-     * flight goes on, charged for its part alone; with nothing in flight
-     * or on show, nothing stays held.
+     * flight goes on, charged for its part alone, a charge that only
+     * shrinks and so is never refused; with nothing in flight or on show,
+     * nothing stays held.
      */
     dropCarried() {
       if (carried === 0 || data !== null) return;
       carried = 0;
-      if (state === "loading") budget.reserve(key, partBytes, evicted, { makeRoom: false });
+      if (state === "loading") budget.shrink(key, partBytes);
       else if (state !== "evicted" && state !== "dropped") budget.release(key);
     },
     /** Stop: abort any read, discard its reply and release what is held. */

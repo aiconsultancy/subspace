@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { PART_MAX_BYTES } from "../src/activity.js";
 import { createBudget } from "../src/budget.js";
+import { createPager } from "../src/pager.js";
 import { activityEvent, textItem } from "./activity-fixtures.js";
 import { buttons, clickOn, officer, pagedWith, pagesOf, prepare, settle, windowsIn } from "./activity-helpers.js";
 
@@ -275,4 +276,23 @@ test("r9 3: a turn closed and reopened during a pressure refit's read names the 
   } finally {
     watcher.stop();
   }
+});
+
+test("r9 3: dropCarried lowers a loading pager's charge to its part even when the budget would refuse that part now", async () => {
+  const budget = createBudget(1000);
+  budget.reserve("floor", 300, null, { pinned: true });
+  const release = [];
+  const read = () => new Promise((resolve) => release.push(() => resolve({ data: "x".repeat(100), next: null })));
+  const pager = createPager({ budget, key: "p", read, partBytes: 400, known: { version: null, count: null, carried: 200 } });
+  const done = pager.open(0);
+  assert.equal(budget.bytes("p"), 600, "the window carried and the incoming part");
+  // The floor grows past what would admit the part beside it, freeing nothing (as a planned refit).
+  budget.reserve("floor", 700, null, { pinned: true, makeRoom: false });
+  assert.equal(budget.fits("p", 400), false);
+  pager.dropCarried();
+  assert.equal(budget.bytes("p"), 400, "the carried window is no longer charged");
+  assert.equal(pager.view.state, "loading", "the read goes on");
+  release[0]();
+  await done;
+  assert.equal(pager.view.state, "ready");
 });

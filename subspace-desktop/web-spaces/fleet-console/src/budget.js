@@ -185,6 +185,24 @@ export function createBudget(limit) {
       const entry = entries.get(key);
       if (entry) entry.used = ++clock;
     },
+    /**
+     * Lower what `key` holds to `bytes`, never raising it: it only gives
+     * room back, so it needs no admission and cannot be refused, and
+     * `key` keeps its place in the freeing order (SUB decision 8346cf82).
+     * Returns whether `key` is held.
+     *
+     * @param {string} key
+     * @param {number} bytes
+     */
+    shrink(key, bytes) {
+      const entry = entries.get(key);
+      if (!entry) return false;
+      if (bytes < entry.bytes) {
+        total -= entry.bytes - bytes;
+        entry.bytes = bytes;
+      }
+      return true;
+    },
     /** Give up `key` without calling its `evict`. */
     release,
     /** Give up every key that `match` accepts, without calling `evict`. */
