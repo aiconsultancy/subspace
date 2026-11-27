@@ -171,6 +171,26 @@ const adminOnly = (member: Member) =>
 
 const fleetNotFound = () => problem(404, "Fleet not found.");
 
+type Db = (typeof Database)["Service"];
+
+/** Insert a fleet grant within the caller's transaction. The caller audits its own provenance. */
+export const insertEnrolmentToken = (
+  tx: Db,
+  input: Pick<TokenRow, "organisationId" | "fleetId" | "createdById" | "maxUses"> & {
+    lifetime: number;
+  },
+) =>
+  Effect.gen(function* () {
+    const { lifetime, ...fields } = input;
+    const id = randomUUID();
+    const { token, hash } = mintEnrolmentToken(id);
+    const [row] = yield* tx
+      .insert(enrolmentTokens)
+      .values({ ...fields, id, tokenHash: hash, expiresAt: new Date(Date.now() + lifetime * 1000) })
+      .returning();
+    return { id, token, expiresAt: dateTime(row!.expiresAt), maxUses: row!.maxUses };
+  });
+
 const issueToken = (member: Member, reference: string, payload: typeof NewEnrolmentToken.Type) =>
   Effect.gen(function* () {
     yield* adminOnly(member);
@@ -179,33 +199,25 @@ const issueToken = (member: Member, reference: string, payload: typeof NewEnrolm
       Effect.gen(function* () {
         const [fleet] = yield* findFleet(tx, member.organisationId, reference);
         if (!fleet) return yield* Effect.fail(fleetNotFound());
-        const id = randomUUID();
-        const { token, hash } = mintEnrolmentToken(id);
-        const lifetime = payload.expiresInSeconds ?? defaultEnrolmentLifetime;
-        const [row] = yield* tx
-          .insert(enrolmentTokens)
-          .values({
-            id,
-            organisationId: member.organisationId,
-            fleetId: fleet.id,
-            tokenHash: hash,
-            expiresAt: new Date(Date.now() + lifetime * 1000),
-            maxUses: payload.maxUses ?? defaultEnrolmentUses,
-            createdById: member.id,
-          })
-          .returning();
+        const grant = yield* insertEnrolmentToken(tx, {
+          organisationId: member.organisationId,
+          fleetId: fleet.id,
+          createdById: member.id,
+          lifetime: payload.expiresInSeconds ?? defaultEnrolmentLifetime,
+          maxUses: payload.maxUses ?? defaultEnrolmentUses,
+        });
         yield* recordAudit(tx, member, {
           action: "enrolmentTokenCreated",
           entityType: "EnrolmentToken",
-          entityId: row!.id,
+          entityId: grant.id,
           summary: "Issued an enrolment token for a fleet.",
           changes: {
             fleetId: fleet.id,
-            expiresAt: dateTime(row!.expiresAt),
-            maxUses: row!.maxUses,
+            expiresAt: grant.expiresAt,
+            maxUses: grant.maxUses,
           },
         });
-        return { id: row!.id, token, expiresAt: dateTime(row!.expiresAt), maxUses: row!.maxUses };
+        return grant;
       }),
     );
   });
@@ -302,6 +314,7 @@ const tokenAudit = (
 
 /** What an enrolment asks for, without its key: the name, rank, ship and IRC nick. */
 type Wanted = Pick<typeof Enrolment.Type, "name" | "rank" | "ship" | "ircNick">;
+type EnrolmentFleet = Pick<typeof fleets.$inferSelect, "id" | "slug" | "organisationId">;
 
 /** The ship a rank takes: a captain's own (required), none for a rear admiral (400 otherwise). */
 const shipOf = (payload: Wanted) => {
@@ -319,11 +332,10 @@ const shipOf = (payload: Wanted) => {
  * organisation, so a name held in another fleet, by a deactivated agent or with another rank is
  * refused (409), naming the agent and its fleet.
  */
-const enrolledAgent = (
-  tx: (typeof Database)["Service"],
-  organisationId: string,
-  fleet: typeof fleets.$inferSelect,
-  payload: Wanted,
+export const enrolledAgent = (
+  tx: Db,
+  fleet: EnrolmentFleet,
+  payload: Pick<Wanted, "name" | "rank">,
 ) =>
   Effect.gen(function* () {
     const [row] = yield* tx
@@ -335,7 +347,7 @@ const enrolledAgent = (
       .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
       .where(
         and(
-          eq(users.organisationId, organisationId),
+          eq(users.organisationId, fleet.organisationId),
           isNotNull(users.agentRank),
           sql`lower(${users.displayName}) = lower(${payload.name})`,
         ),
@@ -363,6 +375,43 @@ const enrolledAgent = (
         ),
       );
     return existing;
+  });
+
+/** Register a key-only officer, without adding a certificate, under the organisation lock. */
+export const registerEnrolledAgent = (
+  tx: Db,
+  fleet: EnrolmentFleet,
+  ship: Pick<typeof ships.$inferSelect, "id" | "name"> | undefined,
+  payload: Omit<Wanted, "ship"> & { model: string },
+  registeredById: string,
+) =>
+  Effect.gen(function* () {
+    const id = randomUUID();
+    const registration = {
+      subject: keyOnlySubject(id),
+      displayName: payload.name,
+      agentIrcNick: payload.ircNick ?? null,
+    };
+    yield* checkAgentNames(tx, fleet.organisationId, registration);
+    const [created] = yield* tx
+      .insert(users)
+      .values({
+        ...registration,
+        id,
+        organisationId: fleet.organisationId,
+        agentRank: payload.rank,
+        agentFleet: fleet.slug,
+        agentFleetId: fleet.id,
+        agentShip: ship?.name ?? null,
+        agentShipId: ship?.id ?? null,
+        agentModel: payload.model,
+        username: registration.agentIrcNick,
+        registeredById,
+      })
+      .onConflictDoNothing()
+      .returning({ id: users.id });
+    if (!created) return yield* Effect.fail(problem(409, "The agent registration changed."));
+    return created.id;
   });
 
 /**
@@ -403,7 +452,7 @@ const enrol = (grant: (typeof EnrolmentGrant)["Service"], payload: typeof Enrolm
         if (!fleet) return yield* Effect.fail(problem(401, invalidToken));
 
         // Agent names are unique in an organisation, so at most one agent has this one.
-        const existing = yield* enrolledAgent(tx, token.organisationId, fleet, payload);
+        const existing = yield* enrolledAgent(tx, fleet, payload);
 
         const active = yield* activeCredential(tx, certificate.fingerprint);
         if (active) {
@@ -445,33 +494,8 @@ const enrol = (grant: (typeof EnrolmentGrant)["Service"], payload: typeof Enrolm
                 problem(409, "The ship name changed. Retry the enrolment."),
               );
           }
-          const id = randomUUID();
-          const registration = {
-            subject: keyOnlySubject(id),
-            displayName: payload.name,
-            agentIrcNick: payload.ircNick ?? null,
-          };
-          yield* checkAgentNames(tx, token.organisationId, registration);
-          const [created] = yield* tx
-            .insert(users)
-            .values({
-              ...registration,
-              id,
-              organisationId: token.organisationId,
-              agentRank: payload.rank,
-              agentFleet: fleet.slug,
-              agentFleetId: fleet.id,
-              agentShip: ship?.name ?? null,
-              agentShipId: ship?.id ?? null,
-              agentModel: payload.model,
-              username: registration.agentIrcNick,
-              // The administrator who issued the token registered the agents it enrols.
-              registeredById: token.createdById,
-            })
-            .onConflictDoNothing()
-            .returning({ id: users.id });
-          if (!created) return yield* Effect.fail(problem(409, "The agent registration changed."));
-          agentId = created.id;
+          // The administrator who issued the token is the registered sponsor of new officers.
+          agentId = yield* registerEnrolledAgent(tx, fleet, ship, payload, token.createdById);
           yield* tx.insert(auditLogs).values(
             tokenAudit(token.organisationId, {
               action: "agentEnrolled",
@@ -592,7 +616,7 @@ const checkEnrolment = (
     for (const wanted of payload.agents) {
       const decided = yield* Effect.gen(function* () {
         yield* shipOf(wanted);
-        const existing = yield* enrolledAgent(db, grant.organisationId, fleet, wanted);
+        const existing = yield* enrolledAgent(db, fleet, wanted);
         if (existing) return "existing" as const;
         yield* checkAgentNames(db, grant.organisationId, {
           subject: keyOnlySubject(randomUUID()),

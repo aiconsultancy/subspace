@@ -59,6 +59,92 @@ and fingerprint, and a device token with its header and claims, valid only at
 - **Bootstrap** (`scripts/pairing-owner.ts`, `bootstrapOwner` in `src/pairing-owner.ts`).
   `bun run auth:owner ORG` runs only as root and does everything in one transaction.
 
+## Provision a fleet for setup
+
+On the API host, root runs `bun run --silent auth:provision-fleet`, with the API's
+`DATABASE_URL`, `AUTH_PROVIDERS` (including `pairing`), `AGENT_TOKEN_AUDIENCE`
+and any `RESERVED_USERNAMES`. The command reads one UTF-8 JSON object of up to
+64 KiB from standard input, or accepts `--file PATH` for a private root-owned
+regular file (no group or other permissions; the final path must not be a
+symlink). It has no HTTP route. A request looks like this:
+
+```json
+{
+  "organisation": "example",
+  "owner": { "name": "Aubrey Example", "email": "aubrey@example.com" },
+  "fleet": {
+    "slug": "example",
+    "name": "Example Fleet",
+    "ircHost": "irc.example.com",
+    "ircPort": 6697,
+    "ircTls": true,
+    "starbaseChannel": "#example-starbase",
+    "commandChannel": "#example-command"
+  },
+  "rearAdmiral": { "name": "atlas", "ircNick": "atlas", "model": "example-model" },
+  "captains": [
+    {
+      "name": "vega",
+      "ircNick": "vega",
+      "model": "example-model",
+      "ship": "Vega",
+      "channel": "#vega"
+    }
+  ],
+  "repositories": ["example/repository"]
+}
+```
+
+- `organisation` names `pairing:ORG`, with the same `ORG` format as
+  `auth:owner`. Give `owner.name` on the first run; the e-mail is optional. On
+  reruns the existing owner is reused, not renamed or replaced. A `dev:ORG`
+  or externally managed organisation with the same suffix is not migrated.
+- `fleet` uses the create-fleet API fields, including optional `ircWebsocketUrl`,
+  `vmHost` and `fleetApiUrl`. Supply the standard channel names from the installer
+  for the fleet and each captain. There is one rear admiral and up to 49
+  captains. Officer names, IRC nicks, ships and channels each differ ignoring
+  case. Officers are matched by name; same-fleet, same-rank active officers keep
+  their member IDs and key credentials. Omission does not delete a ship or
+  deactivate an officer. The command does not create Ergo accounts or keys.
+- Without an `initiative` field, setup finds a non-archived initiative of the
+  fleet's name, preferring one already owned by this fleet over an unassigned
+  one. If none matches, it creates one for the fleet. An ambiguous match needs
+  an explicit `"initiative": {"id": "<UUID>"}`. Keep the returned ID for
+  reruns. An existing initiative of another fleet is moved only with
+  `"initiative": {"id": "<UUID>", "adopt": true}`. That includes ownership
+  inherited from an ancestor. An unassigned initiative can be attached without
+  `adopt`.
+- `repositories` is optional (up to 50 `owner/repository` names). Setup reports
+  existing, unarchived tracker projects linked to them and their effective fleet,
+  including ownership inherited from an ancestor. It does not create, edit or
+  move projects. A different `fleetId` is a warning the installer can show.
+
+On success standard output contains one JSON line, with these fields:
+
+| Field                                                  | Shape                                                                                     |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `organisationId`, `ownerId`, `fleetId`, `initiativeId` | UUID strings                                                                              |
+| `officers`                                             | Array of `{name, id}` in request order, rear admiral first                                |
+| `projects`                                             | Array of `{repository, id, key, fleetId}`; `fleetId` is a UUID or `null`                  |
+| `grant`                                                | `{id, token, expiresAt, maxUses}`: UUID, opaque `senr1.` token, UTC timestamp and integer |
+
+Pass only the grant token to Stargate's existing enrolment flow through a private
+channel. It is fleet-scoped, valid for ten minutes and has one use per officer in
+the specification; as with any fleet grant, a new certificate consumes one use.
+The gateway should keep its existing officer keys on reruns. Provision close to
+enrolment: each successful run returns a fresh grant; earlier grants keep their
+original expiry and use limit. Do not print the response to a setup log or keep
+it in setup answers, generated instructions or shell arguments. Only the hash
+of the token is stored. On refusal, the command exits non-zero, writes a
+diagnostic to standard error and leaves no partial changes or grant. Changes are
+audited as API-host CLI actions, not as actions by the owner. Existing records
+that require an administrator ID use the owner as their sponsor.
+
+Provisioning mints no owner invite and does not rotate a pending invite or
+revoke a device. After setup succeeds, run `auth:owner` separately when an invite
+is needed and deliver it only to the owner. No administrator bearer or human key
+is needed by setup.
+
 ## Decisions
 
 - **Reuse the agent key model, not a new credential type.** A device credential is

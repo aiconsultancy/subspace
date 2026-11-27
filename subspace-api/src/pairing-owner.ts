@@ -74,7 +74,7 @@ export function deviceChoice(flags: {
 }
 
 /** The pairing organisation's ID, created if it is new, and locked. */
-const ensureOrganisation = (tx: Db, externalId: string) =>
+export const ensureOrganisation = (tx: Db, externalId: string) =>
   Effect.gen(function* () {
     const [created] = yield* tx
       .insert(organisations)
@@ -161,9 +161,13 @@ const settleDevices = (
 /**
  * The organisation's owner, its earliest administrator with a paired-only subject, created with
  * the request's name if there is none. A deactivated owner is never replaced, and is restored only
- * with `reactivate`.
+ * with `reactivate`. The caller holds the organisation lock acquired by `ensureOrganisation`.
  */
-const ensureOwner = (tx: Db, organisationId: string, request: OwnerBootstrap) =>
+export const ensureOwner = (
+  tx: Db,
+  organisationId: string,
+  request: Pick<OwnerBootstrap, "displayName" | "email" | "reserved" | "reactivate">,
+) =>
   Effect.gen(function* () {
     // Locked before `active` is read, so a concurrent change to the owner, such as a direct
     // deactivation, either commits first and is seen here or waits for this invite.
