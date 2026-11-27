@@ -402,49 +402,54 @@ def yes_no(label, default, interactive):
     return str(answer).lower().startswith("y")
 
 
-def gather_topology(args, answers, saved, interactive):
-    """Choose the fleet layout; use the existing options to place its services."""
+def resolve_placement(args, answers, saved, requested_api):
+    """Resolve service placement from CLI and saved inputs, independently of the topology label."""
     hosted_api(args, answers, saved)
-    remote_irc = (args.irc or saved.get("irc", "local")) == "remote"
-    shared_api = args.shared_api_target or bool(answers.get("apiUrl"))
+    answers["irc"] = "remote" if (args.irc or saved.get("irc", "local")) == "remote" else "local"
+    if answers["irc"] == "remote" and args.irc_host is not None:
+        answers["ircHost"] = args.irc_host
+    if answers.get("apiUrl"):
+        answers["api"] = False  # The hosted API replaces one on this VM.
+    elif requested_api is not None:
+        answers["api"] = requested_api
+    elif args.database_url_file and answers.get("api") is False:
+        # Asking for an existing PostgreSQL also asks for the API that uses it.
+        answers["api"] = True
+    answers.setdefault("api", True)
+
+
+def gather_topology(explicit, saved, interactive, *, remote_irc, shared_api):
+    """Pick or reconcile the label without moving any service."""
     suggested = "join" if remote_irc and shared_api else "several" if remote_irc or shared_api else "single"
     saved_topology = saved.get("topology")
-    choice = args.topology or saved_topology
+    choice = explicit or saved_topology
     if choice is None and interactive and not saved:
         choice = prompt("Topology: single (recommended: this VM runs the fleet, API, Ergo and PostgreSQL), "
                         "several (first of several fleets), or join (use existing services)", suggested)
     require(choice is None or choice in ("single", "several", "join"), "Choose single, several or join for topology.")
-    if choice == "join" and not (remote_irc and shared_api):
-        require(saved_topology and args.topology is None,
-                "To join, use shared IRC (--irc-server or --irc remote) and a shared API (--api-target or --api-url).")
-        say(f"The saved topology 'join' needs both shared services; recording '{suggested}' for these endpoints.")
-        choice = suggested
+    if choice == "join" and suggested != "join":
+        refusal = "To join, use shared IRC (--irc-server or --irc remote) and a shared API (--api-target or --api-url)."
+        constraint = "needs both shared services"
     elif choice == "single" and suggested != "single":
-        require(saved_topology and args.topology is None,
-                "The 'single' topology uses local IRC and no shared API; choose 'several' or 'join' for shared services.")
-        say(f"The saved topology 'single' uses no shared services; recording '{suggested}' for these endpoints.")
-        choice = suggested
-    answers["topology"] = choice or suggested
-    answers["irc"] = "remote" if remote_irc else "local"
-    if remote_irc:
-        if args.irc_host is not None:
-            answers["ircHost"] = args.irc_host
-        elif "ircHost" not in answers:
-            answers["ircHost"] = prompt("Shared IRC server's DNS name", interactive=interactive)
-    if args.shared_api_target:
+        refusal = "The 'single' topology uses local IRC and no shared API; choose 'several' or 'join' for shared services."
+        constraint = "uses no shared services"
+    else:
+        return choice or suggested
+    require(saved_topology and explicit is None, refusal)
+    say(f"The saved topology '{choice}' {constraint}; recording '{suggested}' for these endpoints.")
+    return suggested
+
+
+def gather_shared_irc(answers, shared_api_target, interactive):
+    # The topology prompt precedes any request for the shared IRC hostname.
+    remote_irc = answers["irc"] == "remote"
+    if remote_irc and "ircHost" not in answers:
+        answers["ircHost"] = prompt("Shared IRC server's DNS name", interactive=interactive)
+    if shared_api_target:
         require(not answers.get("apiUrl"), "--api-target cannot replace an explicit or saved hosted API (--api-url).")
         hostname = answers.get("ircHost")
         require(remote_irc and hostname and not loopback_irc_host(hostname),
                 "--api-target needs remote IRC: use --irc-server NAME or --irc remote --irc-host HOST.")
-        args.api = False
-    if answers.get("apiUrl"):
-        answers["api"] = False  # The hosted API replaces one on this VM.
-    elif args.api is not None:
-        answers["api"] = args.api
-    elif args.database_url_file and answers.get("api") is False:
-        # A fleet set up with --no-api: asking for an existing PostgreSQL asks for the API that uses it.
-        answers["api"] = True
-    answers.setdefault("api", True)
 
 
 def gather_workstation_network(args, answers, saved, interactive):
@@ -493,7 +498,11 @@ def gather(args, saved):
             answers[key] = prompt(label, default, interactive) if interactive else default
         return answers[key]
 
-    gather_topology(args, answers, saved, interactive)
+    requested_api = False if args.shared_api_target else args.api
+    resolve_placement(args, answers, saved, requested_api)
+    answers["topology"] = gather_topology(args.topology, saved, interactive, remote_irc=answers["irc"] == "remote",
+                                          shared_api=args.shared_api_target or bool(answers.get("apiUrl")))
+    gather_shared_irc(answers, args.shared_api_target, interactive)
     gather_workstation_network(args, answers, saved, interactive)
     gather_identity(args, answers, saved, interactive)
     pick("name", args.name, "Fleet name (shown in the desktop and on IRC)")
@@ -690,7 +699,7 @@ def gather(args, saved):
             "--agent-listener requires a Subspace API on this VM.")
     answers["agentListener"] = args.agent_listener
     # An existing PostgreSQL for the API: the file's path is kept, never the URL. --migrate is for this run only.
-    require(not (args.database_url_file and args.api is False),
+    require(not (args.database_url_file and requested_api is False),
             "--database-url-file runs the API on this VM, which --no-api leaves out. Pass one or the other.")
     if args.database_url_file == "":
         # The API's tracker is in that server; a PostgreSQL on this VM would start empty, and the API image's

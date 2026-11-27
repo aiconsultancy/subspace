@@ -344,6 +344,10 @@ class GuidedQuestionsTests(unittest.TestCase):
             self.gather(["--irc", "local", "--topology", "join"], saved=kept)
 
     def test_single_topology_follows_a_switch_to_shared_irc(self):
+        answers, asked = self.gather(["--irc", "remote", "--no-api"], ["", "irc.example.com", ""])
+        self.assertEqual([label.partition(":")[0] for label in asked[:3]],
+                         ["Topology", "Shared IRC server's DNS name", "Private network for workstations"])
+        self.assertEqual((answers["topology"], answers["ircHost"]), ("several", "irc.example.com"))
         saved, _ = self.gather(["--non-interactive"])
         remote = ["--irc", "remote", "--irc-host", "irc.example.com"]
         answers, _ = self.gather(remote, saved=saved)
@@ -3721,9 +3725,13 @@ class HostedApiSetupTests(unittest.TestCase):
                 "--non-interactive", "--shared-api-target"]
         remote = {"irc": "remote", "ircHost": "irc.example.com"}
         for flags, saved in ((["--irc", "remote", "--irc-host", "irc.example.com"], {}), ([], remote)):
-            answers = fleet_setup.gather(fleet_setup.parse_args(base + flags), saved)
+            options = fleet_setup.parse_args(base + flags)
+            answers = fleet_setup.gather(options, saved)
             self.assertFalse(answers["api"])
+            self.assertIsNone(options.api)
             self.assertEqual(answers["ircHost"], "irc.example.com")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "--database-url-file runs the API on this VM"):
+            fleet_setup.gather(fleet_setup.parse_args(base + ["--database-url-file", "/run/example-db"]), remote)
 
         for flags, saved in (
                 ([], {"irc": "local", "ircHost": "irc.example.com"}),
