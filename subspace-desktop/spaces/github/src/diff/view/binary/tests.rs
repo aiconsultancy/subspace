@@ -1,7 +1,11 @@
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{ElementId, Empty, Entity, RenderImage, TestAppContext, VisualTestContext};
+use gpui_kit::{
+    ElementId, Empty, Entity, RenderImage, Subscription, TestAppContext, VisualTestContext,
+};
 use serde_json::json;
 use subspace_client_fleet::diff::DiffSide;
 use subspace_framework::client_test_support::Mock;
@@ -140,6 +144,17 @@ fn binary_read_count(mock: &Mock) -> usize {
         .iter()
         .filter(|request| request.path.contains("/diff/file?"))
         .count()
+}
+
+fn observe_notifications(
+    view: &Entity<DiffView>,
+    window: &mut VisualTestContext,
+) -> (Rc<Cell<usize>>, Subscription) {
+    let notifications = Rc::new(Cell::new(0));
+    let count = notifications.clone();
+    let subscription =
+        window.update(|_, cx| cx.observe(view, move |_, _| count.set(count.get() + 1)));
+    (notifications, subscription)
 }
 
 fn assert_page(

@@ -10,7 +10,10 @@ use gpui_kit::{
     Styled as _, Window, div,
 };
 use image::{Frame, ImageDecoder as _, ImageFormat, ImageReader, Limits};
-use subspace_client_fleet::{Error, diff::DiffContent};
+use subspace_client_fleet::{
+    Error,
+    diff::{DiffContent, DiffRead},
+};
 use subspace_framework::client_github::model::image_type;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
@@ -64,7 +67,7 @@ impl DiffView {
     pub(super) fn preview_binary(
         &mut self,
         format: ImageFormat,
-        mut progress: PreviewRead,
+        progress: PreviewRead,
         cx: &mut Context<Self>,
     ) {
         let (DiffSource::Fleet(source), Some(at), Some(binary)) = (
@@ -103,16 +106,10 @@ impl DiffView {
                         at: &at,
                         side,
                     };
-                    let result = progress
-                        .read(|position| {
-                            blob.read(&client, source.request(mode), position, &closed)
-                                .map_err(PreviewError::Fleet)
-                        })
-                        .and_then(|()| {
-                            closed.check().map_err(PreviewError::Fleet)?;
-                            decode(format, &progress.bytes).ok_or(PreviewError::NotRenderable)
-                        });
-                    (result, progress)
+                    progress.assemble(format, &closed, |position| {
+                        blob.read(&client, source.request(mode), position, &closed)
+                            .map_err(PreviewError::Fleet)
+                    })
                 })
                 .await;
             _ = view.update(cx, |view, cx| {
@@ -211,6 +208,19 @@ pub(super) struct PreviewRead {
 }
 
 impl PreviewRead {
+    fn assemble(
+        mut self,
+        format: ImageFormat,
+        closed: &DiffRead,
+        read: impl FnMut(&Position) -> Result<(DiffContent, bool), PreviewError>,
+    ) -> (Result<Preview, PreviewError>, Self) {
+        let result = self.read(read).and_then(|()| {
+            closed.check().map_err(PreviewError::Fleet)?;
+            decode(format, &self.bytes).ok_or(PreviewError::NotRenderable)
+        });
+        (result, self)
+    }
+
     pub(super) fn read(
         &mut self,
         mut read: impl FnMut(&Position) -> Result<(DiffContent, bool), PreviewError>,

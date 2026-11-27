@@ -1,5 +1,3 @@
-use std::cell::Cell;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -9,7 +7,9 @@ use gpui_kit::test::TestWindowExt as _;
 use subspace_client_fleet::{Error, diff::DiffSide};
 use subspace_framework::client_test_support::Mock;
 
-use super::{PATH, assert_page, binary_read_count, binary_response, click, mount};
+use super::{
+    PATH, assert_page, binary_read_count, binary_response, click, mount, observe_notifications,
+};
 use crate::diff::view::binary::{
     preview::{PreviewError, PreviewRead},
     read::Blob,
@@ -252,10 +252,7 @@ fn only_the_visible_held_side_ticks(cx: &mut TestAppContext) {
     });
     assert_eq!(binary_read_count(&mock), 2);
 
-    let ticks = Rc::new(Cell::new(0));
-    let count = ticks.clone();
-    let _subscription =
-        window.update(|_, cx| cx.observe(&view, move |_, _| count.set(count.get() + 1)));
+    let (ticks, _subscription) = observe_notifications(&view, window);
     window.executor().advance_clock(Duration::from_secs(1));
     window.run_until_parked();
     assert_eq!(ticks.get(), 1, "the hidden held side must not tick");

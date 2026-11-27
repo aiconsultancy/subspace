@@ -1,5 +1,3 @@
-use std::cell::Cell;
-use std::rc::Rc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -15,6 +13,7 @@ use subspace_framework::client_test_support::Mock;
 
 use super::{
     DiffView, PATH, Position, assert_page, binary_read_count, binary_response, click, mount,
+    observe_notifications,
 };
 use crate::diff::view::{
     DiffSource, binary::read::Blob, crew_tests::ReadGate, source::FleetSource,
@@ -135,10 +134,7 @@ fn a_late_hold_reaches_the_loaded_replacement_reader(cx: &mut TestAppContext) {
     assert_page(&view, window, DiffSide::New, 0);
     window.update(|window, _| assert!(window.find("crew-binary-preview").visible()));
 
-    let notified = Rc::new(Cell::new(0));
-    let count = notified.clone();
-    let _subscription =
-        window.update(|_, cx| cx.observe(&view, move |_, _| count.set(count.get() + 1)));
+    let (notified, _subscription) = observe_notifications(&view, window);
     release.send(()).unwrap();
     assert_eq!(first.join().unwrap(), Err(Error::DiffReadCancelled));
     window.run_until_parked();
@@ -154,13 +150,21 @@ fn a_late_hold_reaches_the_loaded_replacement_reader(cx: &mut TestAppContext) {
     view.read_with(window, |view, cx| {
         assert_eq!(view.binary_retry_remaining(cx), 10)
     });
-    let before = binary_read_count(&mock);
+    assert_preview_waits_for_hold(&mock, &view, window);
+}
+
+fn assert_preview_waits_for_hold(
+    mock: &Mock,
+    view: &Entity<DiffView>,
+    window: &mut VisualTestContext,
+) {
+    let before = binary_read_count(mock);
     click(window, "crew-binary-preview");
     window.executor().advance_clock(Duration::from_secs(9));
     window.run_until_parked();
     click(window, "crew-binary-preview");
     assert_eq!(
-        binary_read_count(&mock),
+        binary_read_count(mock),
         before,
         "preview sent before expiry"
     );
@@ -177,7 +181,7 @@ fn a_late_hold_reaches_the_loaded_replacement_reader(cx: &mut TestAppContext) {
         assert!(view.binary.as_ref().unwrap().preview.is_some())
     });
     assert_eq!(
-        binary_read_count(&mock) - before,
+        binary_read_count(mock) - before,
         2,
         "one preview, in two pages"
     );

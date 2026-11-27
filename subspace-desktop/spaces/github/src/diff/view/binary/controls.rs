@@ -96,29 +96,10 @@ fn paging_controls(
     }
     let remaining = view.binary_retry_remaining(cx);
     let held = remaining > 0;
-    let loading = binary.read.is_some();
-    if let Some(retry) = &binary.retry {
-        let bytes_busy = matches!(retry, Retry::Bytes(_));
-        return row
-            .when(!bytes_busy || binary.page.is_some(), |row| {
-                row.children(binary_actions(binary, bytes_busy || held, cx))
-            })
-            .when(
-                held && binary.page.is_some() && binary.preview.is_none(),
-                |row| row.children(preview_action(view, binary, true, cx)),
-            )
-            .child(
-                action_button(
-                    "crew-binary-retry-page",
-                    Intent::Quiet,
-                    Some(IconName::RefreshCw),
-                    "Retry page",
-                )
-                .disabled(held)
-                .on_click(cx.listener(|view, _, _, cx| view.retry_binary(cx))),
-            )
-            .child(hold_message(remaining, tokens));
+    if binary.retry.is_some() {
+        return retry_controls(row, view, binary, held, cx).child(hold_message(remaining, tokens));
     }
+    let loading = binary.read.is_some();
     let row = if binary.preview.is_some() {
         row.child(preview::bytes_button(cx))
     } else {
@@ -136,6 +117,33 @@ fn paging_controls(
     } else {
         row
     }
+}
+
+fn retry_controls(
+    row: Div,
+    view: &DiffView,
+    binary: &BinaryView,
+    held: bool,
+    cx: &Context<DiffView>,
+) -> Div {
+    let bytes_busy = matches!(binary.retry, Some(Retry::Bytes(_)));
+    row.when(!bytes_busy || binary.page.is_some(), |row| {
+        row.children(binary_actions(binary, bytes_busy || held, cx))
+    })
+    .when(
+        held && binary.page.is_some() && binary.preview.is_none(),
+        |row| row.children(preview_action(view, binary, true, cx)),
+    )
+    .child(
+        action_button(
+            "crew-binary-retry-page",
+            Intent::Quiet,
+            Some(IconName::RefreshCw),
+            "Retry page",
+        )
+        .disabled(held)
+        .on_click(cx.listener(|view, _, _, cx| view.retry_binary(cx))),
+    )
 }
 
 fn hold_message(remaining: u64, tokens: &Tokens) -> impl IntoElement {
