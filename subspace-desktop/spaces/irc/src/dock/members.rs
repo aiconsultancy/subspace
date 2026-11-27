@@ -34,6 +34,7 @@ pub(super) fn focus(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) 
     if changed {
         // The conversation in front decides a followed fleet.
         crate::live::watch::sync(board, cx);
+        view::sync_ship(board, cx);
     }
 }
 

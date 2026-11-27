@@ -90,6 +90,7 @@ pub struct Irc {
     /// The inspector's open tab for a fleet channel: its ship or Starbase,
     /// or its people.
     inspector_tab: view::InspectorTab,
+    ship_panel: view::ShipPanel,
     /// The thread chosen in each conversation, for the inspector's Thread
     /// tab.
     threads: thread::Threads,

@@ -5,7 +5,7 @@
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
-use subspace_client_fleet::{FleetApi, FleetRecord, FleetState, Link, TokenStore};
+use subspace_client_fleet::{FleetApi, FleetRecord, FleetSnapshot, FleetState, Link, TokenStore};
 use subspace_client_irc::Event;
 use subspace_framework::core::Secret;
 use subspace_framework::dashboard::avatar::AgentIcons;
@@ -15,13 +15,24 @@ use super::super::remove::settle;
 use super::fleet::ship;
 use crate::fixtures::{channel, message};
 use crate::hub::Hub;
-use crate::live::tests::aurora;
+use crate::live::{FleetLive, tests};
 use crate::{Irc, rows, view};
+
+mod refresh;
 
 /// The hub told the aurora fleet is in `state`, with the fixture's ships.
 pub(super) fn set_fleet(hub: &Entity<Hub>, state: FleetState, cx: &mut VisualTestContext) {
+    set_snapshot(hub, state, &tests::snapshot(), cx);
+}
+
+fn set_snapshot(
+    hub: &Entity<Hub>,
+    state: FleetState,
+    snapshot: &FleetSnapshot,
+    cx: &mut VisualTestContext,
+) {
     hub.update(cx, |hub, cx| {
-        hub.fleets = [("aurora".to_owned(), aurora(state))].into();
+        hub.fleets = [("aurora".to_owned(), FleetLive::new(state, Some(snapshot)))].into();
         cx.notify();
     });
     settle(cx);
@@ -114,17 +125,13 @@ fn a_fleet_that_is_not_live_says_why_and_shows_no_figure(cx: &mut TestAppContext
     for state in [
         FleetState::NotConfigured,
         FleetState::InvalidAddress,
-        FleetState::Checking,
         FleetState::NoToken,
         FleetState::AddressChanged {
             saved_for: Some("https://old.example.test".into()),
         },
         FleetState::StoreUnavailable,
-        FleetState::Ready,
-        FleetState::Followed(Link::Connecting),
         FleetState::Followed(Link::TokenRefused),
         FleetState::Followed(Link::Forbidden),
-        FleetState::Followed(Link::Unreachable),
     ] {
         set_fleet(&hub, state.clone(), cx);
         let (title, sentence) = view::inspector_reason(&state).expect("not live");
