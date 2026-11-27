@@ -318,3 +318,178 @@ test("budget: a plan weighs changes against one order and answers as wouldFree d
   }
   assert.deepEqual({ used: budget.used, d: budget.bytes("d"), r: budget.bytes("r") }, { used: 195, d: 30, r: 35 }, "weighing changes nothing");
 });
+
+test("budget: a plan's fixed orders: a pinned growth past everything that can be freed never names a resized pinned entry or the latest request, and a floor is weighed with each change left out", () => {
+  const budget = createBudget(200);
+  budget.reserve("pin", 30, null, { pinned: true });
+  budget.reserve("pin2", 20, null, { pinned: true });
+  for (const [key, bytes] of [["a", 25], ["b", 40], ["c", 15], ["d", 30], ["e", 20]]) budget.reserve(key, bytes, null);
+  budget.request("r");
+  budget.reserve("r", 15, null);
+  budget.touch("b");
+  // By use: a, c, d, e, b. The growth resizes d, then pin2 and r (both kept), then a: they go after the others, in that
+  // order, and the kept two never go. Held beside pin: 165, then 97 once resized.
+  const plan = budget.plan("pin", 190, { pinned: true });
+  for (const [key, size] of [["d", 5], ["pin2", 10], ["r", 5], ["a", 2]]) plan.set(key, size);
+  assert.deepEqual(plan.freed(), ["c", "e", "b", "d", "a"], "past everything that can be freed, and still short");
+  assert.deepEqual(plan.freed("d"), ["c", "d", "e", "b", "a"], "d as it holds now, in its own place");
+  assert.deepEqual(plan.freed("pin2"), ["c", "e", "b", "d", "a"]);
+  assert.deepEqual(plan.freed("r"), ["c", "e", "b", "d", "a"]);
+  assert.deepEqual(plan.freed("a"), ["a", "c", "e", "b", "d"]);
+  const shorter = budget.plan("pin", 150, { pinned: true });
+  for (const [key, size] of [["d", 5], ["pin2", 10], ["r", 5], ["a", 2]]) shorter.set(key, size);
+  assert.deepEqual(shorter.freed(), ["c", "e", "b"], "it stops once the growth fits");
+  // pin2 and r grown instead of shrunk: the walk passes everything, and the kept two still never go.
+  const grown = budget.plan("pin", 190, { pinned: true });
+  for (const [key, size] of [["r", 60], ["pin2", 60], ["d", 5]]) grown.set(key, size);
+  assert.deepEqual(grown.freed(), ["a", "c", "e", "b", "d"]);
+  assert.deepEqual(grown.freed("r"), ["a", "c", "e", "b", "d"]);
+  // An ordinary reservation's floor holds pin, pin2 and r (65 bytes): 150 more are refused until r holds nothing, and
+  // refused again with r weighed as it holds now; d left out goes back to its own place.
+  const floored = budget.plan("x", 150);
+  assert.deepEqual(floored.freed(), [], "refused beside the floor");
+  floored.set("r", 0);
+  floored.set("d", 5);
+  assert.deepEqual(floored.freed(), ["a", "c", "e", "b", "d"]);
+  assert.deepEqual(floored.freed("r"), [], "r as it holds now: refused again");
+  assert.deepEqual(floored.freed("d"), ["a", "c", "d", "e", "b"]);
+  // The same walk as reserve makes it: pin's growth frees all five and leaves pin2 and r held.
+  const out = [];
+  for (const key of ["a", "b", "c", "d", "e"]) budget.reserve(key, budget.bytes(key), (k) => out.push(k));
+  budget.reserve("pin", 190, null, { pinned: true });
+  assert.deepEqual(out, ["a", "b", "c", "d", "e"]);
+  assert.deepEqual([budget.has("pin2"), budget.has("r")], [true, true]);
+});
+
+/**
+ * Round 11's budget order, from `freeOrder` and `admits` at 58d0eb77, over a
+ * copy of the entries kept beside a budget: what a plan must name, without
+ * going through the budget's own walk.
+ */
+function referenceBudget(limit) {
+  const entries = new Map();
+  let clock = 0;
+  let requested = null;
+  const kept = (key) => key === requested || entries.get(key)?.pinned === true;
+  const sizeOf = (key, sizes) => (sizes.has(key) ? sizes.get(key) : (entries.get(key)?.bytes ?? 0));
+  function wouldFree(key, bytes, pinned, sizes = new Map()) {
+    const fixed = [...entries.keys()].filter((other) => other !== key && kept(other)).reduce((sum, other) => sum + sizeOf(other, sizes), 0);
+    if (!pinned && key !== requested && fixed + bytes > limit) return [];
+    const resized = [...sizes.keys()].filter((other) => other !== key && entries.has(other));
+    let held = [...entries].reduce((sum, [other, entry]) => sum + (other === key ? 0 : entry.bytes), 0);
+    for (const other of resized) held += sizes.get(other) - entries.get(other).bytes;
+    const used = (other) => (sizes.has(other) ? clock + 1 + resized.indexOf(other) : entries.get(other).used);
+    const order = [];
+    for (const other of [...entries.keys()].filter((each) => each !== key && !kept(each)).sort((a, b) => used(a) - used(b))) {
+      if (held + bytes <= limit) break;
+      order.push(other);
+      held -= sizeOf(other, sizes);
+    }
+    return order;
+  }
+  return {
+    wouldFree,
+    reserve(key, bytes, pinned, free) {
+      const fixed = [...entries.keys()].filter((other) => other !== key && kept(other)).reduce((sum, other) => sum + entries.get(other).bytes, 0);
+      if (!pinned && key !== requested && fixed + bytes > limit) return null;
+      entries.delete(key);
+      const freed = free ? wouldFree(key, bytes, true) : [];
+      for (const other of freed) entries.delete(other);
+      entries.set(key, { bytes, used: ++clock, pinned });
+      return freed;
+    },
+    request(key) {
+      requested = key;
+      if (entries.has(key)) entries.get(key).used = ++clock;
+    },
+    touch(key) {
+      if (entries.has(key)) entries.get(key).used = ++clock;
+    },
+    shrink(key, bytes) {
+      if (entries.has(key)) entries.get(key).bytes = Math.min(bytes, entries.get(key).bytes);
+    },
+    release: (key) => entries.delete(key),
+    used: () => [...entries.values()].reduce((sum, entry) => sum + entry.bytes, 0),
+  };
+}
+
+test("budget: a plan and reserve free what round 11's order freed, over seeded random budgets", () => {
+  let seed = 115;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const int = (n) => Math.floor(random() * n);
+  const keys = ["a", "b", "c", "d", "e", "f", "pin", "pin2", "x"];
+  const pick = () => keys[int(keys.length)];
+  let checks = 0;
+  for (let n = 0; n < 400; n += 1) {
+    const limit = 50 + int(300);
+    const budget = createBudget(limit);
+    const reference = referenceBudget(limit);
+    const steps = [];
+    // Each entry keeps the eviction call it was reserved with: one list for them all.
+    const out = [];
+    const evict = (key) => out.push(key);
+    for (let step = 0; step < 4 + int(10); step += 1) {
+      const key = pick();
+      const op = random();
+      if (op < 0.5) {
+        const bytes = int(limit);
+        const pinned = key.startsWith("pin");
+        const free = random() < 0.9;
+        out.length = 0;
+        const held = budget.reserve(key, bytes, evict, { pinned, makeRoom: free });
+        const want = reference.reserve(key, bytes, pinned, free);
+        steps.push(`reserve ${key} ${bytes}${pinned ? " pinned" : ""}${free ? "" : " in place"}`);
+        assert.deepEqual(held ? out : null, want, steps.join("; "));
+        assert.equal(budget.used, reference.used(), steps.join("; "));
+      } else if (op < 0.65) {
+        budget.request(key);
+        reference.request(key);
+        steps.push(`request ${key}`);
+      } else if (op < 0.8) {
+        budget.touch(key);
+        reference.touch(key);
+        steps.push(`touch ${key}`);
+      } else if (op < 0.9) {
+        const bytes = int(limit);
+        budget.shrink(key, bytes);
+        reference.shrink(key, bytes);
+        steps.push(`shrink ${key} ${bytes}`);
+      } else {
+        budget.release(key);
+        reference.release(key);
+        steps.push(`release ${key}`);
+      }
+      // A plan with up to four entries resized (pinned ones, the latest request, the key itself or absent keys
+      // included), one set again and one deleted, each weighed in full and with every change left out in turn.
+      const key2 = pick();
+      const bytes = int(limit * 1.5);
+      const pinned = random() < 0.3;
+      const plan = budget.plan(key2, bytes, { pinned });
+      const sizes = new Map();
+      for (let i = int(5); i > 0; i -= 1) {
+        const [other, size] = [pick(), int(limit)];
+        plan.set(other, size);
+        sizes.set(other, size);
+      }
+      const resized = [...sizes.keys()];
+      if (resized.length > 0 && random() < 0.5) {
+        const [other, size] = [resized[int(resized.length)], int(limit)];
+        plan.set(other, size);
+        sizes.set(other, size);
+      }
+      if (resized.length > 0 && random() < 0.5) {
+        const other = resized[int(resized.length)];
+        plan.delete(other);
+        sizes.delete(other);
+      }
+      const at = `${steps.join("; ")}; plan ${key2} ${bytes}${pinned ? " pinned" : ""} as ${JSON.stringify([...sizes])}`;
+      assert.deepEqual(plan.freed(), reference.wouldFree(key2, bytes, pinned, sizes), at);
+      for (const other of [...sizes.keys(), pick()]) {
+        const without = new Map([...sizes].filter(([each]) => each !== other));
+        assert.deepEqual(plan.freed(other), reference.wouldFree(key2, bytes, pinned, without), `${at} without ${other}`);
+        checks += 1;
+      }
+    }
+  }
+  assert.ok(checks > 3000, `${checks} plans weighed`);
+});
