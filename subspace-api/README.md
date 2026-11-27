@@ -257,7 +257,7 @@ links.
 | `DATABASE_URL`                                                        | PostgreSQL connection URL. Required outside Compose.                                                            |
 | `HOST`, `PORT`                                                        | Server listener, defaulting to `127.0.0.1:3000` outside the container.                                          |
 | `API_PORT`, `POSTGRES_PORT`, `POSTGRES_PASSWORD`                      | Compose host ports and local PostgreSQL password.                                                               |
-| `AUTH_PROVIDERS`                                                      | Comma-separated `workos`, `entra` or `dev`.                                                                     |
+| `AUTH_PROVIDERS`                                                      | Comma-separated `workos`, `entra`, `pairing` ([workstation pairing](#workstation-pairing)) or `dev`.            |
 | `ENABLE_DEV_AUTH`                                                     | Explicit development sign-in opt-in. Local Compose sets this to `true`.                                         |
 | `WORKOS_CLIENT_ID`, `WORKOS_ISSUER`, `WORKOS_JWKS_URL`                | AuthKit client, issuer (default `https://api.workos.com/`) and optional JWKS override.                          |
 | `WORKOS_AUDIENCE`                                                     | Optional exact audience for AuthKit deployments that set an audience claim.                                     |
@@ -270,6 +270,7 @@ links.
 | `RESERVED_USERNAMES_FILE`                                             | File of further reserved names, such as the IRC server's existing accounts, by line, comma or space.            |
 | `AGENT_PORT`, `AGENT_HOST`, `AGENT_ORGANISATION`                      | Optional [agent listener](#the-agent-listener): port (off when unset), address and `<provider>:<organisation>`. |
 | `AGENT_TOKEN_AUDIENCE`                                                | Public origin that [agent tokens](#agent-tokens) name in `aud`. Agent tokens are refused while unset.           |
+| `DEVICE_TOKEN_AUDIENCE`                                               | Origin that [device tokens](#device-tokens) name in `aud`. Defaults to `AGENT_TOKEN_AUDIENCE`.                  |
 | `DEV_KEY_PATH`                                                        | Private development signing key file, defaulting to `.data/dev-signing-key`.                                    |
 | `DEV_CHANNELS`, `DEV_IRC_HOST`, `DEV_IRC_PORT`                        | Channel text and IRC endpoint for newly created dev organisations.                                              |
 | `STORAGE_DRIVER`, `STORAGE_PATH`                                      | Defaults to `local` and `.data/blobs`. Use `s3` for a private S3-compatible bucket.                             |
@@ -881,6 +882,239 @@ workflow mappings before committing the changes, then calculates the
 tracker's state from the resulting children. Both operations use the
 tracker's current `version`.
 
+## Workstation pairing
+
+A person can sign in from their own workstation with a key that the workstation
+generates and keeps, with no identity provider account and no password. An
+organisation whose provider is `pairing` has members who sign in only this way.
+The workstation registers its certificate as one of the member's device
+credentials by redeeming a single-use invite, then signs a short-lived device
+token with its key for each request, exactly as a fleet's gateway signs
+[agent tokens](#agent-tokens). This section is the contract: the desktop and any
+other client or implementation of this API must match it exactly. The
+[change record](docs/changes/workstation-pairing/README.md) explains the decisions
+and has a synthetic [fixture](docs/changes/workstation-pairing/device-token-fixture.json)
+for client tests.
+
+Pairing is on when `AUTH_PROVIDERS` includes `pairing`. The API then needs
+`DEVICE_TOKEN_AUDIENCE` or `AGENT_TOKEN_AUDIENCE` and refuses to start without
+one. The device audience, whichever of the two supplies it, must be an `https`
+origin unless its host is loopback (`localhost`, `127.0.0.0/8` or `[::1]`), for
+development on one machine; otherwise the API refuses to start. Workstations send
+invites to that origin, and pinning the audience does not protect an invite sent
+in plain text. TLS may end at a trusted proxy in front of the API, with the API
+listening on plain HTTP behind it, as long as workstations reach the API through
+`https`. Development sign-in and the other providers are unchanged.
+
+### The first owner
+
+On the API host, as root and from the API's directory, this command creates a
+pairing organisation and its first owner, an organisation administrator, and
+prints one invite for the owner's first workstation:
+
+```sh
+bun run auth:owner example --name "Tamsin Pryor" --email tamsin@example.com
+```
+
+For an API running in Compose, run the command in the `api` container as root
+from the Compose project directory:
+
+```sh
+docker compose exec -u 0 -T api bun run auth:owner example --name "Tamsin Pryor" --email tamsin@example.com
+```
+
+- `ORG` is the organisation's external ID: 1 to 63 lower-case letters, digits,
+  dots and hyphens, starting with a letter or digit. Elsewhere it is named
+  `pairing:ORG`.
+- `--name` is needed only to create the owner; `--email` is optional. The owner's
+  [username](#usernames) is derived from the name as for anyone else.
+- `--expires-in MINUTES` sets the invite's lifetime: 5 to 1,440 minutes, 60 by
+  default.
+- A rerun finds the same organisation and owner, ignoring `--name` and `--email`,
+  revokes the owner's earlier pending invites and prints a new one. Only the newest
+  invite works.
+- `--revoke-devices` also revokes every device credential of the owner. This is
+  the recovery for a lost or stolen workstation: the new invite pairs a
+  replacement.
+- `--reactivate` restores an existing deactivated owner and issues a fresh
+  invite without changing their identity. The command refuses to reactivate
+  anyone unless the flag is set. If the owner has device credentials that were
+  never revoked, it also refuses unless you say what becomes of them:
+  `--revoke-devices` revokes them, as for a lost or stolen workstation, and
+  `--keep-devices` lets them sign in again. It refuses the two together, and
+  `--keep-devices` without `--reactivate`. The command prints how many devices
+  were kept or revoked, and the audit event records their credential IDs.
+- The command runs only as root (uid 0), with the API's `DATABASE_URL`. The
+  invite appears only in its output; give it only to the owner.
+
+### Capability probe
+
+`GET /api/v1/pairing` needs no token and returns nothing secret, so a client can
+check it before it asks for an invite or sends one:
+
+```json
+{
+  "enabled": true,
+  "inviteVersion": "spair1",
+  "redeemPath": "/api/v1/pairing/redeem",
+  "deviceToken": {
+    "type": "subspace-device+jwt",
+    "issuer": "subspace-device",
+    "audience": "https://subspace.example.com",
+    "algorithms": ["EdDSA", "ES256"],
+    "maxLifetimeSeconds": 300,
+    "clockToleranceSeconds": 5
+  }
+}
+```
+
+When pairing is off, `enabled` is `false` and `deviceToken` is `null`. An API that
+predates pairing answers 404. `audience` is the configured value, never derived
+from the request's `Host`.
+
+### Redeeming an invite
+
+An invite is one line: `spair1.` followed by the unpadded base64url encoding of 48
+bytes, 71 characters in all. A client treats it as opaque apart from the prefix,
+which is its version. It is sent only in the request body, never in a URL, a query
+or a header.
+
+The workstation generates an Ed25519 key (the algorithm every client implements;
+ECDSA P-256 is also accepted) and a self-signed certificate for it, as an agent's
+gateway does (see [Credentials](#credentials)), keeps both, and sends:
+
+```http
+POST /api/v1/pairing/redeem
+Content-Type: application/json
+
+{
+  "invite": "spair1.…",
+  "certificate": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+  "label": "Tamsin's workstation"
+}
+```
+
+`label` is optional, one line of at most 120 characters. No other property is
+accepted. No bearer token is sent. On success the answer is 201, with
+`Cache-Control: no-store`:
+
+```json
+{
+  "memberId": "2f1d4c8e-0000-4000-8000-000000000000",
+  "organisationId": "7a9b3e10-0000-4000-8000-000000000000",
+  "credentialId": "c0ffee00-0000-4000-8000-000000000000",
+  "fingerprint": "6f2c9c811f161373937f5beb0967f5f45a2002e394a8de85f69ffa36bd9284e6",
+  "scopes": ["api"],
+  "deviceToken": { "type": "subspace-device+jwt", "...": "as in the probe" }
+}
+```
+
+`fingerprint` is the lower-case hexadecimal SHA-256 of the certificate's DER
+encoding; the client keeps the original certificate it sent. The certificate is
+registered and the invite spent in one transaction, so concurrent redemptions of
+one invite register one device and the rest are refused. An invite whose secret
+does not match is refused before the API locks anything.
+
+Refusals are [problem details](https://www.rfc-editor.org/rfc/rfc9457) whose
+`type` is stable; clients branch on it, not on `detail`:
+
+| Status | `type`                                         | When                                                                                                                                                                                                                                     |
+| ------ | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `urn:subspace:problem:invalid-request`         | A missing or unsupported content type (send `application/json`), invalid JSON, a missing, extra or invalid field (including an invite string longer than 256 characters), or a certificate that is not one Ed25519 or P-256 certificate. |
+| 401    | `urn:subspace:problem:pairing-invite-unusable` | In an otherwise valid request, the invite is malformed, unknown, expired, revoked or already used, or its member can no longer pair. One detail for every reason.                                                                        |
+| 409    | `urn:subspace:problem:credential-conflict`     | The certificate is already registered, to a device or an agent, or was revoked in this organisation. The invite is not spent.                                                                                                            |
+| 404    | `urn:subspace:problem:pairing-unavailable`     | This API does not pair devices.                                                                                                                                                                                                          |
+
+A 400 or 409 does not spend the invite. If a redemption's outcome is unknown,
+keep the pending key and certificate until the outcome is resolved:
+
+- Check with a freshly signed `GET /api/v1/me`. A 200 confirms the pairing. A
+  401 can mean the original redemption has not committed **yet**, or that the
+  token was rejected. Check that the audience matches the probe at the origin
+  used for redemption, and compare the local clock with the server's `Date`
+  header. Sign a fresh token for each check.
+- While the invite may still be usable, retry redemption with the same invite
+  and certificate, then check again with a freshly signed `/me`. If the first
+  attempt committed, this redemption retry returns 401 without registering
+  another device. If it did not, the retry can still pair the device.
+- A second `/me` 401 alone is not a reason to discard the pending record or
+  ask for a new invite. Ask for one only after the API has refused the original
+  invite as unusable and a fresh `/me` still returns 401 with the audience and
+  clock checked, or after an administrator confirms that the original invite
+  cannot be redeemed and the pending device is not active. If the outcome is
+  still unknown, keep the record and resume reconciliation later.
+- Asking for a replacement invite never permits discarding a pending key whose
+  outcome is still unknown: the original redemption may yet have committed.
+  Pair the replacement with a new key, and keep the pending one until its
+  outcome is resolved.
+- The API judges an invite's expiry by its database's clock, not by the clock
+  of whichever API process answers, so every replica gives the same answer.
+
+### Device tokens
+
+A device token is an [agent token](#agent-tokens) in every respect but its `typ`,
+its `iss` and its audience. It is sent as `Authorization: Bearer <token>` to any
+route on the main listener that takes a bearer token, including `/mcp`.
+
+| Part   | Field        | Value                                                                                                  |
+| ------ | ------------ | ------------------------------------------------------------------------------------------------------ |
+| Header | `alg`        | `EdDSA` for an Ed25519 key, `ES256` for a P-256 key.                                                   |
+| Header | `typ`        | Exactly `subspace-device+jwt`.                                                                         |
+| Header | `kid`        | The fingerprint.                                                                                       |
+| Claim  | `iss`        | Exactly `subspace-device`.                                                                             |
+| Claim  | `sub`        | The fingerprint.                                                                                       |
+| Claim  | `aud`        | `DEVICE_TOKEN_AUDIENCE` (or `AGENT_TOKEN_AUDIENCE` when unset), as one string: the probe's `audience`. |
+| Claim  | `iat`, `exp` | Whole seconds since the epoch; `exp` is after `iat` and at most 300 seconds after it.                  |
+| Claim  | `jti`        | A random, unique string of 1 to 256 printable ASCII characters.                                        |
+
+`DEVICE_TOKEN_AUDIENCE` has the form of `AGENT_TOKEN_AUDIENCE`: the origin people's
+workstations reach the API by, such as a private DNS name, when it differs from
+the agents'. It is configured, never taken from a request. The API checks a device
+token by the same numbered rules as an agent token, with five seconds' clock
+tolerance, and also requires that the credential belongs to a person: a device
+token signed with an agent's key, and an agent token signed with a device's key,
+are refused. Each `jti` is accepted once, so a client signs a fresh token for every
+request.
+
+Signing in, and restoring a session after a restart, is a fresh signed
+`GET /api/v1/me`. It returns the member, whose `userId` is stable for as long as
+the membership exists; a token signed by the same device on `/mcp` acts as the same
+person. Every HTTP request carries its own freshly signed token, on REST and `/mcp`
+alike, and so does every retry: a token is accepted once.
+
+- **Lifetime.** A token lives at most 300 seconds. A client that signs a token
+  ahead of its request should not start the request with less than 120 seconds of
+  the token left.
+- **Long-lived streams.** The update stream (`GET /api/v1/updates`) ends when the token that opened it expires, or after
+  three minutes, whichever comes first. The client then reconnects with a fresh
+  token and refreshes over REST.
+- **401 or 403.** 401 means the token proves nothing: missing, malformed, badly
+  signed, expired, replayed, for another audience or kind, or from a revoked or
+  unknown credential, all with one detail. The client never retries with the same
+  token. For a pending device, follow the recovery steps in
+  [Redeeming an invite](#redeeming-an-invite); repeated 401s alone do not settle an
+  in-flight redemption. 403 means the token is good but the member may not do
+  this: a deactivated member
+  (`An active organisation membership is required.`), an administrator route for
+  someone who is not one, or a route a device credential's scopes do not allow.
+- **Scopes.** A device credential has the scope `api` only, so
+  `POST /api/v1/me/irc-credential` answers 403 for now.
+
+The person acts with every rule that applies to people, including administrator
+rights for an administrator. A device credential is stored with agents'
+credentials, so a fingerprint is unique among active credentials in the whole
+database, and the agent credential routes neither list nor revoke one.
+
+Revoking a device refuses its next request: the token checks the credential each
+time. As with agents, it does not close an update stream already open, which ends
+within three minutes.
+
+Audited: `memberRegistered`, `pairingInviteCreated`, `pairingInviteRevoked`,
+`pairingInviteRedeemed`, `deviceCredentialAdded` and `deviceCredentialRevoked`.
+Rows written by `auth:owner` name the integration `Owner bootstrap` as the actor.
+No invite, token or key is logged, audited or returned in an error; a refused
+invite is logged at debug level with its reason only.
+
 ## Ready for agents
 
 Every full issue shape includes `readyForAgents`, a boolean that defaults to
@@ -1079,11 +1313,12 @@ The HTTP tests require a clean loopback Compose stack and create synthetic
 organisations. The agent listener's HTTP tests also need `AGENT_PORT` published by
 that stack, with `TEST_AGENT_API_URL` set to it and `TEST_AGENT_ORGANISATION`
 to the development organisation slug its `AGENT_ORGANISATION` names. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
-The sign-in, username, IRC, agent key and enrolment tests need only
+The sign-in, username, IRC, agent key, enrolment and pairing tests need only
 `TEST_DATABASE_URL`: each creates an isolated database there and runs the API
 in-process, trusting a fictional Entra tenant whose keys only the test holds. The
 agent key tests generate their own Ed25519 and P-256 certificates and mint agent
-tokens as a gateway would.
+tokens as a gateway would, and the pairing tests pair devices and sign device tokens
+as a workstation would.
 The fleet ownership race test holds a row lock in the API's own database while
 an agent writes, so when both variables are set, `TEST_DATABASE_URL` must name
 the database that `TEST_API_URL` serves, as in the example above. For signed pull request and deployment tests, sign in first as

@@ -13,24 +13,30 @@ export type Member = typeof users.$inferSelect & {
   source?: "rest" | "mcp";
   relayedCrew?: { name: string; model: string } | null;
 };
-/** The key credential an agent token was signed with, when the caller signed in that way. */
-export interface AgentCredentialUse {
+/**
+ * The key credential an agent or device token was signed with, when the caller signed in that way.
+ */
+export interface KeyCredentialUse {
   readonly id: string;
   readonly scopes: readonly ("api" | "irc")[];
 }
 export class CurrentMember extends Context.Service<
   CurrentMember,
-  Member & { tokenExpiresAt: number; agentCredential?: AgentCredentialUse }
+  Member & { tokenExpiresAt: number; keyCredential?: KeyCredentialUse }
 >()("subspace/CurrentMember") {}
 
 /**
- * An agent created by enrolment has no account with an identity provider. Its subject is this
- * prefix and its own user ID, which no provider issues, and a provider's token is never matched
- * to such a subject: the agent signs in only with its key credentials.
+ * An agent created by enrolment, and a person created to pair their devices, have no account with
+ * an identity provider. Their subject is one of these prefixes and their own user ID, which no
+ * provider issues, and a provider's token is never matched to such a subject: they sign in only
+ * with their key credentials.
  */
 export const keyOnlySubjectPrefix = "subspace-agent:";
+export const pairedSubjectPrefix = "subspace-member:";
 export const keyOnlySubject = (userId: string) => `${keyOnlySubjectPrefix}${userId}`;
-export const isKeyOnlySubject = (subject: string) => subject.startsWith(keyOnlySubjectPrefix);
+export const pairedSubject = (userId: string) => `${pairedSubjectPrefix}${userId}`;
+export const isKeyOnlySubject = (subject: string) =>
+  subject.startsWith(keyOnlySubjectPrefix) || subject.startsWith(pairedSubjectPrefix);
 
 export const findMember = (identity: PrincipalIdentity) =>
   Effect.gen(function* () {
@@ -46,6 +52,7 @@ export const findMember = (identity: PrincipalIdentity) =>
         and(
           eq(users.subject, identity.subject),
           sql`not starts_with(${users.subject}, ${keyOnlySubjectPrefix})`,
+          sql`not starts_with(${users.subject}, ${pairedSubjectPrefix})`,
           eq(organisations.provider, identity.provider),
           eq(organisations.externalId, identity.externalOrganisation),
         ),
@@ -78,7 +85,7 @@ export const provisionMember = (
   Effect.gen(function* () {
     if (isKeyOnlySubject(identity.subject))
       return yield* Effect.fail(
-        new Error("This form of subject is kept for agents enrolled with a key."),
+        new Error("This form of subject is kept for members who sign in only with a key."),
       );
     const db = yield* Database;
     return yield* db.transaction((tx) =>

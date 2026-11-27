@@ -158,3 +158,15 @@ export function agentToken(
     } as never)
     .sign(options.signWith ?? key.privateKey);
 }
+
+/** A device token: an agent token with the device `typ` and `iss`, as a paired workstation signs. */
+export const deviceToken = (
+  key: AgentKey,
+  audience: string,
+  options: Parameters<typeof agentToken>[2] = {},
+) =>
+  agentToken(key, audience, {
+    ...options,
+    header: { typ: "subspace-device+jwt", ...options.header },
+    claims: { iss: "subspace-device", ...options.claims },
+  });

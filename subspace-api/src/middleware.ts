@@ -9,6 +9,7 @@ import {
   endpointErrors,
   Forbidden,
   InternalError,
+  isProblem,
   problem,
   Unauthorised,
   validationProblem,
@@ -101,11 +102,8 @@ export const validationErrors = HttpApiMiddleware.layerSchemaErrorTransform(
 
 type DomainProblem = (typeof endpointErrors)[number]["Type"];
 
-function isDomainProblem(error: unknown): error is DomainProblem {
-  return (
-    typeof error === "object" && error !== null && "type" in error && error.type === "about:blank"
-  );
-}
+/** `isProblem`, narrowed to the problems every endpoint declares. */
+const isDomainProblem = (error: unknown): error is DomainProblem => isProblem(error);
 
 /** What may be logged about a failed database operation: its category and SQL state only. */
 export function databaseFailure(error: unknown) {

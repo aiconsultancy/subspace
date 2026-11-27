@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Redacted, Result, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -23,6 +23,7 @@ import { recordAudit } from "./audit";
 import { Database } from "./db";
 import { findFleet, FleetRef, ShipName } from "./fleets";
 import { CurrentMember, keyOnlySubject, type Member } from "./identity";
+import { mintOneTimeToken, readOneTimeToken, sameHash } from "./one-time-tokens";
 import {
   BearerAuth,
   databaseFailure,
@@ -47,7 +48,6 @@ import { dateTime, dateTimeOrNull, Line, Timestamp, Uuid } from "./validation";
  * random bytes. Only the SHA-256 of the whole text is stored, and it is compared in constant time.
  */
 export const enrolmentTokenPrefix = "senr1.";
-const tokenShape = /^senr1\.[A-Za-z0-9_-]{64}$/u;
 export const defaultEnrolmentLifetime = 3600;
 export const maxEnrolmentLifetime = 7 * 24 * 3600;
 /** Enough for a rear admiral and the installer's twelve captains, with room to spare. */
@@ -56,32 +56,11 @@ export const maxEnrolmentUses = 100;
 
 type TokenRow = typeof enrolmentTokens.$inferSelect;
 
-const hashOf = (token: string) => createHash("sha256").update(token, "utf8").digest();
-
-const uuidFromBytes = (bytes: Buffer) => {
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-};
-
 /** A new token for the row `id`, and the hash to store. */
-export function mintEnrolmentToken(id: string) {
-  const bytes = Buffer.concat([Buffer.from(id.replaceAll("-", ""), "hex"), randomBytes(32)]);
-  const token = `${enrolmentTokenPrefix}${bytes.toString("base64url")}`;
-  return { token, hash: hashOf(token).toString("hex") };
-}
+export const mintEnrolmentToken = (id: string) => mintOneTimeToken(enrolmentTokenPrefix, id);
 
 /** The row ID a token names and its hash, if it has the token's shape. */
-export function readEnrolmentToken(token: string) {
-  if (!tokenShape.test(token)) return undefined;
-  const encoded = token.slice(enrolmentTokenPrefix.length);
-  const bytes = Buffer.from(encoded, "base64url");
-  if (bytes.length !== 48 || bytes.toString("base64url") !== encoded) return undefined;
-  return { id: uuidFromBytes(bytes.subarray(0, 16)), hash: hashOf(token) };
-}
-
-/** Whether a token's hash is the stored one, compared in constant time. */
-const sameHash = (hash: Buffer, stored: string) =>
-  /^[0-9a-f]{64}$/u.test(stored) && timingSafeEqual(hash, Buffer.from(stored, "hex"));
+export const readEnrolmentToken = (token: string) => readOneTimeToken(enrolmentTokenPrefix, token);
 
 /** Why a token whose secret is right no longer registers anything, if it does not. */
 function spent(row: TokenRow, now = Date.now()) {

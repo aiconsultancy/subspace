@@ -1,0 +1,26 @@
+{
+  "description": "A synthetic device credential and device token for client tests. The key is public test data: never use it for anything else. Verify the token at verifyAt; every other time is outside its validity.",
+  "privateKeyJwk": {
+    "kty": "OKP",
+    "crv": "Ed25519",
+    "x": "GeIgCkG2vK6K-9ga9PonW0RKnw_bH6-Rfuxa3R44pYA",
+    "d": "ytNLqp-eKqsLEYRS1vFfappd65_6C7tK7wTUUe370T4"
+  },
+  "certificate": "-----BEGIN CERTIFICATE-----\nMIHmMIGZoAMCAQICAQEwBQYDK2VwMB0xGzAZBgNVBAMMEmRldmljZS5leGFtcGxl\nLmNvbTAeFw0yNjAxMDEwMDAwMDBaFw0zNjAxMDEwMDAwMDBaMB0xGzAZBgNVBAMM\nEmRldmljZS5leGFtcGxlLmNvbTAqMAUGAytlcAMhABniIApBtryuivvYGvT6J1tE\nSp8P2x+vkX7sWt0eOKWAMAUGAytlcANBAKTXn1f/gucwy+N7C+VqOxPYqP6F6qc+\nhkoCFuBBo4/KgB4vqF17obNftbWtbqwEhurrhpIxv9viNfP5/iNOwgA=\n-----END CERTIFICATE-----\n",
+  "fingerprint": "6f2c9c811f161373937f5beb0967f5f45a2002e394a8de85f69ffa36bd9284e6",
+  "header": {
+    "alg": "EdDSA",
+    "typ": "subspace-device+jwt",
+    "kid": "6f2c9c811f161373937f5beb0967f5f45a2002e394a8de85f69ffa36bd9284e6"
+  },
+  "claims": {
+    "iss": "subspace-device",
+    "sub": "6f2c9c811f161373937f5beb0967f5f45a2002e394a8de85f69ffa36bd9284e6",
+    "aud": "https://subspace.example.com",
+    "iat": 1767225600,
+    "exp": 1767225900,
+    "jti": "00000000-0000-4000-8000-000000000001"
+  },
+  "verifyAt": 1767225700,
+  "token": "eyJhbGciOiJFZERTQSIsInR5cCI6InN1YnNwYWNlLWRldmljZStqd3QiLCJraWQiOiI2ZjJjOWM4MTFmMTYxMzczOTM3ZjViZWIwOTY3ZjVmNDVhMjAwMmUzOTRhOGRlODVmNjlmZmEzNmJkOTI4NGU2In0.eyJpc3MiOiJzdWJzcGFjZS1kZXZpY2UiLCJzdWIiOiI2ZjJjOWM4MTFmMTYxMzczOTM3ZjViZWIwOTY3ZjVmNDVhMjAwMmUzOTRhOGRlODVmNjlmZmEzNmJkOTI4NGU2IiwiYXVkIjoiaHR0cHM6Ly9zdWJzcGFjZS5leGFtcGxlLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1OTAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEifQ.mCANQHFnGnYSkquKnwBl5dset_5XXTNyNHCb-1vFmgMaPMkZFfowum0sCrRhcqn36lhSE7R7XZXuQNx31DEABg"
+}

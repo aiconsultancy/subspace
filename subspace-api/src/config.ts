@@ -3,15 +3,24 @@ import { Redacted } from "effect";
 import { databaseUrl } from "./db";
 import { canonicalName } from "./usernames";
 import { githubConfig } from "./github-app";
+import { organisations } from "./schema";
 import { isUuid } from "./validation";
 
-export type Provider = "workos" | "entra" | "dev";
+const providerNames = organisations.provider.enumValues;
+/**
+ * How an organisation's people sign in: with an identity provider's tokens, or, for `pairing`,
+ * only with the device keys they pair with single-use invites (see `pairing.ts`).
+ */
+export type Provider = (typeof providerNames)[number];
+const isProvider = (name: string): name is Provider =>
+  (providerNames as readonly string[]).includes(name);
 
-export function authProviders(env: NodeJS.ProcessEnv): ReadonlySet<string> {
-  const providers = new Set((env.AUTH_PROVIDERS ?? "workos").split(",").map((name) => name.trim()));
-  if ([...providers].some((name) => !["workos", "entra", "dev"].includes(name))) {
-    throw new Error("AUTH_PROVIDERS must contain workos, entra or dev");
+export function authProviders(env: NodeJS.ProcessEnv): ReadonlySet<Provider> {
+  const names = (env.AUTH_PROVIDERS ?? "workos").split(",").map((name) => name.trim());
+  if (!names.every(isProvider)) {
+    throw new Error("AUTH_PROVIDERS must contain workos, entra, dev or pairing");
   }
+  const providers = new Set(names);
   if (providers.has("dev") && env.NODE_ENV === "production") {
     throw new Error("Dev auth is only available outside production");
   }
@@ -239,7 +248,7 @@ function ircSignIn(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) {
   const separator = organisation.indexOf(":");
   const provider = organisation.slice(0, separator);
   let externalOrganisation = organisation.slice(separator + 1);
-  if (separator < 1 || !externalOrganisation || !["workos", "entra", "dev"].includes(provider)) {
+  if (separator < 1 || !externalOrganisation || !isProvider(provider)) {
     throw new Error("IRC_AUTH_ORGANISATION must be <provider>:<organisation>, such as dev:local");
   }
   if (!providers.has(provider)) {
@@ -268,8 +277,21 @@ function ircSignIn(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) {
  * slash, in the form a URL's origin takes (lower-case host, no default port). Null when unset, and
  * agent tokens are then refused.
  */
-export function agentTokenAudience(env: NodeJS.ProcessEnv) {
-  const value = env.AGENT_TOKEN_AUDIENCE?.trim();
+export const agentTokenAudience = (env: NodeJS.ProcessEnv) =>
+  publicOrigin(env, "AGENT_TOKEN_AUDIENCE");
+
+/**
+ * DEVICE_TOKEN_AUDIENCE: the origin every device token names in `aud`, in the same form, when
+ * people's workstations reach the API by another name than the officers, such as a private DNS
+ * name. AGENT_TOKEN_AUDIENCE when unset. Pairing (AUTH_PROVIDERS has `pairing`) needs one of the
+ * two, and it must be https unless its host is loopback: see `checkPairingAudience`. It is configured,
+ * never taken from a request's Host header.
+ */
+export const deviceTokenAudience = (env: NodeJS.ProcessEnv) =>
+  publicOrigin(env, "DEVICE_TOKEN_AUDIENCE") ?? agentTokenAudience(env);
+
+function publicOrigin(env: NodeJS.ProcessEnv, name: string) {
+  const value = env[name]?.trim();
   if (!value) return null;
   let origin: string | undefined;
   try {
@@ -280,13 +302,39 @@ export function agentTokenAudience(env: NodeJS.ProcessEnv) {
   }
   if (origin !== value) {
     throw new Error(
-      "AGENT_TOKEN_AUDIENCE must be the API's public origin, such as https://api.example.com: scheme, lower-case host and optional port, with no path or trailing slash",
+      `${name} must be the API's public origin, such as https://api.example.com: scheme, lower-case host and optional port, with no path or trailing slash`,
     );
   }
   return value;
 }
 
 const loopback = ["127.0.0.1", "::1", "localhost"];
+
+/** Whether an origin's host is this machine: `localhost`, 127.0.0.0/8 or `[::1]`. */
+const isLoopbackOrigin = (origin: string) => {
+  const { hostname } = new URL(origin);
+  return (
+    hostname === "localhost" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/u.test(hostname)
+  );
+};
+
+/**
+ * Checks the device token audience when pairing is on. Workstations send invites to it and sign
+ * tokens for it, so it must be https: pinning the audience does not protect an invite sent in
+ * plain text. Plain http is allowed only on a loopback host, for development. TLS may end at a
+ * trusted proxy in front of the API, as long as workstations reach the API through https.
+ */
+function checkPairingAudience(env: NodeJS.ProcessEnv, audience: string | null) {
+  if (!audience) throw new Error("Pairing needs DEVICE_TOKEN_AUDIENCE or AGENT_TOKEN_AUDIENCE");
+  if (!audience.startsWith("https://") && !isLoopbackOrigin(audience)) {
+    const name = env.DEVICE_TOKEN_AUDIENCE?.trim()
+      ? "DEVICE_TOKEN_AUDIENCE"
+      : "AGENT_TOKEN_AUDIENCE, the device token audience while DEVICE_TOKEN_AUDIENCE is unset,";
+    throw new Error(
+      `Pairing needs https: ${name} must be an https origin unless its host is loopback`,
+    );
+  }
+}
 
 /**
  * The optional agent-only listener. A request on it names its registered agent in a header and
@@ -319,7 +367,7 @@ function agentListener(
   const separator = organisation.indexOf(":");
   const provider = organisation.slice(0, separator);
   const externalId = organisation.slice(separator + 1);
-  if (separator < 1 || !externalId || !["workos", "entra", "dev"].includes(provider)) {
+  if (separator < 1 || !externalId || !isProvider(provider)) {
     throw new Error("AGENT_ORGANISATION must be <provider>:<organisation>, such as dev:local");
   }
   if (!providers.has(provider)) {
@@ -344,6 +392,9 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
       "Dev sign-in needs a loopback listener or local-only container port publishing",
     );
   }
+  const deviceAudience = deviceTokenAudience(env);
+  // A paired device proves who it is only with tokens bound to this audience.
+  if (providers.has("pairing")) checkPairingAudience(env, deviceAudience);
   const agent = agentListener(env, providers, hostname, port);
   const adminRole = entraAdminRole(env, providers);
   const ircPort = Number(env.DEV_IRC_PORT ?? "6667");
@@ -362,7 +413,11 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
     hostname,
     port,
     agent,
+    /** The providers in AUTH_PROVIDERS: the organisations this deployment serves sign in with them. */
+    providers,
     agentTokenAudience: agentTokenAudience(env),
+    /** The device token audience while AUTH_PROVIDERS has pairing, which turns pairing on. */
+    deviceTokenAudience: providers.has("pairing") ? deviceAudience : null,
     autoRegister: autoRegister(env, providers),
     reservedUsernames: reservedUsernames(env),
     irc: ircSignIn(env, providers),

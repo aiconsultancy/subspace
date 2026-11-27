@@ -20,12 +20,13 @@ import {
   enrolmentTokenGroup,
   enrolmentTokenHandlers,
 } from "./enrolment";
-import { purgeAgentTokenIds, verifyAgentToken, type AgentTokenPolicy } from "./agent-keys";
+import { purgeAgentTokenIds, verifyKeyToken, type KeyTokenPolicy } from "./agent-keys";
 import { agentGroup, agentHandlers } from "./agents";
+import { pairingGroup, pairingHandlers, pairingProblems } from "./pairing";
 import { auditGroup, auditHandlers } from "./audit";
 import {
-  agentTokenIssuer,
   devTokenLifetime,
+  isKeyTokenIssuer,
   jwtVerifiers,
   mintDevToken,
   unverifiedIssuer,
@@ -380,6 +381,7 @@ const api = HttpApi.make("subspace")
     agentCredentialGroup,
     enrolmentTokenGroup,
     enrolmentGroup,
+    pairingGroup,
     auditGroup,
     notificationsGroup,
   )
@@ -657,11 +659,10 @@ export function routes(
 ) {
   const { dbLayer, github, resources } = shared;
   const verify = jwtVerifiers(options, devKey, fetchRemote);
-  const agentTokens: AgentTokenPolicy = {
-    audience: options.agentTokenAudience,
-    providers: new Set(
-      (["workos", "entra", "dev"] as const).filter((provider) => options[provider] !== null),
-    ),
+  const keyTokens: KeyTokenPolicy = {
+    agentAudience: options.agentTokenAudience,
+    deviceAudience: options.deviceTokenAudience,
+    providers: options.providers,
   };
   const signIn: SignInPolicy = {
     autoRegister: options.autoRegister,
@@ -681,17 +682,17 @@ export function routes(
               return yield* Effect.fail(problem(401, "A bearer access token is required."));
             }
             const token = Redacted.value(credential);
-            // An agent token, signed with the agent's registered key, is only ever checked
-            // against agent credentials, never by an identity provider's verifier.
-            if (unverifiedIssuer(token) === agentTokenIssuer) {
-              const agent = yield* verifyAgentToken(token, agentTokens).pipe(
+            // An agent or device token, signed with the member's registered key, is only ever
+            // checked against key credentials, never by an identity provider's verifier.
+            if (isKeyTokenIssuer(unverifiedIssuer(token))) {
+              const signedIn = yield* verifyKeyToken(token, keyTokens).pipe(
                 Effect.provideService(Database, db),
               );
               return yield* next.pipe(
                 Effect.provideService(CurrentMember, {
-                  ...agent.member,
-                  tokenExpiresAt: agent.expiresAt,
-                  agentCredential: agent.credential,
+                  ...signedIn.member,
+                  tokenExpiresAt: signedIn.expiresAt,
+                  keyCredential: signedIn.credential,
                 }),
                 Effect.map(noStore),
               );
@@ -731,8 +732,8 @@ export function routes(
     }),
   ).pipe(Layer.provide(dbLayer));
 
-  // Groups the main listener alone serves: IRC credentials, agents' key credentials and fleet
-  // enrolment.
+  // Groups the main listener alone serves: IRC credentials, agents' key credentials, fleet
+  // enrolment and workstation pairing.
   const common = Layer.mergeAll(
     handlerLayers(new Set()),
     HttpApiBuilder.group(
@@ -743,11 +744,17 @@ export function routes(
     HttpApiBuilder.group(api, "agentCredentials", agentCredentialHandlers),
     HttpApiBuilder.group(api, "enrolmentTokens", enrolmentTokenHandlers),
     HttpApiBuilder.group(api, "enrolment", enrolmentHandlers),
+    HttpApiBuilder.group(
+      api,
+      "pairing",
+      pairingHandlers({ audience: options.deviceTokenAudience, providers: options.providers }),
+    ),
   );
   const services = Layer.mergeAll(
     auth,
     validationErrors,
     enrolmentAuth.pipe(Layer.provide(dbLayer)),
+    pairingProblems,
   );
 
   const endpoints = (
