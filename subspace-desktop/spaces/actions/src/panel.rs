@@ -124,13 +124,10 @@ impl ListDashboard for Actions {
     }
 
     fn row_accessible_label(&self, row: &Row, _cx: &App) -> SharedString {
-        self.records()
-            .iter()
-            .find(|record| record.key == row.key.as_ref())
-            .map_or_else(
-                || row.title.clone(),
-                |record| rows::accessible_label(record).into(),
-            )
+        self.record(&row.key).map_or_else(
+            || row.title.clone(),
+            |record| rows::accessible_label(record).into(),
+        )
     }
 
     /// One click selects a row and fills the inspector; a double click or
@@ -150,12 +147,8 @@ impl ListDashboard for Actions {
         {
             open.active = false;
         }
-        let target = selected.and_then(|key| {
-            self.records()
-                .iter()
-                .find(|record| record.key == key.as_ref())
-                .and_then(|record| record.run.clone())
-        });
+        let target =
+            selected.and_then(|key| self.record(&key).and_then(|record| record.run.clone()));
         if let Some(target) = target {
             self.load_detail(target, cx);
         }
@@ -206,11 +199,7 @@ impl ListDashboard for Actions {
 
     fn row_menu(&self, row: &Row) -> RowMenu {
         let mut menu = RowMenu::from_row(row);
-        if let Some(record) = self
-            .records()
-            .iter()
-            .find(|record| record.key == row.key.as_ref())
-        {
+        if let Some(record) = self.record(&row.key) {
             menu = menu.link("GitHub", &record.link);
         }
         menu

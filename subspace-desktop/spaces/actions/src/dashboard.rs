@@ -70,6 +70,7 @@ impl Dashboard for Actions {
         let repos = services(cx)
             .map(|s| s.config.repos.clone())
             .unwrap_or_default();
+        let tokens = Tokens::current(cx);
         Self {
             focus: cx.focus_handle(),
             client,
@@ -92,7 +93,9 @@ impl Dashboard for Actions {
             poll: None,
             backoff: PollBackoff::default(),
             docks: Docks::load(cx),
-            text_edge: workspace::text_edge(&Tokens::current(cx)),
+            text_edge: workspace::text_edge(&tokens),
+            tokens,
+            record_index: Default::default(),
             weak: cx.weak_entity(),
             filter_popup: None,
             graph: panel::new_graph(cx),

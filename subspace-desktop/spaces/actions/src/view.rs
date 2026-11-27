@@ -17,6 +17,7 @@ impl Render for Actions {
         // The shared list asks for its inset without the tokens, so it
         // reads the text edge this frame worked out.
         self.text_edge = workspace::text_edge(&tokens);
+        self.tokens = tokens;
         let body = shell(self, window, cx);
         // An element declares context names; `view_keys` is a binding
         // predicate and must not be parsed as one.

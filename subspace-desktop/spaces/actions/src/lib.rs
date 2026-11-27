@@ -6,6 +6,7 @@ mod docks;
 mod fetch;
 mod filter_popup;
 pub mod graph;
+mod index;
 mod inspector;
 mod keys;
 mod lanes;
@@ -34,8 +35,9 @@ use gpui_kit::{Context, Entity, FocusHandle, Pixels, Task, WeakEntity};
 use subspace_framework::client_github::Client;
 use subspace_framework::core::task_state::PollBackoff;
 use subspace_framework::dashboard::list::{GroupNote, ListState, LoadStatus};
-use subspace_framework::dashboard::{ItemSearch, SearchDoc, prefs};
+use subspace_framework::dashboard::{ItemSearch, SearchDoc, Tokens, prefs};
 
+use index::RecordIndex;
 use model::{Filters, Record, Snapshot, View};
 
 pub struct Actions {
@@ -65,6 +67,11 @@ pub struct Actions {
     /// Where text starts in every panel, as of the last render. The shared
     /// list asks for its inset without the tokens to work it out.
     text_edge: Pixels,
+    /// The tokens as of the last render, so that each row of the list reads
+    /// them instead of working them out again.
+    tokens: Tokens,
+    /// Where each record of the current view is, rebuilt with the list.
+    record_index: RecordIndex,
     /// Lets a control built outside `Context<Self>`, such as the detail
     /// panel's footer, reach the board.
     weak: WeakEntity<Actions>,
@@ -107,11 +114,13 @@ impl Actions {
         }
     }
 
+    /// The record of the current view with `key`.
+    fn record(&self, key: &str) -> Option<&Record> {
+        self.record_index.find(self.records(), key)
+    }
+
     fn selected(&self) -> Option<&Record> {
-        let key = self.list.selected()?;
-        self.records()
-            .iter()
-            .find(|record| record.key == key.as_ref())
+        self.record(self.list.selected()?)
     }
 
     /// What the writes act on: the selection, unless the opened tab shows
@@ -168,6 +177,7 @@ impl Actions {
                 )
             })
             .collect::<Vec<_>>();
+        self.record_index = RecordIndex::new(self.records());
         self.list.set_groups(groups);
         self.list.set_status(self.load_status());
         self.search = Rc::new(ItemSearch::new(items));

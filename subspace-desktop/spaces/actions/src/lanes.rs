@@ -31,13 +31,6 @@ pub(crate) const LANES_MAX_SHARE: f32 = 0.6;
 /// columns' 1: only once they have all but gone.
 const STATUS_SHRINK: f32 = 0.05;
 
-/// The record a list row draws.
-fn record<'a>(this: &'a Actions, row: &Row) -> Option<&'a Record> {
-    this.records()
-        .iter()
-        .find(|record| record.key == row.key.as_ref())
-}
-
 /// A status's glyph in its tone.
 pub(crate) fn status_icon(status: &str, tokens: &Tokens) -> Icon {
     let (icon, tone) = rows::status_look(status);
@@ -45,13 +38,12 @@ pub(crate) fn status_icon(status: &str, tokens: &Tokens) -> Icon {
 }
 
 /// The status glyph in place of the list's dot.
-pub(crate) fn leading(this: &Actions, row: &Row, cx: &App) -> Option<AnyElement> {
-    let record = record(this, row)?;
-    let tokens = Tokens::current(cx);
+pub(crate) fn leading(this: &Actions, row: &Row, _cx: &App) -> Option<AnyElement> {
+    let record = this.record(&row.key)?;
     Some(
         div()
             .flex_shrink_0()
-            .child(status_icon(&record.status, &tokens))
+            .child(status_icon(&record.status, &this.tokens))
             .into_any_element(),
     )
 }
@@ -68,8 +60,8 @@ pub(crate) fn by_line(actor: &str, event: &str) -> String {
 /// After the title: branch, actor and event, status and age for a run; the
 /// status alone for anything else.
 pub(crate) fn trailing(this: &Actions, row: &Row, cx: &App) -> Option<AnyElement> {
-    let record = record(this, row)?;
-    let tokens = Tokens::current(cx);
+    let record = this.record(&row.key)?;
+    let tokens = &this.tokens;
     let lanes = h_flex()
         .id(SharedString::from(format!("actions-lanes:{}", row.key)))
         .test_support()
@@ -79,7 +71,7 @@ pub(crate) fn trailing(this: &Actions, row: &Row, cx: &App) -> Option<AnyElement
         .overflow_hidden()
         .gap_3()
         .text_xs();
-    let status = status_lane(record, &tokens);
+    let status = status_lane(record, tokens);
     let Some((run, facts)) = record.run.as_ref().zip(record.facts.as_ref()) else {
         return Some(lanes.child(status).into_any_element());
     };
@@ -88,7 +80,7 @@ pub(crate) fn trailing(this: &Actions, row: &Row, cx: &App) -> Option<AnyElement
     let by_id = SharedString::from(format!("actions-by:{}", row.key));
     Some(
         lanes
-            .child(branch_chip(&row.key, &run.branch, &tokens, cx))
+            .child(branch_chip(&row.key, &run.branch, tokens, cx))
             .child(
                 yielding(BY_WIDTH_REM)
                     .text_color(tokens.muted)

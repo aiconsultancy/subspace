@@ -1,5 +1,7 @@
 //! Button roles and their geometry tokens: the `controls` density group.
 
+use std::sync::LazyLock;
+
 use gpui_kit::{Pixels, Rems, px, rems};
 
 use crate::density::{Density, REFERENCE_REM};
@@ -111,7 +113,9 @@ pub struct Controls {
 impl Default for Controls {
     /// The density group's defaults: every theme without the tokens.
     fn default() -> Self {
-        Self::from_density(&Density::default())
+        static DEFAULTS: LazyLock<Controls> =
+            LazyLock::new(|| Controls::from_density(&Density::default()));
+        *DEFAULTS
     }
 }
 
