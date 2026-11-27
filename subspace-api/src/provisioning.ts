@@ -1,13 +1,7 @@
-import { eq, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
-import { AgentName, checkAgentNames, IrcNick } from "./agents";
+import { AgentName, IrcNick, reconcileFleetOfficer } from "./agents";
 import { Database } from "./db";
-import {
-  enrolledAgent,
-  insertEnrolmentToken,
-  maxEnrolmentChecks,
-  registerEnrolledAgent,
-} from "./enrolment";
+import { insertEnrolmentToken, maxEnrolmentChecks } from "./enrolment";
 import { lockInitiativeFleet, lockProjectFleet } from "./fleet-ownership";
 import {
   createFleet,
@@ -25,7 +19,7 @@ import { type Member } from "./identity";
 import { assignFleet, createInitiative, initiativePlacements } from "./initiatives";
 import { BootstrapRefused, ensureOrganisation, ensureOwner } from "./pairing-owner";
 import { problem } from "./problems";
-import { auditLogs, users } from "./schema";
+import { auditLogs } from "./schema";
 import { ReservedUsernames } from "./usernames";
 import { Email, Line, Name, Uuid } from "./validation";
 
@@ -105,76 +99,65 @@ function reconcileFleet(tx: Db, owner: Member, spec: Spec["fleet"]) {
   });
 }
 
+type RosterOfficer =
+  | (Spec["rearAdmiral"] & { rank: "rearAdmiral" })
+  | (Spec["captains"][number] & { rank: "captain" });
+
+function reconcileOfficerShip(
+  tx: Db,
+  owner: Member,
+  fleet: Fleet,
+  officer: RosterOfficer,
+  existingShips: ReadonlyMap<string, Effect.Success<ReturnType<typeof listShips>>[number]>,
+) {
+  return Effect.gen(function* () {
+    if (officer.rank === "rearAdmiral" || !officer.ship) return undefined;
+    const old = existingShips.get(lower(officer.ship));
+    const ship = yield* old
+      ? renameShip(owner, old.id, {
+          name: officer.ship,
+          channel: officer.channel,
+          version: old.version,
+        })
+      : createShip(owner, fleet.id, officer.ship, officer.channel);
+    if (!old || old.version !== ship.version)
+      yield* audit(tx, fleet.organisationId, {
+        action: old ? "shipUpdated" : "shipCreated",
+        entityType: "Ship",
+        entityId: ship.id,
+        summary: "Reconciled a ship on the API host.",
+        changes: { fleetId: fleet.id, version: ship.version },
+      });
+    return ship;
+  });
+}
+
 function reconcileRoster(tx: Db, owner: Member, fleet: Fleet, spec: Spec) {
   return Effect.gen(function* () {
     const existingShips = new Map(
       (yield* listShips(owner, fleet.id)).map((ship) => [lower(ship.name), ship]),
     );
-    const roster = [
-      { ...spec.rearAdmiral, rank: "rearAdmiral" as const, ship: undefined, channel: undefined },
+    const roster: RosterOfficer[] = [
+      { ...spec.rearAdmiral, rank: "rearAdmiral" },
       ...spec.captains.map((captain) => ({ ...captain, rank: "captain" as const })),
     ];
     const officers = [];
     for (const officer of roster) {
-      const existing = yield* enrolledAgent(tx, fleet, officer);
-      const oldShip = officer.ship ? existingShips.get(lower(officer.ship)) : undefined;
-      const ship = !officer.ship
-        ? undefined
-        : oldShip
-          ? yield* renameShip(owner, oldShip.id, {
-              name: officer.ship,
-              channel: officer.channel,
-              version: oldShip.version,
-            })
-          : yield* createShip(owner, fleet.id, officer.ship, officer.channel);
-      if (ship && (!oldShip || oldShip.version !== ship.version))
+      const { id, shipId, outcome } = yield* reconcileFleetOfficer(
+        tx,
+        fleet,
+        officer,
+        owner.id,
+        reconcileOfficerShip(tx, owner, fleet, officer, existingShips),
+      );
+      if (outcome !== "unchanged")
         yield* audit(tx, fleet.organisationId, {
-          action: oldShip ? "shipUpdated" : "shipCreated",
-          entityType: "Ship",
-          entityId: ship.id,
-          summary: "Reconciled a ship on the API host.",
-          changes: { fleetId: fleet.id, version: ship.version },
+          action: outcome === "created" ? "agentRegistered" : "agentUpdated",
+          entityType: "Agent",
+          entityId: id,
+          summary: "Reconciled an officer on the API host.",
+          changes: { fleetId: fleet.id, rank: officer.rank, shipId },
         });
-
-      let id: string;
-      if (!existing) {
-        id = yield* registerEnrolledAgent(tx, fleet, ship, officer, owner.id);
-      } else {
-        id = existing.id;
-        const changes = {
-          displayName: officer.name,
-          agentIrcNick: officer.ircNick,
-          username: officer.ircNick,
-          agentModel: officer.model,
-          agentShip: ship?.name ?? null,
-          agentShipId: ship?.id ?? null,
-        };
-        if (
-          Object.entries(changes).every(
-            ([key, value]) => existing[key as keyof typeof changes] === value,
-          )
-        ) {
-          officers.push({ name: officer.name, id });
-          continue;
-        }
-        yield* checkAgentNames(
-          tx,
-          fleet.organisationId,
-          { subject: existing.subject, ...changes },
-          existing,
-        );
-        yield* tx
-          .update(users)
-          .set({ ...changes, version: existing.version + 1, updatedAt: sql`now()` })
-          .where(eq(users.id, id));
-      }
-      yield* audit(tx, fleet.organisationId, {
-        action: existing ? "agentUpdated" : "agentRegistered",
-        entityType: "Agent",
-        entityId: id,
-        summary: "Reconciled an officer on the API host.",
-        changes: { fleetId: fleet.id, rank: officer.rank, shipId: ship?.id ?? null },
-      });
       officers.push({ name: officer.name, id });
     }
     return officers;

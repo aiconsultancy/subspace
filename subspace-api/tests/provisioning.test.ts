@@ -140,8 +140,19 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
     ]);
     expect((await enrol(grant.token, rear.name, extraKey)).status).toBe(401);
 
+    const captainProfile = async () =>
+      (
+        await database.client.query(
+          `SELECT subject, version, updated_at, agent_rank, agent_fleet_id, registered_by_id,
+                  agent_model, agent_ship, agent_ship_id, agent_irc_nick, username
+           FROM users WHERE id = $1`,
+          [captainRegistration.agentId],
+        )
+      ).rows[0];
+    const originalProfile = await captainProfile();
     const rerun = await provision({ ...input, owner: undefined });
     expect({ ...rerun, grant: undefined }).toEqual({ ...first, grant: undefined });
+    expect(await captainProfile()).toEqual(originalProfile);
     expect(rerun.grant.id).not.toBe(grant.id);
     const replay = await enrol(rerun.grant.token, rear.name, rearKey);
     expect(replay.status).toBe(200);
@@ -208,7 +219,7 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
     const changed = await provision({
       ...input,
       fleet: { ...input.fleet, ircHost: "new-irc.example.com" },
-      captains: [{ ...captain, model: "new-example-model" }],
+      captains: [{ ...captain, ircNick: "new-vega", model: "new-example-model", ship: "Altair" }],
       initiative: { id: first.initiativeId },
     });
     expect(changed.fleetId).toBe(first.fleetId);
@@ -217,16 +228,64 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
       (await database.client.query("SELECT irc_host FROM fleets WHERE id = $1", [first.fleetId]))
         .rows,
     ).toEqual([{ irc_host: "new-irc.example.com" }]);
-    expect(
-      (
-        await database.client.query("SELECT agent_model FROM users WHERE id = $1", [
-          captainRegistration.agentId,
-        ])
-      ).rows,
-    ).toEqual([{ agent_model: "new-example-model" }]);
-    const captainReplay = await enrol(changed.grant.token, captain.name, captainKey, captain.ship);
+    const movedShip = (
+      await database.client.query("SELECT id FROM ships WHERE fleet_id = $1 AND name = 'Altair'", [
+        first.fleetId,
+      ])
+    ).rows[0];
+    const updatedProfile = {
+      ...originalProfile,
+      version: originalProfile.version + 1,
+      updated_at: expect.any(Date),
+      agent_model: "new-example-model",
+      agent_ship: "Altair",
+      agent_ship_id: movedShip.id,
+      agent_irc_nick: "new-vega",
+      username: "new-vega",
+    };
+    expect(await captainProfile()).toEqual(updatedProfile);
+    const captainReplay = await enrol(changed.grant.token, captain.name, captainKey, "Altair");
     expect(captainReplay.status).toBe(200);
     expect(await captainReplay.json()).toMatchObject(captainRegistration);
+    expect(await captainProfile()).toEqual(updatedProfile);
+  });
+
+  test("refuses to move, rerank or reactivate a conflicting officer", async () => {
+    const input = spec("officer-conflicts", "first");
+    const first = await provision(input);
+    const second = spec(input.organisation, "second");
+    const captain = input.captains[0]!;
+    const expectRefusal = (request: typeof FleetProvisionSpec.Type, detail: string) =>
+      expect(provision(request)).rejects.toMatchObject({
+        status: 409,
+        detail: expect.stringContaining(detail),
+      });
+    await expectRefusal({ ...second, captains: input.captains }, "of fleet first has it");
+    await expectRefusal(
+      {
+        ...input,
+        rearAdmiral: { name: captain.name, ircNick: captain.ircNick, model: captain.model },
+        captains: [],
+      },
+      "registered with the rank captain",
+    );
+    await database.client.query("UPDATE users SET active = false WHERE id = $1", [
+      first.officers[1]!.id,
+    ]);
+    await expectRefusal(input, "is deactivated");
+    const fleets = await database.client.query(
+      "SELECT slug FROM fleets WHERE organisation_id = $1",
+      [first.organisationId],
+    );
+    expect(fleets.rows).toEqual([{ slug: "first" }]);
+    const officers = await database.client.query(
+      "SELECT id, version, active FROM users WHERE organisation_id = $1 AND agent_rank IS NOT NULL ORDER BY display_name",
+      [first.organisationId],
+    );
+    expect(officers.rows).toEqual([
+      { id: first.officers[0]!.id, version: 1, active: true },
+      { id: first.officers[1]!.id, version: 1, active: false },
+    ]);
   });
 
   test("moves an existing initiative only on explicit adoption and reports project ownership without editing projects", async () => {

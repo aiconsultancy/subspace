@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Redacted, Result, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
@@ -18,7 +18,13 @@ import {
   readCertificate,
 } from "./agent-credentials";
 import { CertificatePem, CredentialScopes } from "./agent-keys";
-import { AgentName, checkAgentNames, IrcNick } from "./agents";
+import {
+  AgentName,
+  checkAgentNames,
+  findFleetOfficer,
+  IrcNick,
+  registerFleetOfficer,
+} from "./agents";
 import { recordAudit } from "./audit";
 import { Database } from "./db";
 import { findFleet, FleetRef, ShipName } from "./fleets";
@@ -38,7 +44,7 @@ import {
   Unauthorised,
   validationProblem,
 } from "./problems";
-import { auditLogs, enrolmentTokens, fleets, ships, users } from "./schema";
+import { auditLogs, enrolmentTokens, fleets, ships } from "./schema";
 import { dateTime, dateTimeOrNull, Line, Timestamp, Uuid } from "./validation";
 
 /**
@@ -314,7 +320,6 @@ const tokenAudit = (
 
 /** What an enrolment asks for, without its key: the name, rank, ship and IRC nick. */
 type Wanted = Pick<typeof Enrolment.Type, "name" | "rank" | "ship" | "ircNick">;
-type EnrolmentFleet = Pick<typeof fleets.$inferSelect, "id" | "slug" | "organisationId">;
 
 /** The ship a rank takes: a captain's own (required), none for a rear admiral (400 otherwise). */
 const shipOf = (payload: Wanted) => {
@@ -327,97 +332,9 @@ const shipOf = (payload: Wanted) => {
 };
 
 /**
- * The agent an enrolment adds its key to: the active agent of that name, ignoring case, in the
- * token's fleet with the requested rank, or none for a new agent. Agent names are unique in an
- * organisation, so a name held in another fleet, by a deactivated agent or with another rank is
- * refused (409), naming the agent and its fleet.
- */
-export const enrolledAgent = (
-  tx: Db,
-  fleet: EnrolmentFleet,
-  payload: Pick<Wanted, "name" | "rank">,
-) =>
-  Effect.gen(function* () {
-    const [row] = yield* tx
-      .select({
-        agent: users,
-        fleet: sql<string | null>`coalesce(${fleets.slug}, ${users.agentFleet})`,
-      })
-      .from(users)
-      .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
-      .where(
-        and(
-          eq(users.organisationId, fleet.organisationId),
-          isNotNull(users.agentRank),
-          sql`lower(${users.displayName}) = lower(${payload.name})`,
-        ),
-      );
-    const existing = row?.agent;
-    if (existing && existing.agentFleetId !== fleet.id)
-      return yield* Effect.fail(
-        problem(
-          409,
-          `The name ${payload.name} is taken: agent ${existing.displayName} of fleet ${row!.fleet ?? "(none)"} has it, and agent names are unique in an organisation, ignoring case. Choose another name.`,
-        ),
-      );
-    if (existing && !existing.active)
-      return yield* Effect.fail(
-        problem(
-          409,
-          `Agent '${existing.displayName}' is deactivated. Ask an administrator to reactivate it.`,
-        ),
-      );
-    if (existing && existing.agentRank !== payload.rank)
-      return yield* Effect.fail(
-        problem(
-          409,
-          `Agent '${existing.displayName}' is registered with the rank ${existing.agentRank}.`,
-        ),
-      );
-    return existing;
-  });
-
-/** Register a key-only officer, without adding a certificate, under the organisation lock. */
-export const registerEnrolledAgent = (
-  tx: Db,
-  fleet: EnrolmentFleet,
-  ship: Pick<typeof ships.$inferSelect, "id" | "name"> | undefined,
-  payload: Omit<Wanted, "ship"> & { model: string },
-  registeredById: string,
-) =>
-  Effect.gen(function* () {
-    const id = randomUUID();
-    const registration = {
-      subject: keyOnlySubject(id),
-      displayName: payload.name,
-      agentIrcNick: payload.ircNick ?? null,
-    };
-    yield* checkAgentNames(tx, fleet.organisationId, registration);
-    const [created] = yield* tx
-      .insert(users)
-      .values({
-        ...registration,
-        id,
-        organisationId: fleet.organisationId,
-        agentRank: payload.rank,
-        agentFleet: fleet.slug,
-        agentFleetId: fleet.id,
-        agentShip: ship?.name ?? null,
-        agentShipId: ship?.id ?? null,
-        agentModel: payload.model,
-        username: registration.agentIrcNick,
-        registeredById,
-      })
-      .onConflictDoNothing()
-      .returning({ id: users.id });
-    if (!created) return yield* Effect.fail(problem(409, "The agent registration changed."));
-    return created.id;
-  });
-
-/**
  * Registers an agent of the token's fleet, or a credential of an existing one, under the
  * organisation's lock and the token's row lock. The agent is the active agent of that name in the
- * token's fleet, with the requested rank (enrolledAgent); a new agent's name and IRC nick must
+ * token's fleet, with the requested rank (findFleetOfficer); a new agent's name and IRC nick must
  * be free in the organisation (checkAgentNames). The same certificate again for the same agent
  * and scopes is answered 200 with the same IDs and uses nothing; any other registration uses one
  * of the token's uses.
@@ -452,7 +369,7 @@ const enrol = (grant: (typeof EnrolmentGrant)["Service"], payload: typeof Enrolm
         if (!fleet) return yield* Effect.fail(problem(401, invalidToken));
 
         // Agent names are unique in an organisation, so at most one agent has this one.
-        const existing = yield* enrolledAgent(tx, fleet, payload);
+        const existing = yield* findFleetOfficer(tx, fleet, payload);
 
         const active = yield* activeCredential(tx, certificate.fingerprint);
         if (active) {
@@ -495,7 +412,7 @@ const enrol = (grant: (typeof EnrolmentGrant)["Service"], payload: typeof Enrolm
               );
           }
           // The administrator who issued the token is the registered sponsor of new officers.
-          agentId = yield* registerEnrolledAgent(tx, fleet, ship, payload, token.createdById);
+          agentId = yield* registerFleetOfficer(tx, fleet, ship, payload, token.createdById);
           yield* tx.insert(auditLogs).values(
             tokenAudit(token.organisationId, {
               action: "agentEnrolled",
@@ -616,7 +533,7 @@ const checkEnrolment = (
     for (const wanted of payload.agents) {
       const decided = yield* Effect.gen(function* () {
         yield* shipOf(wanted);
-        const existing = yield* enrolledAgent(db, fleet, wanted);
+        const existing = yield* findFleetOfficer(db, fleet, wanted);
         if (existing) return "existing" as const;
         yield* checkAgentNames(db, grant.organisationId, {
           subject: keyOnlySubject(randomUUID()),

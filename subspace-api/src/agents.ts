@@ -1,10 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, isNotNull, isNull, ne, or, sql, type SQLWrapper } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { recordAudit } from "./audit";
 import { Database } from "./db";
 import { ShipName } from "./fleets";
-import { AgentRank, CurrentMember, isKeyOnlySubject, type Member } from "./identity";
+import {
+  AgentRank,
+  CurrentMember,
+  isKeyOnlySubject,
+  keyOnlySubject,
+  type Member,
+} from "./identity";
 import { Version } from "./initiative-contract";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
 import { cursorTime, encodeCursor, readCursor } from "./paging";
@@ -167,6 +174,31 @@ function getAgent(member: Member, id: string) {
   });
 }
 
+type Db = (typeof Database)["Service"];
+type AgentRow = typeof users.$inferSelect;
+type AgentRankValue = typeof AgentRank.Type;
+type AgentProfile = { name: string; model: string; ircNick?: string | null };
+type ShipPlacement = { id: string | null; name: string | null };
+
+function profileFields(data: AgentProfile, ship: ShipPlacement | undefined) {
+  return {
+    displayName: data.name,
+    agentModel: data.model,
+    agentShip: ship?.name ?? null,
+    agentShipId: ship?.id ?? null,
+    // Left out of an edit, the nick stays as it is; null clears it. The username is the nick,
+    // in the same write, so people and agents share one namespace.
+    agentIrcNick: data.ircNick,
+    username: data.ircNick,
+  };
+}
+
+const assignmentFields = (rank: AgentRankValue, fleet: { id: string | null; slug: string }) => ({
+  agentRank: rank,
+  agentFleet: fleet.slug,
+  agentFleetId: fleet.id,
+});
+
 function registrationFields(member: Member, data: typeof Registration.Type, old?: Member) {
   return Effect.gen(function* () {
     const db = yield* Database;
@@ -261,17 +293,14 @@ function registrationFields(member: Member, data: typeof Registration.Type, old?
         );
     }
     return {
-      displayName: data.name,
-      agentRank: data.rank,
-      agentFleet: fleet?.slug ?? existingFleet ?? fleetSlug!,
-      agentShip: ship?.name ?? shipName,
-      agentFleetId: fleet?.id ?? null,
-      agentShipId: ship?.id ?? null,
-      agentModel: data.defaultModel,
-      // Left out of an edit, the nick stays as it is; null clears it. The username is the nick,
-      // in the same write, so people and agents share one namespace.
-      agentIrcNick: data.ircNick,
-      username: data.ircNick,
+      ...profileFields(
+        { name: data.name, model: data.defaultModel, ircNick: data.ircNick },
+        { id: ship?.id ?? null, name: ship?.name ?? shipName },
+      ),
+      ...assignmentFields(data.rank, {
+        id: fleet?.id ?? null,
+        slug: fleet?.slug ?? existingFleet ?? fleetSlug!,
+      }),
       subject,
     };
   });
@@ -409,6 +438,130 @@ export const checkAgentNames = (
     );
   });
 
+type RegistrationUpdate = Partial<
+  ReturnType<typeof profileFields> &
+    ReturnType<typeof assignmentFields> &
+    Pick<AgentRow, "subject" | "active" | "deactivatedAt" | "deactivatedById">
+>;
+
+const registrationChanged = () => problem(409, "The agent registration changed.");
+
+const insertRegistration = (tx: Db, fields: typeof users.$inferInsert) =>
+  Effect.gen(function* () {
+    const [saved] = yield* tx.insert(users).values(fields).onConflictDoNothing().returning();
+    return saved ?? (yield* Effect.fail(registrationChanged()));
+  });
+
+const updateRegistration = (tx: Db, old: AgentRow, fields: RegistrationUpdate) =>
+  Effect.gen(function* () {
+    const [saved] = yield* tx
+      .update(users)
+      .set({ ...fields, version: old.version + 1, updatedAt: sql`now()` })
+      .where(scope(old, old.id))
+      .returning();
+    return saved ?? (yield* Effect.fail(registrationChanged()));
+  });
+
+type OfficerIdentity = { name: string; rank: "rearAdmiral" | "captain" };
+type OfficerFleet = Pick<typeof fleets.$inferSelect, "id" | "slug" | "organisationId">;
+type OfficerShip = Pick<typeof ships.$inferSelect, "id" | "name">;
+type OfficerRegistration = OfficerIdentity & AgentProfile;
+
+/** Find the active officer of this name, fleet and rank, or refuse the conflicting registration. */
+export const findFleetOfficer = (tx: Db, fleet: OfficerFleet, request: OfficerIdentity) =>
+  Effect.gen(function* () {
+    const [row] = yield* tx
+      .select({ agent: users, fleet: fleetSlug })
+      .from(users)
+      .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
+      .where(
+        and(
+          eq(users.organisationId, fleet.organisationId),
+          isNotNull(users.agentRank),
+          sql`lower(${users.displayName}) = lower(${request.name})`,
+        ),
+      );
+    if (!row) return undefined;
+    const { agent } = row;
+    if (agent.agentFleetId !== fleet.id)
+      return yield* Effect.fail(
+        problem(
+          409,
+          `The name ${request.name} is taken: agent ${agent.displayName} of fleet ${row.fleet ?? "(none)"} has it, and agent names are unique in an organisation, ignoring case. Choose another name.`,
+        ),
+      );
+    if (!agent.active)
+      return yield* Effect.fail(
+        problem(
+          409,
+          `Agent '${agent.displayName}' is deactivated. Ask an administrator to reactivate it.`,
+        ),
+      );
+    if (agent.agentRank !== request.rank)
+      return yield* Effect.fail(
+        problem(
+          409,
+          `Agent '${agent.displayName}' is registered with the rank ${agent.agentRank}.`,
+        ),
+      );
+    return agent;
+  });
+
+/** Register a key-only officer without adding a credential. The caller holds the organisation lock. */
+export const registerFleetOfficer = (
+  tx: Db,
+  fleet: OfficerFleet,
+  ship: OfficerShip | undefined,
+  request: OfficerRegistration,
+  registeredById: string,
+) =>
+  Effect.gen(function* () {
+    const id = randomUUID();
+    const registration = {
+      ...profileFields({ ...request, ircNick: request.ircNick ?? null }, ship),
+      ...assignmentFields(request.rank, fleet),
+      subject: keyOnlySubject(id),
+    };
+    yield* checkAgentNames(tx, fleet.organisationId, registration);
+    const saved = yield* insertRegistration(tx, {
+      ...registration,
+      id,
+      organisationId: fleet.organisationId,
+      registeredById,
+    });
+    return saved.id;
+  });
+
+/**
+ * Reconcile an officer's profile under the organisation lock. Check for a conflicting officer
+ * before the caller's ship placement runs. Never move, reactivate or rebind an existing officer.
+ */
+export function reconcileFleetOfficer<E, R>(
+  tx: Db,
+  fleet: OfficerFleet,
+  request: OfficerRegistration & { ircNick: string },
+  registeredById: string,
+  placeShip: Effect.Effect<OfficerShip | undefined, E, R>,
+) {
+  return Effect.gen(function* () {
+    const old = yield* findFleetOfficer(tx, fleet, request);
+    const ship = yield* placeShip;
+    const shipId = ship?.id ?? null;
+    if (!old) {
+      const id = yield* registerFleetOfficer(tx, fleet, ship, request, registeredById);
+      return { id, shipId, outcome: "created" as const };
+    }
+    const changes = profileFields(request, ship);
+    if (
+      (Object.keys(changes) as (keyof typeof changes)[]).every((key) => old[key] === changes[key])
+    )
+      return { id: old.id, shipId, outcome: "unchanged" as const };
+    yield* checkAgentNames(tx, fleet.organisationId, { ...changes, subject: old.subject }, old);
+    yield* updateRegistration(tx, old, changes);
+    return { id: old.id, shipId, outcome: "changed" as const };
+  });
+}
+
 type AgentChange =
   | { kind: "register" | "update"; registration: typeof Registration.Type; version?: number }
   | { kind: "activate" | "deactivate"; version?: number };
@@ -458,29 +611,18 @@ function changeAgent(member: Member, change: AgentChange, id?: string) {
             problem(409, "Register a new agent to bind a different account subject."),
           );
         if (registration) yield* checkAgentNames(tx, member.organisationId, registration, old);
-        const [saved] = old
-          ? yield* tx
-              .update(users)
-              .set({
-                ...registration,
-                active,
-                deactivatedAt: active === undefined ? undefined : active ? null : new Date(),
-                deactivatedById: active === undefined ? undefined : active ? null : member.id,
-                version: old.version + 1,
-                updatedAt: sql`now()`,
-              })
-              .where(scope(member, old.id))
-              .returning()
-          : yield* tx
-              .insert(users)
-              .values({
-                ...registration!,
-                organisationId: member.organisationId,
-                registeredById: member.id,
-              })
-              .onConflictDoNothing()
-              .returning();
-        if (!saved) return yield* Effect.fail(problem(409, "The agent registration changed."));
+        const saved = old
+          ? yield* updateRegistration(tx, old, {
+              ...registration,
+              active,
+              deactivatedAt: active === undefined ? undefined : active ? null : new Date(),
+              deactivatedById: active === undefined ? undefined : active ? null : member.id,
+            })
+          : yield* insertRegistration(tx, {
+              ...registration!,
+              organisationId: member.organisationId,
+              registeredById: member.id,
+            });
         const action = {
           register: "agentRegistered",
           update: "agentUpdated",
