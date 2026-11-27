@@ -48,12 +48,15 @@ for people to choose for themselves.
 - `navigator_title_tests`: the title shows by default; a hidden default
   removes the header and the body starts at the navigator's top; a saved
   `"1"` shows the title over a hidden app default.
-- `navigator_title_tests`: with a badge and an action, a hidden title keeps
-  `workspace-navigator-header` at the strip height, lined up with the
-  pane's strip; the action stays trailing; the tree keeps the Space's name.
-- `toolbar_tests`: a failed state file write keeps the live title and the
-  draft.
-- Component gallery: the Navigator card draws both hidden-title states.
+- `navigator_title_tests`: with a badge alone and with an action alone, a
+  hidden title keeps `workspace-navigator-header` at the strip height,
+  lined up with the pane's strip, and the tree keeps the Space's name; the
+  action stays trailing.
+- `toolbar_tests`: after a good Save, a Save whose state file write fails
+  keeps the live title and the draft, the write boundary alone restores the
+  title, and Save applies the draft once the file can be written again.
+- Component gallery: the Navigator card draws both hidden-title states,
+  and its first samples keep the title under a hidden app default.
 - `pre_startup`: `ProductBuild::new` shows the title.
 - `toolbar_tests`: the Layout switch is a draft until Save, then saves
   `layout.navigator-title` as `"0"` and reopens with the switch off.
