@@ -118,12 +118,13 @@ function zipNames(bytes: Buffer) {
 }
 
 export function validContent(name: string, type: string, bytes: Buffer, chat = false) {
+  if (!validName(name) || !bytes.length || !Object.hasOwn(extensions, type)) return false;
+
   const extension = name.split(".").at(-1)?.toLowerCase() ?? "";
   const matchingExtension =
     extensions[type]?.includes(extension) ||
     (chat && type === "text/plain" && chatTextExtensions.has(extension));
-  if (!validName(name) || !bytes.length || !Object.hasOwn(extensions, type) || !matchingExtension)
-    return false;
+  if (!matchingExtension) return false;
   switch (type) {
     case "image/png":
       return (
