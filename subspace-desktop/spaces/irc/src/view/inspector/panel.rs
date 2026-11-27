@@ -32,14 +32,18 @@ enum Read {
 }
 
 impl Read {
-    fn of(front: &Front, ship: Option<&ShipLive>) -> Self {
+    fn of(front: &Front, ship: Option<&ShipLive>, held: bool) -> Self {
         match state_of(front.fleet.as_ref()) {
             FleetState::Checking | FleetState::Ready | FleetState::Followed(Link::Connecting) => {
                 Self::Starting
             }
             FleetState::Followed(Link::Reconnecting | Link::Unreachable) => Self::Refreshing,
             state if state.is_live() => match ship {
-                Some(ship) if ship.detail_pending && state == FleetState::Followed(Link::Live) => {
+                Some(ship)
+                    if ship.detail_pending
+                        && !held
+                        && state == FleetState::Followed(Link::Live) =>
+                {
                     Self::Starting
                 }
                 Some(ship)
@@ -66,7 +70,6 @@ impl ShipPanel {
         };
         let key = front.key();
         let ship = front.ship();
-        let read = Read::of(&front, ship.as_ref());
         let panel = &mut board.ship_panel;
         if panel.key.as_ref() != Some(&key) {
             *panel = Self {
@@ -74,6 +77,7 @@ impl ShipPanel {
                 ..Self::default()
             };
         }
+        let read = Read::of(&front, ship.as_ref(), panel.last.is_some());
         if read == Read::Refreshing {
             panel.wait(cx);
         } else {
@@ -106,12 +110,10 @@ impl ShipPanel {
         front: &Front,
         current: Option<&'a ShipLive>,
     ) -> Content<'a> {
-        let read = Read::of(front, current);
         let same = self.key.as_ref() == Some(&front.key());
-        let last = self
-            .last
-            .as_ref()
-            .filter(|_| same && read == Read::Refreshing);
+        let held = self.last.as_ref().filter(|_| same);
+        let read = Read::of(front, current, held.is_some());
+        let last = held.filter(|_| read == Read::Refreshing);
         let delayed = same && self.refresh.as_ref().is_some_and(|refresh| refresh.delayed);
         Content {
             ship: last.or(current),

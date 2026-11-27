@@ -49,6 +49,11 @@ fn the_ship_waits_for_crew_and_keeps_complete_details_during_refresh(cx: &mut Te
     set_fleet(&hub, FleetState::Followed(Link::Reconnecting), cx);
     assert_eq!(ship_rows(cx), before, "reconnecting keeps the panel steady");
 
+    let mut partial = tests::snapshot();
+    partial.ships.remove("aurora-lyra").unwrap();
+    set_snapshot(&hub, live(), &partial, cx);
+    assert_eq!(ship_rows(cx), before, "the overview arrives before crew");
+
     cx.executor().advance_clock(Duration::from_secs(5));
     settle(cx);
     cx.update(|window, _| assert!(window.find("irc-inspector-last-known").visible()));
