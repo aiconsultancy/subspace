@@ -24,6 +24,7 @@ Subspace escapes GFM table separators and literal punctuation in image labels
 during export. Duplicate link definitions follow CommonMark's first match.
 The host owns the command-palette and form navigation shortcuts.
 
-Update the dependency to the published editor when the Framework moves to a
-compatible GPUI Kit release. Spaces use `dashboard::markdown_editor` through
-the Framework.
+The published editor's 0.4 releases target GPUI Kit 0.11, the release the
+Framework uses. Replacing this copy with one of them is a separate change:
+check that it builds with GPUI Fast and keeps the Subspace changes above.
+Spaces use `dashboard::markdown_editor` through the Framework.

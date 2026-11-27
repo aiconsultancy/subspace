@@ -5,9 +5,7 @@
 
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::menu::PopupMenuItem;
-use gpui_kit::{
-    App, Context, IntoElement, ParentElement as _, Styled as _, WeakEntity, Window, div,
-};
+use gpui_kit::{App, Context, ParentElement as _, Styled as _, WeakEntity, Window, div};
 use subspace_framework::dashboard::{
     action::{Intent, action_button},
     overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry},
@@ -17,8 +15,6 @@ use subspace_framework::lucide::IconName;
 
 use crate::{Projects, Tab, initiative};
 
-/// Units are measured when they first draw.
-const UNMEASURED_WIDTH: f32 = 0.;
 const BACK: &str = "Back";
 
 pub(super) fn render(this: &mut Projects, cx: &mut Context<Projects>) -> workspace::Toolbar {
@@ -52,31 +48,19 @@ fn initiative_unit(this: &Projects, owner: WeakEntity<Projects>, cx: &App) -> Op
     if !catalog.has_memberships() {
         return None;
     }
-    let name = catalog
-        .selected()
-        .map_or_else(|| "Initiative".to_owned(), |item| item.name.clone());
-    let disabled = this.editing_held();
     let opener = owner.clone();
-    let entry = PopupEntry::new(move || {
-        let opener = opener.clone();
-        PopupMenuItem::new(format!("Initiative: {name}…"))
-            .icon(IconName::Users)
-            .disabled(disabled)
-            .on_click(move |_, window, cx| {
-                _ = opener.update(cx, |this, cx| initiative::open(this, window, cx));
-            })
-    });
-    Some(OverflowUnit::inline(
+    Some(catalog.overflow_unit(
         initiative::ANCHOR,
-        UNMEASURED_WIDTH,
+        this.editing_held(),
         move |_, cx| {
             owner
                 .update(cx, |this, cx| initiative::button(this, cx))
                 .ok()
                 .flatten()
-                .unwrap_or_else(|| div().into_any_element())
         },
-        vec![entry],
+        move |window, cx| {
+            _ = opener.update(cx, |this, cx| initiative::open(this, window, cx));
+        },
     ))
 }
 
@@ -104,7 +88,7 @@ fn page_unit(this: &Projects, tab: Tab, owner: WeakEntity<Projects>) -> Option<O
     let intent = if open { Intent::Primary } else { Intent::Quiet };
     Some(OverflowUnit::inline(
         label,
-        UNMEASURED_WIDTH,
+        OverflowUnit::UNMEASURED_WIDTH,
         move |_, _| {
             let owner = owner.clone();
             action_button(label, intent, None, label)
@@ -140,7 +124,7 @@ fn back_unit(this: &Projects, owner: WeakEntity<Projects>) -> Option<OverflowUni
     });
     Some(OverflowUnit::inline(
         "milestone-back",
-        UNMEASURED_WIDTH,
+        OverflowUnit::UNMEASURED_WIDTH,
         move |_, _| {
             let owner = owner.clone();
             action_button(

@@ -101,6 +101,10 @@ If you want to build a Space or know what the Framework offers one, read
 - [Workspace hairlines](changes/workspace-hairlines/README.md): every strip
   along the top of the workspace exactly `strip_height` high, `Toolbar::strip`,
   and one line per edge, with the rules and layout tests that hold them.
+- [Review follow-ups](changes/review-follow-ups/README.md): the overflow
+  toolbar's focus, scrolling menu and general icon button, both
+  strip sides' menu-button room, pane tabs at the strip's height, and the
+  menu bar's command tests (closes #164, #165, #167, #168 and #174).
 - [Records a board hides from search](changes/search-hidden-records/README.md):
   `Service::set_hidden` and `Service::shows`, asked while every search
   selects candidates, by related items and citation reads, and by the Search

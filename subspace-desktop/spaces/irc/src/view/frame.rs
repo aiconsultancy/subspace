@@ -22,7 +22,7 @@ impl Render for Irc {
         bind_hub(self, cx);
         self.text_edge = workspace::text_edge(&Tokens::current(cx));
         let configured = configured(self, cx);
-        let centre = pane(self, configured, cx);
+        let centre = pane(self, configured, window, cx);
         let mut frame = workspace::Workspace::new("irc-workspace").pane(centre);
         // Before there is a network the status bar has no switch to bring
         // the navigator back with, and the navigator's title names the Space.
@@ -128,39 +128,96 @@ fn navigator(
 
 /// The pane: the toolbar over the conversations, or what the Space says
 /// before it has a network to show or while it is closed.
-fn pane(board: &mut Irc, configured: bool, cx: &mut Context<Irc>) -> workspace::Pane {
+fn pane(
+    board: &mut Irc,
+    configured: bool,
+    window: &Window,
+    cx: &mut Context<Irc>,
+) -> workspace::Pane {
     let pane = workspace::Pane::new("irc-pane");
-    let area = match &board.hub {
-        None => return pane.child(empty::stopped(cx)),
-        Some(_) if closed(board, cx) => return pane.child(empty::not_a_member(board, cx)),
-        Some(_) if awaiting_read(board, cx) => return pane.child(empty::checking(cx)),
-        Some(_) if !configured && unreachable(board, cx) => {
-            return pane.child(empty::unreachable(board, cx));
+    match stand_in(board, configured, cx) {
+        Some(stand_in) => {
+            close_hidden_menus(board, window, cx);
+            pane.child(stand_in)
         }
-        Some(_) if !configured => return pane.child(empty::unconfigured(board, cx)),
-        Some(_) => board.dock.area.clone(),
-    };
+        None => conversations_pane(board, pane, window, cx),
+    }
+}
+
+/// What the pane shows in place of the toolbar and the conversations, if
+/// anything.
+fn stand_in(board: &Irc, configured: bool, cx: &App) -> Option<AnyElement> {
+    Some(match &board.hub {
+        None => empty::stopped(cx),
+        Some(_) if closed(board, cx) => empty::not_a_member(board, cx),
+        Some(_) if awaiting_read(board, cx) => empty::checking(cx),
+        Some(_) if !configured && unreachable(board, cx) => empty::unreachable(board, cx),
+        Some(_) if !configured => empty::unconfigured(board, cx),
+        Some(_) => return None,
+    })
+}
+
+/// While a stand-in shows, the toolbar is not drawn, so its menus and the
+/// chooser its picker opens close rather than stay open out of sight and
+/// come back with it. Focus left on what is no longer drawn moves to the
+/// board's own (see [`keep_focus_drawn`]).
+fn close_hidden_menus(board: &Irc, window: &Window, cx: &mut Context<Irc>) {
+    let open = toolbar::any_menu_open(board, cx);
+    let inside = focus_inside(board, window, cx);
+    if open || inside {
+        crate::dock::with_window(board, cx, move |board, window, cx| {
+            if open {
+                toolbar::close_menus(board, window, cx);
+                cx.notify();
+            }
+            keep_focus_drawn(board, inside, window, cx);
+        });
+    }
+}
+
+/// Whether focus is within the board as last drawn, but not on the board
+/// itself: on a control, or a menu, that the next frame may not draw.
+fn focus_inside(board: &Irc, window: &Window, cx: &App) -> bool {
+    board.focus.contains_focused(window, cx) && !board.focus.is_focused(window)
+}
+
+/// Closing a menu returns focus to its button; once that button is no
+/// longer drawn, focus that was `inside` the board moves to the board's own
+/// focus, so keys still reach the Space and Tab starts from it.
+fn keep_focus_drawn(board: &Irc, inside: bool, window: &mut Window, cx: &mut App) {
+    if inside && !board.focus.contains_focused(window, cx) {
+        board.focus.focus(window, cx);
+    }
+}
+
+/// The toolbar over the conversations' dock area.
+fn conversations_pane(
+    board: &mut Irc,
+    pane: workspace::Pane,
+    window: &Window,
+    cx: &mut Context<Irc>,
+) -> workspace::Pane {
     let content = div()
         .relative()
         .flex_1()
         .min_h_0()
         .w_full()
-        .child(area)
+        .child(board.dock.area.clone())
         .child(measure::height(board.available_height.clone()));
-    pane.toolbar(pane_toolbar(board, cx)).child(content)
+    pane.toolbar(pane_toolbar(board, window, cx)).child(content)
 }
 
 /// The pane's toolbar: the conversation in front on the leading side, the
 /// network and channel actions on the trailing side. While the navigator is
 /// hidden a menu of the conversations leads it, and names the one in front.
-fn pane_toolbar(board: &mut Irc, cx: &mut Context<Irc>) -> workspace::Toolbar {
+fn pane_toolbar(board: &mut Irc, window: &Window, cx: &mut Context<Irc>) -> workspace::Toolbar {
     let navigator_open = board.dock.buffers_open();
     // The conversations' tabs are the dock area's, under the toolbar, so the
     // toolbar is the pane's strip, level with the docks' headers.
     // The pickers keep to that one line: in a narrow pane the last of them
     // move into an overflow menu, after the heading has truncated.
     let mut bar = workspace::Toolbar::new("irc-toolbar").strip();
-    if let Some(pickers) = leading_pickers(board, navigator_open, cx) {
+    if let Some(pickers) = leading_pickers(board, navigator_open, window, cx) {
         bar = bar.leading(pickers);
     }
     if let Some(heading) = heading(board, navigator_open, cx) {
@@ -178,6 +235,7 @@ fn pane_toolbar(board: &mut Irc, cx: &mut Context<Irc>) -> workspace::Toolbar {
 fn leading_pickers(
     board: &mut Irc,
     navigator_open: bool,
+    window: &Window,
     cx: &mut Context<Irc>,
 ) -> Option<AnyElement> {
     let conversations = (!navigator_open).then(|| conversations::unit(board));
@@ -186,7 +244,7 @@ fn leading_pickers(
         .chain(initiatives::unit(board, cx))
         .collect();
     if units.is_empty() {
-        drop_pickers(board, cx);
+        drop_pickers(board, window, cx);
         return None;
     }
     Some(pickers_row(board, units, cx))
@@ -205,11 +263,14 @@ fn pickers_row(board: &mut Irc, units: Vec<OverflowUnit>, cx: &mut Context<Irc>)
 }
 
 /// Forgets the pickers' row once it has nothing to show, closing its
-/// overflow menu if one is open.
-fn drop_pickers(board: &mut Irc, cx: &mut Context<Irc>) {
+/// overflow menu if one is open, and moving focus left on its button to the
+/// board's own.
+fn drop_pickers(board: &mut Irc, window: &Window, cx: &mut Context<Irc>) {
     if let Some(leading) = board.leading.take() {
-        crate::dock::with_window(board, cx, move |_, window, cx| {
+        let inside = focus_inside(board, window, cx);
+        crate::dock::with_window(board, cx, move |board, window, cx| {
             leading.update(cx, |leading, cx| leading.dismiss(window, cx));
+            keep_focus_drawn(board, inside, window, cx);
         });
     }
 }

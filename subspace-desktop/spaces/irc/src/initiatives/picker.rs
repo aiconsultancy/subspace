@@ -2,18 +2,14 @@
 //! button leads the pane's toolbar; its hint goes to the status bar.
 
 use crate::Irc;
-use gpui_kit::component::menu::PopupMenuItem;
-use gpui_kit::{AnyElement, App, Context, Entity, IntoElement as _, Window, div};
+use gpui_kit::{AnyElement, App, Context, Entity, Window};
 use subspace_api_client::initiatives::Catalog;
 use subspace_framework::dashboard::PaletteCommand;
 use subspace_framework::dashboard::anchored::Anchor;
 use subspace_framework::dashboard::menu::{Menu, MenuAnchors, MenuEvent};
-use subspace_framework::dashboard::overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry};
-use subspace_framework::dashboard::panel::IconName;
+use subspace_framework::dashboard::overflow_toolbar::{OverflowToolbar, OverflowUnit};
 
 const ANCHOR: &str = "irc-initiative";
-/// Units are measured when they first draw.
-const UNMEASURED_WIDTH: f32 = 0.;
 
 #[derive(Default)]
 pub(crate) struct Picker {
@@ -89,30 +85,19 @@ fn button(board: &Irc, cx: &mut Context<Irc>) -> Option<AnyElement> {
 /// picker's anchor, so a hidden picker opens from the overflow chevron once
 /// [`set_toolbar`] names the toolbar.
 pub(crate) fn unit(board: &Irc, cx: &App) -> Option<OverflowUnit> {
-    let name = catalog(board, cx)?
-        .selected()
-        .map_or_else(|| "Initiative".to_owned(), |item| item.name.clone());
-    let owner = board.me.clone();
-    let opener = owner.clone();
-    let entry = PopupEntry::new(move || {
-        let opener = opener.clone();
-        PopupMenuItem::new(format!("Initiative: {name}…"))
-            .icon(IconName::Users)
-            .on_click(move |_, window, cx| {
-                _ = opener.update(cx, |board, cx| open(board, window, cx));
-            })
-    });
-    Some(OverflowUnit::inline(
+    let (owner, opener) = (board.me.clone(), board.me.clone());
+    Some(catalog(board, cx)?.overflow_unit(
         ANCHOR,
-        UNMEASURED_WIDTH,
+        false,
         move |_, cx| {
             owner
                 .update(cx, |board, cx| button(board, cx))
                 .ok()
                 .flatten()
-                .unwrap_or_else(|| div().into_any_element())
         },
-        vec![entry],
+        move |window, cx| {
+            _ = opener.update(cx, |board, cx| open(board, window, cx));
+        },
     ))
 }
 

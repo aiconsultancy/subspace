@@ -13,6 +13,7 @@ use crate::{Irc, config::Settings, rows, view};
 mod back;
 mod completion;
 mod conversation;
+mod conversation_menu;
 mod counter;
 mod decision_references;
 mod focus;

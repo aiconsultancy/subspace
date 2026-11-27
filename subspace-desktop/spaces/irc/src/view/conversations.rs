@@ -14,8 +14,6 @@ use crate::{Irc, rows};
 /// What the button says while no conversation is open.
 const NONE_OPEN: &str = "Conversations";
 const BUTTON_ID: &str = "irc-conversation-menu";
-/// Units are measured when they first draw.
-const UNMEASURED_WIDTH: f32 = 0.;
 
 /// One line of the menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +77,8 @@ fn item(line: &Entry, owner: &WeakEntity<Irc>) -> PopupMenuItem {
 }
 
 /// The menu's button: it names the conversation in front and lists every
-/// network's conversations.
+/// network's conversations, in a menu whose height the window bounds and
+/// which scrolls, so every conversation stays reachable.
 fn button(board: &Irc) -> AnyElement {
     let focused = board.dock.focused.as_ref();
     let label = focused.map_or_else(|| NONE_OPEN.into(), |buffer| board.buffer_name(buffer));
@@ -89,9 +88,9 @@ fn button(board: &Irc) -> AnyElement {
     let button = menu_button(BUTTON_ID, icon, label.clone(), false)
         .accessibility_label(format!("Conversation: {label}"));
     anchored::dropdown_menu(button, move |menu, _, _| {
-        lines
-            .iter()
-            .fold(menu, |menu, line| menu.item(item(line, &owner)))
+        lines.iter().fold(menu.scrollable(true), |menu, line| {
+            menu.item(item(line, &owner))
+        })
     })
     .into_any_element()
 }
@@ -109,7 +108,7 @@ pub(super) fn unit(board: &Irc) -> OverflowUnit {
         .collect();
     OverflowUnit::inline(
         BUTTON_ID,
-        UNMEASURED_WIDTH,
+        OverflowUnit::UNMEASURED_WIDTH,
         move |_, cx| {
             owner
                 .upgrade()

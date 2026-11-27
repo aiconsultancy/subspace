@@ -3,7 +3,6 @@
 //! content fills the rest.
 
 use gpui_kit::component::{h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement, Pixels,
     RenderOnce, Stateful, Styled as _, TestSupportExt as _, Window, div, px,
@@ -165,10 +164,15 @@ impl Toolbar {
     /// keep to that one line and centre on it. Controls that may not fit, in
     /// a narrow pane or at a large icon-button size, go in an
     /// `overflow_toolbar::OverflowToolbar` on either side, which moves the
-    /// last of them into its menu. The leading side always keeps room for
-    /// that menu's button; the trailing side yields the rest of the line,
-    /// so its own overflow toolbar collapses rather than pushing the
-    /// leading side out. The strip clips anything else that runs past it.
+    /// last of them into its menu. Each side keeps room for that menu's
+    /// button, and the gaps between its items, while it holds anything;
+    /// beyond that the trailing side yields the rest of the line, so its own
+    /// overflow toolbar collapses rather than pushing the leading side out.
+    /// The strip clips anything else that runs past it, such as the trailing
+    /// side in a strip too narrow for both menu buttons. Trailing content
+    /// must shrink, as an overflow toolbar does; content that cannot is
+    /// clipped from its start, as the trailing side's items end at its
+    /// trailing edge.
     pub fn strip(mut self) -> Self {
         self.strip = true;
         self
@@ -176,36 +180,58 @@ impl Toolbar {
 }
 
 /// How a toolbar lays out its line: as the pane's strip, exactly `height`
-/// high, its leading side never narrower than `reserve` (room for an
-/// overflow menu's button) while it holds anything; or at least this high
-/// with its leading items wrapping.
+/// high, each side never narrower than `reserve` (room for an overflow
+/// menu's button) and the `gap`s between its items while it holds anything;
+/// or at least this high with its leading items wrapping.
 enum Line {
-    Strip { height: Pixels, reserve: Pixels },
+    Strip {
+        height: Pixels,
+        reserve: Pixels,
+        gap: Pixels,
+    },
     Wrapping(Pixels),
 }
 
 impl Line {
     fn frame(&self, frame: Stateful<Div>) -> Stateful<Div> {
         match *self {
-            Self::Strip { height, .. } => frame.items_center().h(height),
+            // A strip too narrow for both sides' menu buttons clips the
+            // trailing one rather than letting it run past the pane.
+            Self::Strip { height, .. } => frame.items_center().h(height).overflow_hidden(),
             Self::Wrapping(least) => frame.items_start().min_h(least).py_1(),
         }
     }
 
-    /// The leading side, holding anything when `occupied`.
-    fn leading(&self, leading: Stateful<Div>, occupied: bool) -> Stateful<Div> {
-        match *self {
-            Self::Strip { reserve, .. } => ring_clip(leading).when(occupied, |leading| {
-                leading.min_w(reserve + px(FOCUS_RING_PX + FOCUS_RING_PX))
-            }),
+    /// The leading side, holding `items` items.
+    fn leading(&self, leading: Stateful<Div>, items: usize) -> Stateful<Div> {
+        match self {
+            Self::Strip { .. } => self.reserved(ring_clip(leading), items),
             Self::Wrapping(_) => leading.flex_wrap(),
         }
     }
 
-    fn trailing(&self, trailing: Stateful<Div>) -> Stateful<Div> {
+    /// The trailing side, holding `items` items, which end at its trailing
+    /// edge however much room it keeps.
+    fn trailing(&self, trailing: Stateful<Div>, items: usize) -> Stateful<Div> {
         match self {
-            Self::Strip { .. } => ring_clip(trailing).min_w_0(),
+            Self::Strip { .. } => self
+                .reserved(ring_clip(trailing).min_w_0(), items)
+                .justify_end(),
             Self::Wrapping(_) => trailing.flex_shrink_0(),
+        }
+    }
+
+    /// A strip side's least width while it holds anything: its menu
+    /// button's room, the gaps between its items, which take that room even
+    /// when the item beside the menu's toolbar collapses, and a focus ring
+    /// each side.
+    fn reserved(&self, side: Stateful<Div>, items: usize) -> Stateful<Div> {
+        match *self {
+            Self::Strip { reserve, gap, .. } if items > 0 => {
+                let gaps = gap * items.saturating_sub(1) as f32;
+                side.min_w(reserve + gaps + px(FOCUS_RING_PX + FOCUS_RING_PX))
+            }
+            _ => side,
         }
     }
 }
@@ -225,13 +251,13 @@ fn ring_clip(side: Stateful<Div>) -> Stateful<Div> {
 impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = Tokens::current(cx);
-        let gap = Metrics::current(cx).gap();
+        let metrics = Metrics::current(cx);
+        let gap = metrics.gap();
         let line = if self.strip {
             Line::Strip {
                 height: strip_height(window, cx),
-                reserve: Metrics::current(cx)
-                    .overflow_width()
-                    .to_pixels(window.rem_size()),
+                reserve: metrics.overflow_width().to_pixels(window.rem_size()),
+                gap: gap.to_pixels(window.rem_size()),
             }
         } else {
             Line::Wrapping(tokens.toolbar_height)
@@ -246,7 +272,7 @@ impl RenderOnce for Toolbar {
             .bg(tokens.bg)
             .border_b_1()
             .border_color(tokens.line);
-        let occupied = !self.leading.is_empty();
+        let (leading_items, trailing_items) = (self.leading.len(), self.trailing.len());
         let leading = h_flex()
             .id("workspace-toolbar-leading")
             .flex_1()
@@ -258,8 +284,8 @@ impl RenderOnce for Toolbar {
             .gap(gap)
             .children(self.trailing);
         line.frame(frame)
-            .child(line.leading(leading, occupied).test_support())
-            .child(line.trailing(trailing).test_support())
+            .child(line.leading(leading, leading_items).test_support())
+            .child(line.trailing(trailing, trailing_items).test_support())
             .test_support()
     }
 }

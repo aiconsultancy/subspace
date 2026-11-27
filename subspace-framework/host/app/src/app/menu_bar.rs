@@ -340,3 +340,7 @@ mod tests;
 #[cfg(test)]
 #[path = "menu_bar_key_tests.rs"]
 mod key_tests;
+
+#[cfg(test)]
+#[path = "menu_bar_command_tests.rs"]
+mod command_tests;

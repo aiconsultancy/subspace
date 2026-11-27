@@ -90,9 +90,9 @@ pub(super) struct Dress {
     /// The adjoining content or header surface the selected tab takes.
     pub(super) surface: gpui_kit::Hsla,
     pub(super) size: Size,
-    /// A workspace pane's tab strip: each tab is as tall as the strip. In
-    /// every bar the selected tab is told apart by its surface and its
-    /// stronger, medium-weight text, never by a line on one edge.
+    /// A workspace pane's tab strip: each tab is exactly as tall as the
+    /// strip. In every bar the selected tab is told apart by its surface and
+    /// its stronger, medium-weight text, never by a line on one edge.
     pub(super) pane: bool,
     /// The workspace's strip height, which a pane's tabs fill.
     pub(super) strip: Pixels,
@@ -134,7 +134,9 @@ pub(super) fn tab(tab: Tab, selected: bool, tokens: &Tokens, dress: Dress) -> Ki
     let content = content_row(tab.spec, &normal, tokens, dress.mono);
     tab.native
         .group(GROUP)
-        .when(dress.pane, |tab| tab.min_h(height))
+        // Kit sets each size's own height after these; the bounds hold the
+        // tab to the strip's.
+        .when(dress.pane, |tab| tab.min_h(height).max_h(height))
         .when(dress.at_edge, |tab| tab.ml(-px(KIT_TAB_BORDER_PX)))
         .prefix(layers(fill, height))
         .child(content)
@@ -193,20 +195,19 @@ fn key_mark(key: SharedString, mono: SharedString, tokens: &Tokens) -> Div {
         .child(key)
 }
 
-/// The tab's height: Kit's for the bar's size, or the strip's in a pane's
-/// tab strip, which the tab's least height stretches it to.
+/// The tab's height: Kit's for the bar's size, or exactly the strip's in a
+/// pane's tab strip, whatever the bar's size, so a large bar's tabs end on
+/// the strip's hairline as a small bar's do.
 fn tab_height(dress: &Dress) -> Pixels {
-    let natural = match dress.size {
+    if dress.pane {
+        return dress.strip;
+    }
+    px(match dress.size {
         Size::XSmall => XSMALL_HEIGHT,
         Size::Small => SMALL_HEIGHT,
         Size::Large => LARGE_HEIGHT,
         _ => DEFAULT_HEIGHT,
-    };
-    if dress.pane {
-        px(natural).max(dress.strip)
-    } else {
-        px(natural)
-    }
+    })
 }
 
 fn hover_rim(colour: gpui_kit::Hsla) -> impl gpui_kit::IntoElement {

@@ -11,8 +11,8 @@ use crate::action::Intent;
 use crate::anchored::Anchor;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Bounds, Context, Entity, IntoElement, Pixels, SharedString,
-    WeakEntity, Window,
+    AnyElement, App, AppContext as _, Bounds, Context, Entity, FocusHandle, IntoElement, Pixels,
+    SharedString, WeakEntity, Window,
 };
 use subspace_lucide::IconName;
 
@@ -71,6 +71,10 @@ pub struct OverflowUnit {
 }
 
 impl OverflowUnit {
+    /// The width to give a unit that has not drawn yet. The toolbar
+    /// measures every unit when it renders, so a caller need not estimate.
+    pub const UNMEASURED_WIDTH: f32 = 0.;
+
     pub fn new(
         key: impl Into<SharedString>,
         measured_width: f32,
@@ -103,35 +107,34 @@ impl OverflowUnit {
         )
     }
 
-    /// A Space's Refresh, at the end of its toolbar: a quiet glyph button
-    /// named `id` while it fits, else a Refresh entry in the overflow menu.
-    /// Both run `reload`.
-    pub fn refresh(id: &'static str, reload: impl Fn(&mut Window, &mut App) + 'static) -> Self {
-        let reload: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new(reload);
-        let menu_reload = reload.clone();
+    /// A quiet glyph button named `id` and labelled `label` while it fits,
+    /// else a menu entry with the same glyph and label. Both run `on_click`.
+    pub fn icon_button(
+        id: &'static str,
+        icon: IconName,
+        label: &'static str,
+        on_click: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        let on_click: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new(on_click);
+        let menu_click = on_click.clone();
         let entry = PopupEntry::new(move || {
-            let reload = menu_reload.clone();
-            PopupMenuItem::new(REFRESH)
-                .icon(IconName::RefreshCw)
-                .on_click(move |_, window, cx| reload(window, cx))
+            let run = menu_click.clone();
+            PopupMenuItem::new(label)
+                .icon(icon)
+                .on_click(move |_, window, cx| run(window, cx))
         });
         Self::inline(
             id,
-            UNMEASURED_WIDTH,
+            Self::UNMEASURED_WIDTH,
             move |_, _| {
-                let reload = reload.clone();
-                crate::action::icon_button(id, Intent::Quiet, IconName::RefreshCw, REFRESH)
-                    .on_click(move |_, window, cx| reload(window, cx))
+                let run = on_click.clone();
+                crate::action::icon_button(id, Intent::Quiet, icon, label)
+                    .on_click(move |_, window, cx| run(window, cx))
             },
             vec![entry],
         )
     }
 }
-
-/// Refresh's label, on its button and in the overflow menu.
-const REFRESH: &str = "Refresh";
-/// A unit is measured when it first draws.
-const UNMEASURED_WIDTH: f32 = 0.;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct OverflowPlan {
@@ -145,24 +148,37 @@ impl OverflowPlan {
     }
 }
 
-/// Selects a visible prefix. Width zero means the first measurement has not
-/// arrived; keeping all units in the row lets GPUI establish their real size.
-pub fn plan_overflow(available: f32, widths: &[f32], gap: f32, chevron: f32) -> OverflowPlan {
-    if available <= 0.0 || widths.iter().any(|width| *width <= 0.0) {
-        return OverflowPlan {
-            visible: widths.len(),
-            hidden: 0,
-        };
-    }
-
-    let total = widths.iter().sum::<f32>() + gap * widths.len().saturating_sub(1) as f32;
+/// Selects the visible prefix of a row `available` wide, given each unit's
+/// width, the gap between units and the width of the menu's button, which
+/// takes a gap before it.
+///
+/// - `None`, a row not yet measured, shows every unit so GPUI can size them;
+///   so does a unit width of 0, a unit not yet measured.
+/// - A measured row with no width shows none: every unit is in the menu,
+///   not drawn where it cannot be seen.
+/// - Otherwise every unit shows if all fit; if not, the longest prefix that
+///   fits beside the menu's button shows.
+pub fn plan_overflow(
+    available: Option<f32>,
+    widths: &[f32],
+    gap: f32,
+    chevron: f32,
+) -> OverflowPlan {
+    let count = widths.len();
+    let plan = |visible: usize| OverflowPlan {
+        visible,
+        hidden: count - visible,
+    };
+    let available = match available {
+        None => return plan(count),
+        Some(width) if width <= NO_WIDTH => return plan(0),
+        Some(_) if widths.iter().any(|width| *width <= 0.0) => return plan(count),
+        Some(width) => width,
+    };
+    let total = widths.iter().sum::<f32>() + gap * count.saturating_sub(1) as f32;
     if total <= available {
-        return OverflowPlan {
-            visible: widths.len(),
-            hidden: 0,
-        };
+        return plan(count);
     }
-
     let mut used = 0.0;
     let mut visible = 0;
     for width in widths {
@@ -173,10 +189,7 @@ pub fn plan_overflow(available: f32, widths: &[f32], gap: f32, chevron: f32) -> 
         used = next;
         visible += 1;
     }
-    OverflowPlan {
-        visible,
-        hidden: widths.len().saturating_sub(visible),
-    }
+    plan(visible)
 }
 
 /// State-bearing shared row. Consumers create it with `cx.new` and render the
@@ -193,6 +206,9 @@ pub struct OverflowToolbar {
     popup: Option<WeakEntity<PopupMenu>>,
     popup_dirty: bool,
     anchor: Option<Entity<Anchor>>,
+    /// Where focus goes when the menu's button stops rendering while it
+    /// holds focus, as when the row widens until every unit fits.
+    focus: Option<FocusHandle>,
     projection: projection::Projection,
 }
 
@@ -220,11 +236,16 @@ impl OverflowToolbar {
             popup: None,
             popup_dirty: false,
             anchor: None,
+            focus: None,
             projection: Default::default(),
         }
     }
+    /// The overflow menu: its height is bounded by the window and it
+    /// scrolls, so a long list of entries stays reachable.
     fn popup(menu: PopupMenu, items: Vec<PopupMenuItem>) -> PopupMenu {
-        items.into_iter().fold(menu, |menu, item| menu.item(item))
+        items
+            .into_iter()
+            .fold(menu.scrollable(true), |menu, item| menu.item(item))
     }
 
     /// Natural width of all units, excluding the overflow trigger. Before the
@@ -259,21 +280,16 @@ impl OverflowToolbar {
         }
     }
 
-    /// Which units show. Before the first measurement every unit does, so
-    /// GPUI can size them. Once measured, a row given no width shows none:
-    /// every unit is in the menu, not drawn where it cannot be seen.
+    /// Whether the overflow menu, or a chooser opened from it, is open.
+    pub fn is_open(&self, cx: &App) -> bool {
+        self.anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.read(cx).is_open())
+    }
+
+    /// Which units show: see [`plan_overflow`].
     fn plan(&self) -> OverflowPlan {
-        match self.viewport {
-            None => OverflowPlan {
-                visible: self.widths.len(),
-                hidden: 0,
-            },
-            Some(width) if width <= NO_WIDTH => OverflowPlan {
-                visible: 0,
-                hidden: self.widths.len(),
-            },
-            Some(width) => plan_overflow(width, &self.widths, self.gap, self.chevron_width),
-        }
+        plan_overflow(self.viewport, &self.widths, self.gap, self.chevron_width)
     }
 
     pub(crate) fn anchor_for(&self, key: &str) -> Option<Entity<Anchor>> {
@@ -288,42 +304,52 @@ impl OverflowToolbar {
 
 #[cfg(test)]
 mod tests {
-    use super::plan_overflow;
+    use super::{OverflowPlan, plan_overflow};
+
+    fn plan(available: f32, widths: &[f32], gap: f32, chevron: f32) -> OverflowPlan {
+        plan_overflow(Some(available), widths, gap, chevron)
+    }
+
+    fn counts(plan: &OverflowPlan) -> (usize, usize) {
+        (plan.visible, plan.hidden)
+    }
 
     #[test]
     fn exact_fit_has_no_trigger() {
-        let plan = plan_overflow(108., &[40., 60.], 8., 28.);
-        assert_eq!((plan.visible, plan.hidden), (2, 0));
-        assert_eq!(plan_overflow(107., &[40., 60.], 8., 28.).visible, 1);
+        assert_eq!(counts(&plan(108., &[40., 60.], 8., 28.)), (2, 0));
+        assert_eq!(plan(107., &[40., 60.], 8., 28.).visible, 1);
     }
 
     #[test]
     fn chevron_reservation_prevents_cutoff_overlap() {
-        let plan = plan_overflow(70., &[30., 30., 30.], 4., 28.);
-        assert_eq!((plan.visible, plan.hidden), (1, 2));
+        assert_eq!(counts(&plan(70., &[30., 30., 30.], 4., 28.)), (1, 2));
     }
 
     #[test]
     fn gap_before_chevron_is_reserved() {
-        let plan = plan_overflow(60., &[32., 32.], 8., 28.);
-        assert_eq!((plan.visible, plan.hidden), (0, 2));
+        assert_eq!(counts(&plan(60., &[32., 32.], 8., 28.)), (0, 2));
     }
 
     #[test]
     fn atomic_units_are_not_split() {
-        let plan = plan_overflow(110., &[70., 40.], 8., 28.);
-        assert_eq!((plan.visible, plan.hidden), (1, 1));
+        assert_eq!(counts(&plan(110., &[70., 40.], 8., 28.)), (1, 1));
     }
 
     #[test]
     fn unmeasured_units_wait_for_real_measurement() {
-        let plan = plan_overflow(40., &[0., 30.], 8., 28.);
-        assert_eq!((plan.visible, plan.hidden), (2, 0));
+        assert_eq!(counts(&plan(40., &[0., 30.], 8., 28.)), (2, 0));
     }
 
     #[test]
     fn growth_and_shrink_have_stable_prefixes() {
-        assert_eq!(plan_overflow(90., &[30., 30., 30.], 4., 20.).visible, 2);
-        assert_eq!(plan_overflow(110., &[30., 30., 30.], 4., 20.).visible, 3);
+        assert_eq!(plan(90., &[30., 30., 30.], 4., 20.).visible, 2);
+        assert_eq!(plan(110., &[30., 30., 30.], 4., 20.).visible, 3);
+    }
+
+    #[test]
+    fn an_unmeasured_row_shows_every_unit_and_a_row_with_no_width_none() {
+        let widths = [30., 30.];
+        assert_eq!(counts(&plan_overflow(None, &widths, 4., 20.)), (2, 0));
+        assert_eq!(counts(&plan_overflow(Some(0.), &widths, 4., 20.)), (0, 2));
     }
 }

@@ -251,10 +251,7 @@ impl Dashboard for Irc {
 
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active = false;
-        self.initiative_menu.dismiss(window, cx);
-        for toolbar in [&self.toolbar, &self.leading].into_iter().flatten() {
-            toolbar.update(cx, |toolbar, cx| toolbar.dismiss(window, cx));
-        }
+        toolbar::close_menus(self, window, cx);
         join::close(self, window, cx);
         view::publish_visible(self, cx);
         live::watch::sync(self, cx);
@@ -393,7 +390,7 @@ impl Dashboard for Irc {
     }
 
     fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.initiative_menu.dismiss(window, cx);
+        toolbar::close_menus(self, window, cx);
         join::close(self, window, cx);
         tracker::message::close_all(self, window, cx);
     }

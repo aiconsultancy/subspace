@@ -23,7 +23,7 @@ fn items(items: &[MenuItem]) -> Vec<String> {
         .collect()
 }
 
-fn bar(terminal: bool, report_issue: bool) -> MenuBar {
+pub(super) fn bar(terminal: bool, report_issue: bool) -> MenuBar {
     MenuBar {
         name: "Example".to_owned(),
         terminal,
@@ -195,68 +195,4 @@ fn help_has_no_report_an_issue_without_the_feature() {
         "Help",
     );
     assert!(!help.iter().any(|item| item.contains("Issue")));
-}
-
-/// Each action item's label with the command it runs and its system edit
-/// action, if any.
-fn commands(menus: &[Menu]) -> Vec<(String, &'static str, Option<gpui_kit::OsAction>)> {
-    let mut found = Vec::new();
-    for menu in menus {
-        collect(&menu.items, &mut found);
-    }
-    found
-}
-
-fn collect(
-    items: &[MenuItem],
-    found: &mut Vec<(String, &'static str, Option<gpui_kit::OsAction>)>,
-) {
-    for item in items {
-        match item {
-            MenuItem::Action {
-                name,
-                action,
-                os_action,
-                ..
-            } => {
-                found.push((name.to_string(), action.name(), *os_action));
-            }
-            MenuItem::Submenu(menu) => collect(&menu.items, found),
-            _ => {}
-        }
-    }
-}
-
-#[test]
-fn each_item_runs_its_own_command() {
-    use gpui_kit::OsAction;
-    let mac = commands(&menus(bar(true, false), Layout::Mac));
-    let runs = |label: &str| {
-        mac.iter()
-            .find(|(name, ..)| name == label)
-            .map(|(_, action, os)| (*action, *os))
-            .unwrap_or_else(|| panic!("{label} is in the menu bar"))
-    };
-    for (label, action) in [
-        ("Next Space", "subspace_app::NextDashboard"),
-        ("Previous Space", "subspace_app::PreviousDashboard"),
-        ("Minimize", "subspace_app::MinimizeWindow"),
-        ("Zoom", "subspace_app::ZoomWindow"),
-        ("Hide Example", "subspace_app::HideApp"),
-        ("Hide Others", "subspace_app::HideOtherApps"),
-        ("Show All", "subspace_app::ShowAllApps"),
-        ("Show Logs", "subspace_app::OpenLogView"),
-    ] {
-        assert_eq!(runs(label).0, action, "{label}");
-    }
-    for (label, os) in [
-        ("Undo", OsAction::Undo),
-        ("Redo", OsAction::Redo),
-        ("Cut", OsAction::Cut),
-        ("Copy", OsAction::Copy),
-        ("Paste", OsAction::Paste),
-        ("Select All", OsAction::SelectAll),
-    ] {
-        assert!(runs(label).1 == Some(os), "{label} is the system's {label}");
-    }
 }

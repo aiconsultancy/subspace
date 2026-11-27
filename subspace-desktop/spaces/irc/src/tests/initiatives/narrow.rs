@@ -38,7 +38,9 @@ fn menu_labels(window: &mut Window) -> Vec<String> {
 
 /// Channels with the navigator hidden, the inspector open and the largest
 /// icon buttons, in a window that leaves the pane its least width.
-fn narrow(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
+pub(super) fn narrow(
+    cx: &mut TestAppContext,
+) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
     let (board, hub, cx) = mount(cx, settings());
     member_of_the_catalogue(&hub, cx);
     let connected = Event::Status {
@@ -171,6 +173,24 @@ fn a_chooser_opened_from_the_overflow_menu_closes_when_the_catalogue_changes(
         assert!(
             !board.initiative_menu.is_open(),
             "no chooser left open with the old initiatives"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn the_pickers_menu_button_keeps_its_room_beside_a_collapsed_heading(cx: &mut TestAppContext) {
+    let (board, hub, cx) = narrow(cx);
+    inject(&hub, crate::tests::channel_events(), cx);
+    let room = crate::fixtures::channel("#subspace");
+    board.update(cx, |board, cx| crate::view::reveal(board, &room, cx));
+    settle(cx);
+    cx.update(|window, _| {
+        let leading = window.within("workspace-toolbar-leading");
+        let row = leading.find("overflow-toolbar-row").bounds();
+        let button = leading.find("overflow-toolbar-button").bounds();
+        assert!(
+            button.left() >= row.left() && button.right() <= row.right(),
+            "the menu button {button:?} inside the pickers' own row {row:?}"
         );
     });
 }

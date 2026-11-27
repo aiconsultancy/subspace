@@ -19,8 +19,6 @@ use subspace_framework::lucide::IconName;
 
 use crate::{Projects, Tab};
 
-/// Units are measured when they first draw.
-const UNMEASURED_WIDTH: f32 = 0.;
 const NEW_MILESTONE: &str = "New milestone";
 const EDIT_PROJECT: &str = "Edit project";
 
@@ -85,7 +83,7 @@ fn page_action(this: &Projects, owner: WeakEntity<Projects>) -> Option<OverflowU
     });
     Some(OverflowUnit::inline(
         id,
-        UNMEASURED_WIDTH,
+        OverflowUnit::UNMEASURED_WIDTH,
         move |_, _| {
             let owner = owner.clone();
             let button = match action {
@@ -100,9 +98,14 @@ fn page_action(this: &Projects, owner: WeakEntity<Projects>) -> Option<OverflowU
     ))
 }
 
-/// Refresh, at the right edge: it reads the projects again.
+/// Refresh, before the page's action: it reads the projects again.
 fn refresh_unit(owner: WeakEntity<Projects>) -> OverflowUnit {
-    OverflowUnit::refresh("projects-refresh", move |window, cx| {
-        _ = owner.update(cx, |this, cx| this.reload(window, cx));
-    })
+    OverflowUnit::icon_button(
+        "projects-refresh",
+        IconName::RefreshCw,
+        "Refresh",
+        move |window, cx| {
+            _ = owner.update(cx, |this, cx| this.reload(window, cx));
+        },
+    )
 }

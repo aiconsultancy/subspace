@@ -13,6 +13,7 @@ mod notice;
 mod private_reactions;
 mod review;
 mod scope;
+mod stand_in;
 mod thread;
 mod thread_gone;
 mod thread_reactions;

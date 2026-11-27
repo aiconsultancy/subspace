@@ -10,6 +10,7 @@ use std::{cell::RefCell, rc::Rc};
 mod dynamic;
 mod freshness;
 mod interaction;
+mod release;
 mod sizing;
 
 struct Harness {
@@ -250,14 +251,17 @@ fn a_row_given_no_width_moves_every_unit_to_the_menu(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn refresh_runs_from_its_button_and_from_the_overflow_menu(cx: &mut TestAppContext) {
+fn an_icon_button_runs_from_its_button_and_from_the_overflow_menu(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let runs = Rc::new(std::cell::Cell::new(0));
     let counted = runs.clone();
     let mut units = units(Rc::default());
-    units.push(OverflowUnit::refresh("test-refresh", move |_, _| {
-        counted.set(counted.get() + 1);
-    }));
+    units.push(OverflowUnit::icon_button(
+        "test-refresh",
+        subspace_lucide::IconName::RefreshCw,
+        "Refresh",
+        move |_, _| counted.set(counted.get() + 1),
+    ));
     let toolbar = cx.new(|_| OverflowToolbar::new(units));
     let (root, cx) = cx.add_window_view(|_, _| Harness {
         toolbar,

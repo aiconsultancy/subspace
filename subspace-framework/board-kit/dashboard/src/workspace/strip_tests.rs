@@ -278,3 +278,44 @@ fn the_detail_panel_bar_ends_level_with_the_tab_strip_at_a_large_size(cx: &mut T
         assert_eq!(bar.size.height, strip_height(window, cx));
     });
 }
+
+/// A pane whose tab strip holds a large tab bar.
+struct LargeTabs;
+
+impl Render for LargeTabs {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::Sizable as _;
+        let tabs = pane_tab_bar("large-tabs")
+            .large()
+            .selected_index(0)
+            .child(tab(TabSpec::new("Backlog", IconName::ListChecks)));
+        div().w(px(800.)).h(px(400.)).child(
+            Workspace::new("large-workspace")
+                .navigator(Navigator::new("Notes"))
+                .pane(Pane::new("large-pane").tabs(tabs).child(div().size_full())),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_large_pane_tab_bar_keeps_its_tabs_to_the_default_strip(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let (_, cx) = cx.add_window_view(|_, _| LargeTabs);
+    cx.update(|window, cx| {
+        let strip = bounds(window, cx, "workspace-tab-strip");
+        let height = strip_height(window, cx);
+        assert_eq!(strip.size.height, height, "the default strip");
+        let tab = window.within("large-tabs").find(0usize).bounds();
+        assert_eq!(
+            tab.size.height, height,
+            "the tab {tab:?} fills the strip {strip:?}"
+        );
+        assert_one_line(&[
+            (
+                "workspace-navigator-header",
+                bounds(window, cx, "workspace-navigator-header").bottom(),
+            ),
+            ("large tab", tab.bottom()),
+        ]);
+    });
+}

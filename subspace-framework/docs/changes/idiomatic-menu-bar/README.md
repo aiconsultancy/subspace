@@ -58,7 +58,10 @@ The menus and their gating are in [Menu bar](../../menu-bar.md).
   only with the feature and a repository, the new macOS keys reaching
   their commands as macOS reports them, Chat's tab keys winning while Chat
   has focus, and the window and app commands being available with no
-  focused window.
+  focused window. Since [Review follow-ups](../review-follow-ups/README.md),
+  every action item of each layout is checked against its command, by the
+  action's type, with each Edit item's GPUI Kit action and its `OsAction`,
+  and the Windows and Linux Full Screen item's.
 - Not verified headlessly: what AppKit adds (Services' contents, Enter Full
   Screen, the window list, the macOS 15 tiling commands, Bring All to Front
   and the Help menu's search field). Check them in a built app.

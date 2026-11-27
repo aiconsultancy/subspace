@@ -80,9 +80,11 @@ nothing to this control.
    that wrap or a second line. A strip is one line, so controls on either
    side that may not fit a narrow pane or a large icon-button size go in an
    `overflow_toolbar::OverflowToolbar`, which moves the last of them into
-   its menu; never let a control be cut off. The leading side keeps room
-   for its menu's button, and the trailing side yields the rest of the
-   line. Two
+   its menu; never let a control be cut off. Each side keeps room for its
+   menu's button, and the gaps between its items, while it holds anything;
+   beyond that the trailing side yields the rest of the line, and a strip
+   too narrow for both menu buttons clips the trailing one. A pane tab
+   bar's tabs are exactly the strip's height whatever the bar's size. Two
    horizontal lines within 5 px of each other across neighbouring panels
    are a defect: make them one line.
 4. **One line per edge.** Where two surfaces meet, exactly one of them

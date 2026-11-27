@@ -4,9 +4,9 @@ use crate::workspace::FOCUS_RING_PX;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::{Sizable as _, button::ButtonVariants as _, h_flex};
 use gpui_kit::{
-    AnyElement, App, AppContext as _, AvailableSpace, Context, Entity, InteractiveElement as _,
-    IntoElement, ParentElement as _, Rems, Render, Styled as _, TestSupportExt as _, Window, div,
-    px, size,
+    AnyElement, App, AppContext as _, AvailableSpace, Context, Entity, FocusHandle, Focusable as _,
+    InteractiveElement as _, IntoElement, ParentElement as _, Rems, Render, Role,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div, px, size,
 };
 use subspace_lucide::IconName;
 
@@ -31,6 +31,21 @@ impl OverflowToolbar {
     fn hidden_units(&self) -> Vec<OverflowUnit> {
         let plan = self.plan();
         self.units[plan.visible..].to_vec()
+    }
+
+    /// Once everything fits the menu's button is gone, and with it the
+    /// menu it renders, so a menu left open would stay open unseen. If the
+    /// button held focus, the toolbar's own focus takes it, so Tab goes on
+    /// to the toolbar's first control rather than starting again elsewhere.
+    fn release_menu(&self, focus: &FocusHandle, window: &mut Window, cx: &mut App) {
+        let Some(anchor) = &self.anchor else {
+            return;
+        };
+        let chevron = anchor.focus_handle(cx);
+        anchor.update(cx, |anchor, cx| anchor.dismiss(window, cx));
+        if chevron.is_focused(window) {
+            focus.focus(window, cx);
+        }
     }
 
     fn refresh_popup(
@@ -149,22 +164,21 @@ impl Render for OverflowToolbar {
             .anchor
             .get_or_insert_with(|| cx.new(crate::anchored::Anchor::new))
             .clone();
+        let focus = self
+            .focus
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(false))
+            .clone();
         self.refresh_popup(&anchor, window, cx);
         let plan = self.plan();
         let mut children = inline_units(&self.units[..plan.visible], window, cx);
         if plan.has_overflow() {
             children.push(self.more_button(anchor, cx).into_any_element());
         } else {
-            // The chevron renders the popup; once everything fits it is gone,
-            // so a menu left open would stay open unseen.
-            self.dismiss(window, cx);
+            self.release_menu(&focus, window, cx);
         }
         let entity = cx.weak_entity();
-        // The clip is on a frame a focus ring's width larger than the row on
-        // every side, which its negative margin keeps out of the layout, so a
-        // focused unit's ring shows. The row itself keeps the width it plans
-        // with: its bounds are the units' allocation.
-        let ring = px(FOCUS_RING_PX);
+        // The row keeps the width it plans with: its bounds are the units'
+        // allocation. Its clip is larger (see `clip`).
         let row = h_flex()
             .id("overflow-toolbar-row")
             .test_support()
@@ -189,13 +203,32 @@ impl Render for OverflowToolbar {
                 });
             })
             .children(children);
-        h_flex()
-            .id("overflow-toolbar-clip")
-            .test_support()
-            .min_w_0()
-            .m(-ring)
-            .p(ring)
-            .overflow_hidden()
-            .child(row)
+        clip(row, focus)
     }
+}
+
+/// The toolbar's accessible name.
+pub(super) const TOOLBAR_LABEL: &str = "Toolbar";
+
+/// The row in its clip, a focus ring's width larger than the row on every
+/// side, which its negative margin keeps out of the layout, so a focused
+/// unit's ring shows. The clip is the toolbar to assistive technology and
+/// holds its focus, which is no tab stop, so Tab passes on to the first unit.
+fn clip(row: impl IntoElement, focus: FocusHandle) -> impl IntoElement {
+    let ring = px(FOCUS_RING_PX);
+    h_flex()
+        .id("overflow-toolbar-clip")
+        .role(Role::Toolbar)
+        .aria_label(TOOLBAR_LABEL)
+        .test_support()
+        .track_focus(&focus)
+        // The focus is for a menu closing on a widen only: a press on blank
+        // space between units must not take focus from the rest of the
+        // window. Units handle the press first and keep their own focus.
+        .on_any_mouse_down(|_, window, _| window.prevent_default())
+        .min_w_0()
+        .m(-ring)
+        .p(ring)
+        .overflow_hidden()
+        .child(row)
 }

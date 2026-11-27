@@ -27,18 +27,12 @@ const HEADER_BOX: (f32, f32) = (420., 48.);
 const SWATCH: f32 = 18.;
 const SWATCH_WIDTH: f32 = 120.;
 const SWATCH_ROW: f32 = 520.;
-const UNMEASURED: f32 = 0.;
 const DESTINATIONS: [(&str, &str, bool); 3] = [
     ("gallery-sample:nav-prs", "PRs", true),
     ("gallery-sample:nav-issues", "Issues", false),
     ("gallery-sample:nav-irc", "Channels", false),
 ];
-const ACTIONS: [(&str, &str, SvgIcon); 5] = [
-    (
-        "gallery-sample:overflow-refresh",
-        "Refresh",
-        IconName::RefreshCw,
-    ),
+const ACTIONS: [(&str, &str, SvgIcon); 4] = [
     ("gallery-sample:overflow-filter", "Filter", IconName::Funnel),
     (
         "gallery-sample:overflow-sort",
@@ -97,26 +91,31 @@ pub(crate) const ITEMS: &[Item] = &[
     },
 ];
 
-/// The retained toolbar of the overflow sample.
+/// The retained toolbar of the overflow sample: Refresh as a glyph button,
+/// then four labelled actions.
 pub(crate) fn overflow_toolbar(cx: &mut App) -> Entity<OverflowToolbar> {
-    let units = ACTIONS
-        .iter()
-        .map(|(id, label, icon)| {
-            let (id, label, icon) = (*id, *label, *icon);
-            OverflowUnit::inline(
-                id,
-                UNMEASURED,
-                move |_, _| {
-                    action_button(id, Intent::Neutral, Some(icon), label).on_click(ignore_click)
-                },
-                vec![PopupEntry::new(move || {
-                    gpui_kit::component::menu::PopupMenuItem::new(label)
-                        .icon(icon)
-                        .on_click(ignore_click)
-                })],
-            )
-        })
-        .collect();
+    let refresh = OverflowUnit::icon_button(
+        "gallery-sample:overflow-refresh",
+        IconName::RefreshCw,
+        "Refresh",
+        |_, _| {},
+    );
+    let actions = ACTIONS.iter().map(|(id, label, icon)| {
+        let (id, label, icon) = (*id, *label, *icon);
+        OverflowUnit::inline(
+            id,
+            OverflowUnit::UNMEASURED_WIDTH,
+            move |_, _| {
+                action_button(id, Intent::Neutral, Some(icon), label).on_click(ignore_click)
+            },
+            vec![PopupEntry::new(move || {
+                gpui_kit::component::menu::PopupMenuItem::new(label)
+                    .icon(icon)
+                    .on_click(ignore_click)
+            })],
+        )
+    });
+    let units = std::iter::once(refresh).chain(actions).collect();
     cx.new(|_| OverflowToolbar::new(units))
 }
 

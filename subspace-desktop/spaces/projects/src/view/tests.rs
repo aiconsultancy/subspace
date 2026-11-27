@@ -89,6 +89,9 @@ enum Page {
     Milestone,
     /// A writable project's overview, so Edit project is there too.
     Overview,
+    /// A writable project's milestones, so New milestone, the Space's main
+    /// action, is there too.
+    Milestones,
 }
 
 /// Projects in a pane at its least width showing `page`, at icon-button
@@ -137,6 +140,10 @@ fn narrow(
             }
             Page::Overview => {
                 board.tab = Tab::Overview;
+                board.record = Some(Ok(writable_record()));
+            }
+            Page::Milestones => {
+                board.tab = Tab::Milestones;
                 board.record = Some(Ok(writable_record()));
             }
         }
@@ -282,6 +289,17 @@ fn the_largest_icon_buttons_keep_edit_project_and_refresh_reachable(cx: &mut Tes
     let actions = [
         ("projects-edit", "Edit project"),
         ("projects-refresh", "Refresh"),
+    ];
+    let hidden = reachable(TRAILING_SIDE, &actions, view);
+    assert!(!hidden.is_empty(), "the actions yield the line: {hidden:?}");
+}
+
+#[gpui_kit::test]
+fn the_largest_icon_buttons_keep_new_milestone_and_refresh_reachable(cx: &mut TestAppContext) {
+    let (_board, view) = narrow(IconButtonSize::ExtraLarge, Page::Milestones, cx);
+    let actions = [
+        ("projects-refresh", "Refresh"),
+        ("projects-new-milestone", "New milestone"),
     ];
     let hidden = reachable(TRAILING_SIDE, &actions, view);
     assert!(!hidden.is_empty(), "the actions yield the line: {hidden:?}");

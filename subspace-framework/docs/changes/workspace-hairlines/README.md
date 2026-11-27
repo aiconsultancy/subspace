@@ -72,8 +72,10 @@ are made into one line, and two borders never butt together.
 - Channels' Refresh is the last unit of its trailing `OverflowToolbar`
   (with Find and More), and Projects' page action (New milestone or Edit
   project) and Refresh form a trailing `OverflowToolbar` of their own, so
-  both yield into a menu rather than being cut off. Both use the new
-  `OverflowUnit::refresh`, the quiet Refresh button and its menu entry.
+  both yield into a menu rather than being cut off. Both used the new
+  `OverflowUnit::refresh`, the quiet Refresh button and its menu entry,
+  since replaced by the general `OverflowUnit::icon_button`
+  ([Review follow-ups](../review-follow-ups/README.md)).
 - Channels' leading pickers (the conversation menu while the navigator is
   hidden, and the initiative picker) go through an `OverflowToolbar` the
   same way. The conversation menu's lines become the overflow menu's
@@ -107,9 +109,8 @@ are made into one line, and two borders never butt together.
   header, so the strip rule does not reach them.
 - When `OverflowToolbar` dismisses its menu because everything fits
   again, the anchor returns focus to the chevron's handle, which no longer
-  renders. The component has no handle on its units to focus instead, so
-  a keyboard user who opened the menu and then widened the window starts
-  again from the Space's own focus.
+  renders. [Review follow-ups](../review-follow-ups/README.md) (#164) moves
+  focus to the toolbar's own container instead.
 - The Projects toolbar shows Overview and Milestones as action buttons,
   the open one as `Intent::Primary`. With **New milestone** also primary,
   the Milestones view has two primary buttons, against the one-primary
@@ -126,7 +127,7 @@ are made into one line, and two borders never butt together.
 | Strips part at larger icon-button sizes | `board-kit/dashboard/src/workspace/header.rs`, `pane.rs`, `panel/toolbar.rs`, `tabs/paint.rs` | `strip_height`, exact heights | `workspace::strip_tests::larger_icon_buttons_grow_every_strip_together`, `workspace::strip_tests::the_detail_panel_bar_ends_level_with_the_tab_strip_at_a_large_size`, `workspace::tests::a_strip_grows_only_to_hold_its_tallest_button_with_its_focus_ring` |
 | Review P2: a strip toolbar cut off Projects' last leading controls in a narrow pane | `subspace-desktop/spaces/projects/src/view/toolbar.rs` | Leading controls in an `OverflowToolbar` | `view::tests::a_narrow_pane_keeps_every_leading_control_reachable`, `view::tests::the_largest_icon_buttons_keep_every_leading_control_reachable` (pane at its least width, Small and Extra large: each control is wholly inside the toolbar's leading side or in the overflow menu; Back chosen from the menu leaves the milestone, and the initiative entry opens the picker) |
 | Review P2/P3: `strip_height` allowed only for toolbar buttons | `board-kit/dashboard/src/workspace.rs`, `icon_button.rs` | The tallest of the toolbar, action and compact roles | `workspace::strip_tests::action_buttons_taller_than_toolbar_buttons_grow_every_strip_together`, `workspace::strip_tests::labelled_buttons_and_inspector_tabs_fit_their_strips_at_a_large_size` |
-| After rebasing onto #170: Channels' narrow-pane tests failed, the leading side 6 px wide with its pickers still drawn in it | `board-kit/dashboard/src/overflow_toolbar.rs`, `workspace/pane.rs`; `subspace-desktop/spaces/irc/src/toolbar.rs`, `view/frame.rs`; `subspace-desktop/spaces/projects/src/view/actions.rs` | A measured zero width shows no unit; the strip's leading side keeps room for its menu button and the trailing side yields; Refresh and the page actions move into trailing overflow toolbars | `overflow_toolbar::runtime_tests::a_row_given_no_width_moves_every_unit_to_the_menu` and `workspace::crowded_strip_tests::a_crowded_strip_keeps_each_sides_menu_button_in_view` (each fails without its fix); `tests::initiatives::narrow::every_toolbar_control_stays_reachable_in_a_narrow_pane_at_the_largest_size` checks both sides of Channels' toolbar; `view::tests::the_largest_icon_buttons_keep_edit_project_and_refresh_reachable` checks both sides of Projects'; `overflow_toolbar::runtime_tests::refresh_runs_from_its_button_and_from_the_overflow_menu` |
+| After rebasing onto #170: Channels' narrow-pane tests failed, the leading side 6 px wide with its pickers still drawn in it | `board-kit/dashboard/src/overflow_toolbar.rs`, `workspace/pane.rs`; `subspace-desktop/spaces/irc/src/toolbar.rs`, `view/frame.rs`; `subspace-desktop/spaces/projects/src/view/actions.rs` | A measured zero width shows no unit; the strip's leading side keeps room for its menu button and the trailing side yields; Refresh and the page actions move into trailing overflow toolbars | `overflow_toolbar::runtime_tests::a_row_given_no_width_moves_every_unit_to_the_menu` and `workspace::crowded_strip_tests::a_crowded_strip_keeps_each_sides_menu_button_in_view` (each fails without its fix); `tests::initiatives::narrow::every_toolbar_control_stays_reachable_in_a_narrow_pane_at_the_largest_size` checks both sides of Channels' toolbar; `view::tests::the_largest_icon_buttons_keep_edit_project_and_refresh_reachable` checks both sides of Projects'; `overflow_toolbar::runtime_tests::refresh_runs_from_its_button_and_from_the_overflow_menu` (now `an_icon_button_runs_from_its_button_and_from_the_overflow_menu`) |
 | Review P2: Channels' pickers could be clipped in a narrow pane | `subspace-desktop/spaces/irc/src/view/frame.rs`, `view/conversations.rs`, `initiatives/picker.rs` | Leading pickers in an `OverflowToolbar` | `tests::initiatives::narrow::every_toolbar_control_stays_reachable_in_a_narrow_pane_at_the_largest_size` (navigator hidden, inspector open, Extra large, pane at its least width: each picker is inside the leading side or in the overflow menu) |
 | Review P3: an empty picker row put a gap before Channels' heading | `subspace-desktop/spaces/irc/src/view/frame.rs` | No picker row without a unit; a row that empties is dropped and its overflow menu closed | `tests::initiatives::header::without_pickers_the_heading_starts_at_the_text_edge` (fails without the fix: 4 px off the text edge) |
 | Review P2: a chooser opened from the overflow menu stayed open when the initiatives changed | `subspace-desktop/spaces/irc/src/initiatives/picker.rs` | The stale check asks whether the chooser is open, wherever it is anchored, not whether it owns its host | `tests::initiatives::narrow::a_chooser_opened_from_the_overflow_menu_closes_when_the_catalogue_changes` (fails without the fix) |

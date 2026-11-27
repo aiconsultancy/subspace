@@ -211,7 +211,6 @@ impl RichText {
         self
     }
 
-    // qual:allow(test_quality, untested) reason: "One-line forwarding builder; GPUI Base owns scrolling and exercises it in inline_virtual_tests, while this renderer tests its retained state and context."
     pub fn scrollable(self, enabled: bool) -> Self {
         self.native(move |view, _| view.scrollable(enabled))
     }

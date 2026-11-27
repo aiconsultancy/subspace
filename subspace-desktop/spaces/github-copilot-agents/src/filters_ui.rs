@@ -15,8 +15,6 @@ use crate::keys::{GROUP_KEY, KIND_KEY, OpenSession, Picking, REPO_KEY};
 use crate::model::{Kind, StateGroup};
 use crate::ui::{ALL, button_id, menu_title, unset_label};
 
-const UNMEASURED_WIDTH: f32 = 0.;
-
 // qual:allow(coupling, oi) reason: "Filter menus mutate and persist the Copilot Agents entity's selection, then rebuild its rows."
 impl CopilotAgents {
     pub(crate) fn clear_filters(&mut self, cx: &mut Context<Self>) {
@@ -159,7 +157,7 @@ impl CopilotAgents {
         let inline_entity = entity.clone();
         OverflowUnit::inline(
             "github-copilot-agents-clear",
-            UNMEASURED_WIDTH,
+            OverflowUnit::UNMEASURED_WIDTH,
             move |_, cx| {
                 inline_entity
                     .update(cx, |_, cx| {
@@ -267,7 +265,7 @@ fn filter_unit(
     let inline_entity = entity.clone();
     OverflowUnit::inline(
         button_id(picking),
-        UNMEASURED_WIDTH,
+        OverflowUnit::UNMEASURED_WIDTH,
         move |_, cx| {
             inline_entity
                 .update(cx, |this, cx| this.filter_button(picking, cx))

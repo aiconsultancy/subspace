@@ -20,7 +20,6 @@ use subspace_framework::dashboard::panel::IconName;
 use crate::remove::{self, Removal};
 use crate::{Irc, join};
 
-const UNMEASURED_WIDTH: f32 = 0.;
 /// The find button's label, also its menu entry when the toolbar overflows.
 const FIND: &str = "Find in conversation";
 
@@ -54,6 +53,24 @@ pub(crate) fn render(board: &mut Irc, cx: &mut Context<Irc>) -> Option<Entity<Ov
     ];
     let units = vec![find(), more(board, network_items, cx), refresh(board)];
     Some(OverflowToolbar::sync(&mut board.toolbar, units, cx))
+}
+
+/// Closes the initiative chooser and both toolbars' overflow menus, the
+/// leading pickers' and the trailing actions'.
+pub(crate) fn close_menus(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
+    board.initiative_menu.dismiss(window, cx);
+    for toolbar in [&board.toolbar, &board.leading].into_iter().flatten() {
+        toolbar.update(cx, |toolbar, cx| toolbar.dismiss(window, cx));
+    }
+}
+
+/// Whether the initiative chooser or a toolbar's overflow menu is open.
+pub(crate) fn any_menu_open(board: &Irc, cx: &App) -> bool {
+    board.initiative_menu.is_open()
+        || [&board.toolbar, &board.leading]
+            .into_iter()
+            .flatten()
+            .any(|toolbar| toolbar.read(cx).is_open(cx))
 }
 
 /// A command of the More menu, which runs `run` when chosen.
@@ -92,7 +109,7 @@ fn find() -> OverflowUnit {
     });
     OverflowUnit::inline(
         FIND,
-        UNMEASURED_WIDTH,
+        OverflowUnit::UNMEASURED_WIDTH,
         move |_, _| {
             icon_button("irc-find", Intent::Quiet, IconName::Search, FIND)
                 .focus_on_click()
@@ -106,9 +123,14 @@ fn find() -> OverflowUnit {
 /// Refresh, at the right edge: it reads the networks and initiatives again.
 fn refresh(board: &Irc) -> OverflowUnit {
     let owner = board.me.clone();
-    OverflowUnit::refresh("irc-refresh", move |window, cx| {
-        _ = owner.update(cx, |board, cx| board.reload(window, cx));
-    })
+    OverflowUnit::icon_button(
+        "irc-refresh",
+        IconName::RefreshCw,
+        "Refresh",
+        move |window, cx| {
+            _ = owner.update(cx, |board, cx| board.reload(window, cx));
+        },
+    )
 }
 
 fn connection(board: &Irc, network: Option<NetworkId>, online: bool) -> Control {
@@ -201,7 +223,7 @@ fn more(board: &Irc, network_items: [Control; 2], cx: &App) -> OverflowUnit {
     let key = format!("{}|{}", network_items[0].label, items[0].0.label());
     OverflowUnit::inline(
         key,
-        UNMEASURED_WIDTH,
+        OverflowUnit::UNMEASURED_WIDTH,
         move |_, _| {
             let (owner, items, network_items) =
                 (owner.clone(), items.clone(), network_items.clone());
