@@ -17,8 +17,10 @@
 # build, which this script creates as a new pre-release.
 set -euo pipefail
 
-# Signing needs the desktop login session; from any other shell, run there.
-if [[ "$(uname -s)" = Darwin && "$(launchctl managername 2>/dev/null || true)" != Aqua ]]; then
+# Signing with the login keychain needs the desktop login session; from any
+# other shell, run there. A keychain of its own (package-macos-ci.sh --run)
+# does not.
+if [[ "$(uname -s)" = Darwin && -z "${SUBSPACE_MACOS_KEYCHAIN:-}" && "$(launchctl managername 2>/dev/null || true)" != Aqua ]]; then
 	scripts="$(cd "$(dirname "$0")" && pwd)"
 	exec bash "$scripts/desktop-session.sh" bash "$scripts/$(basename "$0")" "$@"
 fi

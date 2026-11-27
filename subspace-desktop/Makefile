@@ -102,7 +102,7 @@ release-macos-prerelease: ## Cut a download-only integration pre-release from th
 	@test -n "$(KEYCHAIN_PROFILE)" || { echo 'KEYCHAIN_PROFILE is required: the notarytool Keychain profile name' >&2; exit 2; }
 	RELEASE_DRAFT="$(DRAFT)" mise run release-macos -- --prerelease "$(SIGNING_IDENTITY)" "$(KEYCHAIN_PROFILE)"
 
-package-macos-ci: ## Build a signed release app from CI secrets, reading missing ones from Key Vault (TARGET=... VERSION=...)
+package-macos-ci: ## Build a signed release app from CI secrets, reading missing ones from Key Vault (TARGET=... VERSION=...); the release runner uses its --run mode
 	mise run package-macos-ci -- "$(TARGET)" "$(VERSION)"
 
 install-macos: FEATURES = terminal

@@ -2,10 +2,11 @@
 # a signed manifest of the release's files, their digests, platform and the
 # `subspace` command, attached to the release as
 # packslip.subspace-desktop.sigstore.json. The release itself is built,
-# notarized and published from a desktop session by `make release-macos`;
-# this workflow only signs what that published, keylessly with this
-# workflow's identity. Sign every release from this one file, so consumers
-# keep accepting later releases.
+# notarized and published from a desktop session by `make release-macos`, or
+# on the release runner by release-macos.yml, which then starts this
+# workflow on the tag; this workflow only signs what that published,
+# keylessly with this workflow's identity. Sign every release from this one
+# file, so consumers keep accepting later releases.
 name: packslip
 
 on:

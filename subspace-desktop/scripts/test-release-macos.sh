@@ -121,6 +121,11 @@ grep -Fxq "session bash $(cd "$fixture/scripts" && pwd)/release-macos.sh Develop
 test "$(grep -c '^session ' "$fixture/gh.log")" = 1
 grep -Fq "release edit $tag" "$fixture/gh.log"
 
+# With a keychain of its own (package-macos-ci.sh --run), it stays put.
+SUBSPACE_MACOS_KEYCHAIN=/fixture/signing.keychain-db FAKE_LAUNCHD_MANAGER=Background release
+if grep -q '^session ' "$fixture/gh.log"; then echo 'a release with its own keychain moved into the desktop session' >&2; exit 1; fi
+grep -Fq "release edit $tag" "$fixture/gh.log"
+
 for failure in FAKE_RELEASE=published FAKE_RELEASE=missing FAKE_TAG_MISSING=1 FAKE_TAG_SHA=0123456789abcdef FAKE_COMMIT_MISSING=1; do
 	if env "$failure" bash -c "$(declare -f release); fixture='$fixture' release" 2>"$fixture/failure.out"; then
 		echo "$failure must stop the release" >&2

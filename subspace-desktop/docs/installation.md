@@ -332,7 +332,8 @@ helper with a fake `launchctl`.
 #### packslip
 
 Publishing a stable release (`make release-macos` turning the draft into a
-published release) starts the `packslip` GitHub workflow (`.github/workflows/packslip.yml`). It signs a
+published release) starts the `packslip` GitHub workflow (`.github/workflows/packslip.yml`);
+the release runner starts it itself, on the tag. It signs a
 [packslip](https://packslip.dev) for the release, a signed manifest of its
 files, their SHA-256 digests, the platform (`darwin`, `aarch64`) and the
 `subspace` command inside `Subspace.app`, and attaches it to the release as
@@ -446,9 +447,44 @@ Offline fixtures cover the release planner, stamp and Mac release orchestration
 on Linux too: `python3 scripts/test-prereleases.py`. No fixture publishes a
 release or calls GitHub's API.
 
-The signed packaging task does not publish or install the app. The release job
-runs the same packager with credentials from the protected environment
+The signed packaging task does not publish or install the app. The release
+runner runs the same release with credentials from the protected environment
 described below.
+
+### Publish from the release runner
+
+The **Release macOS** workflow (`.github/workflows/release-macos.yml`) does
+what `make release-macos` does, on the self-hosted macOS release runner
+instead of a signer's Mac. Once Release Please has created the draft and its
+tag, run it by hand on `main` with that tag:
+
+```bash
+gh workflow run release-macos.yml -R aiconsultancy/subspace --ref main \
+  -f tag=subspace-desktop-v<version>
+```
+
+`-f draft=true` attaches the archives but leaves the release a draft, like
+`DRAFT=1`. A maintainer approves the run's `subspace-macos-signing`
+environment before it starts. The job checks out the tag's commit once it
+has checked it (see below), installs the pinned tools, then runs
+`scripts/package-macos-ci.sh --run make release-macos`: the
+checks, both builds, the four files and the publication are those of
+`make release-macos`, signed and notarized in a temporary Keychain.
+`--run COMMAND [ARGUMENT...]` runs any signing step that way, with
+`SUBSPACE_MACOS_KEYCHAIN`, `SIGNING_IDENTITY` and `KEYCHAIN_PROFILE` set
+for it and the raw credentials removed from its environment. A release
+published with the workflow's own token starts no other workflow, so the job
+then starts [packslip](#packslip) on the tag. The workflow takes stable tags
+only; pre-releases and [integration builds](#integration-builds) are still
+made on a signer's Mac.
+
+The runner is a Mac registered to the `aiconsultancy` organisation in the
+runner group `subspace-macos-signing`, with the label `macos-signing`. The
+group is limited to this repository's `release-macos.yml` on `main`, so no
+other workflow, branch or pull request can run on it. The runner runs as a
+standard macOS user with no signing identity of its own, as a launchd daemon
+with no desktop session: the credentials arrive with each job and leave with
+its temporary Keychain.
 
 ### Configure release signing in GitHub
 
@@ -461,7 +497,7 @@ An administrator must configure these settings before a release can publish:
    ID.
 3. In the repository, create the GitHub environment
    `subspace-macos-signing`. Add a deployment branch rule that permits only
-   `main`. Add required reviewers if release approval must be manual.
+   `main`, and add the maintainers who approve releases as required reviewers.
 4. Add these environment secrets. Do not add them as repository secrets:
 
    | Secret | Value |
@@ -472,13 +508,13 @@ An administrator must configure these settings before a release can publish:
    | `APPLE_API_KEY_BASE64` | Base64 text of the App Store Connect `.p8` file, for example `base64 < AuthKey_ID.p8 \| pbcopy` |
    | `APPLE_API_KEY_ID` | App Store Connect API key ID |
    | `APPLE_API_ISSUER_ID` | App Store Connect API issuer ID |
+   | `SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET` | The GitHub OAuth App's client secret (see [Build a signed macOS application](#build-a-signed-macos-application)) |
 
-The caller in `subspace-release.yml` must explicitly pass all six secret names
-to the reusable product workflow. Its `workflow_call.secrets` declarations
-make that contract required. GitHub resolves the values from the signing
-job's environment; do not copy them to repository secrets or use broad
-`secrets: inherit`. Declaring `environment:` alone leaves these secrets empty
-in a reusable workflow. See [GitHub's reusable workflow secret guidance](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-inputs-and-secrets-in-a-reusable-workflow).
+5. In the organisation's Actions settings, create the runner group
+   `subspace-macos-signing` for this repository, allow public repositories,
+   and restrict it to the selected workflow
+   `aiconsultancy/subspace/.github/workflows/release-macos.yml@refs/heads/main`.
+   Register the runner to that group with the label `macos-signing`.
 
 The release runner imports the certificate into a temporary Keychain, stores a
 temporary `notarytool` profile, unsets the secret environment variables before
@@ -500,12 +536,17 @@ wrapper's added diagnostic lists only public certificate SHA-1 fingerprints,
 not certificate names, passwords, private keys or Apple API keys. The signing
 job disables Rustqual installation; it is not needed to build or sign the app.
 
-Signing and publication run only on the push to `main` that merges the
-Release Please PR. The workflow checks the merged PR's commit,
-repository, bot author, component branch and release label. An ordinary merge,
-a manual workflow run or an existing draft alone cannot start signing. Retry
-a signing failure by rerunning the original release-merge run or its failed
-jobs, rather than dispatching a new workflow.
+Signing and publication run only from a manual run on `main` that names an
+existing draft's tag and that a required reviewer has approved. Before any of
+the tag's code runs with the secrets, the workflow's first step, which is
+`main`'s, checks through GitHub's API that the release is a draft and that
+its tag's commit is already on `main`, then the job checks out that commit
+rather than the tag name. Only reviewed code signs, and `release-macos.sh`
+checks the draft and the tag again before it builds. A release that failed
+before publication is still a draft: run the workflow again with the same
+tag, and the draft's files are replaced. If only the packslip step failed,
+the release is published; start [packslip](#packslip) by hand from its tag,
+as the job does: add `--ref subspace-desktop-v<version>` to the command there.
 
 ### Sign from an Azure Key Vault
 

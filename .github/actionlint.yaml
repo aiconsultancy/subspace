@@ -1,0 +1,4 @@
+# The self-hosted macOS release runner (see .github/workflows/release-macos.yml).
+self-hosted-runner:
+  labels:
+    - macos-signing

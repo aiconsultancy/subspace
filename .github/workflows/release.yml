@@ -5,7 +5,8 @@
 #   project, refresh the lockfiles on their branches, and tag and release a
 #   merged one. A Framework release starts publish-framework.yml on its tag.
 #   An app release is a draft that `make release-macos` builds, attaches to
-#   and publishes from the owner's Mac.
+#   and publishes from the owner's Mac, or release-macos.yml from the release
+#   runner.
 # - Nightly: also merge the Framework's release pull request, then release it
 #   in the same run, because a merge made with this workflow's token starts no
 #   other workflow run.
@@ -141,8 +142,9 @@ jobs:
           TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] }}
         run: |
           {
-            echo "Created the draft release $TAG. Publish it from the owner's Mac:"
-            echo "check out $TAG in subspace-desktop/ and run \`make release-macos\`."
+            echo "Created the draft release $TAG. Publish it from the release runner with"
+            echo "\`gh workflow run release-macos.yml --ref main -f tag=$TAG\`, or from the"
+            echo "owner's Mac: check out $TAG in subspace-desktop/ and run \`make release-macos\`."
           } >>"$GITHUB_STEP_SUMMARY"
       - name: Fast-forward the integration branch to main
         if: steps.release.outputs.releases_created == 'true' || steps.after-merge.outputs.releases_created == 'true'

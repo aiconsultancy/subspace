@@ -305,4 +305,69 @@ for failure in search-list import sign notarize; do
     echo "PASS: $failure failure blocks artifacts and deletes the keychain"
 done
 
+# --run hands the temporary keychain, the identity and the notary profile to
+# a command, such as `make release-macos`, in the caller's directory and with
+# the caller's umask; the raw credentials stay behind.
+mkdir -p "$fixture/caller"
+cat >"$fixture/signing-step.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'step %s\n' "$*" >>"$FIXTURE_STATE/log"
+test "$PWD" = "$FIXTURE_CALLER"
+test "$(umask)" = 0022
+test "${SUBSPACE_MACOS_KEYCHAIN:-}" = "$(cat "$FIXTURE_STATE/keychain")"
+grep -Fxq "$SUBSPACE_MACOS_KEYCHAIN" "$FIXTURE_STATE/search-list"
+test "${SIGNING_IDENTITY:-}" = 'Developer ID Application: Fixture (TESTTEAM)'
+test "${KEYCHAIN_PROFILE:-}" = subspace-ci
+for name in MACOS_CERTIFICATE_BASE64 MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY \
+    APPLE_API_KEY_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER_ID; do
+    if [[ -n "${!name:-}" ]]; then echo "the signing step saw $name" >&2; exit 5; fi
+done
+[[ "$FAIL_AT" != step ]] || exit 23
+SH
+chmod 755 "$fixture/signing-step.sh"
+export FIXTURE_CALLER
+FIXTURE_CALLER="$(cd "$fixture/caller" && pwd -P)"
+
+run_step() {
+    local expected="$1" status=0
+    shift
+    (cd "$FIXTURE_CALLER" && umask 022 && "$BASH" "$fixture/scripts/package-macos-ci.sh" "$@") \
+        >"$FIXTURE_STATE/output" 2>&1 || status=$?
+    if [[ "$status" != "$expected" ]]; then
+        cat "$FIXTURE_STATE/output" >&2
+        echo "expected exit $expected, got $status" >&2
+        exit 1
+    fi
+    if find "$RUNNER_TEMP" -name 'subspace-signing.*' | grep -q .; then
+        echo 'credential directory survived' >&2
+        exit 1
+    fi
+    if ! cmp -s "$FIXTURE_STATE/expected-search-list" "$FIXTURE_STATE/search-list"; then
+        echo 'the original Keychain search list was not restored' >&2
+        exit 1
+    fi
+}
+
+reset_case
+run_step 0 --run "$fixture/signing-step.sh" release 'two words'
+grep -Fxq 'step release two words' "$FIXTURE_STATE/log"
+grep -Fx 'security delete-keychain' "$FIXTURE_STATE/log" >/dev/null
+if grep -qE '^(build|run|metadata) ' "$fixture/cargo.log" 2>/dev/null; then
+    echo '--run also packaged an app of its own' >&2
+    exit 1
+fi
+echo 'PASS: --run gives a command the temporary keychain without the raw credentials'
+
+reset_case
+FAIL_AT=step
+run_step 23 --run "$fixture/signing-step.sh"
+grep -Fx 'security delete-keychain' "$FIXTURE_STATE/log" >/dev/null
+echo 'PASS: a failing signing step keeps its status and deletes the keychain'
+
+reset_case
+run_step 2 --run
+test ! -f "$FIXTURE_STATE/keychain"
+echo 'PASS: --run without a command is refused before keychain creation'
+
 echo 'macOS CI signing contracts passed (fake Apple tools only)'

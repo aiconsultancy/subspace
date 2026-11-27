@@ -399,15 +399,19 @@ compare them yourself before asking for review.
   Run its Cargo and make commands from that directory.
 - Work on a repository branch and merge through pull requests; do not push or
   merge directly into `main`.
-- GitHub workflows (all on Linux runners): `.github/workflows/release.yml`
+- GitHub workflows: `.github/workflows/release.yml`
   runs Release Please on every push to `main`, nightly (when it also merges
   the Framework's release pull request) and by hand as a dry run;
   `publish-framework.yml` publishes the Framework's crates when
   `release.yml` starts it on a new `subspace-framework-v*` tag (see the
   Framework's publishing guide); `packslip.yml` signs each published desktop
-  release with packslip (see the installation guide). None of them builds or
-  tests the app. The [pre-push checks](docs/ways-of-working.md#gates) cover
-  desktop changes, and the root `make release-check` covers release tooling.
+  release with packslip (see the installation guide). These run on Linux and
+  none of them builds or tests the app. `release-macos.yml`, run by hand on
+  `main` with a draft's tag, is the only workflow that builds it: it signs
+  and publishes the release on the self-hosted macOS release runner (see
+  Releases). No pull request runs on that runner. The
+  [pre-push checks](docs/ways-of-working.md#gates) cover desktop changes, and
+  the root `make release-check` covers release tooling.
 - Release Please's pull requests (`release-please--branches--main--components--*`)
   are the only commits that change a version; review and merge them on
   `main`. After a release, `release.yml` fast-forwards
@@ -441,6 +445,15 @@ compare them yourself before asking for review.
   `scripts/desktop-session.sh` (a one-off launchd agent in `gui/<uid>`, no
   window) when started from any other shell. Do not open Terminal windows to
   reach it.
+- Or publish the draft from the release runner: `gh workflow run
+  release-macos.yml --ref main -f tag=subspace-desktop-vX.Y.Z` runs
+  `make release-macos` through `scripts/package-macos-ci.sh --run`, with the
+  `subspace-macos-signing` environment's secrets in a temporary Keychain,
+  after a maintainer approves it, then starts packslip. The runner group
+  admits only that workflow on `main`. Never add a job that runs on the
+  `macos-signing` runner for pull requests or other branches, and never give
+  the runner's user a signing identity of its own
+  ([Publish from the release runner](docs/installation.md#publish-from-the-release-runner)).
 - Publishing the release starts `.github/workflows/packslip.yml`, which
   attaches `packslip.subspace-desktop.sigstore.json`, a keyless packslip
   signed by that workflow. After a release, check the workflow run succeeded

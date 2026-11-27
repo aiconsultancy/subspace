@@ -123,9 +123,10 @@ it. The repository's pull request template
 
 ## Gates
 
-No CI builds or tests the code. The GitHub workflows release and sign (see
-[Releases](#releases)); the prek hooks are the gate; install them with
-`make hooks`.
+No CI tests the code. The GitHub workflows release and sign (see
+[Releases](#releases)); the only one that builds the app, **Release macOS**,
+publishes a release from its draft and never runs for a pull request. The
+prek hooks are the gate; install them with `make hooks`.
 
 | Hook | Runs |
 | --- | --- |

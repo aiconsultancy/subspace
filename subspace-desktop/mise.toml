@@ -183,7 +183,7 @@ description = "Build, sign and notarize the macOS app, attach it to the draft re
 run = "bash scripts/release-macos.sh"
 
 [tasks.package-macos-ci]
-description = "Build the signed release app with protected CI secrets: -- RUST_TARGET VERSION"
+description = "Build the signed release app with protected CI secrets: -- RUST_TARGET VERSION, or run a signing step with them: -- --run COMMAND..."
 run = "bash scripts/package-macos-ci.sh"
 
 [tasks.install-macos]

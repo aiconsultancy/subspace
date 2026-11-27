@@ -1,31 +1,49 @@
 #!/usr/bin/env bash
 # Sign with secrets from the environment, reading any missing ones from Key
 # Vault, on an approved macOS release runner or a signer's Mac.
+#
+# With --run, it runs COMMAND in the temporary keychain instead of packaging
+# one app, from the caller's directory and with SUBSPACE_MACOS_KEYCHAIN,
+# SIGNING_IDENTITY and KEYCHAIN_PROFILE set, as `make release-macos` and
+# other signing steps read them; the raw credentials stay behind.
 set -euo pipefail
 # Never trace credential arguments, even if the caller enabled shell tracing.
 set +x
 
-if [[ "$#" -ne 2 ]]; then
+usage() {
 	echo 'usage: mise run package-macos-ci -- RUST_TARGET VERSION' >&2
+	echo '       mise run package-macos-ci -- --run COMMAND [ARGUMENT...]' >&2
 	exit 2
+}
+run=()
+if [[ "${1:-}" = --run ]]; then
+	shift
+	[[ "$#" -ge 1 ]] || usage
+	run=("$@")
+elif [[ "$#" -ne 2 ]]; then
+	usage
 fi
 if [[ "$(uname -s)" != Darwin ]]; then
 	echo 'signed application packaging requires macOS' >&2
 	exit 2
 fi
-target="$1"
-version="$2"
-case "$target" in
-aarch64-apple-darwin) ;;
-*)
-	echo "unsupported macOS target: $target" >&2
-	exit 2
-	;;
-esac
+if [[ "${#run[@]}" -eq 0 ]]; then
+	target="$1"
+	version="$2"
+	case "$target" in
+	aarch64-apple-darwin) ;;
+	*)
+		echo "unsupported macOS target: $target" >&2
+		exit 2
+		;;
+	esac
+fi
 
 root="${SUBSPACE_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 # shellcheck source=product.sh
 source "$root/scripts/product.sh"
+caller_dir="$PWD"
+caller_umask="$(umask)"
 cd "$root"
 # Secrets missing from the environment are read from the Azure Key Vault
 # named by SUBSPACE_SIGNING_KEY_VAULT. There is no default vault. Key Vault
@@ -72,11 +90,13 @@ api_issuer_id="$APPLE_API_ISSUER_ID"
 unset MACOS_CERTIFICATE_BASE64 MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY
 unset APPLE_API_KEY_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER_ID
 
-actual_version="$(cargo metadata --format-version=1 --no-deps --locked \
-	| jq -er '.packages[] | select(.name == "subspace") | .version')"
-if [[ "$version" != "$actual_version" ]]; then
-	echo "expected Subspace version $version, found $actual_version" >&2
-	exit 1
+if [[ "${#run[@]}" -eq 0 ]]; then
+	actual_version="$(cargo metadata --format-version=1 --no-deps --locked \
+		| jq -er '.packages[] | select(.name == "subspace") | .version')"
+	if [[ "$version" != "$actual_version" ]]; then
+		echo "expected Subspace version $version, found $actual_version" >&2
+		exit 1
+	fi
 fi
 
 umask 077
@@ -153,6 +173,14 @@ xcrun notarytool store-credentials subspace-ci --keychain "$keychain" \
 unset certificate_base64 certificate_password api_key_base64 api_key_id api_issuer_id password
 rm "$stage/certificate.p12" "$stage/AuthKey.p8"
 
+# The private umask was for the credential files. The app and its archives
+# get the caller's modes, as on a signer's Mac.
+umask "$caller_umask"
+if [[ "${#run[@]}" -gt 0 ]]; then
+	(cd "$caller_dir" && SUBSPACE_MACOS_KEYCHAIN="$keychain" SIGNING_IDENTITY="$identity" \
+		KEYCHAIN_PROFILE=subspace-ci "${run[@]}")
+	exit 0
+fi
 SUBSPACE_MACOS_KEYCHAIN="$keychain" bash scripts/package-macos.sh "$identity" subspace-ci "$target"
 app_name="$(no_api_suffix "$(cargo run --quiet --locked -p subspace-descriptor --bin subspace-product-metadata -- subspace "$version" | jq -er '.asset_stem')" -NoAPI)"
 archive="$root/dist/${app_name}_${version}_darwin_arm64.zip"
