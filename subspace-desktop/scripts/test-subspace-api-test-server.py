@@ -438,9 +438,12 @@ class FixtureTests(unittest.TestCase):
             fleet.server_close()
             worker.join()
 
-    def test_the_fleet_records_its_fleet_api_address(self):
-        for given, expected in ((None, 'http://127.0.0.1:18484'), ('http://127.0.0.1:41234', 'http://127.0.0.1:41234')):
-            fleet = FIXTURE.FixtureServer(0, 'fixture-access', fleet=True, fleet_api_url=given)
+    def test_the_fleet_records_its_fixture_addresses(self):
+        for url, port, expected_url, expected_irc in (
+            (None, None, 'http://127.0.0.1:18484', ('irc.example.test', 6697, True)),
+            ('http://127.0.0.1:41234', 41235, 'http://127.0.0.1:41234', ('127.0.0.1', 41235, False)),
+        ):
+            fleet = FIXTURE.FixtureServer(0, 'fixture-access', fleet=True, fleet_api_url=url, fleet_irc_port=port)
             worker = threading.Thread(target=fleet.serve_forever, daemon=True)
             worker.start()
             try:
@@ -449,7 +452,8 @@ class FixtureTests(unittest.TestCase):
                 with urlopen(request, timeout=3) as response:
                     items = json.load(response)['items']
                 aurora = next(item['fleet'] for item in items if item.get('fleetId') == 'aurora')
-                self.assertEqual(aurora['fleetApiUrl'], expected)
+                self.assertEqual(aurora['fleetApiUrl'], expected_url)
+                self.assertEqual((aurora['ircHost'], aurora['ircPort'], aurora['ircTls']), expected_irc)
             finally:
                 fleet.shutdown()
                 fleet.server_close()

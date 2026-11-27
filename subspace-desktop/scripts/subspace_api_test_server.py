@@ -318,10 +318,12 @@ FLEET_INITIATIVE = dict(
                                         for agent in FLEET_AGENTS if agent['rank'] == 'captain']))
 
 
-def fleet_initiative(fleet_api_url):
-    """The aurora initiative, its fleet's Fleet API at `fleet_api_url`."""
+def fleet_initiative(fleet_api_url, irc_port=None):
+    """The aurora initiative with the selected Fleet and IRC fixtures."""
     initiative = copy.deepcopy(FLEET_INITIATIVE)
     initiative['fleet']['fleetApiUrl'] = fleet_api_url or FLEET_API_URL
+    if irc_port is not None:
+        initiative['fleet'].update(ircHost='127.0.0.1', ircPort=irc_port, ircTls=False)
     return initiative
 
 
@@ -1410,7 +1412,7 @@ class FixtureServer(ThreadingHTTPServer):
 
     def __init__(self, port, access_jwt, fail_chat_uploads=None, updates_stream=True, change_after=None,
                  decision_scenario='normal', fleet=False, fleet_api_url=None, irc_credential=False,
-                 memberships=True, initiatives_delay=0.0):
+                 memberships=True, initiatives_delay=0.0, fleet_irc_port=None):
         if not access_jwt:
             raise ValueError('A non-empty fixture Access JWT is required.')
         self.access_jwt = access_jwt
@@ -1425,7 +1427,7 @@ class FixtureServer(ThreadingHTTPServer):
         self.fixture.decision_conflicts = set()
         for row, detail in self.fixture.decisions.values():
             save_decision_revision(self.fixture, row, detail, ['created'])
-        self.fleet_api_url = fleet_api_url
+        self.fleet_initiative = fleet_initiative(fleet_api_url, fleet_irc_port)
         self.irc_credential = irc_credential
         # Off: the fixture person belongs to no initiative.
         self.memberships = memberships
@@ -1547,7 +1549,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def fleet_servers(self):
         """The IRC servers the fixture person's fleets use, as (host, port)."""
-        initiatives = [fleet_initiative(self.server.fleet_api_url)] if self.server.fixture.fleet else []
+        initiatives = [self.server.fleet_initiative] if self.server.fixture.fleet else []
         return {(item['fleet']['ircHost'].lower(), item['fleet']['ircPort']) for item in initiatives}
 
     def route(self, method):
@@ -1577,7 +1579,7 @@ class Handler(BaseHTTPRequestHandler):
             return 200, dict(items=[
                 dict(id='ca2aabe7-68bd-4e82-9b76-d577ddf987ac', name='Design Studio', channels='#design, #releases'),
                 dict(id='47d093d1-2498-4943-b0fd-b816d3b83425', name='Observatory', channels='#data, #forecast'),
-            ] + ([fleet_initiative(self.server.fleet_api_url)] if fixture.fleet else []))
+            ] + ([self.server.fleet_initiative] if fixture.fleet else []))
         if method == 'GET' and path == '/api/v1/projects':
             return 200, page(fixture.projects, query, 'projects')
         match = re.fullmatch(r'/api/v1/projects/([^/]+)/updates', path)
@@ -1869,6 +1871,8 @@ def main():
                         help='Add the fictional FLT, NAV, MAP, WARP and RELAY projects and their issues, for web Space evidence.')
     parser.add_argument('--fleet-api-url', metavar='URL',
                         help="With --fleet, the aurora fleet's Fleet API address (default http://127.0.0.1:18484).")
+    parser.add_argument('--fleet-irc-port', type=int, metavar='PORT',
+                        help="With --fleet, advertise the local Ergo fixture on 127.0.0.1:PORT without TLS.")
     parser.add_argument('--irc-credential', action='store_true',
                         help='Issue fictional IRC sign-ins at POST /api/v1/me/irc-credential (404 without it).')
     parser.add_argument('--no-memberships', action='store_true',
@@ -1881,7 +1885,7 @@ def main():
                        decision_scenario=args.decision_scenario, fleet=args.fleet,
                        fleet_api_url=args.fleet_api_url, irc_credential=args.irc_credential,
                        memberships=not args.no_memberships,
-                       initiatives_delay=args.initiatives_delay) as server:
+                       initiatives_delay=args.initiatives_delay, fleet_irc_port=args.fleet_irc_port) as server:
         print(f'Subspace API fixture on {server.origin}', flush=True)
         print(f'SUBSPACE_API_URL={server.origin}/api', flush=True)
         server.serve_forever()

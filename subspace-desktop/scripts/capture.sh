@@ -41,6 +41,9 @@
 #                              built-in Fleet Console's address and token set to it and the fleet's
 #                              Settings > Fleets token saved for that address; with CAPTURE_FLEET=1 the
 #                              API's aurora fleet records it as its fleetApiUrl, so the app uses it
+#   CAPTURE_FLEET_TICK=<secs>  seconds between fictional crew changes (0 holds the fixture still)
+#   CAPTURE_CREW_DETAIL_MODE=<full|old-200|not-found>  the Fleet fixture's crew-detail reply
+#   CAPTURE_FLEET_IRC_PORT=<port>  with CAPTURE_FLEET=1, advertise the loopback Ergo fixture
 #   CAPTURE_FLEET_TOKEN=<saved|none|moved>  with CAPTURE_FLEET_API=1, the aurora fleet's Settings > Fleets
 #                              token: saved for the fixture's address (the default), none saved, or
 #                              fixture-fleet-moved saved for https://aurora-old.example.test, so the
@@ -157,9 +160,13 @@ if [ -n "${CAPTURE_INITIATIVES_DELAY:-}" ]; then
     api_args+=(--initiatives-delay "$CAPTURE_INITIATIVES_DELAY")
 fi
 if [ -n "${CAPTURE_FLEET:-}" ]; then api_args+=(--fleet); fi
+if [ -n "${CAPTURE_FLEET_IRC_PORT:-}" ]; then api_args+=(--fleet-irc-port "$CAPTURE_FLEET_IRC_PORT"); fi
 fleet_api=""
 if [ -n "${CAPTURE_FLEET_API:-}" ]; then
-    python3 -u "$root/scripts/fleet_api_test_server.py" --port 0 --token fixture-fleet --log-requests \
+    fleet_args=(--port 0 --token fixture-fleet --log-requests)
+    if [ -n "${CAPTURE_FLEET_TICK:-}" ]; then fleet_args+=(--tick "$CAPTURE_FLEET_TICK"); fi
+    if [ -n "${CAPTURE_CREW_DETAIL_MODE:-}" ]; then fleet_args+=(--crew-detail-mode "$CAPTURE_CREW_DETAIL_MODE"); fi
+    python3 -u "$root/scripts/fleet_api_test_server.py" "${fleet_args[@]}" \
         >"$fixture/fleet-api.log" 2>&1 &
     servers+=("$!")
     fleet_api="$(server_address "$fixture/fleet-api.log")"

@@ -120,7 +120,13 @@ moves to the next phase, opens a pull request, finishes or picks up queued
 work, so the stream stays live. The capture writes its address and the
 fictional token `fixture-fleet` into `webBoards.fleet-console`, and the app
 adds its built-in Fleet Console to that entry at start, with its permissions
-allowed, so Fleet Console shows the fleet live, not in sample mode.
+allowed, so Fleet Console shows the fleet live, not in sample mode. Set
+`CAPTURE_FLEET_TICK=0` to hold the fixture still. For crew detail, use
+`CAPTURE_CREW_DETAIL_MODE=old-200` to omit the full-text marker, or
+`not-found` to omit the route. The default is `full`.
+When capturing Channels with the Aurora fleet, set `CAPTURE_FLEET_IRC_PORT`
+to the local Ergo fixture's port and pass a matching `CAPTURE_IRC_CONFIG`
+for `127.0.0.1` without TLS.
 
 `CAPTURE_FLEET_API=1` also saves the aurora fleet's token for the fixture's
 address, as **Settings › Fleets** keeps it (`fleet-api-tokens.json`). Only
