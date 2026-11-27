@@ -186,18 +186,28 @@ fn the_navigator_title_switch_is_a_draft_until_save(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_failed_save_keeps_the_live_navigator_title(cx: &mut TestAppContext) {
+fn a_failed_save_keeps_the_live_navigator_title_and_can_be_retried(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();
     let settings = open_settings(root.path(), cx);
-    // The state file cannot be written over a folder.
     let state_file = root.path().join("state.json");
-    let _ = std::fs::remove_file(&state_file);
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.save(window, cx).unwrap();
+        })
+        .unwrap();
+    // The next write cannot replace the state file with a folder there.
+    std::fs::remove_file(&state_file).unwrap();
     std::fs::create_dir(&state_file).unwrap();
     settings
         .update(cx, |settings, window, cx| {
             settings.board_navigation.navigator_title = false;
             assert!(settings.save(window, cx).is_err());
             assert!(navigator_title::shown(cx), "the live title is unchanged");
+            assert_eq!(prefs::get(cx, "layout.navigator-title"), None);
+            assert!(
+                !settings.board_navigation.navigator_title,
+                "the draft is kept"
+            );
             // The write Save stages the title in, failing on its own.
             let stage = settings.board_navigation.stage_title();
             assert!(super::background_updates::save(&mut [], stage, cx).is_err());
@@ -205,13 +215,20 @@ fn a_failed_save_keeps_the_live_navigator_title(cx: &mut TestAppContext) {
                 navigator_title::shown(cx),
                 "a failed write restores the title"
             );
-            assert_eq!(prefs::get(cx, "layout.navigator-title"), None);
+        })
+        .unwrap();
+    std::fs::remove_dir(&state_file).unwrap();
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.save(window, cx).unwrap();
             assert!(
-                !settings.board_navigation.navigator_title,
-                "the draft is kept"
+                !navigator_title::shown(cx),
+                "the retried Save applies the draft"
             );
         })
         .unwrap();
+    let saved = State::load(&state_file);
+    assert_eq!(saved.get("layout.navigator-title"), Some("0"));
 }
 
 #[gpui_kit::test]
