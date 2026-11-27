@@ -137,11 +137,15 @@ impl<'a> TextPage<'a> {
     }
 }
 
+pub(super) struct TaskRows<'a> {
+    pub(super) key: String,
+    pub(super) partial: PartialFields,
+    pub(super) pages: &'a TaskPages,
+}
+
 pub(super) fn rows(
     task: Option<&Task>,
-    project: &str,
-    partial: PartialFields,
-    pages: &TaskPages,
+    inputs: &TaskRows<'_>,
     cx: &Context<Irc>,
 ) -> Vec<AnyElement> {
     let Some(task) = task else {
@@ -154,10 +158,10 @@ pub(super) fn rows(
             if text.is_empty() {
                 return None;
             }
-            let page = TextPage::new(text, pages.page(project, &task.id, field));
+            let page = TextPage::new(text, inputs.pages.page(&inputs.key, &task.id, field));
             let key = field.key();
             let pager = (page.total > 1).then(|| {
-                let project = project.to_owned();
+                let project = inputs.key.clone();
                 let task = task.id.clone();
                 let id = format!("irc-crew-task-pages:{project}:{key}");
                 let change = cx.listener(move |board, page, _, cx| {
@@ -178,7 +182,7 @@ pub(super) fn rows(
                     .gap_1()
                     .child(workspace::fact(
                         label,
-                        field_value(field, page.visible(), partial, project, cx),
+                        field_value(field, page.visible(), inputs, cx),
                         cx,
                     ))
                     .children(pager)
@@ -188,15 +192,9 @@ pub(super) fn rows(
         .collect()
 }
 
-fn field_value(
-    field: Field,
-    text: String,
-    partial: PartialFields,
-    project: &str,
-    cx: &Context<Irc>,
-) -> AnyElement {
+fn field_value(field: Field, text: String, inputs: &TaskRows<'_>, cx: &Context<Irc>) -> AnyElement {
     let text = fact_text(text);
-    if !partial.contains(field) {
+    if !inputs.partial.contains(field) {
         return text.into_any_element();
     }
     let tail = field.is_tail();
@@ -213,7 +211,7 @@ fn field_value(
         .children((!tail).then(marker))
         .child(feedback::empty_line(
             &Tokens::current(cx),
-            format!("irc-crew-preview:{project}:{}", field.key()),
+            format!("irc-crew-preview:{}:{}", inputs.key, field.key()),
             format!(
                 "Showing the {edge} {} characters from the ship's roster; this may be incomplete.",
                 field.limit()

@@ -307,7 +307,7 @@ pub(super) fn body(
     });
     let detail = member
         .zip(board.dock.focused.as_ref())
-        .map(|(member, buffer)| detail::view(&member, (&previews, selection), buffer, cx));
+        .map(|(member, buffer)| detail::view(&member, &previews, selection, buffer, cx));
     Some(
         v_flex()
             .w_full()

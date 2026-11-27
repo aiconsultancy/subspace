@@ -17,19 +17,20 @@ use crate::{Irc, pull_requests};
 
 use super::super::ship::state_tone;
 use super::Selection;
-use super::state::{PartialFields, TaskPreviews};
+use super::state::TaskPreviews;
 
 mod observations;
 mod task_text;
 use observations::Project;
 pub(super) use task_text::TaskPages;
-use task_text::visible;
+use task_text::{TaskRows, visible};
 
 type Facts = Vec<(&'static str, String)>;
 
 pub(super) fn view(
     member: &CrewMember,
-    (previews, selection): (&TaskPreviews<'_>, &Selection),
+    previews: &TaskPreviews<'_>,
+    selection: &Selection,
     buffer: &BufferKey,
     cx: &Context<Irc>,
 ) -> AnyElement {
@@ -53,9 +54,12 @@ pub(super) fn view(
         .children(empty)
         .children(unconfirmed)
         .children(member.contexts.iter().enumerate().map(|(index, context)| {
-            let key = project_key(context.project.as_deref(), index);
-            let partial = previews.fields(context.project.as_deref());
-            project_row(context, (key, partial), &selection.pages, buffer, cx)
+            let rows = TaskRows {
+                key: project_key(context.project.as_deref(), index),
+                partial: previews.fields(context.project.as_deref()),
+                pages: &selection.pages,
+            };
+            project_row(context, rows, buffer, cx)
         }));
     v_flex()
         .w_full()
@@ -110,14 +114,14 @@ fn fact_text(value: String) -> impl IntoElement {
 
 fn project_row(
     context: &CrewContext,
-    (key, partial): (String, PartialFields),
-    pages: &TaskPages,
+    rows: TaskRows<'_>,
     buffer: &BufferKey,
     cx: &Context<Irc>,
 ) -> AnyElement {
     let tokens = Tokens::current(cx);
     let buffer = buffer.clone();
     let project = Project::of(context);
+    let key = &rows.key;
     let name = visible(&project.name);
     let actions = project
         .pull_request
@@ -140,13 +144,7 @@ fn project_row(
                 .child(name),
         )
         .children(project_state(context, cx))
-        .children(task_text::rows(
-            context.current.as_ref(),
-            &key,
-            partial,
-            pages,
-            cx,
-        ))
+        .children(task_text::rows(context.current.as_ref(), &rows, cx))
         .children(fact_rows(project.facts, cx))
         .children(actions)
         .into_any_element()
