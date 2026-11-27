@@ -520,6 +520,12 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     load(true);
   }
 
+  /** Let go of the snapshot read in flight; its reply is dropped (`gone`). */
+  function abortRead() {
+    controller?.abort();
+    controller = null;
+  }
+
   function clearRetry() {
     if (retryTimer !== null) clearTimer(retryTimer);
     retryTimer = null;
@@ -1017,10 +1023,16 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       if (!pending && !state.stale) refreshFull();
       changed();
     },
-    /** The stream (re)opened with this agent: activity events have no replay, so read the snapshot again. */
+    /**
+     * The stream (re)opened with this agent: activity events have no replay,
+     * so read the snapshot again. A read in flight started before this
+     * stream registered the watch: it is let go, so one that never settles
+     * cannot hold the new read behind it.
+     */
     reopened() {
       if (stopped) return;
       waiting = false;
+      abortRead();
       clearRetry();
       if (state.polling) {
         stopPolling();
@@ -1029,10 +1041,11 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       refetch();
       changed();
     },
-    /** The stream attempt that carried this agent ended, or a new one began: wait for its answer before reading. */
+    /** The stream attempt that carried this agent ended, or a new one began: let go of the read in flight and wait for its answer before reading. */
     disconnected() {
       if (stopped || !awaitStream || state.polling || waiting) return;
       waiting = true;
+      abortRead();
       clearRetry();
       changed();
     },
@@ -1050,8 +1063,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     reset() {
       if (stopped) return;
       epoch += 1;
-      controller?.abort();
-      controller = null;
+      abortRead();
       dropAll();
       clearRetry();
       stopPolling();
@@ -1082,8 +1094,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     },
     stop() {
       stopped = true;
-      controller?.abort();
-      controller = null;
+      abortRead();
       dropAll();
       clearRetry();
       stopPolling();

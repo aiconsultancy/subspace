@@ -298,7 +298,10 @@ closes it, as does moving to another tier; focus returns to the button.
   the snapshot's
   cursor are dropped. A `seq` that fails to rise, a new `generation`, an
   item for an unknown turn and every stream re-open read the snapshot
-  again, one read at a time. A skipped `seq` is not a gap. A turn the view
+  again, one read at a time. A re-open, or the end of the stream that
+  carried the officer, lets go of a read still in flight, so one that
+  never answers cannot hold the next read behind it. A skipped `seq` is
+  not a gap. A turn the view
   no longer holds is placed by its start time, so a late end for a turn
   already dropped never shows as the newest. If that read
   fails, the view keeps the last activity read, marked stale with the

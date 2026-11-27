@@ -185,7 +185,12 @@ the desktop side are separate work.
   the next answer, and **Try again** queues until then. The wait is checked
   when a queued read starts, not when it was asked for: a retry or an
   overflow refetch queued behind a read in flight never reads before the
-  new stream answers, and then reads once. If a read fails
+  new stream answers, and then reads once. A snapshot read in flight when
+  the stream reopens, or when the attempt that carried the agent ends, is
+  aborted and its reply dropped: it started before the new stream
+  registered the watch, and one that never settles would otherwise hold
+  every later read behind it, as the reads are single-flight. The client
+  sets no timeout of its own on the snapshot. If a read fails
   while a snapshot is on show, the view goes stale: it keeps the last
   snapshot, says so with the error, applies no events but keeps buffering
   them (at most 512 events or 8 MiB, as Channels; on overflow the buffer is
