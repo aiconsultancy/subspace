@@ -2994,7 +2994,7 @@ def existing_administrator(answers, token):
 
 
 def bootstrap_local_owner(answers):
-    """SUB-76 seam: currently obtain the administrator token through development sign-in only."""
+    """Obtain the administrator token, for now through development sign-in only."""
     # The first development sign-in to a new organisation becomes its administrator.
     token = api_token(answers)
     if external_database(answers):
