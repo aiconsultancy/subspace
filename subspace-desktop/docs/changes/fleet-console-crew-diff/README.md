@@ -47,7 +47,8 @@ one shows, and the differences are listed below with their reasons.
   budget.
 - **Patch parts.** Each file's patch is one `createPager` (`src/pager.js`,
   through `src/diff-parts.js`), keyed by the snapshot's fingerprint, the
-  mode and the path (SUB decision 75c3ed93 §1). A part is one gateway
+  mode and the row's place in the list, not its path, as two rows can share
+  a display path (SUB decision 75c3ed93 §1). A part is one gateway
   patch page, all from one sequence: the file route's first page,
   `…/diff/file?path=&at=<fingerprint>`, read when the patch is first shown,
   then each page its `patchNextPage` names, read with `&page=`. The list's
@@ -61,6 +62,17 @@ one shows, and the differences are listed below with their reasons.
   carry patch text and not point back at the page asked for. The part on
   show stays on show until its replacement arrives; a failed read keeps it
   and offers **Retry page** for the same page.
+- **Rows sharing a display path.** Git can show two byte paths as one
+  display path, and the file route answers a path with the first file that
+  has it, so it cannot address either row on its own (STAR-5). No read by
+  such a path is made. A shared row's patch is one part: its inline patch,
+  read again from the list page that listed it, by that page's token (the
+  first page with none), which must be at the snapshot's fingerprint (else
+  stale) and list the same path in the same place. If the patch runs on, the
+  view says plainly that the gateway cannot address the file yet and the
+  rest cannot be read here; a shared binary row says its bytes cannot be
+  read here, with no bytes or preview buttons. Another file's bytes never
+  show.
 - **Binary files.** **Old bytes** and **New bytes** (an added file only
   New, a removed one only Old) open a hex and ASCII view: a 16-digit offset
   in the file, 8 bytes a row and `.` for bytes outside printable ASCII, as
@@ -198,8 +210,10 @@ each status code of the first page, busy retries with `Retry-After`, the
 default wait and the ten-second cap, an empty snapshot, list paging by
 `nextPage` through the real client with an opaque token,
 stale and invalid list pages, a 17-page list keeping no patch text outside
-the budget and reading an opened patch at the snapshot, charged, patch parts one at a time with Last once the
-count is known, a one-part patch, windows of a long part numbered across
+the budget and reading an opened patch at the snapshot, charged, rows
+sharing a display path each showing their own patch from their own list
+page (stale at another fingerprint) and no bytes, patch parts one at a time
+with Last once the count is known, a one-part patch, windows of a long part numbered across
 windows, **Retry page** for a patch and a binary page keeping the part on
 show, busy and gone file pages, a self-pointing or wrong-path page, a 409
 or another fingerprint for a stale `at` leading to Refresh, a part freed by

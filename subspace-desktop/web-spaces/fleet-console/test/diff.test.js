@@ -455,6 +455,78 @@ test("diff patch: a 409 for a stale `at`, or a page at another fingerprint, lead
 });
 
 /** Two files whose patches are a page each beyond the inline one, in a budget with room for one part's read beside the other's part. */
+/**
+ * Two rows with one display path (two byte paths Git shows the same), one
+ * on each list page; the second's patch runs past its inline part. `at`
+ * gives the fingerprint of each list read, by its number.
+ */
+function sharedRows({ binary = false, at = () => FP } = {}) {
+  const path = "name\uFFFD.txt";
+  const row = (patch, extra = {}) => file(path, binary ? { binary: true, size: 3, additions: null, deletions: null, patch: null } : { patch, ...extra });
+  return watch({
+    list: (query, n) => {
+      const fingerprint = at(n);
+      if (query.page === undefined) return page([row("+first\n"), file("other.txt")], { total: 3, nextPage: "L2", fingerprint });
+      return page([row("+second\n", { patchNextPage: "c2" })], { total: 3, fingerprint });
+    },
+  });
+}
+
+const selectRow = async (panel, watcher, index) => {
+  panel.root.listeners.click({ target: panel.root.findAll((node) => node.attributes["data-diff-select"] === String(index))[0] });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+};
+
+test("diff patch: rows sharing a display path each show their own patch, read again from their own list page, never another file's (STAR-5)", async () => {
+  const { watcher, files, lists } = sharedRows();
+  watcher.start();
+  await flush();
+  assert.equal(lists().length, 2);
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(watcher.view.patch(0).data, "+first\n");
+  await selectRow(panel, watcher, 2);
+  assert.equal(watcher.view.patch(2).data, "+second\n", "the second row's own patch, not the first's under the same path");
+  assert.equal(watcher.view.patch(2).count, 1, "one part: its continuation cannot be addressed");
+  assert.deepEqual(lists().slice(2).map((call) => call.query.page), [undefined, "L2"], "each read again from the list page that listed it");
+  assert.deepEqual(files(), [], "no read by a path the gateway would answer with another file");
+  assert.ok(panel.root.textContent.includes(DIFF_MESSAGES.sharedPatch), "says plainly the rest cannot be read here");
+  assert.deepEqual(buttonsIn(panel.root, "Next part"), []);
+  await selectRow(panel, watcher, 1);
+  assert.equal(files().length, 1, "a path only one row has is read from the file route");
+  assert.equal(watcher.view.patch(1).data, file("other.txt").patch);
+  assert.ok(!panel.root.textContent.includes(DIFF_MESSAGES.sharedPatch));
+});
+
+test("diff patch: a shared row's list page at another fingerprint is stale: the Refresh banner, and no bytes shown", async () => {
+  const { watcher, files } = sharedRows({ at: (n) => (n < 2 ? FP : "fp-2") });
+  watcher.start();
+  await flush();
+  await watcher.openPatch(0);
+  assert.equal(watcher.view.patch(0).data, null);
+  assert.equal(watcher.view.patch(0).state, "failed");
+  assert.equal(watcher.view.banner, DIFF_MESSAGES.changed);
+  assert.deepEqual(files(), []);
+});
+
+test("diff binary: rows sharing a display path offer no bytes or preview, and say why; nothing is read by that path", async () => {
+  const { watcher, files } = sharedRows({ binary: true });
+  watcher.start();
+  await flush();
+  await watcher.openBinary(0, "new");
+  await watcher.openPreview(2, "new");
+  assert.equal(watcher.view.binary, null);
+  assert.equal(watcher.view.preview, null);
+  assert.deepEqual(files(), []);
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.ok(panel.root.textContent.includes(DIFF_MESSAGES.sharedBytes));
+  assert.deepEqual(buttonsIn(panel.root, "New bytes"), []);
+});
+
 function twoPatches(fileRoute) {
   const pad = (path) => `@@ -1,1 +1,1 @@\n-${"o".repeat(200)}\n+${path}\n`;
   const budget = createBudget(1024 * 1024 + 100);

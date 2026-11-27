@@ -59,6 +59,8 @@ export const DIFF_MESSAGES = {
   failed: "Stargate could not compute the diff: Git or the crew plugin failed (500).",
   unstable: "Changed while loading",
   changed: "Changed since loaded",
+  sharedPatch: "Another file in this diff has the same display path, and the gateway cannot address this one on its own yet. This is the part of its patch the file list gave; the rest cannot be read here.",
+  sharedBytes: "Another file in this diff has the same display path, and the gateway cannot address this one on its own yet, so its bytes cannot be read here.",
 };
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -259,11 +261,15 @@ const sameCheckout = (a, b) => a.ship === b.ship && a.member === b.member && (a.
  * whether it has a patch to read. The list's inline patch is not kept: a
  * patch is read a part at a time from the file route at the snapshot's
  * fingerprint, its first page included, so every patch byte held is a
- * pager's part, charged to the budget (thermo P1-2 on #169).
+ * pager's part, charged to the budget (thermo P1-2 on #169). `from` is
+ * where the row was listed, the list page's token (null for the first page)
+ * and its place on that page, so a row the file route cannot address can be
+ * read again from its own list page; `more` says its patch runs past that
+ * page's inline part.
  */
-function listedRow(file) {
+function listedRow(file, page, slot) {
   const { patch, patchNextPage, ...rest } = file;
-  return { file: { ...rest, previousPath: file.previousPath ?? null }, patched: (patch ?? "") !== "" || patchNextPage !== undefined };
+  return { file: { ...rest, previousPath: file.previousPath ?? null }, patched: (patch ?? "") !== "" || patchNextPage !== undefined, more: patchNextPage !== undefined, from: { page, slot } };
 }
 
 /**
@@ -284,7 +290,7 @@ export async function loadDiffList(client, target, mode, read) {
     throw tagFirst(error);
   }
   checkDiffPage(first, target, mode);
-  const files = first.files.map(listedRow);
+  const files = first.files.map((file, slot) => listedRow(file, null, slot));
   let unstable = first.unstable === true;
   let token = first.nextPage ?? null;
   const seen = new Set();
@@ -297,7 +303,8 @@ export async function loadDiffList(client, target, mode, read) {
     checkDiffPage(page, target, mode);
     if (page.fingerprint !== first.fingerprint) throw new StaleError();
     if (!page.files.length || !sameCheckout(first, page)) throw new InvalidResponseError("A later page of the file list is for another checkout or is empty.");
-    files.push(...page.files.map(listedRow));
+    const from = token;
+    files.push(...page.files.map((file, slot) => listedRow(file, from, slot)));
     unstable ||= page.unstable === true;
     token = page.nextPage ?? null;
   }
@@ -480,8 +487,17 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     sources.clear();
   }
 
-  /** A row of the list, by its place in it. */
-  const entryFor = (row, index) => ({ index, ...row });
+  /**
+   * The rows of the list, by their place in it. A row whose display path
+   * another row shares is `shared`: the file route answers a path with the
+   * first file that has it, so it cannot address such a row on its own
+   * (STAR-5), and no read by path is made for one.
+   */
+  function entriesFor(rows) {
+    const paths = new Map();
+    for (const row of rows) paths.set(row.file.path, (paths.get(row.file.path) ?? 0) + 1);
+    return rows.map((row, index) => ({ index, ...row, shared: paths.get(row.file.path) > 1 }));
+  }
 
   async function load() {
     cancelSnapshotReads();
@@ -508,7 +524,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       if (!current(gen)) return;
       diff = loaded.summary;
       unstable = diff.unstable;
-      files = loaded.files.map(entryFor);
+      files = entriesFor(loaded.files);
       status = "ready";
       liveChanged = liveRevision !== baseline && live !== null && live !== diff.fingerprint;
       fingerprint = diff.fingerprint;
@@ -562,7 +578,31 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
     }
   }
 
-  const patchKey = (entry) => ["patch", fingerprint, mode, entry.file.path].join("\u0000");
+  // A patch is keyed by its row, not its path: two rows may share a display path.
+  const patchKey = (entry) => ["patch", fingerprint, mode, String(entry.index)].join("\u0000");
+
+  /**
+   * The inline patch of a shared row, read again from the list page that
+   * listed it, by that page's token: the same snapshot's page (else stale),
+   * with the same path in the same place. It is the patch's one part here.
+   */
+  async function readListedPatch(snapshot, at, entry, signal) {
+    const token = snapshot.child();
+    const abort = () => token.cancel();
+    if (signal?.aborted) abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      const answer = await retryBusy(token, (inner) => client.diff(target.ship, target.member, { project: target.project, mode, page: entry.from.page ?? undefined }, inner));
+      checkDiffPage(answer, target, mode);
+      if (answer.fingerprint !== at) throw new StaleError();
+      const row = answer.files[entry.from.slot];
+      if (row?.path !== entry.file.path) throw new InvalidResponseError("The file list page no longer lists this file in its place.");
+      return row.patch ?? "";
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      token.cancel();
+    }
+  }
   const hasPatch = (entry) => Boolean(entry) && !entry.file.binary && entry.patched;
 
   /**
@@ -571,7 +611,8 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
    * at the snapshot's fingerprint. One sequence of pages: the list's inline
    * preview (64 KiB) ends elsewhere than the file route's first page (1 MiB),
    * so its token is never followed here. A patch with no next page is one
-   * part.
+   * part. A shared row's patch is the one part its list page gives, read
+   * again from that page: the file route would answer with another file's.
    */
   function patchSource(index) {
     const entry = files[index];
@@ -593,6 +634,10 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       onChange: emit,
       read: ({ part, cursor, start, signal }) =>
         partRead(gen, async () => {
+          if (entry.shared) {
+            const text = await readListedPatch(snapshot, at, entry, signal);
+            return { data: text, next: null, after: patchLines(text, start).end };
+          }
           const page = part === 0 ? undefined : cursor;
           const answer = await readFile(snapshot, at, { path, page }, signal);
           const { patch: text, next } = validatePatchPage(answer, { path, page: page ?? null, at });
@@ -652,7 +697,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
 
   function openBinary(index, side) {
     const entry = files[index];
-    if (status !== "ready" || !entry?.file.binary || !binarySides(entry.file).includes(side) || changed()) return;
+    if (status !== "ready" || !entry?.file.binary || entry.shared || !binarySides(entry.file).includes(side) || changed()) return;
     // Bytes the budget let go are read again where they were, at the same snapshot.
     if (binary?.index === index && binary.side === side && binary.source.view?.evicted) return binary.source.show();
     closeBinary();
@@ -717,7 +762,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
    */
   async function openPreview(index, side) {
     const entry = files[index];
-    if (status !== "ready" || !entry?.file.binary || !binarySides(entry.file).includes(side) || changed()) return;
+    if (status !== "ready" || !entry?.file.binary || entry.shared || !binarySides(entry.file).includes(side) || changed()) return;
     closeBinary();
     const key = ["preview", fingerprint, mode, entry.file.path, side].join("\u0000");
     const view = { index, path: entry.file.path, side, key, state: "loading", error: null, type: null, bytes: null, size: null, room: null, read: read.child(), version: 0 };

@@ -12,7 +12,7 @@
 // time. Each has First, Previous and Next, and Last where it is known.
 
 import { h, mount, txt } from "./activity-view.js";
-import { binarySides, DIFF_MODES, diffError, hexRows, HEX_WINDOW_BYTES, knownKind, knownStatus, PREVIEW_MAX_PIXELS, previewable } from "./diff.js";
+import { binarySides, DIFF_MESSAGES, DIFF_MODES, diffError, hexRows, HEX_WINDOW_BYTES, knownKind, knownStatus, PREVIEW_MAX_PIXELS, previewable } from "./diff.js";
 import { bytesOf, patchLines } from "./diff-parts.js";
 import { measurePieces, WINDOW_BYTES, WINDOW_LINES } from "./document.js";
 import { formatBytes, formatClock } from "./format.js";
@@ -146,6 +146,7 @@ function partNotes(entry, patch, view) {
     if (view.changed || problem.kind === "cancelled" || problem.kind === "stale") notes.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read this part."));
     else notes.push(h("p", { class: "act-warn" }, txt(problem.message)), button("data-diff-retry", "Retry page"));
   } else if (view.changed && patch.hasNext) notes.push(h("p", { class: "act-note" }, "The checkout changed. Refresh to read the rest of this patch."));
+  if (entry.shared && entry.more && patch.data !== null) notes.push(h("p", { class: "act-note" }, DIFF_MESSAGES.sharedPatch));
   return notes.length ? h("div", { class: "act-messages" }, notes) : null;
 }
 
@@ -247,11 +248,14 @@ function previewTree(preview) {
 }
 
 function binaryTree(view, entry) {
+  const size = Number.isInteger(entry.file.size) ? `, ${formatBytes(entry.file.size)}` : "";
+  if (entry.shared) return h("p", { class: "act-note" }, `Binary file${size}. ${DIFF_MESSAGES.sharedBytes}`);
+  const facts = h("p", { class: "act-note" }, `Binary file${size}. Its bytes are read a page at a time.`);
   const sides = binarySides(entry.file);
   const actions = sides.map((side) => h("button", { class: "btn", type: "button", "data-diff-binary": side, ...(view.changed ? { "aria-disabled": "true" } : {}) }, `${SIDE[side]} bytes`));
   if (previewable(entry.file.path)) actions.push(...sides.map((side) => h("button", { class: "btn", type: "button", "data-diff-preview": side, ...(view.changed ? { "aria-disabled": "true" } : {}) }, `Preview ${side} image`)));
   const open = view.binary?.index === entry.index ? hexTree(view.binary, view) : view.preview?.index === entry.index ? previewTree(view.preview) : null;
-  return [h("p", { class: "act-note" }, `Binary file${Number.isInteger(entry.file.size) ? `, ${formatBytes(entry.file.size)}` : ""}. Its bytes are read a page at a time.`), h("div", { class: "act-parts" }, actions), open];
+  return [facts, h("div", { class: "act-parts" }, actions), open];
 }
 
 const KIND_NOTES = {
