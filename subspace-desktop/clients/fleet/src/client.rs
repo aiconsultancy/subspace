@@ -2,6 +2,7 @@
 //! render. Requests never follow a redirect, never use a proxy and carry the
 //! token only in the `Authorization` header.
 
+use std::io::{self, BufReader, Read};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -19,10 +20,22 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A fleet with many ships and crew stays far below this.
 const MAX_JSON_BYTES: u64 = 8 * 1024 * 1024;
-// One list page can carry 1,000 × 64 KiB of patch text before JSON escaping;
-// allow six bytes per input byte plus metadata. File pages hold up to 1 MiB.
-const MAX_DIFF_BYTES: u64 = 400 * 1024 * 1024;
-const MAX_FILE_BYTES: u64 = 7 * 1024 * 1024;
+// Stargate v0.52.0 caps a list at 1,000 files and 4 MiB of UTF-8 patches,
+// and a file page at 1 MiB of patch or raw bytes. JSON escaping takes at
+// most six bytes per input byte, more than base64's expansion. Allow for
+// two 4,096-code-point paths per entry, scalar fields, the cursor and envelope.
+const DIFF_LIST_FILES: u64 = 1_000;
+const DIFF_LIST_PATCH_BYTES: u64 = 4 * 1024 * 1024;
+const DIFF_FILE_PAGE_BYTES: u64 = 1024 * 1024;
+const DIFF_PATH_CODE_POINTS: u64 = 4_096;
+const JSON_ESCAPE_BYTES: u64 = 6;
+const DIFF_ENTRY_METADATA: u64 = 2 * DIFF_PATH_CODE_POINTS * JSON_ESCAPE_BYTES + 1024;
+const DIFF_ENVELOPE_BYTES: u64 = 64 * 1024;
+const MAX_DIFF_BYTES: u64 = DIFF_LIST_PATCH_BYTES * JSON_ESCAPE_BYTES
+    + DIFF_LIST_FILES * DIFF_ENTRY_METADATA
+    + DIFF_ENVELOPE_BYTES;
+const MAX_FILE_BYTES: u64 =
+    DIFF_FILE_PAGE_BYTES * JSON_ESCAPE_BYTES + DIFF_ENTRY_METADATA + DIFF_ENVELOPE_BYTES;
 pub(crate) const USER_AGENT: &str = concat!("Subspace/", env!("CARGO_PKG_VERSION"));
 
 /// A fleet's address and the token saved for it. Deliberately has no
@@ -104,8 +117,20 @@ impl FleetClient {
                 .map_err(|_| Error::Unreachable)?,
         )?;
         let reader = response.body_mut().with_config().limit(max_bytes).reader();
-        serde_json::from_reader(std::io::BufReader::new(reader)).map_err(|_| Error::InvalidResponse)
+        read_json(reader)
     }
+}
+
+fn read_json<T: DeserializeOwned>(reader: impl Read) -> Result<T, Error> {
+    serde_json::from_reader(BufReader::new(reader)).map_err(|error| {
+        // serde_json preserves the original I/O error; ureq wraps its own
+        // timeout in ErrorKind::Other, while TCP can return TimedOut directly.
+        match ureq::Error::from(io::Error::from(error)) {
+            ureq::Error::Timeout(_) => Error::Unreachable,
+            ureq::Error::Io(error) if error.kind() == io::ErrorKind::TimedOut => Error::Unreachable,
+            _ => Error::InvalidResponse,
+        }
+    })
 }
 
 /// The one agent for Fleet API reads: no proxy, no redirects, bounded time.
@@ -164,8 +189,18 @@ fn check_status(response: Response<Body>) -> Result<Response<Body>, Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{retry_after, status_error};
+    use std::io;
+
+    use super::{read_json, retry_after, status_error};
     use crate::Error;
+
+    struct BrokenBody(Option<io::Error>);
+
+    impl io::Read for BrokenBody {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            self.0.take().map_or(Ok(0), Err)
+        }
+    }
 
     #[test]
     fn statuses_keep_their_meaning() {
@@ -177,5 +212,29 @@ mod tests {
         assert_eq!(status_error(302, None), Some(Error::UnexpectedStatus(302)));
         assert_eq!(retry_after(Some(" 7 ")), Some(7));
         assert_eq!(retry_after(Some("Wed, 21 Oct 2015 07:28:00 GMT")), None);
+    }
+
+    #[test]
+    fn body_timeouts_are_unreachable_but_oversized_or_malformed_bodies_are_invalid() {
+        for (error, expected) in [
+            (
+                ureq::Error::Timeout(ureq::Timeout::RecvBody).into_io(),
+                Error::Unreachable,
+            ),
+            (io::ErrorKind::TimedOut.into(), Error::Unreachable),
+            (
+                ureq::Error::BodyExceedsLimit(1).into_io(),
+                Error::InvalidResponse,
+            ),
+        ] {
+            assert_eq!(
+                read_json::<serde_json::Value>(BrokenBody(Some(error))),
+                Err(expected)
+            );
+        }
+        assert_eq!(
+            read_json::<serde_json::Value>(&b"{"[..]),
+            Err(Error::InvalidResponse)
+        );
     }
 }
