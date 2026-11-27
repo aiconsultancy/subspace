@@ -92,8 +92,8 @@ the desktop side are separate work.
   back the most, then asks again. The latest request is never one of
   them: it reads in parts only when it no longer fits itself, never to
   make room for another. A refit that gives nothing back is not
-  planned, and one that keeps no window on show, as the growth frees as
-  many without it, is dropped. Only then are the planned pagers opened,
+  planned, and one that keeps no window on show is dropped: the growth
+  frees that refit itself, or frees as many without it. Only then are the planned pagers opened,
   their charges set without freeing anything (`fitted`), and the one
   pinned reservation frees only what the final floor still needs. So one
   large refit keeps the smaller wholes on show, also a small one the

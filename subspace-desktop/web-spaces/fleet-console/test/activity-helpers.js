@@ -2,11 +2,12 @@
 // a fake activity client and the pages a gateway would send. Every fake
 // page reader in the tests stops itself after a few reads.
 
-import { createActivityWatcher, INLINE_KEY } from "../src/activity.js";
+import assert from "node:assert/strict";
+import { createActivityWatcher, INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
 import { createActivityPanel } from "../src/activity-view.js";
 import { HttpError } from "../src/api.js";
 import { splitUtf8, utf8Length } from "../src/utf8.js";
-import { activitySnapshot, GENERATION, T0, toolItem } from "./activity-fixtures.js";
+import { activityEvent, activitySnapshot, GENERATION, T0, textItem, toolItem } from "./activity-fixtures.js";
 
 export const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -209,3 +210,68 @@ export function pagedWith(text, id = "ia") {
 
 /** The windows of bodies drawn under `root`. */
 export const windowsIn = (root) => root.findAll((node) => node.attributes.class === "act-pre act-part");
+
+// ---------- wholes on show in one turn, for the refit tests ----------
+
+const TURN = "turn-b";
+const K = 1024;
+export const keyOf = (id) => `${TURN}\u0000${id}`;
+/** A live item that grows the pinned inline charge by `size` bytes. */
+const growth = (size, seq = 10) => activityEvent(seq, { type: "item", item: textItem(`growth-${seq}`, seq, "g".repeat(size)) });
+
+/** Paged items of `sizes` KiB in one turn, named `ids`, with each one's pages. */
+function several(ids, sizes) {
+  const made = ids.map((id, index) => pagedWith(String.fromCharCode(97 + index).repeat(sizes[index] * K), id));
+  for (const other of made.slice(1)) made[0].snapshot.turns[1].items.push(other.snapshot.turns[1].items[0]);
+  return { snapshot: made[0].snapshot, pages: Object.fromEntries(ids.map((id, index) => [id, made[index].pages])) };
+}
+
+/** `ids` loaded whole in order, each window drawn; every page read is logged in `requested`. */
+async function loadedWhole(snapshot, pages, ids, extra) {
+  const prepared = await prepare(snapshot, extra);
+  const { watcher, client, panel } = prepared;
+  const requested = [];
+  client.activityItemPage = async (agent, turn, id, page) => {
+    requested.push([id, page]);
+    return pages[id][page];
+  };
+  for (const id of ids) {
+    await watcher.loadItem(TURN, id);
+    panel.update(watcher.view, officer);
+  }
+  await settle();
+  panel.update(watcher.view, officer);
+  return { ...prepared, requested };
+}
+
+/**
+ * Wholes of `sizes` KiB named `ids`, loaded in order (so the first is the
+ * least recently used and the last is the latest request), all with their
+ * windows on show, in a view `spare` bytes larger than they need.
+ */
+export async function wholesOnShow(ids, sizes, spare) {
+  const { snapshot, pages } = several(ids, sizes);
+  // What the wholes and their windows hold, measured with room to spare.
+  const roomy = await loadedWhole(snapshot, pages, ids, 50 * K * K);
+  const held = roomy.watcher.view.budget.used - roomy.inline;
+  roomy.watcher.stop();
+  const loaded = await loadedWhole(snapshot, pages, ids, held + spare);
+  assert.equal(windowsIn(loaded.panel.root).length, ids.length, "every window drawn");
+  assert.equal(loaded.watcher.view.budget.requested, keyOf(ids.at(-1)));
+  return loaded;
+}
+
+/** Each of `ids`' mode, or "Load in full" when it was freed. */
+export const modesOf = (watcher, ids) => Object.fromEntries(ids.map((id) => [id, watcher.view.full(TURN, id)?.mode ?? "Load in full"]));
+
+/** What a refit of `id` gives back: its charge less its handover (the window on show and an incoming part). */
+export const givenBack = (watcher, id) => watcher.view.budget.bytes(keyOf(id)) - (64 * K + PART_MAX_BYTES);
+
+/** Grow the inline charge by `size` and let every read settle. */
+export async function grow(watcher, panel, size) {
+  watcher.event(growth(size));
+  for (let i = 0; i < 4; i += 1) {
+    await settle();
+    panel.update(watcher.view, officer);
+  }
+}

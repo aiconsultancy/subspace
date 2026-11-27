@@ -382,7 +382,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * fits (above), never to make room for another: it is part of the floor
    * and is never freed (SUB decision 1c19f413). A refit that gives back
    * nothing is not planned; if the floor still needs that whole's room, it
-   * is freed. A refit that keeps no window is dropped. Returns the keys to
+   * is freed. A refit that keeps no window is dropped: one the growth frees
+   * itself, or one without which it frees no more. Returns the keys to
    * read in parts, in order.
    */
   function planRefits(bytes) {
@@ -399,10 +400,12 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       sizes.set(best, handover(best));
       planned.push(best);
     }
-    // When the floor still frees a window anyway, a refit planned for it may keep none: the latest planned first, each is dropped while that frees no more.
+    // When the floor still frees a window anyway, a refit planned for it may keep none: the latest planned first, each is dropped
+    // when the growth frees that refit itself, or while dropping it frees no more.
     for (const each of planned.reverse()) {
       const without = new Map([...sizes].filter(([other]) => other !== each));
-      if (freedOnShow(without) <= freedOnShow(sizes)) sizes.delete(each);
+      const freedItself = budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as: sizes }).includes(each);
+      if (freedItself || freedOnShow(without) <= freedOnShow(sizes)) sizes.delete(each);
     }
     return [...sizes.keys()];
   }
