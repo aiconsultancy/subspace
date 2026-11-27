@@ -63,14 +63,14 @@ class FleetFixtureTests(unittest.TestCase):
         project = 'navigation-console'
         status, first = self.diff(project=project, mode='branch')
         self.assertEqual(status, 200)
-        status, second = self.diff(project=project, mode='branch', cursor=first['nextCursor'])
+        status, second = self.diff(project=project, mode='branch', page=first['nextPage'])
         self.assertEqual(status, 200)
         files = first['files'] + second['files']
         paths = [entry['path'] for entry in files]
         self.assertEqual(paths, sorted(set(paths)))
         self.assertEqual((first['total'], second['total'], len(files)), (6, 6, 6))
         self.assertEqual((first['additions'], first['deletions']), (7, 2))
-        self.assertNotIn('nextCursor', second)
+        self.assertNotIn('nextPage', second)
         self.assertEqual(first['fingerprint'], second['fingerprint'])
         self.assertEqual((first['ship'], first['member'], first['project']), ('aurora-lyra', 'wren', project))
         self.assertEqual(len(first['head']), 40)
@@ -79,12 +79,12 @@ class FleetFixtureTests(unittest.TestCase):
             self.assertEqual((status, page['mode'], page['total']), (200, mode, count))
             self.assertIsNone(page['project'])
             self.assertEqual(page['fingerprint'], first['fingerprint'])
-        self.assertEqual(self.diff(mode='working', cursor=first['nextCursor']), (400, None))
+        self.assertEqual(self.diff(mode='working', page=first['nextPage']), (400, None))
 
     def test_patch_continuation_and_reread(self):
         path = 'src/chart/tiles.ts'
         first_list = self.diff()[1]
-        last_list = self.diff(cursor=first_list['nextCursor'])[1]
+        last_list = self.diff(page=first_list['nextPage'])[1]
         inline = next(file for file in last_list['files'] if file['path'] == path)
         params = dict(path=path, at=first_list['fingerprint'])
         status, first = self.diff(WREN_DIFF + '/file', **params)
@@ -104,7 +104,7 @@ class FleetFixtureTests(unittest.TestCase):
         self.server.refuse_diff_pages = True
         status, first = self.diff()
         self.assertEqual(status, 200)
-        status, _ = self.diff(cursor=first['nextCursor'])
+        status, _ = self.diff(page=first['nextPage'])
         self.assertEqual(status, 200)
         for path in ('src/chart/tiles.ts', 'fixtures/legacy-tile.bin'):
             with self.subTest(path=path):
@@ -160,7 +160,7 @@ class FleetFixtureTests(unittest.TestCase):
         self.assertEqual(self.diff('/api/v1/ships/aurora-castor/crew/corvin/diff'), (404, None))
         self.assertEqual(self.diff(project='missing'), (404, None))
         self.assertEqual(self.diff(mode='missing'), (400, None))
-        self.assertEqual(self.diff(cursor='bad'), (400, None))
+        self.assertEqual(self.diff(page='bad'), (400, None))
         at = self.diff()[1]['fingerprint']
         route = WREN_DIFF + '/file'
         self.assertEqual(self.diff(route, at=at, path='docs/chart notes.md')[0], 200)

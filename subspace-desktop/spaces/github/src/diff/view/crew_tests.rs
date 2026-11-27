@@ -26,9 +26,9 @@ pub(super) use retry::ReadGate;
 
 fn fixture(cursor: bool) -> String {
     let text = "wide".repeat(2000);
-    json!({ "ship": SHIP, "member": CREW, "mode": "branch", "fingerprint": "B", "computedAt": 1,
+    json!({ "ship": SHIP, "member": CREW, "mode": "branch", "fingerprint": "B",
         "total": if cursor { 2 } else { 1 }, "additions": 1, "deletions": 0,
-        "nextCursor": cursor.then_some("page-list"), "files": [{ "path": "example.txt", "status": "modified",
+        "nextPage": cursor.then_some("page-list"), "files": [{ "path": "example.txt", "status": "modified",
         "additions": 1, "deletions": 0, "patch": format!("@@ -0,0 +1 @@\n+{text}END-OF-LINE\n"), "patchNextPage": "page-file" }]
     }).to_string()
 }
@@ -80,7 +80,7 @@ pub(super) fn mount<'a>(
 fn a_cursor_conflict_or_missing_page_offers_refresh_not_connection_help(cx: &mut TestAppContext) {
     for status in [409, 404] {
         let mock = Mock::new(move |request| {
-            if request.path.contains("cursor=") {
+            if request.path.contains("page=") {
                 (status, String::new())
             } else if request.path.contains("/diff?") {
                 (200, fixture(true))
@@ -102,7 +102,7 @@ fn a_cursor_conflict_or_missing_page_offers_refresh_not_connection_help(cx: &mut
         assert_eq!(
             mock.requests()
                 .iter()
-                .filter(|request| request.path.contains("cursor="))
+                .filter(|request| request.path.contains("page="))
                 .count(),
             2
         );

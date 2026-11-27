@@ -182,13 +182,13 @@ def diff_list(entries, fingerprint, mode, cursor):
     value = dict(total=len(entries), additions=sum(entry[0]['additions'] or 0 for entry in entries),
                  deletions=sum(entry[0]['deletions'] or 0 for entry in entries), files=files)
     if end < len(entries):
-        value['nextCursor'] = continuation
+        value['nextPage'] = continuation
     return value
 
 
 def crew_diff(fleet, ship_id, member_id, file_route, query):
     params = parse_qs(query, keep_blank_values=True)
-    keys = {'project', 'mode'} | ({'path', 'page', 'at', 'side'} if file_route else {'cursor'})
+    keys = {'project', 'mode', 'page'} | ({'path', 'at', 'side'} if file_route else set())
     if not params.keys() <= keys or any(len(values) != 1 or not values[0] for values in params.values()):
         return 400, None
     args = {key: values[0] for key, values in params.items()}
@@ -211,13 +211,13 @@ def crew_diff(fleet, ship_id, member_id, file_route, query):
             return 409, None
         entry = next((entry for entry in entries if entry[0]['path'] == path), None)
         return diff_file(entry, fingerprint, mode, args.get('page'), args.get('side')) if entry else (404, None)
-    value = diff_list(entries, fingerprint, mode, args.get('cursor'))
+    value = diff_list(entries, fingerprint, mode, args.get('page'))
     if value is None:
         return 400, None
     return 200, dict(value, ship=ship_id, member=member_id, project=project, mode=mode,
                      branch=git_state['branch'], head=git_state['head'].ljust(40, '0'),
                      base={'ref': git_state['base'], 'commit': DIFF_BASE}, fingerprint=fingerprint,
-                     computedAt=fleet.now)
+                     unstable=False)
 
 
 def valid_diff_path(path):

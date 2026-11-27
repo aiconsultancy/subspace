@@ -11,6 +11,59 @@ use subspace_framework::client_test_support::Mock;
 use super::{DiffSource, fixture, mount};
 
 #[gpui_kit::test]
+fn the_gateway_list_contract_loads_two_pages_or_an_empty_snapshot(cx: &mut TestAppContext) {
+    const PAGE: &str = "eyJrIjoibGlzdCIsIm8iOjF9";
+    for empty in [false, true] {
+        let mock = Mock::new(move |request| {
+            let mut response = json!({
+                "ship": super::SHIP, "member": super::CREW, "project": null, "mode": "branch",
+                "fingerprint": "B", "unstable": false, "branch": "example", "base": null,
+                "head": "0123456789abcdef", "total": if empty { 0 } else { 2 },
+                "additions": 0, "deletions": 0, "files": [],
+            });
+            if request.path.ends_with("/diff?mode=branch") {
+                if !empty {
+                    response["files"] = json!([listed_file("first.txt")]);
+                    response["nextPage"] = json!(PAGE);
+                }
+            } else if !empty
+                && request
+                    .path
+                    .ends_with(&format!("/diff?mode=branch&page={PAGE}"))
+            {
+                response["files"] = json!([listed_file("second.txt")]);
+            } else {
+                return (404, String::new());
+            }
+            (200, response.to_string())
+        });
+        let (view, window) = mount(cx, &mock);
+        view.read_with(window, |view, _| {
+            assert_eq!(view.fleet.fingerprint.as_deref(), Some("B"));
+            assert!(view.error.is_none());
+            let paths: Vec<_> = view
+                .files
+                .iter()
+                .map(|file| file.file.path.as_str())
+                .collect();
+            assert_eq!(
+                paths,
+                if empty {
+                    &[][..]
+                } else {
+                    &["first.txt", "second.txt"]
+                }
+            );
+        });
+    }
+}
+
+fn listed_file(path: &str) -> Value {
+    json!({"path": path, "previousPath": null, "status": "renamed",
+           "additions": 0, "deletions": 0, "patch": null})
+}
+
+#[gpui_kit::test]
 fn a_feed_change_during_a_list_load_is_compared_with_its_result(cx: &mut TestAppContext) {
     let mock = Mock::new(|request| {
         if request.path.contains("/diff?") {
@@ -90,7 +143,7 @@ fn releasing_the_view_during_a_continuation_stops_the_next_request(cx: &mut Test
     let (release, wait) = mpsc::channel();
     let wait = Mutex::new(wait);
     let mock = Mock::new(move |request| {
-        if request.path.contains("cursor=page-list") {
+        if request.path.contains("page=page-list") {
             started.send(()).unwrap();
             wait.lock()
                 .unwrap()
@@ -137,14 +190,14 @@ fn releasing_the_view_during_a_continuation_stops_the_next_request(cx: &mut Test
         !mock
             .requests()
             .iter()
-            .any(|request| request.path.contains("cursor=never"))
+            .any(|request| request.path.contains("page=never"))
     );
 }
 
 fn middle_page() -> String {
     let mut body: Value = serde_json::from_str(&fixture(true)).unwrap();
     body["total"] = json!(3);
-    body["nextCursor"] = json!("never");
+    body["nextPage"] = json!("never");
     body["files"][0]["path"] = json!("next.txt");
     body.to_string()
 }

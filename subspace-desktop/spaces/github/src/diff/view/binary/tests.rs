@@ -224,7 +224,7 @@ fn binary_response(request: &subspace_framework::client_test_support::Request) -
         return (
             200,
             json!({"ship": "example-ship", "member": "example-crew", "mode": "branch",
-            "fingerprint": "B", "computedAt": 1, "total": 1, "additions": 0, "deletions": 0,
+            "fingerprint": "B", "total": 1, "additions": 0, "deletions": 0,
             "files": [file]})
             .to_string(),
         );

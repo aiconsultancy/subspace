@@ -60,12 +60,11 @@ pub struct V1Diff {
     pub fingerprint: String,
     #[serde(default)]
     pub unstable: bool,
-    pub computed_at: u64,
     pub total: u32,
     pub additions: u32,
     pub deletions: u32,
     pub files: Vec<V1DiffFile>,
-    pub next_cursor: Option<String>,
+    pub next_page: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -126,7 +125,7 @@ impl DiffTarget<'_> {
     ) -> Result<Url, Error> {
         let mut url = self.url(address, false)?;
         if let Some(cursor) = cursor {
-            url.query_pairs_mut().append_pair("cursor", cursor);
+            url.query_pairs_mut().append_pair("page", cursor);
         }
         Ok(url)
     }

@@ -141,7 +141,7 @@ fn load_pages(
         return Ok(Loaded::Unavailable);
     };
     let mut cursors = HashSet::new();
-    while let Some(cursor) = diff.next_cursor.take() {
+    while let Some(cursor) = diff.next_page.take() {
         cancel.check()?;
         if diff.files.len() >= diff.total as usize || !cursors.insert(cursor.clone()) {
             return Err(Error::InvalidResponse);
@@ -155,7 +155,7 @@ fn load_pages(
         }
         diff.files.append(&mut page.files);
         diff.unstable |= page.unstable;
-        diff.next_cursor = page.next_cursor;
+        diff.next_page = page.next_page;
     }
     if diff.files.len() != diff.total as usize {
         return Err(Error::InvalidResponse);
@@ -254,7 +254,7 @@ mod tests {
         serde_json::from_value(json!({
             "ship":"example-ship", "member":"example-crew", "project":"example", "mode":"branch",
             "branch":"example", "base":null, "head":"head", "fingerprint":fingerprint,
-            "computedAt":123, "total":2, "additions":1, "deletions":0, "nextCursor":cursor,
+             "total":2, "additions":1, "deletions":0, "nextPage":cursor,
             "files":[{"path":path, "previousPath":"old.txt", "status":"renamed", "additions":1,
                       "deletions":0, "patch":"@@ -0,0 +1 @@\n+example.com\n", "patchNextPage":"more"}]
         })).unwrap()

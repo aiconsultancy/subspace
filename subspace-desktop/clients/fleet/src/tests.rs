@@ -132,7 +132,7 @@ mod diff {
     };
     const OK: &str = concat!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
-        r#"{"ship":"example-ship","member":"example-crew","project":"example","mode":"working","branch":"example","base":{"ref":"origin/main","commit":"parent"},"head":"head","fingerprint":"snapshot","computedAt":123,"total":2,"additions":1,"deletions":0,"files":[{"path":"notes & plans.txt","previousPath":"old.txt","status":"renamed","additions":1,"deletions":0,"patch":"@@ -0,0 +1,1 @@\n","patchNextPage":"file+1"}],"nextCursor":"list+2"}"#,
+        r#"{"ship":"example-ship","member":"example-crew","project":"example","mode":"working","branch":"example","base":{"ref":"origin/main","commit":"parent"},"head":"head","fingerprint":"snapshot","total":2,"additions":1,"deletions":0,"files":[{"path":"notes & plans.txt","previousPath":"old.txt","status":"renamed","additions":1,"deletions":0,"patch":"@@ -0,0 +1,1 @@\n","patchNextPage":"file+1"}],"nextPage":"list+2"}"#,
     );
     const OK_FILE: &str = concat!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
@@ -144,13 +144,13 @@ mod diff {
         let (address, server) = answer_once(OK);
         let client = FleetClient::new(address, Secret::new("fixture-token"));
         let page = client.diff(TARGET, Some("list+1")).unwrap().unwrap();
-        assert_eq!(page.next_cursor.as_deref(), Some("list+2"));
+        assert_eq!(page.next_page.as_deref(), Some("list+2"));
         assert_eq!(page.files[0].status, DiffStatus::Renamed);
         assert_eq!(page.files[0].patch_next_page.as_deref(), Some("file+1"));
         assert_eq!(
             server.join().unwrap().lines().next(),
             Some(
-                "GET /stargate/api/v1/ships/example-ship/crew/example-crew/diff?mode=working&project=example&cursor=list%2B1 HTTP/1.1"
+                "GET /stargate/api/v1/ships/example-ship/crew/example-crew/diff?mode=working&project=example&page=list%2B1 HTTP/1.1"
             )
         );
     }
@@ -248,7 +248,7 @@ mod diff {
                     .lines()
                     .next()
                     .unwrap()
-                    .contains("&cursor=more ")
+                    .contains("&page=more ")
             );
         }
     }
