@@ -14,13 +14,11 @@ import { Effect, Schema } from "effect";
 import { reservedUsernames } from "../src/config";
 import { databaseLayer, databaseUrl } from "../src/db";
 import {
-  bootstrapOwner,
-  BootstrapRefused,
   defaultInviteLifetime,
-  deviceChoice,
   maxInviteLifetime,
   minInviteLifetime,
-} from "../src/pairing";
+} from "../src/pairing-invites";
+import { bootstrapOwner, BootstrapRefused, deviceChoice } from "../src/pairing-owner";
 import { Email, Name } from "../src/validation";
 
 const usage =
@@ -91,6 +89,10 @@ try {
   );
   if (result.revokedInvites) console.log(`Revoked ${result.revokedInvites} earlier invite(s).`);
   if (result.revokedDevices) console.log(`Revoked ${result.revokedDevices} device credential(s).`);
+  if (result.cascade.devices || result.cascade.invites)
+    console.log(
+      `Revoked with them what they had issued: ${result.cascade.invites} pending invite(s) and ${result.cascade.devices} device(s) paired with their invites.`,
+    );
   if (result.keptDevices)
     console.log(`Kept ${result.keptDevices} device credential(s): they can sign in again.`);
   else if (result.ownerReactivated && !result.revokedDevices)

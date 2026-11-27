@@ -44,10 +44,17 @@ export interface SignInClaims {
   readonly roles: readonly string[];
   /** Whether the token names a guest of the tenant rather than a member of it. */
   readonly guest?: boolean;
+  /**
+   * Whether the token says outright that it names a member of the tenant: Entra's optional `acct`
+   * claim, 0. A token without it may still be a guest's (see `entraGuest`).
+   */
+  readonly tenantMember?: boolean;
 }
 
 export type VerifiedIdentity = PrincipalIdentity & {
   expiresAt: number;
+  /** When the provider issued the token, in seconds since the epoch, for WorkOS and Entra. */
+  issuedAt?: number;
   claims?: SignInClaims;
 };
 type Verifier = (token: string) => Promise<VerifiedIdentity>;
@@ -126,6 +133,9 @@ export type RemoteFetch = NonNullable<
   NonNullable<Parameters<typeof createRemoteJWKSet>[1]>[typeof customFetch]
 >;
 
+/** Whether an Entra token's `acct` claim names a member of the tenant: 0, and nothing else. */
+const entraTenantMember = (payload: JWTPayload) => payload.acct === 0 || payload.acct === "0";
+
 /**
  * Whether an Entra token names a guest. Microsoft documents `acct`, an optional claim, as 0 for a
  * member of the tenant and 1 for a guest, so when it is present it decides; any other value is
@@ -135,7 +145,7 @@ export type RemoteFetch = NonNullable<
  * whose account lives in this tenant cannot be told apart without `acct`.
  */
 function entraGuest(payload: JWTPayload, tenantId: string) {
-  if (payload.acct !== undefined) return !(payload.acct === 0 || payload.acct === "0");
+  if (payload.acct !== undefined) return !entraTenantMember(payload);
   const issuers = [
     `https://login.microsoftonline.com/${tenantId}/v2.0`,
     `https://sts.windows.net/${tenantId}/`,
@@ -185,6 +195,7 @@ export function jwtVerifiers(
       return {
         provider: "workos",
         expiresAt: payload.exp!,
+        issuedAt: payload.iat!,
         subject: claim(payload, "sub"),
         externalOrganisation: claim(payload, "org_id"),
       };
@@ -235,9 +246,14 @@ export function jwtVerifiers(
       return {
         provider: "entra",
         expiresAt: payload.exp!,
+        issuedAt: payload.iat!,
         subject: claim(payload, "oid").toLowerCase(),
         externalOrganisation: tenantId,
-        claims: { ...signInClaims(payload), guest: entraGuest(payload, tenantId) },
+        claims: {
+          ...signInClaims(payload),
+          guest: entraGuest(payload, tenantId),
+          tenantMember: entraTenantMember(payload),
+        },
       };
     });
   }

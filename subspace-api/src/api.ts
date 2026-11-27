@@ -22,6 +22,9 @@ import {
 } from "./enrolment";
 import { purgeAgentTokenIds, verifyKeyToken, type KeyTokenPolicy } from "./agent-keys";
 import { agentGroup, agentHandlers } from "./agents";
+import { deviceGroup, deviceHandlers } from "./devices";
+import { inviteGroup, inviteHandlers } from "./invites";
+import { linkedIdentityGroup, linkedIdentityHandlers } from "./linked-identities";
 import { pairingGroup, pairingHandlers, pairingProblems } from "./pairing";
 import { auditGroup, auditHandlers } from "./audit";
 import {
@@ -70,7 +73,14 @@ import {
 } from "./github";
 import { createGitHubClient } from "./github-app";
 import { GithubPollState, githubPollState, pollGitHub } from "./github-poll";
-import { AgentRank, CurrentMember, localMember, publicProfile } from "./identity";
+import {
+  AgentRank,
+  CurrentMember,
+  localMember,
+  otherSignInRoleSource,
+  publicProfile,
+  signedInAs,
+} from "./identity";
 import { ircAuthenticateLayer, ircCredentialGroup, ircCredentialHandlers } from "./irc";
 import { signedInMember, type SignInPolicy } from "./registration";
 import { ReservedUsernames } from "./usernames";
@@ -382,6 +392,9 @@ const api = HttpApi.make("subspace")
     enrolmentTokenGroup,
     enrolmentGroup,
     pairingGroup,
+    deviceGroup,
+    inviteGroup,
+    linkedIdentityGroup,
     auditGroup,
     notificationsGroup,
   )
@@ -690,7 +703,7 @@ export function routes(
               );
               return yield* next.pipe(
                 Effect.provideService(CurrentMember, {
-                  ...signedIn.member,
+                  ...signedInAs(signedIn.member, otherSignInRoleSource(signIn)),
                   tokenExpiresAt: signedIn.expiresAt,
                   keyCredential: signedIn.credential,
                 }),
@@ -733,7 +746,7 @@ export function routes(
   ).pipe(Layer.provide(dbLayer));
 
   // Groups the main listener alone serves: IRC credentials, agents' key credentials, fleet
-  // enrolment and workstation pairing.
+  // enrolment, workstation pairing, people's devices and their linked provider accounts.
   const common = Layer.mergeAll(
     handlerLayers(new Set()),
     HttpApiBuilder.group(
@@ -747,8 +760,23 @@ export function routes(
     HttpApiBuilder.group(
       api,
       "pairing",
-      pairingHandlers({ audience: options.deviceTokenAudience, providers: options.providers }),
+      pairingHandlers({
+        audience: options.deviceTokenAudience,
+        providers: options.providers,
+        entraAdminRole: options.entra?.adminRole ?? null,
+      }),
     ),
+    HttpApiBuilder.group(api, "devices", deviceHandlers),
+    HttpApiBuilder.group(
+      api,
+      "invites",
+      inviteHandlers({
+        audience: options.deviceTokenAudience,
+        reservedUsernames: options.reservedUsernames,
+        entraAdminRole: options.entra?.adminRole ?? null,
+      }),
+    ),
+    HttpApiBuilder.group(api, "linkedIdentities", linkedIdentityHandlers(verify)),
   );
   const services = Layer.mergeAll(
     auth,

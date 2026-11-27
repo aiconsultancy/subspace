@@ -3,7 +3,8 @@ import { Effect, Schema } from "effect";
 import { type PrincipalIdentity } from "../src/auth";
 import { reservedUsernames } from "../src/config";
 import { databaseLayer, databaseUrl } from "../src/db";
-import { provisionMember } from "../src/identity";
+import { isLinkProvider } from "../src/identity";
+import { provisionMember } from "../src/registration";
 import { Email, Name, Uuid } from "../src/validation";
 
 const { values, positionals } = parseArgs({
@@ -20,7 +21,7 @@ const { values, positionals } = parseArgs({
 const [provider, externalOrganisation, subject, ...extra] = positionals;
 const role = values.role;
 if (
-  !["workos", "entra"].includes(provider ?? "") ||
+  !isLinkProvider(provider ?? "") ||
   !externalOrganisation ||
   !subject ||
   extra.length ||

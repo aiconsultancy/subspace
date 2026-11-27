@@ -73,6 +73,18 @@ export const problemTypes = {
   credentialConflict: "urn:subspace:problem:credential-conflict",
   /** This API does not pair devices: AUTH_PROVIDERS lacks pairing (404). */
   pairingUnavailable: "urn:subspace:problem:pairing-unavailable",
+  /**
+   * A provider token given to link an account that is not a fresh, valid WorkOS or Entra access
+   * token for this API (400).
+   */
+  identityTokenUnusable: "urn:subspace:problem:identity-token-unusable",
+  /** A provider account that is linked to, or registered as, another member (409). */
+  identityConflict: "urn:subspace:problem:identity-conflict",
+  /**
+   * An administrator's invite for a person who already signs in, with a provider account or a
+   * paired device, and pairs another device themselves (409).
+   */
+  memberSignsIn: "urn:subspace:problem:member-signs-in",
 } as const;
 type ProblemType = (typeof problemTypes)[keyof typeof problemTypes];
 const knownTypes: ReadonlySet<string> = new Set(Object.values(problemTypes));
@@ -85,6 +97,32 @@ export function typedProblem<Status extends ProblemStatus>(
 ) {
   return { ...problem(status, detail), type };
 }
+
+/*
+ * The typed refusals of the signed-in pairing and linking routes. Their other problems, including
+ * the shared 400 for a malformed body, are `about:blank`; each route's description names its typed
+ * ones.
+ */
+
+/** The refusal of a pairing route when AUTH_PROVIDERS lacks pairing (404). */
+export const pairingUnavailable = () =>
+  typedProblem(404, problemTypes.pairingUnavailable, "This API does not pair devices.");
+
+/** An administrator's invite for a person who already signs in (409). */
+export const memberSignsIn = () =>
+  typedProblem(
+    409,
+    problemTypes.memberSignsIn,
+    "This person already signs in, with a provider account or a paired device. They pair another device themselves, from /me/pairing/invites.",
+  );
+
+/** A provider token that cannot link an account (400). */
+export const identityTokenUnusable = (detail: string) =>
+  typedProblem(400, problemTypes.identityTokenUnusable, detail);
+
+/** A provider account, or provider organisation, that is another member's or organisation's (409). */
+export const identityConflict = (detail: string) =>
+  typedProblem(409, problemTypes.identityConflict, detail);
 
 /** Whether a failure is a problem this API answers with, rather than an unexpected error. */
 export const isProblem = (error: unknown): error is { type: string; status: number } =>

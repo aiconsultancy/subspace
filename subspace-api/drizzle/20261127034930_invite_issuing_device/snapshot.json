@@ -1,0 +1,174 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "73c65011-174b-44cc-ac58-f20eb616700a",
+  "prevIds": [
+    "588495b1-7346-4a1c-9e34-a49868cae960"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "pairing_invites",
+        "created_by_credential_id"
+      ],
+      "writes": [
+        "s|col|public.pairing_invites.created_by_credential_id",
+        "n|col|public.pairing_invites.created_by_credential_id",
+        "e|col|public.pairing_invites.created_by_credential_id"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_unique",
+      "statementTarget": [
+        "table",
+        "public",
+        "agent_credentials"
+      ],
+      "writes": [
+        "s|uq|public.agent_credentials.agent_credentials_scope_id",
+        "n|uq|public.agent_credentials.agent_credentials_scope_id",
+        "e|uq|public.agent_credentials.agent_credentials_scope_id",
+        "n|con|public.agent_credentials.agent_credentials_scope_id",
+        "n|rel|public.agent_credentials_scope_id"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.agent_credentials.id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "pairing_invites",
+        "pairing_invites_issuing_device"
+      ],
+      "writes": [
+        "s|idx|public.pairing_invites_issuing_device",
+        "n|idx|public.pairing_invites_issuing_device",
+        "e|idx|public.pairing_invites_issuing_device",
+        "n|rel|public.pairing_invites_issuing_device"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public",
+        "n|col|public.pairing_invites.created_by_credential_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "pairing_invites"
+      ],
+      "writes": [
+        "s|fk|public.pairing_invites.pairing_invites_O1nHHzjDzCVr_fkey",
+        "n|fk|public.pairing_invites.pairing_invites_O1nHHzjDzCVr_fkey",
+        "e|fk|public.pairing_invites.pairing_invites_O1nHHzjDzCVr_fkey",
+        "n|con|public.pairing_invites.pairing_invites_O1nHHzjDzCVr_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public",
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|col|public.pairing_invites.organisation_id",
+        "n|col|public.pairing_invites.created_by_credential_id",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.agent_credentials.id",
+        "e|uniqueness|public.agent_credentials.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "created_by_credential_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_issuing_device",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "created_by_credential_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_O1nHHzjDzCVr_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "created_by_credential_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "agent_credentials",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_scope_id",
+        "nameExplicit": true,
+        "columns": [
+          "organisation_id",
+          "id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    }
+  ]
+}

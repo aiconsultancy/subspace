@@ -99,6 +99,42 @@ describe("IRC credentials", () => {
       });
   });
 
+  test("a credential for a key credential is sirc2. and names that credential", () => {
+    const credentialId = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    const now = Date.now();
+    const { password } = mintIrcCredential(secret, userId, host, now, credentialId);
+    expect(password).toMatch(/^sirc2\.[A-Za-z0-9_-]{96}$/u);
+    expect(password.length).toBeLessThanOrEqual(200);
+    expect(password).not.toContain(credentialId);
+    expect(readIrcCredential(secret, password, [host], now)).toEqual({
+      ok: true,
+      userId,
+      credentialId,
+    });
+    expect(readIrcCredential(secret, password, [host], now + 600_000)).toEqual({
+      ok: false,
+      reason: "expired",
+    });
+    // The credential ID is signed, and so is the prefix: neither format passes for the other.
+    const flip = (index: number) =>
+      password.slice(0, index) + (password[index] === "A" ? "B" : "A") + password.slice(index + 1);
+    expect(readIrcCredential(secret, flip(40), [host], now)).toEqual({
+      ok: false,
+      reason: "signature",
+    });
+    const unbound = mintIrcCredential(secret, userId, host, now).password;
+    for (const malformed of [
+      password.replace("sirc2.", "sirc1."),
+      unbound.replace("sirc1.", "sirc2."),
+      password.slice(0, -1),
+      "sirc3." + password.slice(6),
+    ])
+      expect(readIrcCredential(secret, malformed, [host], now)).toEqual({
+        ok: false,
+        reason: "malformed",
+      });
+  });
+
   test("secrets are compared whatever their lengths", () => {
     expect(sameSecret(hookToken, Redacted.make(hookToken))).toBe(true);
     expect(sameSecret(`${hookToken}x`, Redacted.make(hookToken))).toBe(false);
@@ -536,6 +572,69 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
     expect(await hook({ certfp: (await credential(foreign, "{irc}", elsewhere)).certfp })).toEqual(
       no,
     );
+  });
+
+  test("a password bound to a key credential works only while that credential may sign in to IRC", async () => {
+    const owner = await person({ given_name: "Warden" });
+    const [{ organisation_id: org }] = (
+      await database.client.query("SELECT organisation_id FROM users WHERE id = $1", [owner.userId])
+    ).rows;
+    const [{ id: lyra }] = (
+      await database.client.query(
+        `INSERT INTO users (organisation_id, subject, display_name, agent_rank, agent_fleet, agent_model, registered_by_id, agent_irc_nick)
+         VALUES ($1, $2, 'Lyra Bound', 'captain', 'alpha', 'example-model', $3, 'Lyra-9') RETURNING id`,
+        [org, crypto.randomUUID(), owner.userId],
+      )
+    ).rows;
+    const credential = async (userId: string, scopes: string) => {
+      const key = agentKey("ed25519");
+      const parsed = await parseCertificate(key.certificate);
+      if (!parsed.ok) throw new Error("The test certificate did not parse.");
+      const [{ id }] = (
+        await database.client.query(
+          `INSERT INTO agent_credentials (organisation_id, user_id, fingerprint, algorithm, certificate, public_key, scopes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [
+            org,
+            userId,
+            key.fingerprint,
+            parsed.certificate.algorithm,
+            parsed.certificate.pem,
+            parsed.certificate.publicKey,
+            scopes,
+          ],
+        )
+      ).rows;
+      return id as string;
+    };
+    const bound = (credentialId: string, user = lyra) =>
+      mintIrcCredential(secret, user, host, Date.now(), credentialId).password;
+    const key = await credential(lyra, "{api,irc}");
+    const password = bound(key);
+    expect(await hook({ accountName: "Lyra-9", passphrase: password })).toEqual(yes("Lyra-9"));
+    const used = await database.client.query(
+      "SELECT last_used_at FROM agent_credentials WHERE id = $1",
+      [key],
+    );
+    expect(used.rows[0].last_used_at).toBeInstanceOf(Date);
+    // Another user's credential, an unknown one and one without the irc scope.
+    expect(
+      await hook({
+        accountName: "Lyra-9",
+        passphrase: bound(await credential(owner.userId, "{api,irc}")),
+      }),
+    ).toEqual(no);
+    expect(await hook({ accountName: "Lyra-9", passphrase: bound(crypto.randomUUID()) })).toEqual(
+      no,
+    );
+    expect(
+      await hook({ accountName: "Lyra-9", passphrase: bound(await credential(lyra, "{api}")) }),
+    ).toEqual(no);
+    // Once revoked, a password it already holds is refused at the next sign-in.
+    await database.client.query("UPDATE agent_credentials SET revoked_at = now() WHERE id = $1", [
+      key,
+    ]);
+    expect(await hook({ accountName: "Lyra-9", passphrase: password })).toEqual(no);
   });
 
   test("anything but a good credential answers success false with 200", async () => {

@@ -66,12 +66,13 @@ export async function entraTenant() {
   };
   /**
    * An access token for `oid`, with any claim replaced or added. `expires` sets the expiry, as
-   * jose reads it, and `key` signs with a key the tenant does not publish.
+   * jose reads it, `issuedAt` the issue time in seconds since the epoch, and `key` signs with a
+   * key the tenant does not publish.
    */
   const sign = (
     oid: string,
     claims: JWTPayload = {},
-    options: { expires?: string | number; key?: CryptoKey } = {},
+    options: { expires?: string | number; issuedAt?: number; key?: CryptoKey } = {},
   ) =>
     new SignJWT({
       oid,
@@ -84,7 +85,7 @@ export async function entraTenant() {
       .setProtectedHeader({ alg: "RS256", kid: "test" })
       .setIssuer(issuer)
       .setAudience((claims.aud as string | undefined) ?? audience)
-      .setIssuedAt()
+      .setIssuedAt(options.issuedAt)
       .setExpirationTime(options.expires ?? "1h")
       .sign(options.key ?? privateKey);
   return {
@@ -99,6 +100,68 @@ export async function entraTenant() {
       ENTRA_AUDIENCE: audience,
     },
   };
+}
+
+/** A WorkOS environment whose keys only this test holds, beside the Entra tenant. */
+export async function workosEnvironment() {
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const jwk = { ...(await exportJWK(publicKey)), kid: "workos-test" };
+  const jwksUrl = "https://workos.example.com/jwks";
+  /** A WorkOS access token for `subject` in `organisation`, issued `age` seconds ago. */
+  const sign = (subject: string, organisation: string, age = 0) => {
+    const iat = Math.floor(Date.now() / 1000) - age;
+    return new SignJWT({ sid: crypto.randomUUID(), org_id: organisation })
+      .setProtectedHeader({ alg: "RS256", kid: "workos-test" })
+      .setIssuer("https://api.workos.com/")
+      .setSubject(subject)
+      .setIssuedAt(iat)
+      .setExpirationTime(iat + 3600)
+      .sign(privateKey);
+  };
+  return { jwk, jwksUrl, sign };
+}
+
+/** Waits until `count` connections to the database wait for a lock, other than `client`'s. */
+export async function lockWaiters(client: pg.Client, count: number) {
+  for (let waited = 0; ; waited += 25) {
+    const { rows } = await client.query(
+      "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+    );
+    if (rows[0].n >= count) return;
+    if (waited > 5000) throw new Error(`Fewer than ${count} requests waited for a lock`);
+    await Bun.sleep(25);
+  }
+}
+
+/**
+ * Starts `request` while another connection holds the organisation row lock that every guarded
+ * write takes, runs `during` once the request waits for a lock, then releases it: so `during`
+ * commits after the request signed in and before it reads its caller again under the lock.
+ * `during` may start more requests and wait for them with `waiters`.
+ */
+export async function acrossOrganisationLock<T>(
+  databaseUrl: string,
+  organisationId: string,
+  request: () => Promise<T>,
+  during: (waiters: (count: number) => Promise<void>) => Promise<unknown>,
+) {
+  const barrier = new pg.Client({ connectionString: databaseUrl });
+  await barrier.connect();
+  let pending: Promise<T> | undefined;
+  try {
+    await barrier.query("BEGIN");
+    await barrier.query("SELECT id FROM organisations WHERE id = $1 FOR NO KEY UPDATE", [
+      organisationId,
+    ]);
+    pending = request();
+    pending.catch(() => {});
+    await lockWaiters(barrier, 1);
+    await during((count) => lockWaiters(barrier, count));
+  } finally {
+    await barrier.query("COMMIT").catch(() => {});
+    await barrier.end();
+  }
+  return pending;
 }
 
 function freePort() {

@@ -577,6 +577,11 @@ class IrcHelperTest(unittest.TestCase):
         self.assertIn("an IRC sign-in is sent only over TLS", str(code))
         self.assertFalse(any(path == "/api/v1/me/irc-credential" for path, _, _ in api.requests))
 
+    def test_irc_passwords_of_either_form_never_reach_a_channel(self):
+        for password in (PASSWORD, "sirc2.fixturefixturefixturefixture.boundtoadevice"):
+            self.assertIsNotNone(irc_helper.SECRET.search(f"my password is {password}"))
+        self.assertIsNone(irc_helper.SECRET.search("see sirc2.md and sirc3.fixturefixturefixture"))
+
     def test_development_sign_in_uses_the_installed_fleets_saved_password(self):
         target = self.home / "targets" / "example-fleet"
         target.mkdir(parents=True)

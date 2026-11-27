@@ -116,6 +116,7 @@ test("the Entra verifier reads profile and role claims beside the identity", asy
     subject: oid,
     externalOrganisation: tenant.tenant,
     expiresAt: expect.any(Number),
+    issuedAt: expect.any(Number),
     claims: {
       name: "Tamsin Quarrie",
       email: "tamsin@example.com",
@@ -124,6 +125,7 @@ test("the Entra verifier reads profile and role claims beside the identity", asy
       familyName: "Quarrie",
       roles: ["Subspace.Admin", "Reader"],
       guest: false,
+      tenantMember: false,
     },
   });
   // Claims of the wrong type or length are ignored; the identity is unchanged.
@@ -139,6 +141,7 @@ test("the Entra verifier reads profile and role claims beside the identity", asy
     familyName: undefined,
     roles: [],
     guest: false,
+    tenantMember: false,
   });
 });
 

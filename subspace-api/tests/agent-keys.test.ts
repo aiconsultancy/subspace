@@ -634,7 +634,10 @@ describe.skipIf(!testDatabase)("agent tokens on the main listener", () => {
       server,
     );
     expect(issued.status).toBe(200);
-    expect((await issued.json()).account).toBe(both.agent.name);
+    const body = await issued.json();
+    expect(body.account).toBe(both.agent.name);
+    // Bound to the key credential that asked for it.
+    expect(body.password).toMatch(/^sirc2\./u);
   });
 
   test("administrators manage credentials; certificates are read strictly; others are refused", async () => {

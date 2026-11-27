@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Schema } from "effect";
 import { Database } from "./db";
 import { AgentRank, type Member } from "./identity";
 import { cursorTime, encodeCursor, readCursor } from "./paging";
@@ -360,8 +360,16 @@ export const createFleet = (member: Member, payload: typeof CreateFleet.Type) =>
     );
   });
 
+/**
+ * Whether a database failure is a violation of `constraint`, however it is wrapped: in errors'
+ * causes, or in an Effect cause, as a failed query's error carries it.
+ */
 export function hasConstraint(error: unknown, constraint: string): boolean {
   if (typeof error !== "object" || error === null) return false;
+  if (Cause.isCause(error))
+    return error.reasons.some(
+      (reason) => Cause.isFailReason(reason) && hasConstraint(reason.error, constraint),
+    );
   if ("constraint" in error && error.constraint === constraint) return true;
   return "cause" in error && hasConstraint(error.cause, constraint);
 }

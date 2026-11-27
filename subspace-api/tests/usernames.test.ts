@@ -7,7 +7,8 @@ import { Effect } from "effect";
 import pg from "pg";
 import { config, reservedUsernames } from "../src/config";
 import { Database, databaseLayer } from "../src/db";
-import { localMember, provisionMember } from "../src/identity";
+import { localMember } from "../src/identity";
+import { provisionMember } from "../src/registration";
 import {
   allocatedUsername,
   foldName,

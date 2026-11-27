@@ -9,6 +9,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  type PgTableExtraConfigValue,
   primaryKey,
   text,
   timestamp,
@@ -254,13 +255,30 @@ export const pairingInvites = pgTable(
     /** The SHA-256 of the invite's text in lower-case hex. */
     tokenHash: text("token_hash").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    /** The administrator who issued it, or null for the owner bootstrap command on the API host. */
+    /**
+     * Who issued it: an administrator, or the person themselves to pair another device; null for
+     * the owner bootstrap command on the API host.
+     */
     createdById: uuid("created_by_id"),
+    /**
+     * The device credential that signed the request issuing it, if one did. Revoking that device
+     * revokes this invite while it is pending, and the device it paired.
+     */
+    createdByCredentialId: uuid("created_by_credential_id"),
+    /**
+     * Where the administrator role came from that let the issuer invite another person: their
+     * provisioned role whenever it made them one, else their own Entra token's app role
+     * (ENTRA_ADMIN_ROLE); see `IssuerAuthority`. Redemption checks that the issuer still holds it
+     * from that source, so withdrawing the source withdraws the invite. Null for an invite for the
+     * issuer themselves or from the owner bootstrap command.
+     */
+    issuerAuthority: text("issuer_authority", { enum: ["entraAppRole", "provisioned"] }),
     createdAt: createdAt(),
     redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
-  (table) => [
+  // Typed, as it names agent_credentials, whose own constraints name this table.
+  (table): PgTableExtraConfigValue[] => [
     unique("pairing_invites_scope_id").on(table.organisationId, table.id),
     foreignKey({
       columns: [table.organisationId, table.userId],
@@ -270,7 +288,12 @@ export const pairingInvites = pgTable(
       columns: [table.organisationId, table.createdById],
       foreignColumns: [users.organisationId, users.id],
     }),
+    foreignKey({
+      columns: [table.organisationId, table.createdByCredentialId],
+      foreignColumns: [agentCredentials.organisationId, agentCredentials.id],
+    }),
     index("pairing_invites_member").on(table.organisationId, table.userId),
+    index("pairing_invites_issuing_device").on(table.createdByCredentialId),
     check("pairing_invites_hash", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
   ],
 );
@@ -311,6 +334,7 @@ export const agentCredentials = pgTable(
     revokedById: uuid("revoked_by_id"),
   },
   (table) => [
+    unique("agent_credentials_scope_id").on(table.organisationId, table.id),
     foreignKey({
       columns: [table.organisationId, table.userId],
       foreignColumns: [users.organisationId, users.id],
@@ -344,6 +368,44 @@ export const agentCredentials = pgTable(
       "agent_credentials_scopes",
       sql`cardinality(${table.scopes}) between 1 and 2 and ${table.scopes} <@ array['api', 'irc']::text[]`,
     ),
+  ],
+);
+
+/**
+ * The identity provider accounts a person has linked to their membership, besides the subject in
+ * `users`: a WorkOS or Entra account that a paired person linked from one of their devices with a
+ * fresh token of that account. A provider account names at most one member in the whole database,
+ * and a member holds at most one account of each provider.
+ */
+export const memberIdentities = pgTable(
+  "member_identities",
+  {
+    id: id(),
+    organisationId: organisationId(),
+    userId: uuid("user_id").notNull(),
+    provider: text({ enum: ["workos", "entra"] }).notNull(),
+    /** The provider's organisation: a WorkOS organisation ID or an Entra tenant ID. */
+    externalOrganisation: text("external_organisation").notNull(),
+    subject: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    unique("member_identities_scope_id").on(table.organisationId, table.id),
+    unique("member_identities_account").on(
+      table.provider,
+      table.externalOrganisation,
+      table.subject,
+    ),
+    unique("member_identities_one_per_provider").on(
+      table.organisationId,
+      table.userId,
+      table.provider,
+    ),
+    foreignKey({
+      columns: [table.organisationId, table.userId],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    check("member_identities_provider", sql`${table.provider} in ('workos', 'entra')`),
   ],
 );
 

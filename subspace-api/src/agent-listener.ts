@@ -3,7 +3,7 @@ import { Context, Effect, Layer, type Types } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Config } from "./config";
 import { Database } from "./db";
-import { CurrentMember, type Member } from "./identity";
+import { CurrentMember, type Member, signedInAs } from "./identity";
 import { BearerAuth } from "./middleware";
 import { problem } from "./problems";
 import { fleets, organisations, ships, users } from "./schema";
@@ -169,7 +169,7 @@ export const agentAuth = Layer.effect(
           const agent = yield* chooseAgent(candidates, reference);
           return yield* next.pipe(
             Effect.provideService(CurrentMember, {
-              ...agent,
+              ...signedInAs(agent, "provisioned"),
               tokenExpiresAt: Math.floor(Date.now() / 1000) + identityLifetimeSeconds,
             }),
             Effect.map(HttpServerResponse.setHeader("Cache-Control", "private, no-store")),

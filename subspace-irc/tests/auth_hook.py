@@ -240,6 +240,8 @@ def smoke():
                 member.send("PRIVMSG NickServ :PASSWD sirc1.valid replacement-pw replacement-pw")
                 member.expect("managed externally")
             assert account_exists(plain, "hook-member")
+            # A sirc2. password, bound to a key credential, reaches the API too.
+            signs_in(plain, "hook-bound-user", "sirc2.valid", "hook-bound").__exit__()
             # Extra fields are ignored; Ergo gets a fresh object with the validated name.
             signs_in(plain, "hook-extra-user", "sirc1.extra", "hook-extra").__exit__()
             # The same credential for another presented name is refused by the stub.
@@ -254,6 +256,7 @@ def smoke():
             # prefixed passphrase, listed hand-made accounts and unprefixed passwords.
             signs_in(plain, OPERATOR, operator_pw, OPERATOR).__exit__()
             refused(plain, OPERATOR, "sirc1.valid")
+            refused(plain, OPERATOR, "sirc2.valid")
             refused(plain, "HOOK-HANDMADE", "sirc1.valid")
             refused(plain, "hook-other-local@phone", "sirc1.valid")
             refused(plain, "hook-local-only", "plain-local-password")
@@ -269,7 +272,8 @@ def smoke():
             signs_in(port(6697), "hook-cert-nick", None, AGENT, client_context).__exit__()
 
             requests = stub_requests()
-            assert "hook-presented" in requests and "hook-extra-user" in requests, requests
+            assert all(name in requests for name in ("hook-presented", "hook-extra-user",
+                                                     "hook-bound-user")), requests
             for name in (AGENT, OPERATOR, "HOOK-HANDMADE", "hook-other-local", "hook-local-only", "certfp"):
                 assert name not in requests, f"local login for {name} reached the API"
 
@@ -383,6 +387,7 @@ def smoke():
                     overrides={"IRC_AUTH_PASSPHRASE_PREFIX": "custom-", "IRC_AUTH_CERT_LOGINS": "true"})
             signs_in(port(), "hook-custom-user", "custom-valid", "hook-custom").__exit__()
             refused(port(), "hook-sirc-user", "sirc1.valid")
+            refused(port(), "hook-sirc-user", "sirc2.valid")
             signs_in(port(6697), "hook-cert-nick", None, "hook-cert", client_context).__exit__()
             assert account_exists(port(), "hook-cert")
             requests = stub_requests()
@@ -413,13 +418,13 @@ def smoke():
             fails_to_start("must use https unless IRC_AUTH_API_ALLOW_HTTP=true", IRC_AUTH_API_URL="http://auth-stub")
             # With plain HTTP allowed, the URL passes and start-up reaches the next check.
             fails_to_start("IRC_AUTH_PASSPHRASE_PREFIX must be", IRC_AUTH_API_URL="http://auth-stub",
-                           IRC_AUTH_API_ALLOW_HTTP="true", IRC_AUTH_PASSPHRASE_PREFIX="has space")
+                           IRC_AUTH_API_ALLOW_HTTP="true", IRC_AUTH_PASSPHRASE_PREFIX="a b c d e f g h i")
             fails_to_start("must be true or false", IRC_AUTH_CERT_LOGINS="yes")
             fails_to_start("names must not contain @", IRC_AUTH_LOCAL_ACCOUNTS="hook-handmade@laptop")
             fails_to_start("IRC_AUTH_API_CONCURRENCY must be an integer from 1 to 192",
                            IRC_AUTH_API_CONCURRENCY="193")
             fails_to_start("IRC_AUTH_API_CA_FILE must be readable", IRC_AUTH_API_CA_FILE="/run/missing.pem")
-            fails_to_start("IRC_AUTH_PASSPHRASE_PREFIX must be", IRC_AUTH_PASSPHRASE_PREFIX="tab\tprefix")
+            fails_to_start("IRC_AUTH_PASSPHRASE_PREFIX must be", IRC_AUTH_PASSPHRASE_PREFIX="sirc1. pr\u00e9fixe")
             fails_to_start("Set only one of IRC_AUTH_LOCAL_ACCOUNTS and IRC_AUTH_LOCAL_ACCOUNTS_FILE",
                            IRC_AUTH_LOCAL_ACCOUNTS_FILE=TOKEN_PATH)
             fails_to_start("Seeded passwords must not start with IRC_AUTH_PASSPHRASE_PREFIX",

@@ -9,6 +9,7 @@
     "start": "bun src/main.ts",
     "auth:member": "bun scripts/member.ts",
     "auth:owner": "bun scripts/pairing-owner.ts",
+    "auth:bindings": "bun scripts/provider-bindings.ts",
     "auth:username": "bun scripts/username.ts",
     "auth:dev": "bun scripts/dev-token.ts",
     "seed:demo": "bun scripts/seed-demo.ts",

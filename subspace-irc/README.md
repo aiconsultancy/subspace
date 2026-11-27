@@ -150,13 +150,18 @@ hook. A client gets its credential from `POST /api/v1/me/irc-credential` and
 presents it as the SASL PLAIN password with its account name; the credential
 lasts ten minutes.
 
-The script calls the API only for a password that starts with the API's
-credential prefix (`IRC_AUTH_PASSPHRASE_PREFIX`, default `sirc1.`). With
+The script calls the API only for a password that starts with one of the
+API's credential prefixes. By default these are `sirc1.`, the password of a
+person signed in through a provider, and `sirc2.`, a password bound to the key
+credential (an agent's key or a paired device) that asked for it. Set
+`IRC_AUTH_PASSPHRASE_PREFIX` to up to eight prefixes, separated by commas or
+whitespace, to replace that list: a custom list must name every format the API
+issues, and start-up warns when it has `sirc1.` without `sirc2.`. With
 `IRC_AUTH_CERT_LOGINS=true` it also passes on certificate logins (SASL
 EXTERNAL) that carry no password. It refuses every other login at once,
 without a network request, so Ergo goes straight to its local accounts. A
 local account's password never leaves the IRC server, and start-up fails if a
-seeded password starts with the prefix. For the logins it passes on, the
+seeded password starts with one of the prefixes. For the logins it passes on, the
 script posts Ergo's request unchanged to `POST /api/v1/irc/authenticate` with
 the token as a bearer token. It never retries.
 
@@ -329,7 +334,7 @@ your Compose override or through your container host's volume controls.
 | `IRC_AUTH_API_ALLOW_HTTP` | `false` | Allow an `http` API URL on a private container network on one host |
 | `IRC_AUTH_API_TOKEN_FILE`, `IRC_AUTH_API_TOKEN` | empty | Hook token (32–1024 URL-safe or Base64 characters), preferably as a mounted file |
 | `IRC_AUTH_API_CA_FILE` | system CA bundle | PEM file of a private CA that signed the API's certificate |
-| `IRC_AUTH_PASSPHRASE_PREFIX` | `sirc1.` | Prefix of API-issued IRC credentials; only these passwords reach the API |
+| `IRC_AUTH_PASSPHRASE_PREFIX` | `sirc1. sirc2.` | Prefixes of API-issued IRC credentials, separated by commas or whitespace; only these passwords reach the API |
 | `IRC_AUTH_CERT_LOGINS` | `false` | Pass certificate logins without a password to the API |
 | `IRC_AUTH_LOCAL_ACCOUNTS`, `IRC_AUTH_LOCAL_ACCOUNTS_FILE` | empty | Extra accounts that only sign in locally, beside the seeded ones |
 | `IRC_AUTH_API_CONCURRENCY` | `128` | Most API-bound logins in flight at once, from 1 to 192; others are refused at once |
@@ -392,6 +397,7 @@ shellcheck entrypoint.sh subspace-auth.sh
 docker compose config --quiet
 python3 tests/smoke.py
 python3 tests/auth_hook.py
+python3 -B tests/auth_script.py
 ```
 
 The smoke test builds the image in an isolated Compose project with synthetic
@@ -406,12 +412,18 @@ and creates the account, and that Ergo receives a fresh answer. Refusals,
 errors, redirects, timeouts, truncated, oversized, repeated-key and malformed
 answers, and answers naming local-only accounts all fail closed. It checks
 from the stub's request log that local and local-only logins never reach the
-API, while prefixed credentials, a custom prefix and enabled certificate
-logins do. A missing, empty or malformed local-only list forwards nothing.
+API, while credentials with either prefix, a custom prefix and enabled
+certificate logins do. A missing, empty or malformed local-only list forwards nothing.
 With 300 concurrent API-bound logins against a hanging API, more than Ergo's
 script slots, every one is refused and the operator still signs in promptly.
 It also checks the local fallback with the API down, certificate verification
 and start-up validation.
+
+The auth script test runs `subspace-auth.sh` itself, without Docker, against a
+stub API on loopback. It checks that `sirc1.` and `sirc2.` passwords both reach
+the API by default, that a configured list replaces the default, and that
+other passwords, local-only accounts and a missing or malformed local-only
+list reach nothing. It needs `sh`, `jq`, `curl`, `flock` and Python 3.
 
 ## Licence
 

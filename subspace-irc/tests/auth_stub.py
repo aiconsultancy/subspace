@@ -31,6 +31,9 @@ def answer(name, passphrase):
         # Accepted only for the presented name, answered with a different one.
         "sirc1.valid": (200, {"success": True, "accountName": "hook-member"})
         if name == "hook-presented" else (200, {"success": False}),
+        # A password bound to a key credential: the second format the API issues.
+        "sirc2.valid": (200, {"success": True, "accountName": "hook-bound"})
+        if name == "hook-bound-user" else (200, {"success": False}),
         "custom-valid": (200, {"success": True, "accountName": "hook-custom"})
         if name == "hook-custom-user" else (200, {"success": False}),
         "sirc1.refuse": (200, {"success": False}),

@@ -64,7 +64,8 @@ container network. The default server provider outside Compose is WorkOS.
 
 Send the provider's **access token** in `Authorization: Bearer <token>`. The API
 verifies the token and resolves an active local membership for its verified
-provider, organisation and subject.
+provider, organisation and subject, or, when that account is
+[linked](#linking-a-provider-account) to a member, that member.
 
 ### First sign-in
 
@@ -97,7 +98,9 @@ create one member, and every one of them succeeds.
   tenant's own issuer is a guest's. Excluding guests reliably therefore needs
   `acct` as an optional claim on the access token, because a guest whose home
   tenant is this tenant cannot be told apart from a member without it. A guest
-  whom the membership command has added signs in as usual.
+  whom the membership command has added signs in as usual. Linking a tenant's
+  first account into another organisation needs `acct`
+  ([Linking a provider account](#linking-a-provider-account)); sign-in does not.
 - Registration admits every member of the tenant who can obtain an access token for
   the API. To limit it to chosen people or groups, turn on _Assignment required_
   for the enterprise applications in Entra and assign them.
@@ -107,13 +110,29 @@ create one member, and every one of them succeeds.
 
 `ENTRA_ADMIN_ROLE` names an app role defined on the API's app registration. When it
 is set, an Entra token whose `roles` claim holds that value makes its holder an
-administrator, and a token without it makes them a member, on every request. The
+administrator, and a token without it makes them a member, on every request. A
+request never acts above its own token's role: if another sign-in records a
+different role while it is in flight, it keeps the lower of the two. The
 API records the token's role apart from the provisioned role that the membership
 command's `--role` sets, writes it only when it changes and audits each change as
 `memberRoleChanged`. While the setting is configured, the token's role is the
 effective one for Entra members; when it is removed, the provisioned role applies
 again, so the grants it made end with it. An agent record is never an
-administrator, and the database refuses an agent a token role.
+administrator, and the database refuses an agent a token role. The role comes only
+with an Entra token, in both directions. A person who signs in from a
+[paired device](#workstation-pairing) or through a
+[linked account](#linking-a-provider-account) acts with their provisioned role,
+and while the setting is configured never above the token role last recorded for
+them:
+
+- an administrator by `ENTRA_ADMIN_ROLE` alone is a member from a device or a
+  linked account;
+- a provisioned administrator whose token no longer carries the role is a member
+  there too, from their next request, once an Entra sign-in has recorded the
+  change.
+
+A request is checked again under its organisation's lock before it changes
+anything, with its role from the same source as when it signed in.
 
 ### Upgrading
 
@@ -151,7 +170,10 @@ name or email. For Entra, use the tenant UUID in `tid` and user object UUID in
 `oid`. The access token must use the tenant's v2 issuer, identify the configured client
 in `azp`, contain the delegated API scope and use the API application's client
 UUID as its audience. Use `--deactivate` with the same organisation and subject
-to revoke API access.
+to revoke API access. The command refuses an account that is linked to a member,
+and it adds no one to a provider organisation's own organisation while that
+provider organisation's accounts are [linked](#linking-a-provider-account) into
+another one; someone it saved there before can still be changed or deactivated.
 
 ### Usernames
 
@@ -365,7 +387,8 @@ about to connect to, as it will connect:
   deactivated member. The route also answers 404 when `IRC_CREDENTIAL_SECRET` is
   not set, and 409 for an agent without an IRC nick.
 
-A credential is `sirc1.` followed by the unpadded base64url encoding of 56 bytes:
+A credential issued to a member signed in through an identity provider is
+`sirc1.` followed by the unpadded base64url encoding of 56 bytes:
 
 1. the user's UUID as 16 bytes, in the order its hexadecimal digits are written;
 2. the expiry as an unsigned 64-bit big-endian count of seconds since the Unix
@@ -373,6 +396,13 @@ A credential is `sirc1.` followed by the unpadded base64url encoding of 56 bytes
 3. an HMAC-SHA256, keyed by the UTF-8 bytes of `IRC_CREDENTIAL_SECRET`, over the
    ASCII text `sirc1.`, the 24 bytes of items 1 and 2, and the requested host in
    canonical form: ASCII letters in lower case and any IPv6 brackets removed.
+
+A credential issued to a request signed with a key credential, a person's
+[paired device](#workstation-pairing) or an agent's key, is bound to that key
+credential: `sirc2.` followed by the unpadded base64url encoding of 72 bytes, 96
+characters, which are items 1 and 2, then the key credential's UUID as 16 bytes, then
+an HMAC-SHA256 as in item 3 over the ASCII text `sirc2.`, those 40 bytes and the
+canonical host. Each prefix is signed, so neither form passes for the other.
 
 The host is not in the credential. It is stateless: nothing is stored. A
 credential is good while the current time is before its expiry, the expiry is no
@@ -403,11 +433,13 @@ not serve it.
 
 The rules, in order:
 
-1. A `passphrase` that starts with `sirc1.` succeeds only if its signature is
+1. A `passphrase` that starts with `sirc1.` or `sirc2.` succeeds only if its signature is
    this deployment's for a host in `IRC_AUTH_SERVERS`, it has not expired, its user exists, is active, belongs to the
    organisation in `IRC_AUTH_ORGANISATION` and has a username, and the
    `accountName`, ignoring an `@` and anything after it and compared without
-   regard to case, is that username. The answer names the canonical username,
+   regard to case, is that username. A `sirc2.` passphrase also needs its key
+   credential to be unrevoked, to belong to that user in that organisation and to
+   have the scope `irc`, on every sign-in. The answer names the canonical username,
    which for an agent is its nick as registered.
 2. A `certfp` with no passphrase succeeds only if, compared as hexadecimal
    without regard to case, it is the fingerprint of an active
@@ -699,10 +731,10 @@ implementation of this API must match it exactly.
   by fingerprint, that is by certificate: the same key in a new certificate has
   another fingerprint and can be registered again. A revoked credential keeps its
   record.
-- Revoking a credential refuses its agent tokens and IRC sign-ins from then on. It
-  does not close connections already open, to IRC or to the update stream, and an
-  [IRC password](#post-apiv1meirc-credential) already issued with one of its tokens
-  stays usable until it expires, within ten minutes.
+- Revoking a credential refuses its agent tokens and IRC sign-ins from then on,
+  including with an [IRC password](#post-apiv1meirc-credential) already issued
+  with one of its tokens, which is bound to it. It does not close connections
+  already open, to IRC or to the update stream.
 - Moving an agent to another fleet revokes all its active credentials in the same
   change, each audited as `agentCredentialRevoked` with the reason `fleetChanged`:
   the previous fleet's gateway holds those keys, and the new fleet enrols a fresh
@@ -852,9 +884,9 @@ An organisation administrator manages an agent's credentials:
 - `POST /api/v1/agents/{agentId}/credentials` with
   `{ "certificate", "scopes", "label"? }` registers one: 201 with it.
 - `DELETE /api/v1/agents/{agentId}/credentials/{credentialId}` revokes it and
-  answers 200 with it. Its tokens and IRC sign-ins are refused from then on; open
-  connections and IRC passwords already issued are not, as
-  [Credentials](#credentials) says.
+  answers 200 with it. Its tokens and IRC sign-ins are refused from then on,
+  including IRC passwords already issued with its tokens; open connections are not,
+  as [Credentials](#credentials) says.
 
 These routes are on the main listener only.
 
@@ -936,9 +968,19 @@ docker compose exec -u 0 -T api bun run auth:owner example --name "Tamsin Pryor"
 - A rerun finds the same organisation and owner, ignoring `--name` and `--email`,
   revokes the owner's earlier pending invites and prints a new one. Only the newest
   invite works.
-- `--revoke-devices` also revokes every device credential of the owner. This is
-  the recovery for a lost or stolen workstation: the new invite pairs a
-  replacement.
+- `--revoke-devices` also revokes every unrevoked device credential of the
+  owner, and what those devices issued, as [revoking a device](#devices) through
+  the API does: their pending invites, the devices paired with their invites,
+  whoever they belong to, and in turn what those issued. This is the recovery for
+  a lost or stolen workstation. It starts only from devices it revokes: an owner
+  device revoked earlier without what it issued, for example by part one's image
+  during a rollback, is not walked again. Finish that walk by revoking the device
+  again with `DELETE /api/v1/members/{memberId}/devices/{credentialId}`, which
+  revokes anything it issued that is not yet revoked. The command prints how many devices and invites went with
+  the owner's, and each revocation is audited. Pair the new laptop with the new
+  invite first; then invite again the people invited from the old one, who pair
+  again. A provider account linked from the old workstation stays linked: see
+  [Devices](#devices) to find and unlink it.
 - `--reactivate` restores an existing deactivated owner and issues a fresh
   invite without changing their identity. The command refuses to reactivate
   anyone unless the flag is set. If the owner has device credentials that were
@@ -1007,7 +1049,7 @@ accepted. No bearer token is sent. On success the answer is 201, with
   "organisationId": "7a9b3e10-0000-4000-8000-000000000000",
   "credentialId": "c0ffee00-0000-4000-8000-000000000000",
   "fingerprint": "6f2c9c811f161373937f5beb0967f5f45a2002e394a8de85f69ffa36bd9284e6",
-  "scopes": ["api"],
+  "scopes": ["api", "irc"],
   "deviceToken": { "type": "subspace-device+jwt", "...": "as in the probe" }
 }
 ```
@@ -1100,8 +1142,9 @@ alike, and so does every retry: a token is accepted once.
   this: a deactivated member
   (`An active organisation membership is required.`), an administrator route for
   someone who is not one, or a route a device credential's scopes do not allow.
-- **Scopes.** A device credential has the scope `api` only, so
-  `POST /api/v1/me/irc-credential` answers 403 for now.
+- **Scopes.** A device credential has the scopes `api` and `irc`: its tokens call
+  the API and obtain an [IRC password](#irc-with-a-paired-device). Its certificate
+  does not sign in to IRC by itself, as an agent's can.
 
 The person acts with every rule that applies to people, including administrator
 rights for an administrator. A device credential is stored with agents'
@@ -1112,8 +1155,249 @@ Revoking a device refuses its next request: the token checks the credential each
 time. As with agents, it does not close an update stream already open, which ends
 within three minutes.
 
+### Invites
+
+Anyone who signs in, with a provider account or a paired device, pairs another of
+their own workstations with an invite they issue themselves:
+
+```http
+POST /api/v1/me/pairing/invites
+Content-Type: application/json
+
+{ "expiresInSeconds": 900 }
+```
+
+An organisation administrator invites a new person, whom the request creates, or a
+person who has no way to sign in, such as one whose only device was lost:
+
+```http
+POST /api/v1/pairing/invites
+Content-Type: application/json
+
+{ "displayName": "Corin Tarrowmere", "email": "corin@example.com", "role": "member" }
+```
+
+```http
+POST /api/v1/pairing/invites
+Content-Type: application/json
+
+{ "memberId": "2f1d4c8e-0000-4000-8000-000000000000", "expiresInSeconds": 900 }
+```
+
+An administrator's body has either `memberId` or `displayName`, never both.
+`email` is optional, and `role` is `member` (the default) or `admin`.
+`expiresInSeconds` is 300 to 86,400, 3,600 by default, on both routes. The answer
+is 201, with `Cache-Control: private, no-store`:
+
+```json
+{
+  "inviteId": "5b0e6a2c-0000-4000-8000-000000000000",
+  "memberId": "2f1d4c8e-0000-4000-8000-000000000000",
+  "memberCreated": false,
+  "invite": "spair1.…",
+  "expiresAt": "2026-11-27T10:15:00Z"
+}
+```
+
+- The invite is the same single-use, hashed `spair1.` invite as the owner's, and is
+  redeemed the same way. It appears in this answer only; give it only to the person.
+- Issuing an invite revokes the person's earlier pending invites, so only the
+  newest works. The person's paired devices keep working.
+- A new person signs in only with paired devices, with a username derived from the
+  name, until they [link a provider account](#linking-a-provider-account).
+- An administrator's invite never pairs a device for a person who signs in, with a
+  provider account (registered or linked) or a device that was never revoked: that
+  would let the administrator act as them. Such a person pairs another device
+  themselves. The trust that remains is in the administrator who creates a person,
+  or recovers one with no way to sign in: until the person pairs, whoever holds the
+  invite becomes them.
+- The invite records who issued it and, for a request signed by a device, which
+  device. Revoking that device revokes the invite while it is pending, and the
+  device it paired, and so on (see [Devices](#devices)).
+- An invite stops working when its issuer is no longer allowed to issue it: an
+  administrator's pending invites for other people are revoked when the
+  administrator is deactivated or loses the role. Redemption also checks that
+  the issuer is still an administrator from where their role came from when they
+  issued it, and that the device that issued it is unrevoked. That is the
+  provisioned role whenever it made them an administrator, and otherwise their
+  own Entra token's `ENTRA_ADMIN_ROLE`: removing that setting stops at once the
+  invites that only it let people issue, and leaves a provisioned
+  administrator's working. While the setting is configured, the provisioned
+  role counts only up to the token role last recorded for the issuer.
+- 403 for an agent, or on the administrator's route for anyone who is not an
+  administrator; 404 when this API does not pair devices
+  (`urn:subspace:problem:pairing-unavailable`) or `memberId` is not a person of the
+  organisation; 409 for a deactivated person, and
+  `urn:subspace:problem:member-signs-in` (409) for a person who signs in; 400 for a
+  malformed body. Unlike redemption's, only those two typed problems carry a
+  `type` other than `about:blank`: the 400 is a generic problem, with no
+  `errors` list, that never repeats what was sent.
+
+An administrator lists the organisation's pending invites, those neither redeemed,
+revoked nor expired and whose issuer still vouches for them, as redemption checks
+(an invite whose issuing device is revoked or whose issuer is no longer an
+administrator from the same source is left out), with
+`GET /api/v1/pairing/invites`: `id`, `memberId`,
+`createdAt`, `expiresAt`, `redeemedAt`, `revokedAt`, `createdByUserId` and
+`createdByDeviceId`, never the invite itself. The list is read without locks, so
+an invite whose issuer is demoted or deactivated at that moment can still appear
+in one response; redemption checks the issuer again under the organisation's
+lock. `DELETE /api/v1/pairing/invites/{inviteId}` revokes one and answers 200
+with it; an invite already redeemed, revoked or expired answers the same,
+unchanged. Their problems are `about:blank`.
+
+### Devices
+
+A person lists and revokes their own devices, and an administrator anyone's in the
+organisation, on the main listener:
+
+- `GET /api/v1/me/devices` and `GET /api/v1/members/{memberId}/devices` list them,
+  revoked ones included, newest first: `id`, `memberId`, `fingerprint`,
+  `algorithm`, `scopes`, `label`, `createdAt`, `pairingInviteId`,
+  `invitedByUserId`, `invitedByDeviceId`, `lastUsedAt`, `revokedAt`,
+  `revokedByUserId` and `current`, which is true for the device that signed the
+  request. `invitedByUserId` and `invitedByDeviceId` name who issued the invite that
+  paired it, a member and the device that signed the request if one did; both are
+  null for an invite from the owner bootstrap command.
+- `DELETE /api/v1/me/devices/{credentialId}` and
+  `DELETE /api/v1/members/{memberId}/devices/{credentialId}` revoke one and answer
+  200 with it. Revoking a revoked device answers the same, unchanged. The device's
+  next API request and next IRC sign-in are refused; the person's other devices
+  keep working. This is how a lost or stolen workstation is removed.
+- What a device issued is revoked with it, and audited: its pending invites, the
+  devices paired with its invites, whoever they belong to, and in turn what those
+  issued. Whoever stole a workstation can therefore not keep a foothold through a
+  device it paired. Revoking an administrator's device also revokes the devices of
+  the people it invited; each pairs again with their own invite if they still sign
+  in another way, or with an administrator's.
+  Revoking a revoked device revokes anything it issued that is not yet revoked.
+- A [provider account](#linking-a-provider-account) linked from a device belongs to
+  the member, not the device, so revoking the device leaves it linked. After a
+  stolen workstation, list the member's linked accounts, and the
+  `memberIdentityLinked` audit events whose `changes.credentialId` is the stolen
+  device's ID, then unlink any account the member does not recognise.
+- The `/members` routes need an administrator (403 otherwise) and answer 404 for an
+  agent, whose key credentials are under its
+  [credential routes](#credential-management). A device that is not the person's
+  answers 404.
+- Every problem of these routes is `about:blank`.
+
+### IRC with a paired device
+
+A paired person obtains an IRC password with a signed
+`POST /api/v1/me/irc-credential`, as anyone does. The password is a `sirc2.`
+credential bound to the device that signed the request (see
+[IRC sign-in](#irc-sign-in)): on every new IRC sign-in the hook checks that the
+device is still paired, so revoking a device also refuses a password it already
+holds. A connection already established stays open until it ends. Agents' passwords
+are bound to their key credential in the same way; certificate sign-in and the
+`sirc1.` passwords of people signed in through a provider are unchanged.
+
+### Linking a provider account
+
+A member can hold paired devices, a WorkOS account and an Entra account at once,
+and each signs in as the same member, with the same authorship, role and IRC
+account. An organisation that starts with pairing can therefore turn on WorkOS or
+Entra later without anyone becoming a new member.
+
+A person links an account from one of their paired devices. They sign in with the
+provider as usual, and send the access token it gave them, which must be for this
+API and issued in the last ten minutes, in a request signed by the device:
+
+```http
+POST /api/v1/me/identities
+Authorization: Bearer <device token>
+Content-Type: application/json
+
+{ "token": "<WorkOS or Entra access token>" }
+```
+
+The answer is 201 with the link; linking an account the caller has linked already
+answers 201 with the existing link:
+
+```json
+{
+  "id": "9d3c1f4a-0000-4000-8000-000000000000",
+  "memberId": "2f1d4c8e-0000-4000-8000-000000000000",
+  "provider": "entra",
+  "externalOrganisation": "00000000-0000-4000-8000-00000000000a",
+  "subject": "00000000-0000-4000-8000-00000000000b",
+  "createdAt": "2026-11-27T10:00:00Z"
+}
+```
+
+From then on that account's access tokens sign in as the member. The member's
+stored role applies: an Entra token's administrator role is not read for a linked
+account. Administrator rights that come only from `ENTRA_ADMIN_ROLE` therefore do
+not carry over to a paired device or a linked account; there the stored role, the
+one the membership command or an invite set, is what counts, and while the
+setting is configured it is never above the token role last recorded for the
+member (see [First sign-in](#first-sign-in)).
+The request proves both halves of the link at once, the member with the device's
+signature and the account with the provider's, so no one links an account they do
+not hold to a member they are not. Beyond that:
+
+- An account names at most one member. Linking refuses an account that is linked
+  already, or that is registered as a member in its provider organisation's own
+  Subspace organisation, and a member links at most one account of each provider.
+- A provider organisation (a WorkOS organisation or an Entra tenant) is linked into
+  at most one Subspace organisation, and never into one while its own Subspace
+  organisation has members, so its people cannot end up as two members.
+- The first account of a provider organisation linked into an organisation other
+  than its own needs an administrator, and an account that belongs to the provider
+  organisation. For an Entra tenant, the access token must carry the optional
+  `acct` claim with 0, for a member of the tenant: a guest's account, and a token
+  without `acct`, are refused, because without it a guest whose home tenant is this
+  one looks like a member. Add `acct` as an optional claim on the API's access
+  token before an administrator links the tenant's first account. That link binds the provider
+  organisation to this one: its other accounts can be linked here, and only here.
+  After that, each member links their own.
+- Once a provider organisation is linked into another organisation, its people who
+  are not linked are not registered in an organisation of their own: their first
+  sign-in answers 403 until they link from a paired device. Nor does the
+  membership command add one of them to it.
+- Only a request signed by a paired device links an account: a provider sign-in or
+  an agent answers 403.
+
+| Status | `type`                                         | When                                                                                                                                                                                                                |
+| ------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `urn:subspace:problem:identity-token-unusable` | The token is not a valid WorkOS or Entra access token for this API, or was issued more than ten minutes ago.                                                                                                        |
+| 403    | `about:blank`                                  | The request is not signed by a paired device, or the first link of the provider organisation needs an administrator and an account that is not an Entra guest's, with `acct` 0 in an Entra token.                   |
+| 409    | `urn:subspace:problem:identity-conflict`       | The account is linked to another member or registered as one, the caller has linked another account of that provider, or the provider organisation is linked into another organisation or has its own with members. |
+
+The link's other problems, including the 400 for a malformed body, are `about:blank`,
+as are those of the routes below.
+
+`GET /api/v1/me/identities` lists the caller's linked accounts, and
+`DELETE /api/v1/me/identities/{identityId}` unlinks one, answering 200 with it. An
+administrator lists and unlinks a person's under
+`/api/v1/members/{memberId}/identities`, such as an account linked by mistake. An
+unlinked account no longer signs in to the API as the member from its next
+request; the member's devices and other accounts keep working. An IRC password
+the account was issued while linked is a `sirc1.` password, bound to no key
+credential, so it still signs in to IRC as the member until it expires, ten
+minutes after issue.
+
+A binding is released when its provider organisation's last account in that
+Subspace organisation is unlinked, whether the members or an administrator unlink
+them one by one through the API, which needs no operator. The host's operator can
+also release one at once with the provider bindings command, which runs only as
+root. Without arguments it lists every binding and takes no organisation to
+filter by; its `--release` form unlinks all the provider organisation's accounts
+in that Subspace organisation, each audited with the integration
+`Provider bindings command` as the actor:
+
+```sh
+bun run auth:bindings
+bun run auth:bindings --release pairing example entra 00000000-0000-4000-8000-00000000000a
+```
+
+Its people then sign in there only with their devices, and the provider
+organisation's unknown people are registered in its own organisation again.
+
 Audited: `memberRegistered`, `pairingInviteCreated`, `pairingInviteRevoked`,
-`pairingInviteRedeemed`, `deviceCredentialAdded` and `deviceCredentialRevoked`.
+`pairingInviteRedeemed`, `deviceCredentialAdded`, `deviceCredentialRevoked`,
+`memberIdentityLinked` and `memberIdentityUnlinked`.
 Rows written by `auth:owner` name the integration `Owner bootstrap` as the actor.
 No invite, token or key is logged, audited or returned in an error; a refused
 invite is logged at debug level with its reason only.
@@ -1326,12 +1610,13 @@ The HTTP tests require a clean loopback Compose stack and create synthetic
 organisations. The agent listener's HTTP tests also need `AGENT_PORT` published by
 that stack, with `TEST_AGENT_API_URL` set to it and `TEST_AGENT_ORGANISATION`
 to the development organisation slug its `AGENT_ORGANISATION` names. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
-The sign-in, username, IRC, agent key, enrolment and pairing tests need only
+The sign-in, username, IRC, agent key, enrolment, pairing and device tests need only
 `TEST_DATABASE_URL`: each creates an isolated database there and runs the API
 in-process, trusting a fictional Entra tenant whose keys only the test holds. The
 agent key tests generate their own Ed25519 and P-256 certificates and mint agent
 tokens as a gateway would, and the pairing tests pair devices and sign device tokens
-as a workstation would.
+as a workstation would. The device tests also trust a fictional WorkOS environment,
+to link its accounts.
 The fleet ownership race test holds a row lock in the API's own database while
 an agent writes. The parent-cycle HTTP test changes that database directly: it
 temporarily sets `parent_id` on a synthetic issue, then clears it. Both tests

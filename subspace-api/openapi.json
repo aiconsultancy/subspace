@@ -453,7 +453,7 @@
             }
           }
         },
-        "description": "Issues a short-lived password for the caller's IRC account on the IRC server at host and port, to give that server with SASL PLAIN as the account (optionally followed by @ and a device name). The password is opaque, at most 200 characters, valid for ten minutes, reusable until it expires and accepted only by that deployment's IRC servers. 404 when this server does not issue IRC credentials or does not sign people in to that IRC server; 409 for an agent without an IRC nick.",
+        "description": "Issues a short-lived password for the caller's IRC account on the IRC server at host and port, to give that server with SASL PLAIN as the account (optionally followed by @ and a device name). The password is opaque, at most 200 characters, valid for ten minutes, reusable until it expires and accepted only by that deployment's IRC servers. A caller signed in with a key credential, a paired device or an agent's key, needs its irc scope (403 without it), and the password it receives stops working at the next IRC sign-in once that credential is revoked; a connection already established is not closed. 404 when this server does not issue IRC credentials or does not sign people in to that IRC server; 409 for an agent without an IRC nick.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -34838,6 +34838,1580 @@
         }
       }
     },
+    "/api/v1/me/devices": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "operationId": "devices.listMyDevices",
+        "parameters": [],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Device"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "The caller's paired devices, revoked ones included, newest first; current marks the device that signed the request. Its problems are about:blank."
+      }
+    },
+    "/api/v1/me/devices/{credentialId}": {
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "operationId": "devices.revokeMyDevice",
+        "parameters": [
+          {
+            "name": "credentialId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Device"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "Revokes one of the caller's devices, such as a lost one. Its next API request and its next IRC sign-in are refused, even with an IRC password it already holds; the caller's other devices keep working. What the device issued is revoked with it: its pending pairing invites, and the devices paired with its invites, and in turn what they issued. A revoked device is returned unchanged, after anything it issued is revoked. Its problems are about:blank."
+      }
+    },
+    "/api/v1/members/{memberId}/devices": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "operationId": "devices.listMemberDevices",
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Device"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "An organisation administrator lists a person's paired devices, revoked ones included, newest first. 404 for an agent: its key credentials are under /agents/{agentId}/credentials. Its problems are about:blank."
+      }
+    },
+    "/api/v1/members/{memberId}/devices/{credentialId}": {
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "operationId": "devices.revokeMemberDevice",
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          },
+          {
+            "name": "credentialId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Device"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "An organisation administrator revokes one of a person's devices. Its next API request and its next IRC sign-in are refused; the person's other devices keep working. What the device issued is revoked with it: its pending pairing invites, and the devices paired with its invites, and in turn what they issued. A revoked device is returned unchanged, after anything it issued is revoked. Its problems are about:blank."
+      }
+    },
+    "/api/v1/pairing/invites": {
+      "post": {
+        "tags": [
+          "invites"
+        ],
+        "operationId": "invites.issuePairingInvite",
+        "parameters": [],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "PairingInviteIssued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingInviteIssued"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "An organisation administrator issues a single-use pairing invite for a new person named by displayName (with an optional email and role, member by default), who is created and signs in only with paired devices until they link a provider account, or for an active person named by memberId who has no other way to sign in: no provider account and no device that was never revoked (201). The invite begins spair1. and expires after expiresInSeconds, 300 to 86400 (default 3600); the person's earlier pending invites are revoked. It is shown in this answer only, and is revoked with the device that signed the request, if one did. 404 when this API does not pair devices or the member is not a person of the organisation; 409 for a deactivated member, and for a person who signs in, who pairs another device from /me/pairing/invites. Unlike redemption's, only two of these problems carry a type: urn:subspace:problem:pairing-unavailable (404) when this API does not pair devices, and urn:subspace:problem:member-signs-in (409) for a person who signs in. The others, including 400 for a malformed body, are about:blank.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPairingInvite"
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "get": {
+        "tags": [
+          "invites"
+        ],
+        "operationId": "invites.listPairingInvites",
+        "parameters": [],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PairingInvite"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "An organisation administrator lists the organisation's pending pairing invites, newest first: those neither redeemed, revoked nor expired, and whose issuer still vouches for them, as redemption checks: the device that issued one is unrevoked and, for another person's invite, its issuer is still an active administrator from the source their role came from when they issued it. Its problems are about:blank."
+      }
+    },
+    "/api/v1/me/pairing/invites": {
+      "post": {
+        "tags": [
+          "invites"
+        ],
+        "operationId": "invites.issueOwnPairingInvite",
+        "parameters": [],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "PairingInviteIssued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingInviteIssued"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "A person who signs in, with a provider account or a paired device, issues a single-use invite that pairs another of their own devices (201). The invite begins spair1. and expires after expiresInSeconds, 300 to 86400 (default 3600); the person's earlier pending invites are revoked. It is shown in this answer only, and is revoked with the device that signed the request, if one did. 403 for an agent; 404 when this API does not pair devices, with type urn:subspace:problem:pairing-unavailable. The other problems, including 400 for a malformed body, are about:blank.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewOwnPairingInvite"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/v1/pairing/invites/{inviteId}": {
+      "delete": {
+        "tags": [
+          "invites"
+        ],
+        "operationId": "invites.revokePairingInvite",
+        "parameters": [
+          {
+            "name": "inviteId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PairingInvite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingInvite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "An organisation administrator revokes a pairing invite, which then pairs nothing. An invite that is already redeemed, revoked or expired is returned unchanged. Its problems are about:blank."
+      }
+    },
+    "/api/v1/me/identities": {
+      "post": {
+        "tags": [
+          "linkedIdentities"
+        ],
+        "operationId": "linkedIdentities.linkIdentity",
+        "parameters": [],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "LinkedIdentity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedIdentity"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "Links the WorkOS or Entra account that token proves to the caller, so that it signs in as the caller from then on, keeping their authorship and IRC account (201; the existing link if the caller has linked it already). The request must be signed by one of the caller's paired devices, and token must be an access token for this API issued within the last 10 minutes (400 with type urn:subspace:problem:identity-token-unusable otherwise). The first account of a provider organisation linked into an organisation other than its own needs an administrator, with an account that is not an Entra guest's: for Entra, the token must carry the optional acct claim, 0, for a member of the tenant (403). 409 with type urn:subspace:problem:identity-conflict when the account is linked to or registered as another member, the caller has linked another account of that provider, or the provider organisation is linked into another organisation or has its own organisation with members. The other problems, including 400 for a malformed body, are about:blank.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityLink"
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "get": {
+        "tags": [
+          "linkedIdentities"
+        ],
+        "operationId": "linkedIdentities.listMyIdentities",
+        "parameters": [],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LinkedIdentity"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "The provider accounts linked to the caller. Its problems are about:blank."
+      }
+    },
+    "/api/v1/me/identities/{identityId}": {
+      "delete": {
+        "tags": [
+          "linkedIdentities"
+        ],
+        "operationId": "linkedIdentities.unlinkMyIdentity",
+        "parameters": [
+          {
+            "name": "identityId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "LinkedIdentity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedIdentity"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "Unlinks one of the caller's provider accounts: from its next request it no longer signs in as the caller. Their devices and other accounts keep working. Its problems are about:blank."
+      }
+    },
+    "/api/v1/members/{memberId}/identities": {
+      "get": {
+        "tags": [
+          "linkedIdentities"
+        ],
+        "operationId": "linkedIdentities.listMemberIdentities",
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LinkedIdentity"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "An organisation administrator lists the provider accounts linked to a person. Its problems are about:blank."
+      }
+    },
+    "/api/v1/members/{memberId}/identities/{identityId}": {
+      "delete": {
+        "tags": [
+          "linkedIdentities"
+        ],
+        "operationId": "linkedIdentities.unlinkMemberIdentity",
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          },
+          {
+            "name": "identityId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "LinkedIdentity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedIdentity"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "An organisation administrator unlinks a provider account from a person, such as one linked by mistake: from its next request it no longer signs in as them. Its problems are about:blank."
+      }
+    },
     "/api/v1/audit": {
       "get": {
         "tags": [
@@ -37192,6 +38766,407 @@
         ],
         "additionalProperties": false
       },
+      "LinkedIdentity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "memberId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "workos",
+              "entra"
+            ]
+          },
+          "externalOrganisation": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "memberId",
+          "provider",
+          "externalOrganisation",
+          "subject",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "IdentityLink": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false
+      },
+      "PairingInvite": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "memberId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "redeemedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdByUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdByDeviceId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "memberId",
+          "createdAt",
+          "expiresAt",
+          "redeemedAt",
+          "revokedAt",
+          "createdByUserId",
+          "createdByDeviceId"
+        ],
+        "additionalProperties": false
+      },
+      "PairingInviteIssued": {
+        "type": "object",
+        "properties": {
+          "inviteId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "memberId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "memberCreated": {
+            "type": "boolean"
+          },
+          "invite": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "inviteId",
+          "memberId",
+          "memberCreated",
+          "invite",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "NewOwnPairingInvite": {
+        "type": "object",
+        "properties": {
+          "expiresInSeconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 300,
+                "maximum": 86400
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NewPairingInvite": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "memberId": {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              "expiresInSeconds": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 86400
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "memberId"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "displayName": {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              "email": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+                    "maxLength": 254
+                  },
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "admin",
+                      "member"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expiresInSeconds": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 86400
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "displayName"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "memberId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "EdDSA",
+              "ES256"
+            ]
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "api",
+                "irc"
+              ]
+            }
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "pairingInviteId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invitedByUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invitedByDeviceId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastUsedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokedByUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "memberId",
+          "fingerprint",
+          "algorithm",
+          "scopes",
+          "label",
+          "createdAt",
+          "pairingInviteId",
+          "invitedByUserId",
+          "invitedByDeviceId",
+          "lastUsedAt",
+          "revokedAt",
+          "revokedByUserId",
+          "current"
+        ],
+        "additionalProperties": false
+      },
       "DevicePaired": {
         "type": "object",
         "properties": {
@@ -37218,7 +39193,8 @@
             "items": {
               "type": "string",
               "enum": [
-                "api"
+                "api",
+                "irc"
               ]
             }
           },
@@ -43221,6 +45197,15 @@
     },
     {
       "name": "pairing"
+    },
+    {
+      "name": "devices"
+    },
+    {
+      "name": "invites"
+    },
+    {
+      "name": "linkedIdentities"
     },
     {
       "name": "audit"

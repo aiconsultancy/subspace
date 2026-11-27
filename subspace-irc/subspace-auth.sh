@@ -2,8 +2,8 @@
 # Ergo auth-script hook: ask the Subspace API whether a login is valid.
 #
 # Ergo writes one JSON line on stdin and reads one JSON line from stdout.
-# Only API-issued credentials (a passphrase with the configured prefix) and,
-# when enabled, certificate logins reach the API. Logins to local-only
+# Only API-issued credentials (a passphrase with one of the configured
+# prefixes) and, when enabled, certificate logins reach the API. Logins to local-only
 # accounts and every other login are refused at once, so a local account's
 # password never leaves this server. The request is posted unchanged; the
 # answer to Ergo is always a fresh object built from validated values, never
@@ -27,7 +27,12 @@ refuse() {
 # rather than waiting for the end of input.
 IFS= read -r request || refuse 'no request on stdin'
 
-prefix=${IRC_AUTH_PASSPHRASE_PREFIX:-sirc1.}
+# The prefixes of API-issued credentials, separated by commas or whitespace.
+# The entrypoint always passes its checked list, which defaults to sirc1. (a
+# person signed in through a provider) and sirc2. (bound to the key credential
+# that asked for it); without one, nothing reaches the API.
+prefixes=${IRC_AUTH_PASSPHRASE_PREFIX:-}
+[ -n "$prefixes" ] || refuse 'IRC_AUTH_PASSPHRASE_PREFIX is not set'
 cert_logins=${IRC_AUTH_CERT_LOGINS:-false}
 # The account names that only sign in locally (the seeded accounts, channel
 # founders, the operator and IRC_AUTH_LOCAL_ACCOUNTS), written by the
@@ -48,14 +53,16 @@ fi
 
 # Ergo's ASCII case mapping folds A-Z only, as ascii_downcase does. A device
 # suffix (name@device) never changes the account.
-decision=$(printf '%s\n' "$request" | jq -r --argjson names "$names" --arg prefix "$prefix" --arg certs "$cert_logins" '
+decision=$(printf '%s\n' "$request" | jq -r --argjson names "$names" --arg prefixes "$prefixes" --arg certs "$cert_logins" '
     def text($key): .[$key] | type == "string" and . != "";
-    if type != "object" then "local"
+    ($prefixes | [splits("[\\s,]+") | select(. != "")]) as $prefixes
+    | if type != "object" then "local"
     elif text("accountName")
         and ((.accountName | sub("@.*"; "") | ascii_downcase) as $name | any($names[]; . == $name))
     then "local"
     elif text("passphrase") then
-        if .passphrase | startswith($prefix) then "api" else "local" end
+        .passphrase as $passphrase
+        | if any($prefixes[]; . as $prefix | $passphrase | startswith($prefix)) then "api" else "local" end
     elif text("certfp") and $certs == "true" then "api"
     else "local" end' 2>/dev/null) || refuse 'Ergo sent an invalid request'
 [ "$decision" = api ] || refuse

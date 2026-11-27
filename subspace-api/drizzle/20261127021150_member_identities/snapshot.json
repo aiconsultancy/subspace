@@ -1,0 +1,316 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "588495b1-7346-4a1c-9e34-a49868cae960",
+  "prevIds": [
+    "17d659de-7dc6-4e30-be3d-6750d121a89f"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "member_identities"
+      ],
+      "writes": [
+        "s|tbl|public.member_identities",
+        "n|tbl|public.member_identities",
+        "e|tbl|public.member_identities",
+        "n|rel|public.member_identities",
+        "n|type|public.member_identities",
+        "n|rel|public.member_identities_pkey",
+        "n|rel|public.member_identities_scope_id",
+        "n|rel|public.member_identities_account",
+        "n|rel|public.member_identities_one_per_provider"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "member_identities"
+      ],
+      "writes": [
+        "s|fk|public.member_identities.member_identities_organisation_id_organisations_id_fkey",
+        "n|fk|public.member_identities.member_identities_organisation_id_organisations_id_fkey",
+        "e|fk|public.member_identities.member_identities_organisation_id_organisations_id_fkey",
+        "n|con|public.member_identities.member_identities_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.member_identities",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.member_identities.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "member_identities"
+      ],
+      "writes": [
+        "s|fk|public.member_identities.member_identities_p3cJIt8Y6fjS_fkey",
+        "n|fk|public.member_identities.member_identities_p3cJIt8Y6fjS_fkey",
+        "e|fk|public.member_identities.member_identities_p3cJIt8Y6fjS_fkey",
+        "n|con|public.member_identities.member_identities_p3cJIt8Y6fjS_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.member_identities",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.member_identities.organisation_id",
+        "n|col|public.member_identities.user_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "member_identities",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "provider",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "external_organisation",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "subject",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "member_identities_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "member_identities_p3cJIt8Y6fjS_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "user_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "member_identities_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "member_identities_scope_id",
+        "nameExplicit": true,
+        "columns": [
+          "organisation_id",
+          "id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "member_identities_account",
+        "nameExplicit": true,
+        "columns": [
+          "provider",
+          "external_organisation",
+          "subject"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "member_identities_one_per_provider",
+        "nameExplicit": true,
+        "columns": [
+          "organisation_id",
+          "user_id",
+          "provider"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "member_identities",
+        "name": "member_identities_provider",
+        "value": "\"provider\" in ('workos', 'entra')",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

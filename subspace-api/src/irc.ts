@@ -17,53 +17,97 @@ import { Host, Port } from "./validation";
  * IRC sign-in through the API. A signed-in user asks for a short-lived credential and gives it to
  * the IRC server with SASL PLAIN; the server's auth-script asks this API whether it is good.
  *
- * A credential is `sirc1.` and the unpadded base64url encoding of 56 bytes: the user's 16-byte
- * UUID, the expiry as 8 bytes of seconds since the epoch (big-endian), and an HMAC-SHA256 keyed by
- * IRC_CREDENTIAL_SECRET over `sirc1.`, those 24 bytes and the canonical host of the IRC server it
- * was issued for. The host is not in the credential: the hook checks the signature against each
- * host in IRC_AUTH_SERVERS, so a credential works only on a server this deployment lists. It is
- * stateless, valid until the expiry and reusable until then. Clients treat it as opaque.
+ * A credential is a prefix and the unpadded base64url encoding of a body and its MAC. The body is
+ * the user's 16-byte UUID and the expiry as 8 bytes of seconds since the epoch (big-endian); in a
+ * `sirc2.` credential it is followed by the 16-byte UUID of the key credential that signed the
+ * request for it, a paired device or an agent's key. The MAC is an HMAC-SHA256 keyed by
+ * IRC_CREDENTIAL_SECRET over the prefix, the body and the canonical host of the IRC server it was
+ * issued for. `sirc1.` (24-byte body, 75 characters after the prefix) is issued to a member signed
+ * in through an identity provider, `sirc2.` (40-byte body, 96 characters) to one signed in with a
+ * key credential.
+ *
+ * The host is not in the credential: the hook checks the signature against each host in
+ * IRC_AUTH_SERVERS, so a credential works only on a server this deployment lists. A credential is
+ * valid until the expiry and reusable until then; the hook refuses a `sirc2.` credential as well
+ * once its key credential is revoked, at the next sign-in. Clients treat it as opaque.
  */
 export const ircCredentialPrefix = "sirc1.";
+export const boundIrcCredentialPrefix = "sirc2.";
 export const ircCredentialLifetimeSeconds = 600;
-const bodyLength = 24;
 const macLength = 32;
-const credentialShape = /^sirc1\.[A-Za-z0-9_-]{75}$/u;
+/** A format's body length, and its shape: the prefix and the unpadded base64url of body and MAC. */
+const format = (prefix: string, bodyLength: number) => ({
+  bodyLength,
+  shape: new RegExp(
+    `^${prefix.replaceAll(".", "\\.")}[A-Za-z0-9_-]{${Math.ceil(((bodyLength + macLength) * 4) / 3)}}$`,
+    "u",
+  ),
+});
+const formats = {
+  [ircCredentialPrefix]: format(ircCredentialPrefix, 24),
+  [boundIrcCredentialPrefix]: format(boundIrcCredentialPrefix, 40),
+} as const;
+type Prefix = keyof typeof formats;
+
+/** The credential format a passphrase claims by its prefix, if it claims one. */
+const prefixOf = (passphrase: string): Prefix | undefined => {
+  const prefix = passphrase.slice(0, ircCredentialPrefix.length);
+  return prefix === ircCredentialPrefix || prefix === boundIrcCredentialPrefix ? prefix : undefined;
+};
 
 type Secret = Redacted.Redacted<string>;
 
-function signature(secret: Secret, body: Uint8Array, host: string) {
+function signature(secret: Secret, prefix: Prefix, body: Uint8Array, host: string) {
   return createHmac("sha256", Redacted.value(secret))
-    .update(ircCredentialPrefix)
+    .update(prefix)
     .update(body)
     .update(canonicalHost(host), "utf8")
     .digest();
 }
 
-/** A credential for `userId` on the IRC server at `host`, valid for ten minutes from `now`. */
-export function mintIrcCredential(secret: Secret, userId: string, host: string, now = Date.now()) {
-  const id = Buffer.from(userId.replaceAll("-", ""), "hex");
-  if (id.length !== 16) throw new Error("An IRC credential needs a user UUID.");
+const uuidBytes = (uuid: string, what: string) => {
+  const bytes = Buffer.from(uuid.replaceAll("-", ""), "hex");
+  if (bytes.length !== 16) throw new Error(`An IRC credential needs ${what} UUID.`);
+  return bytes;
+};
+
+const uuidText = (bytes: Uint8Array) => {
+  const hex = Buffer.from(bytes).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
+/**
+ * A credential for `userId` on the IRC server at `host`, valid for ten minutes from `now`, and
+ * bound to the key credential `credentialId` when there is one.
+ */
+export function mintIrcCredential(
+  secret: Secret,
+  userId: string,
+  host: string,
+  now = Date.now(),
+  credentialId?: string,
+) {
+  const prefix: Prefix = credentialId ? boundIrcCredentialPrefix : ircCredentialPrefix;
   const expiresAt = Math.floor(now / 1000) + ircCredentialLifetimeSeconds;
-  const body = Buffer.alloc(bodyLength);
-  id.copy(body, 0);
+  const body = Buffer.alloc(formats[prefix].bodyLength);
+  uuidBytes(userId, "a user").copy(body, 0);
   body.writeBigUInt64BE(BigInt(expiresAt), 16);
+  if (credentialId) uuidBytes(credentialId, "a key credential").copy(body, 24);
   return {
     password:
-      ircCredentialPrefix +
-      Buffer.concat([body, signature(secret, body, host)]).toString("base64url"),
+      prefix + Buffer.concat([body, signature(secret, prefix, body, host)]).toString("base64url"),
     expiresAt: new Date(expiresAt * 1000),
   };
 }
 
 export type CredentialCheck =
-  | { readonly ok: true; readonly userId: string }
+  | { readonly ok: true; readonly userId: string; readonly credentialId?: string }
   | { readonly ok: false; readonly reason: "malformed" | "signature" | "expired" };
 
 /**
- * The user a credential names, if it is well formed, carries this deployment's signature for one
- * of `hosts`, compared in constant time, and has not expired at `now`. An expiry further ahead
- * than a fresh credential's is refused as well.
+ * The user a credential names, and the key credential it is bound to if any, if it is well
+ * formed, carries this deployment's signature for one of `hosts`, compared in constant time, and
+ * has not expired at `now`. An expiry further ahead than a fresh credential's is refused as well.
  */
 export function readIrcCredential(
   secret: Secret,
@@ -71,8 +115,11 @@ export function readIrcCredential(
   hosts: readonly string[],
   now = Date.now(),
 ): CredentialCheck {
-  if (!credentialShape.test(passphrase)) return { ok: false, reason: "malformed" };
-  const encoded = passphrase.slice(ircCredentialPrefix.length);
+  const prefix = prefixOf(passphrase);
+  if (!prefix) return { ok: false, reason: "malformed" };
+  const { bodyLength, shape } = formats[prefix];
+  if (!shape.test(passphrase)) return { ok: false, reason: "malformed" };
+  const encoded = passphrase.slice(prefix.length);
   const raw = Buffer.from(encoded, "base64url");
   if (raw.length !== bodyLength + macLength || raw.toString("base64url") !== encoded)
     return { ok: false, reason: "malformed" };
@@ -80,17 +127,16 @@ export function readIrcCredential(
   const given = raw.subarray(bodyLength);
   let signed = false;
   for (const host of new Set(hosts.map(canonicalHost)))
-    signed = timingSafeEqual(signature(secret, body, host), given) || signed;
+    signed = timingSafeEqual(signature(secret, prefix, body, host), given) || signed;
   if (!signed) return { ok: false, reason: "signature" };
   const expiresAt = body.readBigUInt64BE(16);
   const seconds = BigInt(Math.floor(now / 1000));
   if (expiresAt <= seconds || expiresAt > seconds + BigInt(ircCredentialLifetimeSeconds + 60))
     return { ok: false, reason: "expired" };
-  const hex = body.subarray(0, 16).toString("hex");
-  return {
-    ok: true,
-    userId: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`,
-  };
+  const userId = uuidText(body.subarray(0, 16));
+  return prefix === boundIrcCredentialPrefix
+    ? { ok: true, userId, credentialId: uuidText(body.subarray(24, 40)) }
+    : { ok: true, userId };
 }
 
 /** Whether two secrets are equal, compared in constant time whatever their lengths. */
@@ -120,7 +166,7 @@ export const ircCredentialGroup = HttpApiGroup.make("ircCredentials")
       error: endpointErrors,
     }).annotate(
       OpenApi.Description,
-      "Issues a short-lived password for the caller's IRC account on the IRC server at host and port, to give that server with SASL PLAIN as the account (optionally followed by @ and a device name). The password is opaque, at most 200 characters, valid for ten minutes, reusable until it expires and accepted only by that deployment's IRC servers. 404 when this server does not issue IRC credentials or does not sign people in to that IRC server; 409 for an agent without an IRC nick.",
+      "Issues a short-lived password for the caller's IRC account on the IRC server at host and port, to give that server with SASL PLAIN as the account (optionally followed by @ and a device name). The password is opaque, at most 200 characters, valid for ten minutes, reusable until it expires and accepted only by that deployment's IRC servers. A caller signed in with a key credential, a paired device or an agent's key, needs its irc scope (403 without it), and the password it receives stops working at the next IRC sign-in once that credential is revoked; a connection already established is not closed. 404 when this server does not issue IRC credentials or does not sign people in to that IRC server; 409 for an agent without an IRC nick.",
     ),
   )
   .prefix(versionedApi)
@@ -168,7 +214,15 @@ export const ircCredentialHandlers =
                 : "This account has no username yet. Sign in again shortly.",
             ),
           );
-        const { password, expiresAt } = mintIrcCredential(secret, member.id, payload.host);
+        // A password issued to a key credential is bound to it, so revoking the device or key
+        // stops its passwords at the next IRC sign-in.
+        const { password, expiresAt } = mintIrcCredential(
+          secret,
+          member.id,
+          payload.host,
+          Date.now(),
+          member.keyCredential?.id,
+        );
         return { account: member.username, password, expiresAt: utcSeconds(expiresAt) };
       }),
     );
@@ -187,6 +241,7 @@ type Refusal =
         | "no credential"
         | "certificate"
         | "unknown certificate"
+        | "revoked credential"
         | "scope"
         | "not an agent"
         | "account"
@@ -279,12 +334,13 @@ const decide = (hook: Hook, secret: Secret, hosts: readonly string[], text: stri
     if (!input) return refused("body");
     if (input.passphrase === undefined || input.passphrase === "")
       return input.certfp ? yield* certificateSignIn(hook, input.certfp) : refused("no credential");
-    if (!input.passphrase.startsWith(ircCredentialPrefix)) return refused("no credential");
+    if (!prefixOf(input.passphrase)) return refused("no credential");
     const credential = readIrcCredential(secret, input.passphrase, hosts);
     if (!credential.ok) return credential;
     const db = yield* Database;
     const [user] = yield* db
       .select({
+        organisationId: users.organisationId,
         active: users.active,
         username: users.username,
         provider: organisations.provider,
@@ -294,6 +350,23 @@ const decide = (hook: Hook, secret: Secret, hosts: readonly string[], text: stri
       .innerJoin(organisations, eq(organisations.id, users.organisationId))
       .where(eq(users.id, credential.userId));
     if (!user) return { ...refused("unknown user"), userId: credential.userId };
+    // A bound password works only while its key credential is an active one of the same user
+    // with scope irc, checked at every sign-in; a connection already established may finish.
+    if (credential.credentialId) {
+      const [key] = yield* db
+        .select({ scopes: agentCredentials.scopes })
+        .from(agentCredentials)
+        .where(
+          and(
+            eq(agentCredentials.organisationId, user.organisationId),
+            eq(agentCredentials.userId, credential.userId),
+            eq(agentCredentials.id, credential.credentialId),
+            isNull(agentCredentials.revokedAt),
+          ),
+        );
+      if (!key) return { ...refused("revoked credential"), userId: credential.userId };
+      if (!key.scopes.includes("irc")) return { ...refused("scope"), userId: credential.userId };
+    }
     const rejection = !user.active
       ? "inactive"
       : user.provider !== hook.provider || user.externalId !== hook.externalOrganisation
@@ -305,6 +378,7 @@ const decide = (hook: Hook, secret: Secret, hosts: readonly string[], text: stri
             ? "account"
             : null;
     if (rejection) return { ...refused(rejection), userId: credential.userId };
+    if (credential.credentialId) yield* touchCredential(credential.credentialId);
     return { ok: true as const, accountName: user.username!, userId: credential.userId };
   });
 
@@ -315,8 +389,8 @@ const noStore = { "Cache-Control": "no-store" };
  * OpenAPI document, the MCP tools and the bearer middleware. Only the hook token authorises it.
  * Once the token is accepted the answer is always 200, `{"success":true,"accountName":...}` or
  * `{"success":false}`, so Ergo falls back to its own accounts for anything that is not a good
- * credential of this organisation: a `sirc1.` passphrase, or, with no passphrase, the certfp of an
- * agent's key credential with scope `irc`.
+ * credential of this organisation: a `sirc1.` or `sirc2.` passphrase, or, with no passphrase, the
+ * certfp of an agent's key credential with scope `irc`.
  */
 export function ircAuthenticateRoute(hook: Hook, secret: Secret, hosts: readonly string[]) {
   return HttpRouter.add("POST", ircAuthenticatePath, (request) =>

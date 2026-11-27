@@ -177,7 +177,13 @@ const database = new Proxy(
 const auth = Layer.succeed(
   BearerAuth,
   BearerAuth.of({
-    bearer: (next) => Effect.provideService(next, CurrentMember, { ...human, tokenExpiresAt: 0 }),
+    bearer: (next) =>
+      Effect.provideService(next, CurrentMember, {
+        ...human,
+        tokenExpiresAt: 0,
+        roleSource: "provisioned",
+        tokenGrant: null,
+      }),
   }),
 );
 const api = HttpApi.make("decisions-test").add(decisionGroup);

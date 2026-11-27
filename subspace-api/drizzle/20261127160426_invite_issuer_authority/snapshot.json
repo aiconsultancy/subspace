@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "9728dcc3-83ed-4ac3-a9b7-c84e5c467f8f",
+  "prevIds": [
+    "73c65011-174b-44cc-ac58-f20eb616700a"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "pairing_invites",
+        "issuer_authority"
+      ],
+      "writes": [
+        "s|col|public.pairing_invites.issuer_authority",
+        "n|col|public.pairing_invites.issuer_authority",
+        "e|col|public.pairing_invites.issuer_authority"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "issuer_authority",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

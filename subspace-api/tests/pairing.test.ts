@@ -9,14 +9,8 @@ import { documentedApi } from "../src/api";
 import { config, deviceTokenAudience } from "../src/config";
 import { databaseLayer } from "../src/db";
 import { problemTypes } from "../src/problems";
-import {
-  bootstrapOwner,
-  BootstrapRefused,
-  deviceChoice,
-  mintPairingInvite,
-  pairingInvitePrefix,
-  readPairingInvite,
-} from "../src/pairing";
+import { mintPairingInvite, pairingInvitePrefix, readPairingInvite } from "../src/pairing-invites";
+import { bootstrapOwner, BootstrapRefused, deviceChoice } from "../src/pairing-owner";
 import fixture from "../docs/changes/workstation-pairing/device-token-fixture.json";
 import { agentKey, agentToken, deviceToken, type AgentKey } from "./certificates";
 import { entraTenant, isolatedDatabase, startApi, testDatabase } from "./entra-stack";
@@ -369,7 +363,7 @@ describe.skipIf(!testDatabase)("workstation pairing on the main listener", () =>
     expect(body).toMatchObject({
       memberId: owner.id,
       fingerprint: key.fingerprint,
-      scopes: ["api"],
+      scopes: ["api", "irc"],
       deviceToken: { audience: deviceAudience },
     });
     const signedIn = await me(await deviceToken(key, deviceAudience));
@@ -729,15 +723,8 @@ describe.skipIf(!testDatabase)("workstation pairing on the main listener", () =>
     }
   });
 
-  test("devices have the api scope only, and the agent credential routes cannot touch them", async () => {
+  test("the agent credential routes cannot touch a device", async () => {
     const { key, owner, body } = await pairDevice();
-    const irc = await api.call(
-      "/api/v1/me/irc-credential",
-      await deviceToken(key, deviceAudience),
-      "POST",
-      { host: "irc.example.com", port: 6697 },
-    );
-    expect(irc.status).toBe(403);
     const revoke = await api.call(
       `/api/v1/agents/${owner.id}/credentials/${body.credentialId}`,
       await deviceToken(key, deviceAudience),

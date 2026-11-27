@@ -21,7 +21,7 @@ import {
 } from "./validation";
 
 type Db = (typeof Database)["Service"];
-type AuditFields = Pick<
+export type AuditFields = Pick<
   typeof auditLogs.$inferInsert,
   "action" | "entityType" | "entityId" | "projectId" | "summary" | "changes"
 >;

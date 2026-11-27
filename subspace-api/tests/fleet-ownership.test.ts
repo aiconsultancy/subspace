@@ -354,7 +354,12 @@ describe("the refusal on the issue routes", () => {
     BearerAuth,
     BearerAuth.of({
       bearer: (next) =>
-        Effect.provideService(next, CurrentMember, { ...rearAdmiral, tokenExpiresAt: 0 }),
+        Effect.provideService(next, CurrentMember, {
+          ...rearAdmiral,
+          tokenExpiresAt: 0,
+          roleSource: "provisioned",
+          tokenGrant: null,
+        }),
     }),
   );
   const api = HttpApi.make("fleet-ownership-test").add(issueGroup);

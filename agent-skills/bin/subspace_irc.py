@@ -56,7 +56,7 @@ MSGID = re.compile(r"[A-Za-z0-9_.:+/=-]{1,128}")
 JOIN_ERRORS = {"403", "405", "471", "473", "474", "475", "477", "489"}
 # Shapes of keys and tokens that must never reach a channel's history.
 SECRET = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsirc1\.[A-Za-z0-9_-]{16,}|\bsenr1\.[A-Za-z0-9_.-]{16,}"
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsirc[12]\.[A-Za-z0-9_-]{16,}|\bsenr1\.[A-Za-z0-9_.-]{16,}"
     r"|\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.|\b(?:ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{20,}"
     r"|\bsk-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}"
 )

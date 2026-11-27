@@ -119,10 +119,20 @@ if [ -n "$auth_url" ]; then
     jq -Rse 'test("\\A[A-Za-z0-9._~+/=-]{32,1024}\\z")' < "$auth_token.tmp" >/dev/null ||
         { rm -f "$auth_token.tmp"; die 'The hook token must be 32–1024 characters of letters, digits and . _ ~ + / = -'; }
     mv "$auth_token.tmp" "$auth_token"
-    # Only passphrases with this prefix (API-issued credentials) reach the API.
-    auth_prefix=${auth_prefix:-sirc1.}
-    printf '%s' "$auth_prefix" | jq -Rse 'test("\\A[!-~]{1,64}\\z")' >/dev/null ||
-        die 'IRC_AUTH_PASSPHRASE_PREFIX must be 1–64 printable ASCII characters without whitespace'
+    # Only passphrases with one of these prefixes (API-issued credentials)
+    # reach the API: by default sirc1. and sirc2., the two formats the API
+    # issues. A list that is set replaces the default.
+    auth_prefix=$(printf '%s' "${auth_prefix:-sirc1. sirc2.}" | jq -Rrs '
+        [splits("[\\s,]+") | select(. != "")] | unique
+        | if length > 0 and length <= 8 and all(.[]; test("\\A[!-~]{1,64}\\z")) then join(" ") else error("invalid") end
+    ' 2>/dev/null) ||
+        die 'IRC_AUTH_PASSPHRASE_PREFIX must be 1–8 prefixes of 1–64 printable ASCII characters, separated by commas or whitespace'
+    case " $auth_prefix " in
+        *' sirc1. '*) case " $auth_prefix " in
+            *' sirc2. '*) ;;
+            *) printf 'subspace-irc: warning: IRC_AUTH_PASSPHRASE_PREFIX has sirc1. but not sirc2., so passwords the API binds to a key credential are refused\n' >&2 ;;
+        esac ;;
+    esac
     if [ -n "$auth_ca" ]; then
         case "$auth_ca" in /*) ;; *) die 'IRC_AUTH_API_CA_FILE must be an absolute path' ;; esac
         [ -r "$auth_ca" ] || die 'IRC_AUTH_API_CA_FILE must be readable by UID 10001'
@@ -239,8 +249,11 @@ if [ -f "$temporary/channels" ]; then
 fi
 
 if [ -n "$auth_url" ]; then
-    # A seeded password with the credential prefix would be sent to the API.
-    if jq -e --arg prefix "$auth_prefix" 'any(.[]; (.password // "") | startswith($prefix))' \
+    # A seeded password with a credential prefix would be sent to the API.
+    if jq -e --arg prefixes "$auth_prefix" '
+        ($prefixes | split(" ")) as $prefixes
+        | any(.[]; (.password // "") as $password
+            | any($prefixes[]; . as $prefix | $password | startswith($prefix)))' \
         "$temporary/seed" >/dev/null; then
         die 'Seeded passwords must not start with IRC_AUTH_PASSPHRASE_PREFIX'
     fi

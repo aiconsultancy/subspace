@@ -14,7 +14,7 @@ import {
 import { recordAudit } from "./audit";
 import { Database } from "./db";
 import { hasConstraint } from "./fleets";
-import { CurrentMember, type Member } from "./identity";
+import { CurrentMember, isAdministrator, type Member } from "./identity";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
 import { endpointErrors, problem, validationProblem } from "./problems";
 import { agentCredentials, organisations, users } from "./schema";
@@ -156,7 +156,7 @@ export const insertCredential = (
   });
 
 const adminOnly = (member: Member) =>
-  member.role !== "admin" || member.agentRank
+  !isAdministrator(member)
     ? Effect.fail(problem(403, "Agent credentials are managed by an organisation administrator."))
     : Effect.void;
 
