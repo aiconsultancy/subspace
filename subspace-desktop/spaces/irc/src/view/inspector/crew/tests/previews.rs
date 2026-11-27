@@ -36,7 +36,7 @@ fn same_revision_previews_keep_full_text_and_only_divergence_rearms() {
     let mut state = DetailState::new(feed("Starting…"), 0);
     let first = state.begin().unwrap();
     state.finish(first, Ok(roster(&full)));
-    assert!(state.update(feed(&projected), 0));
+    assert!(state.update(feed(projected), 0));
     assert_progress(&state, &full);
     assert_eq!(state.begin(), None, "matching preview does not poll");
 
@@ -64,6 +64,21 @@ fn a_new_revision_with_the_same_tail_does_not_shorten_fetched_text() {
         state.begin().is_some(),
         "a new revision still queues a read"
     );
+}
+
+#[test]
+fn a_feed_revision_behind_the_reply_never_replaces_its_fetched_text() {
+    let stale = format!("{} A check is still running.", "🌊".repeat(2000));
+    let full = "All checks have finished. ".repeat(100);
+    let mut state = DetailState::new(present(revision("Starting", 1)), 0);
+    let read = state.begin().unwrap();
+    assert!(state.update(present(revision(progress_tail(&stale), 2)), 0));
+    let fetched = revision(&full, 3);
+    state.finish(read, Ok(fetched.clone()));
+
+    let (shown, _, previews) = state.shown(true);
+    assert_eq!(shown.unwrap().current_task(), fetched.current_task());
+    assert!(!previews.fields(Some("chart")).contains(Field::Progress));
 }
 
 #[test]

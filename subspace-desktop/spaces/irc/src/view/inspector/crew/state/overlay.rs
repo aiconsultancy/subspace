@@ -51,6 +51,13 @@ pub(super) fn overlay_facts(
 fn overlay_task(context: &mut CrewContext, old: &CrewContext, new: &CrewContext) -> PartialFields {
     match (&mut context.current, &old.current, &new.current) {
         (Some(shown), Some(old), Some(new)) if shown.id == new.id => {
+            // The detail endpoint can see a revision the feed has not reached
+            // yet. A feed update after the read started is not always newer.
+            if task_revision(Some(shown)) == task_revision(Some(new))
+                || matches!((shown.updated_at, new.updated_at), (Some(fetched), Some(feed)) if fetched > feed)
+            {
+                return PartialFields::default();
+            }
             let partial = overlay_text(shown, old, new);
             overlay!(shown, old, new; status, updated_at);
             partial

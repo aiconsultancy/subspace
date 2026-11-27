@@ -4,8 +4,6 @@ use std::collections::HashMap;
 
 use subspace_client_fleet::model::{CrewMember, Task};
 
-use super::roster::task_revision;
-
 // The Fleet ship feed takes heads and tails in code points, with no ellipsis.
 const SUMMARY_LIMIT: usize = 180;
 const PHASE_LIMIT: usize = 80;
@@ -115,10 +113,6 @@ pub(super) fn diverged(old: &Task, new: &Task, full: Option<&Task>) -> bool {
 }
 
 pub(super) fn overlay_text(shown: &mut Task, old: &Task, new: &Task) -> PartialFields {
-    if task_revision(Some(shown)) == task_revision(Some(new)) {
-        // The response may already include the revision that arrived in flight.
-        return PartialFields::default();
-    }
     PartialFields(Field::ALL.map(|field| {
         let preview = field.text(new);
         if field.text(old) == preview || field.is_projection(field.text(shown), preview) {
