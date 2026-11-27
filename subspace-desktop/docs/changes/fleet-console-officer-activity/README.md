@@ -453,3 +453,16 @@ They:
   small whole anyway;
 - never refit the latest request to make room for another, though its
   refit would give back the most.
+
+The round 11 tests (SUB decision `25e1a31a`) are in files named for what
+they check. `test/activity-inline-charge.test.js` checks that a turn's
+measured length equals its compact JSON for varied turns, that the inline
+charge stays exact as events change the turns, and that an event measures
+only the changed turn's own fields and item; it fails at `ffec732c`, which
+has no `turnSizer`. `test/activity-stream-reopen.test.js` reads the
+snapshot again past a read that never settles, after a re-open and after
+the stream ends, and drops that read's late answer; each fails at
+`b2cb71c1`. `test/activity-refit.test.js` drops a planned refit the growth
+frees anyway, reserving no handover for it (Charon's probe A grown by
+1,200,000 bytes); it fails at `7103c1a3`. The refit tests share the
+helpers in `test/activity-helpers.js`.
