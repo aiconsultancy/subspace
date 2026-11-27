@@ -7,9 +7,10 @@
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, SharedString, TestAppContext, VisualTestContext};
 use serde_json::{Map, Value, json};
+use subspace_client_fleet::activity::AgentActivity;
 
 use super::super::super::remove::settle;
-use super::{answer, drawn, mounted, opened, refresh, running};
+use super::{answer, drawn, mounted, opened, refresh, running, turn};
 use crate::Irc;
 use crate::view::inspector::activity::{PIECE, inline_bytes, set_room, walked};
 
@@ -178,32 +179,60 @@ fn a_step_shows_the_token_counts_this_version_does_not_know(cx: &mut TestAppCont
     assert!(drawn(&on("tokens:1"), cx).contains("\"image\": \"IMAGE-TOKENS\""));
 }
 
+/// A snapshot of one turn, `t-now`, of `status`, whose one item is a step
+/// that counted `tokens`.
+fn step(status: &str, tokens: Value) -> AgentActivity {
+    let items = json!([{"id": "i2", "kind": "step", "seq": 6, "startedAt": 1,
+                        "updatedAt": 2, "status": "completed", "tokens": tokens}]);
+    serde_json::from_value(json!({
+        "agent": {"id": "aurora-lyra", "role": "captain", "backend": "opencode",
+                  "collected": true},
+        "turns": [turn("t-now", status, 0, items)],
+        "cursor": {"generation": "g1", "seq": 5}
+    }))
+    .unwrap()
+}
+
+/// What the snapshot's inline content of `board`'s turn view charges, and
+/// what it charges once the step of a turn of `status` keeps an 8 KiB
+/// token count this version does not know.
+fn step_charges(board: &Entity<Irc>, status: &str, cx: &mut VisualTestContext) -> (u64, u64) {
+    let inline = |cx: &mut VisualTestContext| {
+        board.read_with(cx, |board, _| {
+            inline_bytes(board.inspector_activity.as_ref().unwrap())
+        })
+    };
+    answer(board, Ok(step(status, json!({"input": 10}))), cx);
+    let before = inline(cx);
+    refresh(board, cx);
+    let extension = "x".repeat(8192);
+    let tokens = json!({"input": 10, "newCount": extension});
+    answer(board, Ok(step(status, tokens)), cx);
+    (before, inline(cx))
+}
+
 /// Round 7 delta (P2), SUB decision `084f5236` item 3 (Deimos's fixture):
 /// a token count this version does not know is kept to be shown, so the
 /// inline content charges every byte of it, its key and its value.
 #[gpui_kit::test]
 fn a_step_charges_the_token_counts_this_version_does_not_know(cx: &mut TestAppContext) {
     let (board, cx) = opened(cx);
-    let inline = |cx: &mut VisualTestContext| {
-        board.read_with(cx, |board, _| {
-            inline_bytes(board.inspector_activity.as_ref().unwrap())
-        })
-    };
-    let step = |tokens| {
-        running(
-            json!([{"id": "i2", "kind": "step", "seq": 6, "startedAt": 1,
-                        "updatedAt": 2, "status": "completed", "tokens": tokens}]),
-        )
-    };
-    answer(&board, Ok(step(json!({"input": 10}))), cx);
-    let before = inline(cx);
-    refresh(&board, cx);
-    let extension = "x".repeat(8192);
-    answer(
-        &board,
-        Ok(step(json!({"input": 10, "newCount": extension}))),
-        cx,
-    );
+    let (before, after) = step_charges(&board, "running", cx);
     assert_eq!(drawn(&on("tokens:0:key"), cx), "newCount");
-    assert_eq!(inline(cx) - before, 8192 + "newCount".len() as u64);
+    assert_eq!(after - before, 8192 + "newCount".len() as u64);
+}
+
+/// Round 8 delta (P3), SUB decision `084f5236` item 3: the step of a
+/// closed turn mounts nothing of its body, yet the token count it keeps
+/// is charged all the same, every byte of its key and its value.
+#[gpui_kit::test]
+fn a_closed_step_charges_the_token_counts_it_does_not_draw(cx: &mut TestAppContext) {
+    let (board, cx) = opened(cx);
+    let (before, after) = step_charges(&board, "completed", cx);
+    assert!(mounted(&on("tokens:0:key"), cx).is_empty(), "not mounted");
+    assert!(
+        mounted(CARD, cx).is_empty(),
+        "the closed turn mounts no card"
+    );
+    assert_eq!(after - before, 8192 + "newCount".len() as u64);
 }
