@@ -4,7 +4,7 @@
 [package]
 name = "subspace-terminal-panel"
 description = "The shell-docked terminal panel with local shell sessions"
-version = "0.12.1"
+version = "0.13.0"
 publish = false
 edition = "2024"
 license = "Apache-2.0"

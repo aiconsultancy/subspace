@@ -4,6 +4,173 @@ Release Please adds an entry for each release of the Subspace App, from the
 conventional commits that touch `subspace-desktop/`. See
 [Releases](docs/ways-of-working.md#releases).
 
+## [0.13.0](https://github.com/aiconsultancy/subspace/compare/subspace-desktop-v0.12.1...subspace-desktop-v0.13.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* apps built on the Framework use GPUI Kit 0.11 and GPUI Fast.
+* **framework:** `Channel::current()` is no longer `const`; the first read fixes the channel for the process. `product_data_name()` takes no argument. Every config, state, cache and log path the Framework manages now uses one directory name, the data name, in the platform config or state directory. The default agents directory, `~/.config/subspace/copilot/agents`, is unchanged. The Keychain service `<data name>.github` uses the data name too, as does any service an app derives from `state::directory_name()`, such as Subspace's `<data name>.fleet-api`. The account session store keeps the namespace the app passes. The data name is the name an app passes to `subspace_framework::product::configure_data_name`. Otherwise it is the binary name, which `prepare_context`, `record_new_install_theme` or `launch` sets, whichever runs first. A pre-release channel adds `-<type>`. For an app whose binary is not `subspace`, such as `harbor`, these are now looked for under `harbor[-<type>]` instead of `subspace[-<type>]`:
+    - the shared state directory's caches, the signed-in GitHub account list,
+      and the agent sessions and chat workspaces;
+    - `config.json` and `copilot.json` as the core reads them;
+    - the Keychain service `subspace[-<type>].github`, and
+      `subspace[-<type>].fleet-api` for an app that uses the fleet client.
+    The Settings state and config files, the saved PATH and the app log were
+    already under `harbor[-<type>]` and stay there. No files or Keychain items
+    are moved.
+    To keep the old shared location, call `configure_data_name("subspace")`
+    before `prepare_context`, `record_new_install_theme` and `launch`. It also
+    works after an early read. The Settings files, the saved PATH and the log
+    then also use `subspace`: one directory name is now the only layout.
+    If a data path is read before the data directory is named, the process
+    falls back to `subspace`. While that fallback is still implicit and differs
+    from the binary name, `prepare_context`, `record_new_install_theme` and
+    `launch` stop with an error before reading or writing anything.
+* **desktop:** the default build has no Copilot chat. Build with the `copilot` feature to keep it.
+* **issues:** the All initiatives choice is removed when the app has an API backend.
+
+### Features
+
+* **api-client:** keep one remembered initiative selected for every member ([bcf4687](https://github.com/aiconsultancy/subspace/commit/bcf468771f47d577359b9f3021ed410b66055db0))
+* **decisions:** propose and review decisions in the desktop ([c585c9b](https://github.com/aiconsultancy/subspace/commit/c585c9b0b88252209a4d48907006fc5cf6395b0d))
+* **desktop:** add a build-gated AgentsView Space ([#173](https://github.com/aiconsultancy/subspace/issues/173)) ([b8b9de6](https://github.com/aiconsultancy/subspace/commit/b8b9de6b4229fb46eb14104799993fc05908cc11))
+* **desktop:** add Projects and milestone management ([f6b5b02](https://github.com/aiconsultancy/subspace/commit/f6b5b026addc05b7a364a4f3e7fba0b743d83261))
+* **desktop:** add Projects and milestone management ([554fd86](https://github.com/aiconsultancy/subspace/commit/554fd86878f6177917159da024cb825ae2bf4391))
+* **desktop:** ask for sign-in at start-up with an API backend ([48779af](https://github.com/aiconsultancy/subspace/commit/48779af75ee65857c14113ac3c47095f16334f5f))
+* **desktop:** build the app without Copilot chat by default ([9ce2837](https://github.com/aiconsultancy/subspace/commit/9ce283734ef3fa1ea17b70762e686dc09b639592))
+* **desktop:** build with no API backend ([6e64acd](https://github.com/aiconsultancy/subspace/commit/6e64acd0cb879e8c4f824ab5fa4855cfc38a56b9))
+* **desktop:** edit issue descriptions as formatted Markdown ([#200](https://github.com/aiconsultancy/subspace/issues/200)) ([22b716a](https://github.com/aiconsultancy/subspace/commit/22b716a90a068b812a305aff9e2d6b06ab9d7cc3))
+* **desktop:** edit projects and drill into milestones ([2615083](https://github.com/aiconsultancy/subspace/commit/2615083a6f0c990cb98fb01d57fdba6834531a29))
+* **desktop:** edit projects and drill into milestones ([ded616a](https://github.com/aiconsultancy/subspace/commit/ded616a9c862f2b90822ee1061669aa6b5998cc5))
+* **desktop:** link decisions and refine workspace views ([#170](https://github.com/aiconsultancy/subspace/issues/170)) ([b44d7b4](https://github.com/aiconsultancy/subspace/commit/b44d7b4686b5dbd47b5f483c9b16f5447b7827ae))
+* **desktop:** make the public release ready to download and try ([1781a57](https://github.com/aiconsultancy/subspace/commit/1781a5712a575e6e6e36e90cb77a14c07a2fa99b))
+* **desktop:** match AgentsView with Twilight Two ([#183](https://github.com/aiconsultancy/subspace/issues/183)) ([661c213](https://github.com/aiconsultancy/subspace/commit/661c2137bda24413a50e5d7c8e4737310007557b))
+* **desktop:** nest issues under trackers and attach files to issues ([#199](https://github.com/aiconsultancy/subspace/issues/199)) ([33a7dfd](https://github.com/aiconsultancy/subspace/commit/33a7dfde91db5900d05ef5e09a910fcf7005ad26))
+* **desktop:** publish the no-API build beside the standard one ([6de09fb](https://github.com/aiconsultancy/subspace/commit/6de09fbb84290aca9faa4ed338f1c100dffa16d2))
+* **desktop:** read a connection file at start-up ([6d3f865](https://github.com/aiconsultancy/subspace/commit/6d3f86582d7f411e6de408790a3fd011902c1ad9))
+* **desktop:** show activity with the Subspace mark ([#202](https://github.com/aiconsultancy/subspace/issues/202)) ([23186a7](https://github.com/aiconsultancy/subspace/commit/23186a7429c0a219d7ccff1ff9abcbc1dd661773))
+* **desktop:** show contextual decision actions and refresh controls ([#188](https://github.com/aiconsultancy/subspace/issues/188)) ([090ad8f](https://github.com/aiconsultancy/subspace/commit/090ad8f1b9a2637a40d48d561b75d61092a002f3))
+* **desktop:** start Channels, Issues and Decisions on in release builds ([b1ec1d5](https://github.com/aiconsultancy/subspace/commit/b1ec1d5990de5bd3239e8ebbc4f4a181cd1413b7))
+* **framework:** demonstrate the tracker parent picker ([#203](https://github.com/aiconsultancy/subspace/issues/203)) ([a3eb49b](https://github.com/aiconsultancy/subspace/commit/a3eb49b4fe15a84c3e012974914f75a8fe45fb68))
+* **framework:** give the menu bar idiomatic menus on each platform ([#160](https://github.com/aiconsultancy/subspace/issues/160)) ([d83200f](https://github.com/aiconsultancy/subspace/commit/d83200f9633b924765df321396e24c0cb8b43ccb))
+* **framework:** let an app name its data directory and release channel ([#142](https://github.com/aiconsultancy/subspace/issues/142)) ([ae2d70e](https://github.com/aiconsultancy/subspace/commit/ae2d70e3a21aec259a50e99609c1749549d20096))
+* **irc:** close Channels for people in no initiative, hold for the first read and name an unreachable API ([e40af0f](https://github.com/aiconsultancy/subspace/commit/e40af0fee7a565ad354ccc32b34733df1cfb7628))
+* **irc:** connect Channels from the signed-in account with no settings ([7f6f9c3](https://github.com/aiconsultancy/subspace/commit/7f6f9c3427200d4b2aa25ea09acd61a8646b5120))
+* **irc:** connect to the signed-in account's fleet servers without settings ([e7abf9f](https://github.com/aiconsultancy/subspace/commit/e7abf9f1c3ce5a6d9f1fd3931170b5b6d412a6c3))
+* **irc:** discover new direct messages after reconnecting ([a64aff2](https://github.com/aiconsultancy/subspace/commit/a64aff2c7776dff5a404207d293aa5a6cf79f3d1))
+* **irc:** fetch a SASL login from a credential source at each connect ([df99582](https://github.com/aiconsultancy/subspace/commit/df995821223ab3f1a2e7137c5fefa91e8d24c708))
+* **irc:** keep account networks off without an API backend ([cd73c25](https://github.com/aiconsultancy/subspace/commit/cd73c250ad6f7c1693484bc01db3c0d5da647cf0))
+* **irc:** show the account's networks read-only in Settings › Channels ([32ce9ca](https://github.com/aiconsultancy/subspace/commit/32ce9ca70c58960167d28a4d74d76d2998343f6b))
+* **irc:** tracker commands and a message toolbar in Channels ([2f8eff0](https://github.com/aiconsultancy/subspace/commit/2f8eff0c38bb7b9090ace9b9e004f5a82e2d68a7))
+* **issues:** assign trackers and confirm child updates ([#187](https://github.com/aiconsultancy/subspace/issues/187)) ([1617d83](https://github.com/aiconsultancy/subspace/commit/1617d83b7008db727f5826cdf783225ede7bdab3))
+* **issues:** show and edit issue owners ([#209](https://github.com/aiconsultancy/subspace/issues/209)) ([c6b2f60](https://github.com/aiconsultancy/subspace/commit/c6b2f60c55631f1a9091c5ae28151b9fdabb2a56))
+* **issues:** show only the selected initiative and drop All initiatives ([943c920](https://github.com/aiconsultancy/subspace/commit/943c9208a89f2289bc5b351f05472cb0bddf6a7f))
+* let officers inspect images and share files in IRC ([#139](https://github.com/aiconsultancy/subspace/issues/139)) ([77aa4bc](https://github.com/aiconsultancy/subspace/commit/77aa4bc3d19580386ce29f2284d33c33152500f7))
+* **subspace-api-client:** read the username and ask for an IRC credential ([0d947db](https://github.com/aiconsultancy/subspace/commit/0d947dbfde65a46429094f9a7c13c7ddeea4c2aa))
+* **web:** sign a web Space in with the app's account on macOS ([8c3f03d](https://github.com/aiconsultancy/subspace/commit/8c3f03db5668e47d0d4647568e5e73022cbd48e4))
+* **web:** sign a web Space in with the app's account on macOS ([17243a3](https://github.com/aiconsultancy/subspace/commit/17243a303a3ba2328f50f0d99757da25ffc76710))
+* **web:** start a signed-in web Space where the app's state says ([5074b37](https://github.com/aiconsultancy/subspace/commit/5074b3756c78529900ae9cedc50b30b910750378))
+* **web:** start a signed-in web Space where the app's state says ([4e9b925](https://github.com/aiconsultancy/subspace/commit/4e9b9256f2d8e7efbd1d5e3549ed0feb16595f4c))
+
+
+### Bug Fixes
+
+* **desktop:** check connection values after the variables and blame their source ([30ea130](https://github.com/aiconsultancy/subspace/commit/30ea130e1648a55c225e0078a01cb79c4d1343f8))
+* **desktop:** check sign-in settings at start-up and open dev sign-in on a hosted API ([f7237dd](https://github.com/aiconsultancy/subspace/commit/f7237dd23f5eac776a2d2104c008392903df39f7))
+* **desktop:** check the Copilot build's licences too ([12f43cb](https://github.com/aiconsultancy/subspace/commit/12f43cbec2b1ceb40d3f16869c5f8c79e296936b))
+* **desktop:** follow-up fixes for the optional Copilot build ([0f52440](https://github.com/aiconsultancy/subspace/commit/0f52440c80e2804b2bf3479837550bbe229bf831))
+* **desktop:** guard milestone edits during scope changes ([2de45bf](https://github.com/aiconsultancy/subspace/commit/2de45bf14f75789801c461a9f2f4e239ddacf9fe))
+* **desktop:** guide recovery from connection failures ([e4c41dc](https://github.com/aiconsultancy/subspace/commit/e4c41dc326d430ed65fad319746dfd5280ab114f))
+* **desktop:** improve connection recovery and IRC threads ([bcdd4a2](https://github.com/aiconsultancy/subspace/commit/bcdd4a286bab518e0fc47991a5c2bb8ab215faaf))
+* **desktop:** keep updates in a build with no API backend ([f0e4503](https://github.com/aiconsultancy/subspace/commit/f0e45034fff31e511f5aca9c647d124f7040de1f))
+* **desktop:** let a variable complete or correct the connection file ([136e65a](https://github.com/aiconsultancy/subspace/commit/136e65afc1979c68883c1e283ed171c2593d69ee))
+* **desktop:** let About, --version and upgrade run past a broken setting ([580c5e7](https://github.com/aiconsultancy/subspace/commit/580c5e769d43df8765fcf1b376bcd09023539836))
+* **desktop:** offer no account when development sign-in cannot reach its API ([d786e8f](https://github.com/aiconsultancy/subspace/commit/d786e8f94b24d098e17f32a56490162783a785bd))
+* **desktop:** preserve direct IRC addressing and recovery hints ([34737a4](https://github.com/aiconsultancy/subspace/commit/34737a4290481acc345da72bf0a39c6200b1b4bb))
+* **desktop:** preserve project fields and milestone navigation ([66c340d](https://github.com/aiconsultancy/subspace/commit/66c340d280ff39ece3da96cf2ac05ec1baaf2343))
+* **desktop:** public release review fixes ([8b63c2f](https://github.com/aiconsultancy/subspace/commit/8b63c2f47dffafa1cada72587b526fb44274b954))
+* **desktop:** refuse a bad SUBSPACE_NO_API in the PowerShell installer ([192a2a9](https://github.com/aiconsultancy/subspace/commit/192a2a94f6e5cfc369b34ad7dd7ce5797a1595d7))
+* **desktop:** restore milestone scroll after linked issues load ([d24fdc1](https://github.com/aiconsultancy/subspace/commit/d24fdc1e0e0333a807fdba6325726392687837f2))
+* **desktop:** show Fleet Console in a build with no API backend ([ad9f98d](https://github.com/aiconsultancy/subspace/commit/ad9f98d60b253c6fa32c5e0fb104e766adabad40))
+* **desktop:** stabilise PR references and scope decision reads ([#177](https://github.com/aiconsultancy/subspace/issues/177)) ([17305a3](https://github.com/aiconsultancy/subspace/commit/17305a3e4290270a4281f360f49257a760d70316))
+* **desktop:** update a build with no API backend only from its own archives ([931ce40](https://github.com/aiconsultancy/subspace/commit/931ce407a5733ab1a787634426a9eb6edfac5432))
+* **fleet:** show the link the service last announced ([#190](https://github.com/aiconsultancy/subspace/issues/190)) ([a93a213](https://github.com/aiconsultancy/subspace/commit/a93a213f8f88ac200c2d4de28c1b1032ad3bf7e8))
+* **framework:** keep plain secrets verbatim and verify split ones ([d41d146](https://github.com/aiconsultancy/subspace/commit/d41d146858c2da9f908f665a3e320711181bb756))
+* **framework:** land the reviewed Windows credential split ([19f8187](https://github.com/aiconsultancy/subspace/commit/19f8187acee6711df165d644c96782c57a0da06e))
+* **framework:** line up the workspace strips and draw one line per edge ([#162](https://github.com/aiconsultancy/subspace/issues/162)) ([c11ffb4](https://github.com/aiconsultancy/subspace/commit/c11ffb4569917840777fc7a9036f012e60bb61cd))
+* **framework:** repair [#162](https://github.com/aiconsultancy/subspace/issues/162)'s merge into main ([#206](https://github.com/aiconsultancy/subspace/issues/206)) ([42953c1](https://github.com/aiconsultancy/subspace/commit/42953c162ac6e926d0e15f50c7a98453a5710cff))
+* **framework:** restore Markdown editing with GPUI Fast ([#207](https://github.com/aiconsultancy/subspace/issues/207)) ([9a7ad82](https://github.com/aiconsultancy/subspace/commit/9a7ad829031f5831cb5945e9d811bc55086931c3))
+* **framework:** sweep keychain chunks only at sign-out, and only exactly ([91b404c](https://github.com/aiconsultancy/subspace/commit/91b404c56fda20e47561d0c09fb2ddffe2bc28f4))
+* **github:** count a 400 as a refusal only when GitHub found nothing ([3b689f4](https://github.com/aiconsultancy/subspace/commit/3b689f49cf9714d207525c5d8f734470490520ea))
+* **github:** judge each request of a reference read by its own tick ([7b72e73](https://github.com/aiconsultancy/subspace/commit/7b72e734d38043ea334a21f93af9df362ea4e56b))
+* **github:** keep an in-flight access decision when another account signs in or out ([9d7bb59](https://github.com/aiconsultancy/subspace/commit/9d7bb59dd2db9eef7ac36b1d310077d1b9f5df0c))
+* **irc:** bind each IRC credential to the server it is for ([de96352](https://github.com/aiconsultancy/subspace/commit/de963529e890eca280e7bb731ed2659b16e9c836))
+* **irc:** check a staged switch against the account signed in at Save ([07c6e8c](https://github.com/aiconsultancy/subspace/commit/07c6e8c57ee24091838df8ff1979403aa7b4cf64))
+* **irc:** close private reactions again when a later initiatives read fails ([5371343](https://github.com/aiconsultancy/subspace/commit/5371343045276fb6a00bc5db033838719c892e43))
+* **irc:** close the findings left open on the Channels tracker commands ([a9b4a4b](https://github.com/aiconsultancy/subspace/commit/a9b4a4b8811f4cc020e52f75a9c5ce8b0cb87ef8))
+* **irc:** compare a tracker's API base as a URL, its path exactly ([29028f7](https://github.com/aiconsultancy/subspace/commit/29028f7735e962f1f0bf098bac7daeb36b465e59))
+* **irc:** compare an unconfirmed command in one canonical form ([cfd92c0](https://github.com/aiconsultancy/subspace/commit/cfd92c02ee302222d1f75f09a60892c6e3628247))
+* **irc:** count a decision's length as the API does, with its own message ([5c657d8](https://github.com/aiconsultancy/subspace/commit/5c657d8f2d8d319ccc376e182dd0f841cc599f2b))
+* **irc:** count a login's lifetime from its request, at most ten minutes ([f3a740d](https://github.com/aiconsultancy/subspace/commit/f3a740d27579c3e8a1aeb6e01f0aec9cd406cb69))
+* **irc:** de-duplicate a rename only within the reports of one NICK ([b9c5156](https://github.com/aiconsultancy/subspace/commit/b9c5156d02d559cb997a569b106a34c437df78a4))
+* **irc:** decide a stored line's account from its network alone ([f59b6df](https://github.com/aiconsultancy/subspace/commit/f59b6df909d09fc7443b8e12060ff57232497c84))
+* **irc:** drop a conversation's reaction revision once the book holds nothing for it ([559701f](https://github.com/aiconsultancy/subspace/commit/559701f4c4324c45129eb7320174125504ed52bc))
+* **irc:** drop a refused sign-in at once and check it again when sent ([ca5690a](https://github.com/aiconsultancy/subspace/commit/ca5690afd2ded9dfa0531a2c8adb98c477b77e2a))
+* **irc:** fence an account's networks the moment the account changes ([6e90e04](https://github.com/aiconsultancy/subspace/commit/6e90e044ea5a16e92d432fa5c2b816b8481447d3))
+* **irc:** fit tracker summaries and titles to the API's UTF-16 limits ([d14239d](https://github.com/aiconsultancy/subspace/commit/d14239dfce8fa5d04df0c21ea16fcf359cbb20a6))
+* **irc:** give /assign no default captain the API records no user for ([cf124fa](https://github.com/aiconsultancy/subspace/commit/cf124fabb095dfde1b11509cb94580bbb4371ecb))
+* **irc:** give account networks ids no saved network can take ([f76e2a4](https://github.com/aiconsultancy/subspace/commit/f76e2a45cc1ee7c6fde5d8d715a67ebd8d26e02b))
+* **irc:** group and name every fleet channel once the fleet details load ([7473506](https://github.com/aiconsultancy/subspace/commit/7473506685601c1bbdf63201bf9a549efd99b675))
+* **irc:** group and name every fleet channel once the fleet details load ([4557fd1](https://github.com/aiconsultancy/subspace/commit/4557fd1a46200a84d55613bb89cdd543d79f90f5))
+* **irc:** hold a hand-typed private TAGMSG to the reactions gate ([affdccb](https://github.com/aiconsultancy/subspace/commit/affdccb71c0a1dd5a7212db143546be9e22e56b8))
+* **irc:** hold a hand-typed reaction to the reactions gate, stop included ([eb1faf8](https://github.com/aiconsultancy/subspace/commit/eb1faf8c7cb369a843dd4ce33b487805bb959a6b))
+* **irc:** keep a message's IRC provenance out of the tracker's Markdown ([6a306b7](https://github.com/aiconsultancy/subspace/commit/6a306b7a205e2682adf316f2aed6358d51abfdc6))
+* **irc:** keep a tracker command's draft and say why while another write runs ([9d80c36](https://github.com/aiconsultancy/subspace/commit/9d80c364a7874cb7855bf2c5b627fbb8b24d835d))
+* **irc:** keep account history across accounts and keep saved networks working on upgrade ([d1ce36f](https://github.com/aiconsultancy/subspace/commit/d1ce36fa39c25b2ac167fc11fece98564ed69e97))
+* **irc:** keep an issued password out of the configuration and require its sign-in ([cc78200](https://github.com/aiconsultancy/subspace/commit/cc78200ff80652d3480da7920daaee4a45331f17))
+* **irc:** keep attachment references in the same message ([#123](https://github.com/aiconsultancy/subspace/issues/123)) ([bb17474](https://github.com/aiconsultancy/subspace/commit/bb17474bc68995324f514ebbdebc820cdf30ce03))
+* **irc:** keep comma addressing and ignore mentions inside URLs ([414b63b](https://github.com/aiconsultancy/subspace/commit/414b63bcd16274c3c7ffdfbe161fd0a3ae96587f))
+* **irc:** keep private reactions closed until the initiatives were read for this account ([77d97f3](https://github.com/aiconsultancy/subspace/commit/77d97f3c33e310292b5f4c6fa5083ed1f945cd0d))
+* **irc:** keep request status and reply counts in sync ([70c9054](https://github.com/aiconsultancy/subspace/commit/70c90545959f80907eba97e7d9b8d74c250e7dbf))
+* **irc:** keep the Settings switch to an account network honest ([023fdc8](https://github.com/aiconsultancy/subspace/commit/023fdc833836306ff19f87d527a0c9a013795bc1))
+* **irc:** never send an unconfirmed create or decision again from the same place ([2a59f6c](https://github.com/aiconsultancy/subspace/commit/2a59f6cc28fd355ecdd8283d4a2d89084a1bedc6))
+* **irc:** open the reaction menu at the message it is for ([6aede44](https://github.com/aiconsultancy/subspace/commit/6aede44cf285479017e35dbfa55aeb15fd8a0277))
+* **irc:** plan account networks only from the account's own memberships ([6ab56b7](https://github.com/aiconsultancy/subspace/commit/6ab56b73e7cbb38b42b9d9d4671ceef3daf1efdb))
+* **irc:** re-export the dialog's scope refusal for tests only ([65a026c](https://github.com/aiconsultancy/subspace/commit/65a026c2f2f5112c9868759a5be8388d93432f72))
+* **irc:** redraw Channels when the start-up wait for initiatives times out ([740f27f](https://github.com/aiconsultancy/subspace/commit/740f27fc2e6f8d076fc200b4c31d273564ac8798))
+* **irc:** redraw Channels when the start-up wait for initiatives times out ([d7a920d](https://github.com/aiconsultancy/subspace/commit/d7a920d35e057925e89251b4a888109de8a68690))
+* **irc:** report an open tracker dialog as the Space's dialog ([fa3d623](https://github.com/aiconsultancy/subspace/commit/fa3d62363ff6a24ae18de6decef1b9423b3ebc1c))
+* **irc:** run a completion's run row only for the plan it showed ([12d2e7c](https://github.com/aiconsultancy/subspace/commit/12d2e7cb099e2db24aa3068be8ce98792502dcff))
+* **irc:** run a run row only with the client it was shown under ([1e2becd](https://github.com/aiconsultancy/subspace/commit/1e2becd1b860e20e6a75810ad02ad33adb7587fe))
+* **irc:** run a tracker command only on Return or a click, never on Tab ([5ba4d4d](https://github.com/aiconsultancy/subspace/commit/5ba4d4db63768e55cc2d8324a919cdb0f5cc57e1))
+* **irc:** send a decision's evidence reference as plain text ([1ad73d9](https://github.com/aiconsultancy/subspace/commit/1ad73d9a2a3618b5470aa537e258aaca840746f2))
+* **irc:** send a tracker write only to the tracker the Issues scope names ([e4688b4](https://github.com/aiconsultancy/subspace/commit/e4688b43873f4b40f9f2f0a463d4c80ba80b63a9))
+* **irc:** show every word a message dialog writes, and fence a decision's body ([d601176](https://github.com/aiconsultancy/subspace/commit/d601176a302dfbbb03359335517117c2189db09d))
+* **irc:** start an account network only once its history is restored ([1d041bf](https://github.com/aiconsultancy/subspace/commit/1d041bf07741a89a80118f0818b42affa1b76110))
+* **irc:** time a login from the API's clock and keep it through a failed renewal ([433d169](https://github.com/aiconsultancy/subspace/commit/433d169bfcb74e8b341da4804ed57289999fbdeb))
+* **irc:** use status badges on hover previews ([75c3a0e](https://github.com/aiconsultancy/subspace/commit/75c3a0e0dd40f4fcec9ad5763927cf383d13d22d))
+* **irc:** use status badges on hover previews ([387513f](https://github.com/aiconsultancy/subspace/commit/387513ffaddb98d6da9d6ada75a50c2d2042d77e))
+* **irc:** use the paperclip to choose files ([8b15876](https://github.com/aiconsultancy/subspace/commit/8b15876191e481f80fc631cef2291a3e6a5549db))
+* **irc:** use the paperclip to choose files ([5b7c6c8](https://github.com/aiconsultancy/subspace/commit/5b7c6c85f0ada3c1c8c7efee003bfc3767de6443))
+* **irc:** write from a message dialog only under the account and tracker it opened under ([4c8f66e](https://github.com/aiconsultancy/subspace/commit/4c8f66e4d7315203f1d83a0d86139ffd6ad5c5ff))
+* **issues:** say sign-in is unavailable everywhere Issues asks for it ([77afa26](https://github.com/aiconsultancy/subspace/commit/77afa26917a43beed43121181eb850c9a86ae23b))
+* **subspace-api-client:** drop a cached issue card when its refresh is refused ([7a188f8](https://github.com/aiconsultancy/subspace/commit/7a188f8bb80dee8ac5046c3dce79e510baf32c9e))
+* **web:** address the review findings for web Space sessions ([24c954a](https://github.com/aiconsultancy/subspace/commit/24c954ad399b2f652cc3b08606f969b5aa4c0042))
+* **web:** address the review findings for web Space sessions ([13354e5](https://github.com/aiconsultancy/subspace/commit/13354e596d5514dab310c94d06b17794e1c1fca3))
+
+
+### Performance Improvements
+
+* **irc:** gather tracker facts for completion only in a slash command ([da98982](https://github.com/aiconsultancy/subspace/commit/da98982034a922fd9e592f14388f04946da3b015))
+* stop rendering hidden Spaces and speed up Actions rows ([#157](https://github.com/aiconsultancy/subspace/issues/157)) ([98c32a6](https://github.com/aiconsultancy/subspace/commit/98c32a664a4725fdf8bd348a1e241c3acb4ab623))
+* **subspace-api-client:** skip a superseded reference read before its request ([26a7678](https://github.com/aiconsultancy/subspace/commit/26a767865247d7b8b87c166e252352e09b5668e6))
+
+
+### Code Refactoring
+
+* build on GPUI Kit 0.11 with GPUI Fast ([#191](https://github.com/aiconsultancy/subspace/issues/191)) ([90611c3](https://github.com/aiconsultancy/subspace/commit/90611c344337eb1499feae9070f35d83b70be90b))
+
 ## [0.12.1](https://github.com/aiconsultancy/subspace/compare/subspace-desktop-v0.12.0...subspace-desktop-v0.12.1) (2026-11-22)
 
 
