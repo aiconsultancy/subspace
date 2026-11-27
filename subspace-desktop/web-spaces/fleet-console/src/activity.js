@@ -65,9 +65,6 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isStr = (v) => typeof v === "string";
 
-export const TURN_STATUSES = ["running", "completed", "failed", "cancelled"];
-export const ITEM_KINDS = ["step", "text", "reasoning", "tool"];
-
 export function isActivityItem(item) {
   return isObj(item) && isStr(item.id) && isNum(item.seq) && isStr(item.kind) && (item.paged === undefined || (isObj(item.paged) && isNum(item.paged.pages) && isNum(item.paged.bytes)));
 }
