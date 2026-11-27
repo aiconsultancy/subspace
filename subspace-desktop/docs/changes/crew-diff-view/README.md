@@ -21,18 +21,23 @@ the working tree, and starts from an empty tree only on an unborn branch. File
 headers label untracked files, submodules and symlinks. A submodule without a
 patch has its own note, not a binary reader. The shared Fleet feed can also
 report a new fingerprint for that checkout. A change observed during a load
-or after it can mark the
-snapshot stale; the feed value already known when the load started cannot.
-The viewer checks for changes again when the Space becomes active. A conflict
-or missing list continuation also asks for **Refresh**. If a list or file
-page reports an unstable read, the viewer still displays the content and
-shows **Changed while loading · Refresh**. Closing or refreshing cancels the
-previous file-list load. **Refresh** keeps the displayed files, selection and
-scroll position until the new snapshot for the same mode is ready. While it
-runs, no new file, byte or preview read starts. Reads already in flight can
-finish against the displayed fingerprint; an unchanged refresh keeps their
-results and retry countdowns. If the refresh fails temporarily, the diff stays
-visible with an inline **Retry**. Replacing or clearing the snapshot cancels
+or after it can mark the snapshot stale; the feed value already known when
+the load started cannot. The viewer checks for changes again when the Space
+becomes active. A conflict or missing list continuation asks for **Refresh**.
+In Stargate v0.52.0, only list pages can report `unstable`; the viewer still
+displays the content and shows **Changed while loading · Refresh**. A file
+that keeps changing returns HTTP 409 instead. The successful file-page
+fixture with `unstable` in `crew_tests/page_notices.rs` checks forward
+compatibility, not a v0.52.0 response.
+
+Closing or refreshing cancels the previous file-list load. **Refresh** keeps
+the displayed files, selection and scroll position until the new snapshot
+for the same mode is ready. While it runs, users cannot start new patch,
+byte or preview reads. A preview already started can fetch further pages,
+and automatic retries can still read the same page against the displayed
+fingerprint. An unchanged refresh keeps their results and retry countdowns.
+If the refresh fails temporarily, the diff stays visible with an inline
+**Retry**. Replacing or clearing the snapshot cancels
 outstanding reads. A mode or access change, or a confirmed unavailable diff,
 clears the previous result. A stale snapshot cancels file, byte and preview
 reads but leaves already loaded content visible.
