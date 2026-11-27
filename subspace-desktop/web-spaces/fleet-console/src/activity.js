@@ -427,7 +427,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     let kept = planned.filter(plan.has);
     let fewest = lostOnShow();
     for (const each of kept) plan.delete(each);
-    if (lostOnShow() <= fewest) [kept, fewest] = [[], lostOnShow()];
+    const none = lostOnShow();
+    if (none <= fewest) [kept, fewest] = [[], none];
     for (const each of optional.filter((other) => budget.bytes(other) > handover(other))) {
       plan.set(each, handover(each));
       const lost = lostOnShow();
