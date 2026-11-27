@@ -63,8 +63,11 @@ the desktop side are separate work.
   cache budget only (SUB `20ce0349`): larger content is paged, never hidden
   or cut. The budget is shared by the inline snapshot, the items read and
   what the panel draws. The inline snapshot is charged first as `inline`,
-  the compact JSON of the turns held. It is pinned: never freed, counted
-  once per turn object. A reservation fits only beside the pinned entries.
+  the compact JSON of the turns held. It is pinned: never freed. Each
+  turn's own fields are measured once per turn object and each item once
+  per item object (`turnSizer`), so an event on a long running turn
+  measures only that turn's fields and the item that changed, never the
+  whole turn again. A reservation fits only beside the pinned entries.
   Room is made before each read by evicting the least recently opened item
   read; an evicted item offers **Load in full** again. Eviction forgets the
   client's copy only: the item stays on the gateway, whose retention of the

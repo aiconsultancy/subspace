@@ -255,16 +255,37 @@ export const FORMAT_FACTOR = 2;
 /** The inline snapshot's key in the budget: pinned, never freed. */
 export const INLINE_KEY = "inline";
 
-/** Each turn's compact JSON length, counted once per turn object (a change makes a new one). */
-const turnBytes = new WeakMap();
-function bytesOfTurn(turn) {
-  let bytes = turnBytes.get(turn);
-  if (bytes === undefined) {
-    bytes = jsonBytes(turn);
-    turnBytes.set(turn, bytes);
-  }
-  return bytes;
+/**
+ * A turn's compact JSON length, measured in pieces: the turn's own fields
+ * once per turn object and each item once per item object. `applyChange`
+ * makes a new turn for every change but keeps the items it did not change,
+ * so an event on a long running turn measures only that turn's fields and
+ * the item that changed, never the whole turn again. `measure` gives one
+ * value's compact JSON length.
+ */
+export function turnSizer(measure = jsonBytes) {
+  const turns = new WeakMap();
+  const items = new WeakMap();
+  const itemBytes = (item) => {
+    let bytes = items.get(item);
+    if (bytes === undefined) {
+      bytes = measure(item);
+      items.set(item, bytes);
+    }
+    return bytes;
+  };
+  return (turn) => {
+    let bytes = turns.get(turn);
+    if (bytes === undefined) {
+      // `{…,"items":[a,b]}`: the fields around an empty list, then each item and a comma between each two.
+      bytes = measure({ ...turn, items: [] }) + turn.items.reduce((total, item) => total + itemBytes(item), 0) + Math.max(0, turn.items.length - 1);
+      turns.set(turn, bytes);
+    }
+    return bytes;
+  };
 }
+
+const bytesOfTurn = turnSizer();
 
 /**
  * One officer's activity, joined from its snapshot and events.
