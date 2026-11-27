@@ -196,8 +196,8 @@ pub struct CrewContext {
     pub pull_request_known: bool,
 }
 
-/// One task of a crew member. The fleet summary bounds the text; the crew
-/// detail route returns it in full.
+/// One task of a crew member. The ship roster bounds the text; only a crew
+/// detail reply with `taskText: "full"` confirms that it is complete.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 #[non_exhaustive]
