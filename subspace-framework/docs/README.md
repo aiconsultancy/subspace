@@ -75,6 +75,9 @@ If you want to build a Space or know what the Framework offers one, read
 
 ## Change records
 
+- [Hide the Space title in the navigator](changes/navigator-title-setting/README.md):
+  the Settings › Layout switch, `ProductBuild::navigator_title` and the
+  navigator without its header.
 - [Embedded fonts](changes/bundled-fonts/README.md): `ProductBuild::fonts`,
   registration before the theme, and automatic choices that keep the
   platform's fonts.
