@@ -70,8 +70,8 @@ shared middleware; a client adds nothing.
 
 ## The viewer
 
-Open it with **Cmd/Ctrl+Shift+L**, the palette's **Show logs** or the app
-menu. It replaces the board, under a **Logs** header, until you close it:
+Open it with **Cmd/Ctrl+Shift+L**, the palette's **Show logs** or, on macOS,
+**Help › Show Logs**. It replaces the board, under a **Logs** header, until you close it:
 select the close button (×, **Close logs**) at the right of the header, press
 Esc anywhere in the view (Esc closes an open menu first), choose **Close logs**
 in the palette, or select a board. While the log view is open, no board tab is

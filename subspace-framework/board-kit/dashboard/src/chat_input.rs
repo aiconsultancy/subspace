@@ -104,8 +104,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", ChatRenameCancel, rename),
         KeyBinding::new(crate::secondary!("t"), ChatNewTab, panel),
         KeyBinding::new(crate::secondary!("w"), ChatCloseTab, panel),
+        // macOS reports shifted punctuation as the resulting character.
         KeyBinding::new(crate::secondary!("shift-]"), ChatNextTab, panel),
+        KeyBinding::new(crate::secondary!("}"), ChatNextTab, panel),
         KeyBinding::new(crate::secondary!("shift-["), ChatPreviousTab, panel),
+        KeyBinding::new(crate::secondary!("{"), ChatPreviousTab, panel),
         KeyBinding::new("down", ChatSessionNext, sessions),
         KeyBinding::new("up", ChatSessionPrevious, sessions),
         KeyBinding::new("enter", ChatSessionOpen, sessions),

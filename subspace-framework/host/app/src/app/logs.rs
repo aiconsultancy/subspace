@@ -1,5 +1,5 @@
 //! The Framework log viewer, opened in place of the board like the Search
-//! view (Cmd/Ctrl+Shift+L, the palette's "Show logs", the app menu). Its
+//! view (Cmd/Ctrl+Shift+L, the palette's "Show logs", Help › Show Logs). Its
 //! header's Close, Escape, the palette's "Close logs" or choosing a board
 //! return to the board.
 

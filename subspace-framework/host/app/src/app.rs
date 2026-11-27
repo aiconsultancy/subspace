@@ -15,6 +15,7 @@ pub(crate) use help_dock::test_support;
 mod keys;
 mod last_view;
 mod logs;
+mod menu_bar;
 pub(crate) mod navigation;
 #[cfg(test)]
 mod notification_tests;
@@ -64,8 +65,8 @@ use crate::jig::{Jig, JigEvent};
 use crate::registry;
 use crate::settings::Settings;
 
-pub(crate) use keys::install_menus;
 pub use keys::{bind_keys, palette_key};
+pub(crate) use menu_bar::install_menus;
 pub use subspace_dashboard::log_view::OpenLogView;
 pub use window::{WINDOW_KEY, window_bounds};
 

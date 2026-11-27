@@ -16,7 +16,7 @@ const DEVELOPER_MODE_HELP: &str = "Shows the Developer menu, its commands and th
 /// How to open and use the inspector, with this platform's key.
 fn inspector_help() -> String {
     format!(
-        "Press {} or choose Developer > Inspect elements. Point at an element to see its bounds and component name. Click to pin it and copy its name, ID or source. Press Esc to close the inspector.",
+        "Press {} or choose Developer > Inspect Elements. Point at an element to see its bounds and component name. Click to pin it and copy its name, ID or source. Press Esc to close the inspector.",
         crate::inspector::shortcut_label()
     )
 }

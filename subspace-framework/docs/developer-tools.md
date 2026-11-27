@@ -55,7 +55,7 @@ it belongs to.
 
 - Press **⌘F12** on macOS (**Ctrl+F12** elsewhere). GPUI Kit's own key,
   **⌘⌥I** (**Ctrl+Shift+I**), opens the same inspector.
-- Choose **Developer > Inspect elements** in the menu bar.
+- Choose **Developer > Inspect Elements** in the menu bar.
 - Choose **Inspect elements** in the command palette. While the inspector is
   open, the command reads **Close inspector**.
 

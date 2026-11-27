@@ -494,7 +494,7 @@ Details of the tools:
 Space Lab defines no board-specific bindings. Press `?` while board navigation has focus to show or hide the Help
 panel with this guide and the key list. `Cmd+Shift+/` (`Ctrl+Shift+/` elsewhere)
 opens the Keyboard Shortcuts filter. The **Help (?)** toolbar button and the
-**Help** item in the macOS app menu open the same Help panel.
+**Help** item in the macOS Help menu open the same Help panel.
 
 | Key | Where | Action |
 | --- | --- | --- |

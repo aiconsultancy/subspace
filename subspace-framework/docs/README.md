@@ -54,6 +54,8 @@ If you want to build a Space or know what the Framework offers one, read
 
 ## What every app gets
 
+- [Menu bar](menu-bar.md): the native menus on macOS, and their Windows and
+  Linux layouts.
 - [Logging](logging.md): `subspace_core::log`, the log file and the log viewer.
 - [Full-text search](search.md): the Search view, its sources and the index.
 - [Report an issue](report-issue.md): the report dialog, diagnostics and
@@ -93,6 +95,9 @@ If you want to build a Space or know what the Framework offers one, read
 - [Long secrets in Windows Credential Manager](changes/windows-credential-limit/README.md):
   how `Keychain` splits a secret over one Windows credential across several,
   and keeps short and earlier secrets as one.
+- [An idiomatic menu bar](changes/idiomatic-menu-bar/README.md): the app,
+  Edit, View, Window and Help menus on macOS, and File and Help on Windows
+  and Linux.
 - [Records a board hides from search](changes/search-hidden-records/README.md):
   `Service::set_hidden` and `Service::shows`, asked while every search
   selects candidates, by related items and citation reads, and by the Search

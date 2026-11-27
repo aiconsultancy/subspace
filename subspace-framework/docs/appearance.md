@@ -10,7 +10,7 @@ Existing saved theme choices still win when available. If a saved theme has
 been removed, the default is used. Subspace does not switch
 themes with the system appearance; choose **Cupertino Light** for a light
 window.
-Select a theme in **Settings > Appearance**, or open **View > Theme designer**.
+Select a theme in **Settings > Appearance**, or open **View > Theme Designer**.
 The backtick shortcut and the eye toolbar button also open the designer.
 
 Three independent font choices control headings and tabs, body text, and code

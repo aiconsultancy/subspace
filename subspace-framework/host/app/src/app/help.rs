@@ -30,7 +30,7 @@ fn shell_keys() -> [(&'static str, &'static str); 24] {
         ("`", "Theme designer"),
         (settings_key(), "Settings"),
         (shortcut("⌘⇧L", "Ctrl+Shift+L"), "Show the log viewer"),
-        ("F1–F12", "The only Space-switching keys with Secondary+1–9"),
+        ("F1–F12", "Spaces, in tab order, as Secondary+1–9 do"),
         (shortcut("⌘1–⌘9", "Ctrl+1–Ctrl+9"), "Spaces, in tab order"),
         (chat_key(), "Show or hide Chat"),
         (add_to_chat_key(), "Add the row and its details to Chat"),
@@ -112,7 +112,12 @@ impl SubspaceApp {
     pub(super) fn help_keys(&self, cx: &App) -> Vec<(SharedString, SharedString)> {
         let mut keys = self.board_keys(cx);
         keys.extend(terminal_keys(cx));
-        keys.extend(shell_keys().map(|(key, meaning)| (key.into(), meaning.into())));
+        keys.extend(
+            shell_keys()
+                .into_iter()
+                .chain(super::menu_bar::help_keys().iter().copied())
+                .map(|(key, meaning)| (key.into(), meaning.into())),
+        );
         keys
     }
 

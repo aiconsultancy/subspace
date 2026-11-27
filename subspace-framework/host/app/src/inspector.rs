@@ -173,9 +173,9 @@ fn close_on_escape(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
 /// The Developer menu, after View, as Safari places its Develop menu.
 pub(crate) fn menu() -> Menu {
     Menu::new("Developer").items([
-        MenuItem::action("Inspect elements", ToggleInspector),
+        MenuItem::action("Inspect Elements", ToggleInspector),
         MenuItem::separator(),
-        MenuItem::action("Developer settings…", OpenDeveloperSettings),
+        MenuItem::action("Developer Settings…", OpenDeveloperSettings),
     ])
 }
 

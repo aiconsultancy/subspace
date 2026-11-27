@@ -279,12 +279,13 @@ stapled Apple silicon app, `Subspace_<version>_darwin_arm64.zip`, and its
 guide for local signing setup.
 
 Debug builds, such as `make run`, include the element inspector: press ⌘F12
-(Ctrl+F12 elsewhere) or choose **Developer > Inspect elements**, point at an
+(Ctrl+F12 elsewhere) or choose **Developer > Inspect Elements**, point at an
 element to see its bounds and component name, and click to pin it. See
 [Developer tools](../subspace-framework/docs/developer-tools.md). Release builds have no inspector
 or Developer menu. The status bar shows the version; debug builds
 also show their Git branch and UTC build timestamp. Use **About**
-in the application menu or command palette to view the app and Subspace
+in the macOS app menu, the status bar or the command palette
+to view the app and Subspace
 Framework versions, the repository link, commit, branch, UTC build time, Rust
 target and build profile. The CLI exposes the same
 details without configuration or GUI initialization:
@@ -622,6 +623,10 @@ keeps the collapse control.
 | Cmd+Shift+C (Super+Shift+C on Linux, Ctrl+Shift+C on Windows) | Show or hide chat |
 | Cmd+Shift+A (Ctrl+Shift+A elsewhere) | Add the selected row and its open details to the chat |
 | Cmd+Q (Ctrl+Shift+Q on Linux) | Quit |
+| Cmd+H, Option+Cmd+H (macOS) | Hide Subspace; hide the other apps |
+| Cmd+M (macOS) | Minimise the window |
+| Ctrl+Cmd+F (macOS) | Enter or leave full screen |
+| Shift+Cmd+] and Shift+Cmd+[ (macOS) | Next and previous Space; in Chat, its next and previous tab |
 
 The command palette's **Keyboard Shortcuts** command opens the same searchable
 view of the active board's shortcuts and the global shortcuts. The toolbar and

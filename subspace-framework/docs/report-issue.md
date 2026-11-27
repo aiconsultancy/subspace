@@ -85,7 +85,7 @@ redaction. They do not enable **Include paths** for a future report.
 Each listed error also writes one sanitized structured record to the app log
 when it occurs. Reopening or rendering the error again does not add a record.
 Select **Show log** next to **Copy details** to open the existing log view.
-You can also use **View > Show logs** or **Cmd-Shift-L** on macOS. The log view
+You can also use **Help > Show Logs** or **Cmd-Shift-L** on macOS. The log view
 has **Open log folder** and **Copy log path**. Reporting an issue does not
 automatically attach the log.
 If Settings has unsaved changes, its existing confirmation appears before

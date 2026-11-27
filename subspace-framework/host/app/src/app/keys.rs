@@ -1,14 +1,12 @@
-//! The app shell's key bindings, native menus and the state file it writes.
+//! The app shell's key bindings and the state file it writes.
 
-use gpui_kit::{Action, App, KeyBinding, Menu, MenuItem};
+use gpui_kit::{Action, App, KeyBinding};
 use subspace_dashboard::{AddToChat, app_keys, prefs, secondary, view_keys};
 
 use super::{
-    CloseBoardHelp, CloseHelp, CloseJig, MoveTerminalLeft, MoveTerminalRight, MoveTerminalToBottom,
-    NextDashboard, OpenAbout, OpenLogView, OpenSearchView, OpenSettings, PaletteBackspace,
-    PaletteEscape, PreviousDashboard, Quit, Reload, SearchItems, ToggleChat, ToggleHelp, ToggleJig,
-    TogglePalette, ToggleShortcuts, ToggleTerminal, ToggleTerminalFullWidth,
-    ToggleTerminalMaximized, ToggleWrap,
+    CloseBoardHelp, CloseHelp, CloseJig, OpenLogView, OpenSearchView, OpenSettings,
+    PaletteBackspace, PaletteEscape, Quit, Reload, SearchItems, ToggleChat, ToggleHelp, ToggleJig,
+    TogglePalette, ToggleShortcuts, ToggleWrap,
 };
 
 /// Show the dashboard at `index`, in switcher order. F1 to F12 send it with
@@ -126,6 +124,8 @@ pub fn bind_keys(cx: &mut App) {
             .enumerate()
             .map(|(index, keys)| KeyBinding::new(keys, ShowDashboard { index }, app_context)),
     );
+    super::menu_bar::bind_keys(cx);
+    super::menu_bar::register_actions(cx);
 }
 
 pub fn save_prefs(cx: &mut App) {
@@ -184,76 +184,9 @@ pub fn chat_key() -> &'static str {
     }
 }
 
-/// The native menu bar, with the Developer menu in debug builds while
-/// Developer mode is on.
-pub(crate) fn install_menus(cx: &mut App) {
-    if cx
-        .try_global::<subspace_dashboard::CurrentProduct>()
-        .is_none()
-    {
-        return;
-    }
-    let name = crate::product::desktop_name(cx);
-    #[cfg_attr(not(debug_assertions), expect(unused_mut))]
-    let mut menus = menus(name, crate::terminal::registration(cx).is_some());
-    #[cfg(debug_assertions)]
-    if crate::settings::developer_mode(cx) {
-        menus.push(crate::inspector::menu());
-    }
-    cx.set_menus(menus);
-}
-
-/// The native menu bar (macOS); each item runs the same action as its key.
-/// `terminal` adds the terminal's items for a product that docks one.
-pub fn menus(name: &str, terminal: bool) -> Vec<Menu> {
-    let terminal_items = terminal.then(|| {
-        [
-            MenuItem::action("Terminal", ToggleTerminal),
-            MenuItem::submenu(Menu::new("Terminal layout").items([
-                MenuItem::action("Move left", MoveTerminalLeft),
-                MenuItem::action("Move to bottom", MoveTerminalToBottom),
-                MenuItem::action("Move right", MoveTerminalRight),
-                MenuItem::action("Full window width", ToggleTerminalFullWidth),
-                MenuItem::action("Maximize", ToggleTerminalMaximized),
-            ])),
-        ]
-    });
-    vec![
-        Menu::new(name.to_owned()).items([
-            MenuItem::action("Command palette", TogglePalette),
-            MenuItem::action("Search items", SearchItems),
-            MenuItem::action("Search content", OpenSearchView),
-            MenuItem::action("Show logs", OpenLogView),
-            MenuItem::action("Help", ToggleHelp),
-            MenuItem::action("Keyboard Shortcuts", ToggleShortcuts),
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::action("About…", OpenAbout),
-            MenuItem::separator(),
-            MenuItem::action(format!("Quit {name}"), Quit),
-        ]),
-        Menu::new("View").items(
-            [
-                MenuItem::action("Reload", Reload),
-                MenuItem::action("Wrap titles", ToggleWrap),
-                MenuItem::action("Theme designer", ToggleJig),
-                MenuItem::action("Chat", ToggleChat),
-            ]
-            .into_iter()
-            .chain(terminal_items.into_iter().flatten())
-            .chain([
-                MenuItem::separator(),
-                MenuItem::action("Next Space", NextDashboard),
-                MenuItem::action("Previous Space", PreviousDashboard),
-            ]),
-        ),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        ShowDashboard, add_to_chat_key, bind_keys, chat_key, menus, palette_key, settings_key,
-    };
+    use super::{ShowDashboard, add_to_chat_key, bind_keys, chat_key, palette_key, settings_key};
     use gpui_kit::{Keystroke, TestAppContext};
 
     #[gpui_kit::test]
@@ -277,28 +210,6 @@ mod tests {
                 );
             }
         });
-    }
-
-    #[test]
-    fn the_view_menu_lists_the_terminal_only_for_a_product_with_one() {
-        let names = |terminal| {
-            menus("Subspace", terminal)[1]
-                .items
-                .iter()
-                .filter_map(|item| match item {
-                    gpui_kit::MenuItem::Action { name, .. } => Some(name.to_string()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        assert!(!names(false).iter().any(|name| name.contains("erminal")));
-        let with = names(true);
-        assert!(with.contains(&"Terminal".to_owned()));
-        let layout = menus("Subspace", true)[1]
-            .items
-            .iter()
-            .any(|item| matches!(item, gpui_kit::MenuItem::Submenu(menu) if menu.name == "Terminal layout"));
-        assert!(layout);
     }
 
     #[test]
