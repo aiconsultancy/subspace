@@ -50,7 +50,12 @@ item too large to send inline is paged and loads on demand, never hidden.
   since; when that room does not hold what arrived and a part of its
   window, what was read stays, charged as before, with **Load the
   latest** and a caption that the newer version did not fit beside a
-  later request (SUB decision `a884e4c6`). A snapshot of a new generation still lets go of it at once. Page counts and sizes are checked before anything is
+  later request (SUB decision `a884e4c6`). Moving to another part of
+  an item read in parts withdraws a **Load the latest** under way or
+  failed: the part asked for is read, its page counted in place of what
+  the newer read reserved, never beside it, the newer read's answer is
+  dropped, and **Load the latest** is offered again with a caption that
+  moving to another part stopped it. A snapshot of a new generation still lets go of it at once. Page counts and sizes are checked before anything is
   allocated: a size the pages could not carry, or a joined length other
   than the declared one, is an invalid answer.
 - **One budget.** Everything the view holds counts against 64 MiB: the

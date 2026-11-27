@@ -7,7 +7,10 @@
 //! arrives it counts that part and its window alone. The read goes ahead
 //! even when less than a page of room is left: refusing would hide the
 //! item, and the floor keeps a part and its window beside the page coming
-//! in ([`super::super::ledger`]).
+//! in ([`super::super::ledger`]). It is the latest request, so a newer
+//! read of the item under way or failed gives way to it: its answer is
+//! dropped, the page it reserved is no longer counted, and **Load the
+//! latest** is offered again beside why ([`Reload::Withdrawn`]).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,8 +43,12 @@ pub(in super::super) fn show_page(
         return;
     }
     // Room for a whole page beside the one shown and its window, which it
-    // replaces, held until the part arrives.
+    // replaces, held until the part arrives: in place of what a newer read
+    // reserved, never beside it.
     loaded.incoming = PAGE;
+    // The latest request: a newer read of the item gives way to it, and
+    // says so.
+    loaded.reload = std::mem::replace(&mut loaded.reload, Reload::None).paged();
     // The latest request from its admission: the one the floor keeps.
     stamp(selection, key);
     let read = next_read(selection);
@@ -55,8 +62,6 @@ pub(in super::super) fn show_page(
     };
     parts.loading = Some(page);
     parts.failed = None;
-    // The latest request: any newer read of the item gives way to it.
-    loaded.reload = Reload::None;
     // Only the version is pinned: no copy of the page outside its room.
     let pinned = parts.page.version();
     // The part read before, if any, asks for nothing more.

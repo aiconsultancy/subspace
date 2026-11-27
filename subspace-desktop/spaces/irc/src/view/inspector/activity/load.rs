@@ -30,7 +30,8 @@
 //! whole item only when both fit the room (SUB decision `084f5236` item
 //! 2). A newer version arriving with no room beside a later request is
 //! not swapped in: what was read stays, and beside **Load the latest** a
-//! caption says why (SUB decision `a884e4c6`). What a read draws is never planned beside the snapshot's bodies: it
+//! caption says why (SUB decision `a884e4c6`), as it does when moving to
+//! another part withdraws that read. What a read draws is never planned beside the snapshot's bodies: it
 //! always draws, within its own allowance. A new snapshot never lets go of
 //! the read the floor keeps: the part of the item last asked for.
 
@@ -239,6 +240,20 @@ pub(super) enum Reload {
     /// swapped in: what was shown stays, beside why and **Load the
     /// latest** (SUB decision `a884e4c6`).
     Deferred,
+    /// Moving to another part withdrew it, under way or failed: what was
+    /// shown stays, beside why and **Load the latest**.
+    Withdrawn,
+}
+
+impl Reload {
+    /// What moving to another part leaves of it: a read under way or
+    /// failed gives way to the part asked for, and says so.
+    fn paged(self) -> Self {
+        match self {
+            Self::Reading(_) | Self::Failed(_) => Self::Withdrawn,
+            other => other,
+        }
+    }
 }
 
 /// What a read draws within its allowance.

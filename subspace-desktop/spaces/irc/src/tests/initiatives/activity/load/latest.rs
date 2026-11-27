@@ -10,8 +10,8 @@ use serde_json::json;
 
 use super::super::super::super::remove::settle;
 use super::{
-    Irc, PAGE, answer, drawn, held_bytes, label, load, on, paged, refresh, running, served,
-    served_json, tool,
+    Irc, PAGE, answer, drawn, held_bytes, in_parts_with_room, label, load, on, paged, refresh,
+    running, served, served_json, tool,
 };
 use crate::view::inspector::activity::{ask_for, latest_request, set_room, snapshot_pruned};
 
@@ -155,4 +155,47 @@ fn a_refresh_while_the_latest_is_read_at_no_room_keeps_the_part_shown(cx: &mut T
         newer.contains("yyyy") && json.starts_with(&newer),
         "{newer}"
     );
+}
+
+/// Round 9 Opus review (P3 1), rule `469f1320`: moving to another part
+/// while **Load the latest** is read withdraws that read. The snapshot
+/// names version 7 before the item route serves it, so the part asked for
+/// arrives at the version shown; the read of the latest asks for nothing
+/// more and its answer is dropped. The item never counts both: only the
+/// page coming in is charged beside the part shown. **Load the latest** is
+/// offered again, beside a caption saying why it is back.
+#[gpui_kit::test]
+fn moving_to_another_part_withdraws_the_latest_and_says_so(cx: &mut TestAppContext) {
+    let (board, served, cx) = in_parts_with_room(cx, &"x".repeat(300_000));
+    let (json, pages) = served_json(&served);
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(7, json.len()))), cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+    assert_eq!(drawn(&on("page"), cx), format!("Part 1 of {pages}"));
+    let shown = held(&board, cx);
+
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("load")), cx);
+        window.click(SharedString::from(on("page-next")), cx);
+        window.render_frame(cx);
+    });
+    let charged = held(&board, cx);
+    assert!(
+        charged <= shown + PAGE as u64,
+        "{charged} counts more than a page beside the {shown} shown"
+    );
+    settle(cx);
+    assert_eq!(
+        drawn(&on("page"), cx),
+        format!("Part 2 of {pages}"),
+        "the part arrived, the latest's answer dropped; gateway saw {:?}",
+        served.asked()
+    );
+    assert_eq!(drawn(&on("json-part"), cx), &json[PAGE..2 * PAGE]);
+    assert!(drawn(&on("loading"), cx).is_empty());
+    assert_eq!(
+        drawn(&on("withdrawn"), cx),
+        "Moving to another part stopped loading the latest version: load it again to show it."
+    );
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
 }

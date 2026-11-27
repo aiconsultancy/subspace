@@ -7,7 +7,7 @@ use gpui_kit::{Entity, SharedString, TestAppContext, VisualTestContext};
 
 use super::super::super::super::remove::settle;
 use super::{
-    Irc, PAGE, changed_under_parts, drawn, held_bytes, in_parts, on, served_json, set_budget, tool,
+    Irc, PAGE, changed_under_parts, drawn, held_bytes, in_parts_with_room, on, served_json, tool,
 };
 
 fn held(board: &Entity<Irc>, cx: &mut VisualTestContext) -> u64 {
@@ -26,12 +26,8 @@ fn click(id: &str, cx: &mut VisualTestContext) {
 /// window alone.
 #[gpui_kit::test]
 fn a_part_read_holds_a_page_of_room_until_it_arrives(cx: &mut TestAppContext) {
-    let (board, served, cx) = in_parts(cx, &"x".repeat(200_000));
+    let (board, served, cx) = in_parts_with_room(cx, &"x".repeat(200_000));
     let (json, pages) = served_json(&served);
-    // Room for the page coming in beside the part shown and its window.
-    board.update(cx, |board, _| {
-        set_budget(board.inspector_activity.as_mut().unwrap(), 4 * PAGE as u64);
-    });
     let shown = held(&board, cx);
     click("page-last", cx);
     assert_eq!(

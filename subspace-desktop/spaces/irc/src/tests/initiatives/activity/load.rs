@@ -188,6 +188,20 @@ fn in_parts<'a>(
     (board, served, cx)
 }
 
+/// `i3` read in parts with `output`, then its budget raised to four
+/// pages: room for the page coming in beside the part shown and its
+/// window.
+fn in_parts_with_room<'a>(
+    cx: &'a mut TestAppContext,
+    output: &str,
+) -> (Entity<Irc>, Arc<Gateway>, &'a mut VisualTestContext) {
+    let (board, served, cx) = in_parts(cx, output);
+    board.update(cx, |board, _| {
+        set_budget(board.inspector_activity.as_mut().unwrap(), 4 * PAGE as u64);
+    });
+    (board, served, cx)
+}
+
 /// `i3` read in parts with `before` as its output, then changed on the
 /// gateway to `after`: the gateway, and the new JSON and its page count.
 fn changed_under_parts<'a>(
