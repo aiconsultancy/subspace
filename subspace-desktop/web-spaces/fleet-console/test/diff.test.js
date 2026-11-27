@@ -965,6 +965,27 @@ test("diff budget: wouldFree on a view's scope names only that view's keys, in t
   assert.equal(diff.has("image") || diff.has("patch"), false);
 });
 
+test("diff budget: wouldFree on a view's scope admits as reserve does, with reserve's pinned option, and names only that view's keys", () => {
+  const budget = createBudget(100);
+  const activity = budget.scope("activity\u0000");
+  const diff = budget.scope("diff\u0000");
+  activity.reserve("floor", 70, null, { pinned: true });
+  activity.reserve("old", 10, null);
+  diff.reserve("patch", 10, null);
+  assert.deepEqual(activity.wouldFree("plain", 40), [], "reserve would refuse it, so nothing is named");
+  assert.deepEqual(diff.wouldFree("plain", 40), []);
+  assert.deepEqual(activity.wouldFree("floor", 100, { pinned: true }), ["old"], "a pinned reservation is admitted: the scope forwards pinned");
+  assert.deepEqual(diff.wouldFree("floor", 100, { pinned: true }), ["patch"]);
+  assert.equal(diff.reserve("plain", 40, null), false);
+  assert.equal(activity.reserve("plain", 40, null), false);
+  assert.equal(budget.used, 90, "nothing freed");
+  const freed = [];
+  activity.reserve("old", 10, (key) => freed.push(`activity:${key}`));
+  diff.reserve("patch", 10, (key) => freed.push(`diff:${key}`));
+  activity.reserve("floor", 100, null, { pinned: true });
+  assert.deepEqual(freed, ["activity:old", "diff:patch"], "reserve frees what the two scopes named");
+});
+
 test("diff budget: on the console's budget, inline growth refits the Activity view's displayed whole, which makes the room before the diff view's older part is freed", async () => {
   const a = pagedWith("a".repeat(600 * 1024), "ia");
   const b = pagedWith("b".repeat(70 * 1024), "ib");
