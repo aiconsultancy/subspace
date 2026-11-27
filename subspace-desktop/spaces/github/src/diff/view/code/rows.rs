@@ -1,12 +1,13 @@
 //! The non-code rows of the diff list: file headers, notes and hunk gaps.
 
+use crate::diff::model::FileStatus;
 use gpui_kit::component::{Disableable as _, Selectable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
-use subspace_framework::client_github::model::{GhFileStatus, image_type};
+use subspace_framework::client_github::model::image_type;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::truncated;
@@ -221,10 +222,7 @@ impl DiffView {
         let expandable = self.item().is_some()
             && !self.expanded.contains(&(file, gap))
             && hidden != Some(0)
-            && !matches!(
-                view.file.status,
-                GhFileStatus::Added | GhFileStatus::Removed
-            );
+            && !matches!(view.file.status, FileStatus::Added | FileStatus::Removed);
         let loading = matches!(self.texts.get(&file), Some(Text::Loading));
         let label = match (hidden, loading) {
             (_, true) => "⋯ loading".to_string(),

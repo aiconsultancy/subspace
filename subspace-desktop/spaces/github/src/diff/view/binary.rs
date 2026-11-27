@@ -1,13 +1,13 @@
 //! A viewport for one decoded Fleet page. Page history holds positions only;
 //! switching sides or closing the viewer drops its bytes and pending read.
 
+use crate::diff::model::FileStatus;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     AnyElement, Context, IntoElement, ParentElement as _, Styled as _, Task,
     UniformListScrollHandle, Window, div,
 };
 use subspace_client_fleet::diff::{DiffContent, DiffRead, DiffSide};
-use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, truncated};
@@ -176,7 +176,7 @@ impl DiffView {
             return;
         };
         let side = match view.file.status {
-            GhFileStatus::Removed => DiffSide::Old,
+            FileStatus::Removed => DiffSide::Old,
             _ => DiffSide::New,
         };
         self.current = file;

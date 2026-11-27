@@ -10,6 +10,7 @@ use subspace_framework::core::Secret;
 use ureq::Body;
 use ureq::http::{Response, StatusCode};
 
+use crate::diff::{DiffFilePage, DiffTarget, V1Diff, V1DiffFilePage};
 use crate::model::{FleetOverview, ShipDetail};
 use crate::{Error, FleetAddress};
 
@@ -18,6 +19,10 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A fleet with many ships and crew stays far below this.
 const MAX_JSON_BYTES: u64 = 8 * 1024 * 1024;
+// One list page can carry 1,000 × 64 KiB of patch text before JSON escaping;
+// allow six bytes per input byte plus metadata. File pages hold up to 1 MiB.
+const MAX_DIFF_BYTES: u64 = 400 * 1024 * 1024;
+const MAX_FILE_BYTES: u64 = 7 * 1024 * 1024;
 pub(crate) const USER_AGENT: &str = concat!("Subspace/", env!("CARGO_PKG_VERSION"));
 
 /// A fleet's address and the token saved for it. Deliberately has no
@@ -53,16 +58,42 @@ impl FleetClient {
         self.get(&["ships", id])
     }
 
+    /// Read one page of changed files. `None` means the route is unavailable.
+    pub fn diff(
+        &self,
+        target: DiffTarget<'_>,
+        cursor: Option<&str>,
+    ) -> Result<Option<V1Diff>, Error> {
+        let url = target.list_url(self.address(), cursor)?;
+        match self.get_json(&url, MAX_DIFF_BYTES) {
+            Ok(page) => Ok(Some(page)),
+            Err(Error::NotFound) if cursor.is_none() => Ok(None),
+            Err(Error::NotFound | Error::UnexpectedStatus(409)) => Err(Error::StaleDiff),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Read one page of a file. Unlike a list-route 404, a file-route 404
+    /// can mean that the requested path does not exist.
+    pub fn diff_file(
+        &self,
+        target: DiffTarget<'_>,
+        request: DiffFilePage<'_>,
+    ) -> Result<V1DiffFilePage, Error> {
+        let url = target.file_url(self.address(), request)?;
+        self.get_json(&url, MAX_FILE_BYTES)
+            .map_err(|error| match error {
+                Error::UnexpectedStatus(409) => Error::StaleDiff,
+                other => other,
+            })
+    }
+
     fn get<T: DeserializeOwned>(&self, segments: &[&str]) -> Result<T, Error> {
         let url = self.address.url(segments)?;
         self.get_json(&url, MAX_JSON_BYTES)
     }
 
-    pub(crate) fn get_json<T: DeserializeOwned>(
-        &self,
-        url: &url::Url,
-        max_bytes: u64,
-    ) -> Result<T, Error> {
+    fn get_json<T: DeserializeOwned>(&self, url: &url::Url, max_bytes: u64) -> Result<T, Error> {
         let mut response = check_status(
             agent()
                 .get(url.as_str())

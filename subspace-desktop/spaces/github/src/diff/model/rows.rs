@@ -1,73 +1,7 @@
 use std::collections::HashSet;
 
-use subspace_framework::client_github::model::{GhDiffFile, GhFileStatus, image_type};
-
-use super::parse::{DiffLine, Gap, LineKind, Patch, gaps, parse_patch};
-
-pub fn placeholder_reason(file: &GhDiffFile) -> Option<&'static str> {
-    if file.patch.is_some() {
-        return None;
-    }
-    let changes = file.additions + file.deletions;
-    Some(if file.status == GhFileStatus::Renamed && changes == 0 {
-        "Renamed without changes"
-    } else if changes == 0 {
-        "Binary file, or no text changes"
-    } else {
-        "Diff too large to show here"
-    })
-}
-
-pub fn tree_status(status: GhFileStatus) -> Option<TreeStatus> {
-    Some(match status {
-        GhFileStatus::Added | GhFileStatus::Copied => TreeStatus::Added,
-        GhFileStatus::Removed => TreeStatus::Deleted,
-        GhFileStatus::Renamed => TreeStatus::Renamed,
-        GhFileStatus::Unchanged => return None,
-        GhFileStatus::Modified | GhFileStatus::Changed => TreeStatus::Modified,
-    })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TreeStatus {
-    Added,
-    Deleted,
-    Modified,
-    Renamed,
-}
-
-pub fn is_image(file: &GhDiffFile) -> bool {
-    image_type(&file.path).is_some()
-}
-
-#[derive(Debug, Clone)]
-pub struct FileView {
-    pub file: GhDiffFile,
-    pub patch: Patch,
-    pub reason: Option<&'static str>,
-    pub next_page: Option<String>,
-    pub binary: bool,
-    pub binary_size: Option<u64>,
-}
-
-impl FileView {
-    pub fn new(file: GhDiffFile) -> Self {
-        let patch = file.patch.as_deref().map(parse_patch).unwrap_or_default();
-        let reason = placeholder_reason(&file);
-        Self {
-            file,
-            patch,
-            reason,
-            next_page: None,
-            binary: false,
-            binary_size: None,
-        }
-    }
-
-    pub fn image_only(&self) -> bool {
-        self.file.patch.is_none() && is_image(&self.file)
-    }
-}
+use super::parse::{DiffLine, Gap, LineKind, gaps};
+use super::{FileStatus, FileView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
@@ -130,10 +64,7 @@ pub fn build_rows(files: &[FileView], options: &RowOptions<'_>) -> (Vec<DiffRow>
 
 fn project_file(rows: &mut Vec<DiffRow>, file: usize, view: &FileView, options: &RowOptions<'_>) {
     let file_gaps = gaps(&view.patch.hunks, (options.lengths)(file));
-    let can_expand = !matches!(
-        view.file.status,
-        GhFileStatus::Added | GhFileStatus::Removed
-    );
+    let can_expand = !matches!(view.file.status, FileStatus::Added | FileStatus::Removed);
     for (hunk_index, hunk) in view.patch.hunks.iter().enumerate() {
         rows.push(DiffRow::Gap {
             file,

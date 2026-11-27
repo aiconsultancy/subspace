@@ -1,12 +1,12 @@
 //! Owns the pending or mounted diff and the navigation it can return to.
 
-use gpui_kit::{AppContext as _, Context, Entity, Subscription, Window};
+use gpui_kit::{AppContext as _, Context, Entity, FocusHandle, Subscription, Window};
 use subspace_client_fleet::{FleetApi, navigation::OpenCrewDiff};
-use subspace_framework::dashboard::{DashboardEvent, ReturnPoint};
+use subspace_framework::dashboard::ReturnPoint;
 
-use crate::diff::view::{DiffSource, FleetSource, GitHubSource};
+use crate::diff::view::{DiffSource, FleetSource};
 use crate::diff::{DiffEvent, DiffView, OpenDiff};
-use crate::{GhItem, Github, ItemKind, Toast, emit_toast};
+use crate::{Github, emit_toast};
 
 #[derive(Default)]
 pub(super) struct OpenDiffState {
@@ -85,71 +85,59 @@ impl OpenDiffState {
     pub fn discard(&mut self, window: Option<&mut Window>, cx: &mut Context<Github>) {
         let _ = self.replace(None, window, cx);
     }
-}
 
-// qual:allow(coupling, oi) reason: "The board's open and close actions stay beside the diff state they own rather than in the board entry point."
-impl Github {
-    pub(super) fn open_crew_diff(&mut self, target: OpenCrewDiff, cx: &mut Context<Self>) -> bool {
+    pub fn queue_crew(&mut self, target: OpenCrewDiff, cx: &mut Context<Github>) -> bool {
         if !FleetApi::current(cx).is_some_and(|api| api.read(cx).fleet(&target.fleet).is_some()) {
             return false;
         }
-        let origin = self.diff.arrival.take();
-        let _ = self
-            .diff
-            .replace(Some(Current::Pending(target, origin)), None, cx);
-        self.close_confirmation = None;
-        self.composer = None;
-        cx.notify();
+        let origin = self.arrival.take();
+        let _ = self.replace(Some(Current::Pending(target, origin)), None, cx);
         true
     }
 
-    pub(super) fn mount_pending_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.diff.current, Some(Current::Pending(..)))
-            && let Some(Current::Pending(target, origin)) = self.diff.current.take()
-        {
-            self.mount_diff(
-                DiffSource::Fleet(FleetSource { target }),
-                Route::Crew(origin),
-                window,
-                cx,
-            );
-        }
-    }
-
-    pub(super) fn open_diff(&mut self, item: GhItem, window: &mut Window, cx: &mut Context<Self>) {
-        if item.kind != ItemKind::Pr {
-            emit_toast(Toast::error("Issues have no files"), cx);
-            return;
-        }
-        let Some(login) = self.account.clone() else {
-            return;
-        };
-        let source = DiffSource::GitHub(GitHubSource {
-            item: Box::new(item),
-            login,
-            client: self.client.clone(),
-        });
-        self.mount_diff(source, Route::PullRequest, window, cx);
-    }
-
-    fn mount_diff(
+    pub fn mount_pending(
         &mut self,
-        source: DiffSource,
+        focus: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Github>,
+    ) -> bool {
+        if !matches!(self.current, Some(Current::Pending(..))) {
+            return false;
+        }
+        let Some(Current::Pending(target, origin)) = self.current.take() else {
+            return false;
+        };
+        let open = OpenDiff {
+            source: DiffSource::Fleet(FleetSource { target }),
+            focus: focus.clone(),
+        };
+        self.mount(open, Route::Crew(origin), window, cx);
+        true
+    }
+
+    pub fn mount_pull_request(
+        &mut self,
+        open: OpenDiff,
+        window: &mut Window,
+        cx: &mut Context<Github>,
+    ) {
+        self.mount(open, Route::PullRequest, window, cx);
+    }
+
+    fn mount(
+        &mut self,
+        open: OpenDiff,
         route: Route,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<Github>,
     ) {
-        let open = OpenDiff {
-            source,
-            focus: self.focus.clone(),
-        };
+        let focus = open.focus.clone();
         let view = cx.new(|cx| DiffView::new(open, window, cx));
         let events = cx.subscribe_in(&view, window, |board, _, event, window, cx| match event {
             DiffEvent::Close => board.close_diff(window, cx),
             DiffEvent::Toast(toast) => emit_toast(toast.clone(), cx),
         });
-        self.composer = None;
-        let _ = self.diff.replace(
+        let _ = self.replace(
             Some(Current::Mounted {
                 view,
                 _events: events,
@@ -158,19 +146,11 @@ impl Github {
             Some(window),
             cx,
         );
-        self.focus.focus(window, cx);
+        focus.focus(window, cx);
         cx.notify();
     }
 
-    pub(super) fn close_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.composer.take().is_some() {
-            cx.notify();
-            return;
-        }
-        if let Some(origin) = self.diff.replace(None, Some(window), cx) {
-            cx.emit(DashboardEvent::Return(origin));
-        }
-        self.focus.focus(window, cx);
-        cx.notify();
+    pub fn close(&mut self, window: &mut Window, cx: &mut Context<Github>) -> Option<ReturnPoint> {
+        self.replace(None, Some(window), cx)
     }
 }

@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
+use crate::diff::model::FileStatus;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Div, Image, ImageFormat, ImageSource,
     InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _, div, img, px,
 };
-use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, feedback};
@@ -47,8 +47,8 @@ impl DiffView {
             .clone()
             .unwrap_or_else(|| view.file.path.clone());
         let after_path = view.file.path.clone();
-        let before = (status != GhFileStatus::Added).then(|| (self.base_sha.clone(), before_path));
-        let after = (status != GhFileStatus::Removed).then(|| (self.head_sha.clone(), after_path));
+        let before = (status != FileStatus::Added).then(|| (self.base_sha.clone(), before_path));
+        let after = (status != FileStatus::Removed).then(|| (self.head_sha.clone(), after_path));
         self.image = Some(ImageView {
             file,
             before: slot_for(&before),

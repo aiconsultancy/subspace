@@ -1,5 +1,6 @@
 //! Controls for selecting a side and paging or previewing its bytes.
 
+use crate::diff::model::FileStatus;
 use gpui_kit::component::{Disableable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -7,7 +8,6 @@ use gpui_kit::{
     Styled as _, TestSupportExt as _, div,
 };
 use subspace_client_fleet::diff::DiffSide;
-use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
@@ -36,7 +36,7 @@ impl DiffView {
 
 fn side_control(
     binary: &BinaryView,
-    status: GhFileStatus,
+    status: FileStatus,
     changed: bool,
     tokens: &Tokens,
     cx: &Context<DiffView>,
@@ -47,9 +47,8 @@ fn side_control(
     )
 }
 
-fn side_label(side: DiffSide, status: GhFileStatus, changed: bool) -> Option<&'static str> {
-    (changed || matches!(status, GhFileStatus::Added | GhFileStatus::Removed)).then_some(match side
-    {
+fn side_label(side: DiffSide, status: FileStatus, changed: bool) -> Option<&'static str> {
+    (changed || matches!(status, FileStatus::Added | FileStatus::Removed)).then_some(match side {
         DiffSide::Old => "Old bytes",
         DiffSide::New => "New bytes",
     })

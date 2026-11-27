@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use crate::diff::model::FileStatus;
 use gpui_kit::{AppContext as _, Context};
-use subspace_framework::client_github::model::GhFileStatus;
 use subspace_framework::dashboard::Toast;
 
 use super::{DiffEvent, DiffView, Text};
@@ -27,7 +27,7 @@ impl DiffView {
         else {
             return;
         };
-        let (sha, path) = if view.file.status == GhFileStatus::Removed {
+        let (sha, path) = if view.file.status == FileStatus::Removed {
             (self.base_sha.clone(), view.file.path.clone())
         } else {
             (self.head_sha.clone(), view.file.path.clone())

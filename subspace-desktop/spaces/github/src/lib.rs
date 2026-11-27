@@ -58,7 +58,8 @@ use subspace_framework::dashboard::{
 };
 
 use crate::detail::{Mode, OnAction, PanelAction, PanelInput};
-use crate::diff::DiffView;
+use crate::diff::view::{DiffSource, GitHubSource};
+use crate::diff::{DiffView, OpenDiff};
 use crate::model::{
     SectionData, assignee_logins, can_comment, can_review, default_section, is_pr_section,
     patch_sections, pr_only, same_login, search_doc, search_items, section_by_id, section_repos,
@@ -1360,6 +1361,38 @@ impl Github {
         self.open_diff(item, window, cx);
     }
 
+    fn open_diff(&mut self, item: GhItem, window: &mut Window, cx: &mut Context<Self>) {
+        if item.kind != ItemKind::Pr {
+            emit_toast(Toast::error("Issues have no files"), cx);
+            return;
+        }
+        let Some(login) = self.account.clone() else {
+            return;
+        };
+        let open = OpenDiff {
+            source: DiffSource::GitHub(GitHubSource {
+                item: Box::new(item),
+                login,
+                client: self.client.clone(),
+            }),
+            focus: self.focus.clone(),
+        };
+        self.composer = None;
+        self.diff.mount_pull_request(open, window, cx);
+    }
+
+    fn close_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.composer.take().is_some() {
+            cx.notify();
+            return;
+        }
+        if let Some(origin) = self.diff.close(window, cx) {
+            cx.emit(DashboardEvent::Return(origin));
+        }
+        self.focus.focus(window, cx);
+        cx.notify();
+    }
+
     fn open_in_github(&mut self, _: &OpenInGithub, _: &mut Window, cx: &mut Context<Self>) {
         match self.subject_item(cx) {
             Some(item) => {
@@ -1501,7 +1534,13 @@ impl Dashboard for Github {
 
     fn open_link(&mut self, url: &str, cx: &mut Context<Self>) -> bool {
         if let Some(target) = OpenCrewDiff::parse(url) {
-            return self.open_crew_diff(target, cx);
+            if !self.diff.queue_crew(target, cx) {
+                return false;
+            }
+            self.close_confirmation = None;
+            self.composer = None;
+            cx.notify();
+            return true;
         }
         navigation::open(self, url, cx)
     }
@@ -2073,7 +2112,9 @@ fn configure(composer: &mut Composer, mode: Mode, window: &mut Window, cx: &mut 
 
 impl Render for Github {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.mount_pending_diff(window, cx);
+        if self.diff.mount_pending(&self.focus, window, cx) {
+            self.composer = None;
+        }
         search_index::purge(self, cx);
         self.sync_collapsed(cx);
         self.ensure_detail(cx);

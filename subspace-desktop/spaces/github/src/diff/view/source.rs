@@ -11,7 +11,7 @@ use subspace_client_fleet::{Error, FleetAccess, FleetApi, FleetClient, FleetFoll
 use subspace_framework::client_github::Client;
 use subspace_framework::client_github::model::{DiffResponse, GhDiffFile, GhFileStatus, GhItem};
 
-use super::FileView;
+use super::super::model::{DiffFile, FileStatus, FileView};
 
 #[derive(Clone)]
 pub(crate) enum DiffSource {
@@ -171,18 +171,47 @@ fn same_checkout(left: &V1Diff, right: &V1Diff) -> bool {
         && left.total == right.total
 }
 
-// qual:allow(dry, boilerplate) reason: "The Fleet and GitHub client enums are independent wire types; the viewer owns their mapping."
-pub(super) fn fleet_file(file: V1DiffFile) -> FileView {
-    let status = match file.status {
-        DiffStatus::Added => GhFileStatus::Added,
-        DiffStatus::Removed => GhFileStatus::Removed,
-        DiffStatus::Modified => GhFileStatus::Modified,
-        DiffStatus::Renamed => GhFileStatus::Renamed,
-    };
-    let mut view = FileView::new(GhDiffFile {
+impl From<GhFileStatus> for FileStatus {
+    fn from(status: GhFileStatus) -> Self {
+        match status {
+            GhFileStatus::Added => Self::Added,
+            GhFileStatus::Removed => Self::Removed,
+            GhFileStatus::Modified | GhFileStatus::Changed => Self::Modified,
+            GhFileStatus::Renamed => Self::Renamed,
+            GhFileStatus::Copied => Self::Copied,
+            GhFileStatus::Unchanged => Self::Unchanged,
+        }
+    }
+}
+
+impl From<DiffStatus> for FileStatus {
+    fn from(status: DiffStatus) -> Self {
+        use DiffStatus::{Added, Modified, Removed, Renamed};
+        match status {
+            Added => Self::Added,
+            Removed => Self::Removed,
+            Modified => Self::Modified,
+            Renamed => Self::Renamed,
+        }
+    }
+}
+
+pub(super) fn github_file(file: GhDiffFile) -> FileView {
+    FileView::new(DiffFile {
         path: file.path,
         previous_path: file.previous_path,
-        status,
+        status: file.status.into(),
+        additions: file.additions,
+        deletions: file.deletions,
+        patch: file.patch,
+    })
+}
+
+pub(super) fn fleet_file(file: V1DiffFile) -> FileView {
+    let mut view = FileView::new(DiffFile {
+        path: file.path,
+        previous_path: file.previous_path,
+        status: file.status.into(),
         additions: file.additions.unwrap_or_default(),
         deletions: file.deletions.unwrap_or_default(),
         patch: file.patch,
@@ -204,9 +233,16 @@ pub(super) fn fleet_file(file: V1DiffFile) -> FileView {
 mod tests {
     use serde_json::json;
     use subspace_client_fleet::{Error, diff::V1Diff};
-    use subspace_framework::client_github::model::GhFileStatus;
 
-    use super::{DiffRead, FleetState, Loaded, fleet_file};
+    use super::{DiffRead, FileStatus, FleetState, GhFileStatus, Loaded, fleet_file};
+
+    #[test]
+    fn github_changed_status_is_displayed_as_modified() {
+        assert_eq!(
+            FileStatus::from(GhFileStatus::Changed),
+            FileStatus::Modified
+        );
+    }
 
     fn load_pages(
         read: impl FnMut(Option<&str>) -> Result<Option<V1Diff>, Error>,
@@ -238,7 +274,7 @@ mod tests {
             panic!("expected Fleet diff");
         };
         let files: Vec<_> = diff.files.into_iter().map(fleet_file).collect();
-        assert_eq!(files[0].file.status, GhFileStatus::Renamed);
+        assert_eq!(files[0].file.status, FileStatus::Renamed);
         assert_eq!(files[0].file.previous_path.as_deref(), Some("old.txt"));
         assert_eq!(files[0].patch.lines[0].text, "example.com");
         assert_eq!(files[0].next_page.as_deref(), Some("more"));

@@ -10,7 +10,7 @@ use subspace_framework::dashboard::{Tokens, prefs};
 use super::super::model::{
     FileView, RowOptions, VIEWED_KEY, ViewedStore, build_rows, file_at, tree_order, viewed_id,
 };
-use super::source::{Loaded, fleet_file};
+use super::source::{Loaded, fleet_file, github_file};
 use super::{DiffSource, DiffView, Text, code_row_height};
 
 enum LoadError {
@@ -189,7 +189,7 @@ impl DiffView {
                 self.base_sha = diff.base_sha;
                 self.head_sha = diff.head_sha;
                 self.total = diff.total;
-                self.set_files(diff.files.into_iter().map(FileView::new).collect(), cx);
+                self.set_files(diff.files.into_iter().map(github_file).collect(), cx);
             }
             Loaded::Fleet(diff) => {
                 self.fleet.stale_page = false;

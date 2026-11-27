@@ -1,10 +1,12 @@
 //! Pure parsing and projection models for the GitHub diff view.
 
+mod files;
 pub mod parse;
 pub mod rows;
 pub mod tree;
 pub mod viewed;
 
+pub use files::*;
 pub use parse::*;
 pub use rows::*;
 pub use tree::*;
@@ -13,17 +15,16 @@ pub use viewed::*;
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffRow, FileView, Layout, LineKind, RowOptions, TreeStatus, ViewedStore, build_rows,
-        file_at, gaps, parse_patch, placeholder_reason, tree_order, tree_rows, tree_status,
-        word_ranges,
+        DiffFile, DiffRow, FileStatus, FileView, Layout, LineKind, RowOptions, TreeStatus,
+        ViewedStore, build_rows, file_at, gaps, parse_patch, placeholder_reason, tree_order,
+        tree_rows, tree_status, word_ranges,
     };
     use std::collections::HashSet;
-    use subspace_framework::client_github::model::{GhDiffFile, GhFileStatus};
 
     const PATCH: &str = "@@ -3,4 +3,5 @@ fn main() {\n     let a = 1;\n-    let b = 2;\n+    let b = 3;\n+    let c = 4;\n     done();\n\\ No newline at end of file\n@@ -20,2 +21,2 @@\n-x\n+y\n z";
 
-    fn file(path: &str, status: GhFileStatus, patch: Option<&str>) -> GhDiffFile {
-        GhDiffFile {
+    fn file(path: &str, status: FileStatus, patch: Option<&str>) -> DiffFile {
+        DiffFile {
             path: path.into(),
             previous_path: None,
             status,
@@ -97,8 +98,8 @@ mod tests {
     #[test]
     fn rows_preserve_layout_collapse_expansion_and_file_starts() {
         let files = vec![
-            FileView::new(file("src/a.rs", GhFileStatus::Modified, Some(PATCH))),
-            FileView::new(file("img.png", GhFileStatus::Added, None)),
+            FileView::new(file("src/a.rs", FileStatus::Modified, Some(PATCH))),
+            FileView::new(file("img.png", FileStatus::Added, None)),
         ];
         let none = HashSet::new();
         let no_gaps = HashSet::new();
@@ -156,14 +157,14 @@ mod tests {
 
     #[test]
     fn placeholders_explain_files_without_a_text_diff() {
-        let mut renamed = file("b", GhFileStatus::Renamed, None);
+        let mut renamed = file("b", FileStatus::Renamed, None);
         renamed.additions = 0;
         renamed.deletions = 0;
         assert_eq!(
             placeholder_reason(&renamed),
             Some("Renamed without changes")
         );
-        let mut binary = file("b", GhFileStatus::Modified, None);
+        let mut binary = file("b", FileStatus::Modified, None);
         binary.additions = 0;
         binary.deletions = 0;
         assert_eq!(
@@ -171,36 +172,26 @@ mod tests {
             Some("Binary file, or no text changes")
         );
         assert_eq!(
-            placeholder_reason(&file("b", GhFileStatus::Modified, None)),
+            placeholder_reason(&file("b", FileStatus::Modified, None)),
             Some("Diff too large to show here")
         );
         assert_eq!(
-            placeholder_reason(&file("b", GhFileStatus::Modified, Some(""))),
+            placeholder_reason(&file("b", FileStatus::Modified, Some(""))),
             None
         );
     }
 
     #[test]
     fn file_statuses_map_to_tree_statuses() {
-        assert_eq!(tree_status(GhFileStatus::Added), Some(TreeStatus::Added));
-        assert_eq!(tree_status(GhFileStatus::Copied), Some(TreeStatus::Added));
+        assert_eq!(tree_status(FileStatus::Added), Some(TreeStatus::Added));
+        assert_eq!(tree_status(FileStatus::Copied), Some(TreeStatus::Added));
+        assert_eq!(tree_status(FileStatus::Removed), Some(TreeStatus::Deleted));
+        assert_eq!(tree_status(FileStatus::Renamed), Some(TreeStatus::Renamed));
         assert_eq!(
-            tree_status(GhFileStatus::Removed),
-            Some(TreeStatus::Deleted)
-        );
-        assert_eq!(
-            tree_status(GhFileStatus::Renamed),
-            Some(TreeStatus::Renamed)
-        );
-        assert_eq!(
-            tree_status(GhFileStatus::Modified),
+            tree_status(FileStatus::Modified),
             Some(TreeStatus::Modified)
         );
-        assert_eq!(
-            tree_status(GhFileStatus::Changed),
-            Some(TreeStatus::Modified)
-        );
-        assert_eq!(tree_status(GhFileStatus::Unchanged), None);
+        assert_eq!(tree_status(FileStatus::Unchanged), None);
     }
 
     #[test]

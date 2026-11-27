@@ -14,11 +14,11 @@ use gpui_kit::{
     Styled as _, Subscription, Task, UniformListScrollHandle, Window, actions,
 };
 use subspace_framework::client_github::Client;
-use subspace_framework::client_github::model::{GhDiffFile, GhFileStatus, GhItem};
+use subspace_framework::client_github::model::GhItem;
 use subspace_framework::dashboard::{MODAL_CONTEXT, Toast, Tokens, prefs};
 
 use super::highlight::Runs;
-use super::model::{DiffRow, FileView, Layout};
+use super::model::{DiffFile, DiffRow, FileStatus, FileView, Layout};
 
 actions!(
     github_diff,
@@ -331,8 +331,8 @@ impl DiffView {
         (self.loaded && !self.files.is_empty()).then(|| self.tree(tokens, window, cx))
     }
 
-    fn blob_url(&self, file: &GhDiffFile) -> Option<String> {
-        let sha = if file.status == GhFileStatus::Removed {
+    fn blob_url(&self, file: &DiffFile) -> Option<String> {
+        let sha = if file.status == FileStatus::Removed {
             &self.base_sha
         } else {
             &self.head_sha
