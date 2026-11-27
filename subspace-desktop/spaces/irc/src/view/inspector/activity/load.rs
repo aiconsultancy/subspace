@@ -31,9 +31,10 @@
 //! 2). A newer version arriving with no room beside a later request is
 //! not swapped in: what was read stays, and beside **Load the latest** a
 //! caption says why (SUB decision `a884e4c6`), as it does when moving to
-//! another part withdraws that read. What a read draws is never planned beside the snapshot's bodies: it
-//! always draws, within its own allowance. A new snapshot never lets go of
-//! the read the floor keeps: the part of the item last asked for.
+//! another part withdraws that read. What a read draws is never planned
+//! beside the snapshot's bodies: it always draws, within its own
+//! allowance. A new snapshot never lets go of the read the floor keeps:
+//! the part of the item last asked for.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

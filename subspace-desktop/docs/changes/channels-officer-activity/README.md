@@ -55,9 +55,10 @@ item too large to send inline is paged and loads on demand, never hidden.
   failed: the part asked for is read, its page counted in place of what
   the newer read reserved, never beside it, the newer read's answer is
   dropped, and **Load the latest** is offered again with a caption that
-  moving to another part stopped it. A snapshot of a new generation still lets go of it at once. Page counts and sizes are checked before anything is
-  allocated: a size the pages could not carry, or a joined length other
-  than the declared one, is an invalid answer.
+  moving to another part stopped it. A snapshot of a new generation
+  still lets go of it at once. Page counts and sizes are checked before
+  anything is allocated: a size the pages could not carry, or a joined
+  length other than the declared one, is an invalid answer.
 - **One budget.** Everything the view holds counts against 64 MiB: the
   snapshot's inline content (estimated from its strings and values, every
   field and token count this version does not know included, drawn or not)
