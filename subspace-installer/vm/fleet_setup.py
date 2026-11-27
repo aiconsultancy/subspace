@@ -468,7 +468,8 @@ def gather_identity(args, answers, saved, interactive):
     if development and (not saved or not saved.get("api", True)):
         require(yes_no("Identity: use development sign-in to register this fleet on its local API for now? "
                        "Owner device pairing is not available in setup yet", False, interactive),
-                "Set up the API's production sign-in first (see INSTALL.md), use a hosted API, or pass --no-api.")
+                "Set up the API's production sign-in first (see INSTALL.md), use a hosted API, pass --no-api, "
+                "or rerun and answer y to use development sign-in.")
     elif interactive and not saved:
         say("Identity: setup leaves sign-in to the configured API, if any. It does not pair an owner.")
     for key, flag, label, default in (

@@ -281,8 +281,10 @@ class GuidedQuestionsTests(unittest.TestCase):
         self.assertEqual((kept["adminEmail"], kept["organisation"]), ("operator@example.com", "example"))
 
     def test_fresh_interactive_local_api_requires_accepting_the_legacy_bootstrap(self):
-        with self.assertRaisesRegex(fleet_setup.SetupError, "production sign-in first"):
-            self.gather(replies=["", "", "n"])
+        message = "production sign-in first.*rerun and answer y to use development sign-in"
+        for reply in ("", "n"):
+            with self.subTest(reply=reply), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                self.gather(replies=["", "", reply])
         self.assertFalse((fleet_setup.INPUTS / "answers.json").exists())
         answers, asked = self.gather(["--non-interactive"])
         self.assertEqual(asked, [])
