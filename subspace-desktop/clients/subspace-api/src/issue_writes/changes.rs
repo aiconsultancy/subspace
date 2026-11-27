@@ -12,6 +12,7 @@ pub enum IssueProperty {
     Summary(String),
     Description(Option<String>),
     State(String),
+    Owner(String),
     Assignee(Option<String>),
     AssignUnassignedChildren,
     MoveOpenChildren,
@@ -45,6 +46,8 @@ pub struct IssueChanges {
     #[serde(skip_serializing_if = "Option::is_none")]
     assignee_id: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    owner_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     assign_unassigned_children: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     move_open_children: Option<bool>,
@@ -75,6 +78,7 @@ impl IssueChanges {
             IssueProperty::Summary(text) => self.summary = Some(text.trim().to_owned()),
             IssueProperty::Description(text) => self.description = Some(text),
             IssueProperty::State(id) => self.state_id = Some(id),
+            IssueProperty::Owner(id) => self.owner_id = Some(id),
             IssueProperty::Assignee(id) => self.assignee_id = Some(id),
             IssueProperty::Priority(priority) => self.priority = Some(priority),
             IssueProperty::DueDate(date) => self.due_date = Some(date),

@@ -50,8 +50,11 @@ type across projects. **Done**, **Cancelled** and **Duplicate** start folded.
 Unfold a group to read its issues. The board remembers your folded groups.
 
 Rows show the priority, project identifier (such as **SUB-12**), state,
-tracker mark, title, progress, labels, due date, estimate and assignee when
-available. Labels use their service colours. A narrow list omits label chips.
+tracker mark, title, progress, labels, due date, estimate, owner and assignee
+when available. When the service supports issue owners, Owner has an outlined
+badge with a shield beside Assignee. Hover over either badge to see the role
+and full name. Labels use their service
+colours. A narrow list omits label chips.
 A group loads another page when you move near its end. **Show more** reads
 the next page; a failed page offers **Retry**.
 
@@ -147,11 +150,14 @@ Description, images, attachments, Sub-issues, Pull requests and Activity
 form the reading column. Properties, Relations and Record sit in the
 inspector on the right; while the inspector is hidden, or the window is too
 narrow for it, they follow Activity at the end of the reading column.
-Properties show state, priority, assignee, labels,
-due date, project, milestone, parent and type; populated estimates and cycles
-also appear. Record shows the creator, lifecycle dates, archive facts and update
-date. Imported dates are labelled **Originally created**, **Originally started**,
-**Originally completed** or **Originally cancelled** independently.
+Properties show state, priority, owner, assignee, labels, due date, project,
+milestone, parent and type. Populated estimates and cycles also appear. The
+owner is the person accountable for the issue. The assignee is the person or
+agent doing the work. To change the owner, choose **Edit owner…**, select a
+person and choose **Save**. Record shows the creator, lifecycle dates, archive
+facts and update date. Imported dates are labelled **Originally created**,
+**Originally started**, **Originally completed** or **Originally cancelled**
+independently.
 
 Open a parent, child or related issue from this page. **Show more** continues
 Relations or Pull requests; **Show n more** continues Sub-issues when its total

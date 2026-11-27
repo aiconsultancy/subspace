@@ -1,7 +1,7 @@
 //! A row's lanes in Subspace API's order: priority, identifier, state and tracker
 //! marks before the title; progress or sub-issue count, labels, due date,
-//! estimate and assignee after it. As the pane narrows, labels go first, as
-//! in Subspace API. The selected row ends with Open.
+//! estimate, owner and assignee after it. As the pane narrows, labels go
+//! first, as in Subspace API. The selected row ends with Open.
 
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -11,8 +11,10 @@ use gpui_kit::{
 };
 use subspace_api_client::model::{IssueListItem, Label};
 use subspace_framework::dashboard::action::{Intent, action_button};
-use subspace_framework::dashboard::{Glyph, Group, Row, Tokens, Tone, avatar, feedback, truncated};
+use subspace_framework::dashboard::{Glyph, Group, Row, Tokens, Tone, feedback, truncated};
 use subspace_framework::lucide::{IconName, SvgIcon};
+
+mod people;
 
 use super::progress::progress;
 use crate::Issues;
@@ -24,7 +26,6 @@ use crate::model::{IssuePriority, StateKind};
 const IDENTIFIER_WIDTH_PX: f32 = 68.;
 /// The tracker mark's slot, kept on every row so titles line up.
 const TRACKER_SLOT_PX: f32 = 14.;
-const ASSIGNEE_SIZE_PX: f32 = 20.;
 const LABEL_DOT_PX: f32 = 7.;
 /// The widest a chip grows before its name is cut, so one long label cannot
 /// push the row's other lanes aside. In rem, so it follows the text size.
@@ -208,7 +209,7 @@ fn item_lanes(item: &IssueListItem, lanes: Lanes, tokens: &Tokens) -> Div {
         })
         .children(fields.due_date.as_deref().and_then(short_date))
         .children(fields.estimate.map(estimate))
-        .child(assignee(item, tokens))
+        .child(people::people(item, tokens))
 }
 
 /// A label in Subspace API's own colour.
@@ -254,19 +255,6 @@ fn chip(
 
 fn estimate(points: f64) -> String {
     format!("{points}")
-}
-
-/// The assignee's initials, or an empty slot.
-fn assignee(item: &IssueListItem, tokens: &Tokens) -> AnyElement {
-    match &item.fields.assignee {
-        Some(person) => avatar::member(person.display_name.clone(), tokens).into_any_element(),
-        None => div()
-            .size(px(ASSIGNEE_SIZE_PX))
-            .rounded(tokens.control_radius)
-            .border_1()
-            .border_color(tokens.hair)
-            .into_any_element(),
-    }
 }
 
 /// `#RRGGBB` as a colour value.

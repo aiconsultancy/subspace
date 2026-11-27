@@ -105,3 +105,24 @@ fn label_colours_and_due_dates_read_as_the_api_writes_them() {
     assert_eq!(short_date("2026-13-01"), None);
     assert_eq!(short_date("soon"), None);
 }
+
+#[gpui_kit::test]
+fn issue_rows_name_both_roles_and_empty_slots(cx: &mut gpui_kit::TestAppContext) {
+    use crate::tests::{design_groups, label, listed, render};
+
+    let (board, cx) = listed(cx);
+    let mut groups = design_groups();
+    groups[0].rows[0].fields.owner =
+        Some(serde_json::from_value(crate::fixtures::person("Rosa Fixture")).unwrap());
+    board.update(cx, |board, cx| board.show_groups(groups, true, cx));
+    render(cx);
+
+    for (id, expected) in [
+        ("issues-person:Owner:id-SUB-955", "Owner: Rosa Fixture"),
+        ("issues-person:Assignee:id-SUB-955", "Assignee: Jo Fixture"),
+        ("issues-person:Owner:id-SUB-1540", "Owner: No owner"),
+        ("issues-person:Assignee:id-SUB-1540", "Assignee: Unassigned"),
+    ] {
+        assert_eq!(label(cx, id).as_deref(), Some(expected));
+    }
+}

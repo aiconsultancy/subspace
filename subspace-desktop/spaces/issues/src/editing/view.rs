@@ -217,6 +217,7 @@ fn properties(
     tokens: &Tokens,
     cx: &mut Context<Issues>,
 ) -> Div {
+    let owner = editor.editing_existing() && subspace_api_client::capabilities().issue_owners;
     v_flex()
         .gap_3()
         .pt_2()
@@ -224,16 +225,18 @@ fn properties(
         .border_color(tokens.hair)
         .child(div().text_size(tokens.heading_font).child("Properties"))
         .child(
-            h_flex()
-                .gap_3()
-                .flex_wrap()
-                .children(Field::ALL.into_iter().map(|field| {
-                    reveal_focus::scope(
-                        field.facts().0,
-                        &editor.scroll,
-                        picker::render(board, editor, field, locked, cx),
-                    )
-                })),
+            h_flex().gap_3().flex_wrap().children(
+                Field::ALL
+                    .into_iter()
+                    .filter(|field| owner || *field != Field::Owner)
+                    .map(|field| {
+                        reveal_focus::scope(
+                            field.facts().0,
+                            &editor.scroll,
+                            picker::render(board, editor, field, locked, cx),
+                        )
+                    }),
+            ),
         )
         .child(additional_properties(board, editor, locked, cx))
 }

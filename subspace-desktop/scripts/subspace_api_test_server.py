@@ -682,7 +682,7 @@ def tracker_state(types):
 
 
 def validate_issue_payload(payload, create):
-    allowed = {'title', 'summary', 'description', 'stateId', 'assigneeId', 'priority', 'estimate', 'readyForAgents',
+    allowed = {'title', 'summary', 'description', 'stateId', 'ownerId', 'assigneeId', 'priority', 'estimate', 'readyForAgents',
                'dueDate', 'labelIds', 'parentId', 'type', 'milestoneId', 'cycleId', 'projectId' if create else 'version'}
     if not isinstance(payload, dict) or not payload or set(payload) - allowed:
         raise Problem(400, 'Supply editable issue fields only.')
@@ -738,6 +738,11 @@ def issue_properties(fixture, row, payload):
         if state is None:
             raise Problem(400, 'Choose a state from this project.')
         values['state'] = {k: state[k] for k in ('id', 'name', 'type')}
+    if 'ownerId' in payload:
+        owner = next((person for person in (ADA, GRACE) if person['userId'] == payload['ownerId']), None)
+        if owner is None:
+            raise Problem(400, 'Choose an active human owner.')
+        values['owner'] = owner
     if 'assigneeId' in payload:
         people = {p['userId']: p for p in (ADA, GRACE, AGENT)}
         if fixture.fleet:

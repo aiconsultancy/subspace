@@ -1,10 +1,11 @@
 use super::{
-    board_with_hub, has, issue_edit_route, offline_with, open_editor, patch_bodies, render,
+    board_with_hub, has, issue, issue_edit_route, offline_with, open_editor, patch_bodies, render,
     settle_board,
 };
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{TestAppContext, VisualTestContext};
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[gpui_kit::test]
 fn property_pickers_use_the_api_and_tracker_controls_refuse_direct_values(cx: &mut TestAppContext) {
@@ -20,6 +21,7 @@ fn property_pickers_use_the_api_and_tracker_controls_refuse_direct_values(cx: &m
     render(cx);
     cx.update(|w, cx| w.press("c", cx));
     render(cx);
+    assert!(!has(cx, "issue-edit-owner"));
     cx.update(|w, cx| w.click("issue-edit-assignee", cx));
     settle_board(&board, cx, |b| b.menu.is_some());
     wait_for_option(cx, 1);
@@ -159,4 +161,79 @@ pub(super) fn tab_to_visible_field(cx: &mut VisualTestContext, id: &'static str)
         cx.run_until_parked();
     }
     panic!("Tab did not reach {id}");
+}
+
+fn owner_write_fixture() -> super::Offline {
+    let persisted = AtomicBool::new(false);
+    offline_with(
+        move |r| match (r.method.as_str(), r.path.split('?').next().unwrap()) {
+            ("GET", "/api/v1/users") => Some((
+                200,
+                json!({"items":[
+                    {"id":"agent-fixture","displayName":"Orbit Fixture","kind":"agent"},
+                    {"id":"human-fixture","displayName":"Rosa Fixture","kind":"human"}
+                ],"nextCursor":null})
+                .to_string(),
+            )),
+            ("GET" | "PATCH", "/api/v1/issues/SUB-2" | "/api/v1/issues/2") => {
+                if r.method == "PATCH" {
+                    persisted.store(true, Ordering::Relaxed);
+                }
+                let saved = persisted.load(Ordering::Relaxed);
+                let mut value: serde_json::Value =
+                    serde_json::from_str(&issue("Owner fixture", if saved { 2 } else { 1 }))
+                        .unwrap();
+                value["owner"] = if saved {
+                    json!({"userId":"human-fixture","displayName":"Rosa Fixture","kind":"human","isFormerMember":false})
+                } else {
+                    json!({"userId":"former-fixture","displayName":"Former Fixture","kind":"human","isFormerMember":true})
+                };
+                Some((200, value.to_string()))
+            }
+            _ => None,
+        },
+    )
+}
+
+#[gpui_kit::test]
+fn owner_picker_offers_humans_and_saves_only_the_versioned_owner(cx: &mut TestAppContext) {
+    let fixture = owner_write_fixture();
+    let (board, cx) = board_with_hub(&fixture, cx);
+    settle_board(&board, cx, |b| b.can_create_issue());
+    super::open_page(&board, cx);
+    assert_eq!(
+        crate::tests::label(cx, "issue-property:Owner").as_deref(),
+        Some("Owner: Former Fixture (former member)"),
+    );
+    cx.update(|w, cx| w.press("e", cx));
+    render(cx);
+    assert!(has(cx, "issue-edit-owner"));
+    cx.update(|w, cx| w.press("escape", cx));
+    render(cx);
+    cx.update(|w, cx| w.click("issue-property-edit:Owner", cx));
+    wait_for_option(cx, 0);
+    cx.update(|w, cx| {
+        assert!(w.try_find(("menu-option", 1_usize)).is_none());
+        w.press("enter", cx);
+    });
+    render(cx);
+    cx.update(|w, cx| w.click("issue-inline-save", cx));
+    settle_board(&board, cx, |b| {
+        b.editor.is_none()
+            && b.issue_view
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.detail())
+                .and_then(|detail| detail.fields.owner.as_ref())
+                .is_some_and(|owner| owner.user_id == "human-fixture")
+    });
+    assert_eq!(
+        patch_bodies(&fixture),
+        [json!({"version":1,"ownerId":"human-fixture"})]
+    );
+    render(cx);
+    assert_eq!(
+        crate::tests::label(cx, "issue-property:Owner").as_deref(),
+        Some("Owner: Rosa Fixture"),
+    );
 }

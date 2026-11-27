@@ -37,6 +37,9 @@ impl EditTarget {
                 Self::ProjectMove
             }
             "Priority" => Self::Property(Field::Priority),
+            "Owner" if subspace_api_client::capabilities().issue_owners => {
+                Self::Property(Field::Owner)
+            }
             "Assignee" => Self::Property(Field::Assignee),
             "Labels" => Self::Property(Field::Labels),
             "Due date" => Self::DueDate,

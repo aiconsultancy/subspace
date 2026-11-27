@@ -10,6 +10,8 @@ fn properties_follow_api_scope_and_explain_absent_names_without_ids() {
     value["cycle"] = json!({"id":"cycle", "number":3, "state":"active"});
     value["assignee"] = crate::fixtures::person("Jo Fixture");
     value["assignee"]["isFormerMember"] = json!(true);
+    value["owner"] = crate::fixtures::person("Rosa Fixture");
+    value["owner"]["isFormerMember"] = json!(true);
     value["parentId"] = json!("missing-parent");
     let detail: IssueDetail = serde_json::from_value(value).unwrap();
     let rows: Vec<_> = facts(
@@ -24,6 +26,7 @@ fn properties_follow_api_scope_and_explain_absent_names_without_ids() {
         [
             "State",
             "Priority",
+            "Owner",
             "Assignee",
             "Labels",
             "Due date",
@@ -39,6 +42,7 @@ fn properties_follow_api_scope_and_explain_absent_names_without_ids() {
     assert!(rows.contains(&("Milestone", "Unavailable".into())));
     assert!(rows.contains(&("Parent", "Unavailable".into())));
     assert!(rows.contains(&("Estimate", "0".into())));
+    assert!(rows.contains(&("Owner", "Rosa Fixture (former member)".into())));
     assert!(rows.contains(&("Assignee", "Jo Fixture (former member)".into())));
     assert!(!rows.iter().any(|(_, value)| value.contains("private-id")));
 }

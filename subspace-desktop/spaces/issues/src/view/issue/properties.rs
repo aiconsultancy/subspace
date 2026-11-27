@@ -28,6 +28,12 @@ pub(super) fn facts(detail: &IssueDetail, projects: &[Project]) -> Vec<Fact> {
             "Priority",
             IssuePriority::from_value(f.priority).look().label,
         ),
+    ];
+    if subspace_api_client::capabilities().issue_owners {
+        let owner = f.owner.as_ref().map_or_else(|| "No owner".into(), person);
+        facts.push(Fact::new("Owner", owner));
+    }
+    facts.extend([
         Fact::new(
             "Assignee",
             f.assignee
@@ -36,7 +42,7 @@ pub(super) fn facts(detail: &IssueDetail, projects: &[Project]) -> Vec<Fact> {
         ),
         Fact::new("Labels", labels),
         Fact::new("Due date", f.due_date.as_deref().unwrap_or("No due date")),
-    ];
+    ]);
     facts.extend(context(detail, projects));
     // The projects contract exposes no estimate/cycle capability flags. Populated
     // issue values are the only positive signal; never invent empty controls.
@@ -227,6 +233,12 @@ fn value(fact: &Fact, detail: &IssueDetail, tokens: &Tokens) -> AnyElement {
                 .xsmall()
                 .text_color(tokens.tone(priority.tone));
             marked(icon, id, fact, tokens)
+        }
+        "Owner" if detail.fields.owner.is_some() => {
+            let shield = Icon::from(IconName::Shield)
+                .xsmall()
+                .text_color(tokens.muted);
+            marked(shield, id, fact, tokens)
         }
         "Assignee" if detail.fields.assignee.is_some() => {
             marked(avatar::member(fact.value.clone(), tokens), id, fact, tokens)

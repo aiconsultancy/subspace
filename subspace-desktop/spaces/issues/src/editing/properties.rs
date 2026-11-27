@@ -2,12 +2,14 @@
 use crate::model::IssuePriority;
 use std::collections::HashMap;
 use subspace_api_client::{
-    issue_writes::{ChoiceSource, IssueChanges, IssueChoice, IssueProperty},
+    issue_writes::{ChoiceSource, IssueChanges, IssueChoice},
     model::{IssueDetail, Project},
 };
 use subspace_framework::lucide::{IconName, SvgIcon};
 mod labels;
+mod write;
 use labels::{keep_edits, same_ids, toggle};
+use write::property;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Field {
@@ -20,13 +22,15 @@ pub(crate) enum Field {
     Type,
     Milestone,
     Cycle,
+    Owner,
 }
 impl Field {
-    pub(super) const ALL: [Self; 9] = [
+    pub(super) const ALL: [Self; 10] = [
         Self::Project,
         Self::Type,
         Self::State,
         Self::Priority,
+        Self::Owner,
         Self::Assignee,
         Self::Labels,
         Self::Estimate,
@@ -34,7 +38,7 @@ impl Field {
         Self::Cycle,
     ];
     pub(super) fn facts(self) -> (&'static str, &'static str, SvgIcon) {
-        const FACTS: [(&str, &str, SvgIcon); 9] = [
+        const FACTS: [(&str, &str, SvgIcon); 10] = [
             ("issue-edit-project", "Project", IconName::Folder),
             ("issue-edit-state", "State", IconName::CircleDot),
             ("issue-edit-priority", "Priority", IconName::SignalHigh),
@@ -44,12 +48,13 @@ impl Field {
             ("issue-edit-type", "Type", IconName::Layers),
             ("issue-edit-milestone", "Milestone", IconName::Flag),
             ("issue-edit-cycle", "Cycle", IconName::Calendar),
+            ("issue-edit-owner", "Owner", IconName::Shield),
         ];
         FACTS[self as usize]
     }
 
     pub(super) fn empty_name(self) -> &'static str {
-        const NAMES: [&str; 9] = [
+        const NAMES: [&str; 10] = [
             "Choose project",
             "Project default",
             "None",
@@ -59,6 +64,7 @@ impl Field {
             "Issue",
             "No milestone",
             "No cycle",
+            "No owner",
         ];
         NAMES[self as usize]
     }
@@ -71,7 +77,7 @@ impl Field {
         match self {
             Self::State if values.tracker() => key.map(ChoiceSource::TrackerStates),
             Self::State => key.map(ChoiceSource::States),
-            Self::Assignee => Some(ChoiceSource::Assignees),
+            Self::Assignee | Self::Owner => Some(ChoiceSource::Assignees),
             Self::Labels => Some(ChoiceSource::Labels),
             Self::Estimate => key.map(ChoiceSource::Estimates),
             Self::Milestone => key.map(ChoiceSource::Milestones),
@@ -144,6 +150,14 @@ impl Properties {
                 vec![IssueChoice::new(&f.state.id, &f.state.name)],
             ),
             (Field::Priority, vec![priority_choice(f.priority)]),
+            (
+                Field::Owner,
+                f.owner
+                    .as_ref()
+                    .map(|p| IssueChoice::new(&p.user_id, p.fact_label()))
+                    .into_iter()
+                    .collect(),
+            ),
             (
                 Field::Assignee,
                 f.assignee
@@ -281,20 +295,6 @@ impl Properties {
     pub(super) fn has_edits(&self) -> bool {
         !self.edits.is_empty()
     }
-}
-fn property(field: Field, values: &[IssueChoice]) -> Option<IssueProperty> {
-    let id = values.first().map(|v| v.id().to_owned());
-    Some(match field {
-        Field::Project => return None,
-        Field::State => IssueProperty::State(id?),
-        Field::Priority => IssueProperty::Priority(id?.parse().ok()?),
-        Field::Assignee => IssueProperty::Assignee(id),
-        Field::Labels => IssueProperty::Labels(values.iter().map(|v| v.id().to_owned()).collect()),
-        Field::Estimate => IssueProperty::Estimate(id.and_then(|v| v.parse().ok())),
-        Field::Type => IssueProperty::Type(id?),
-        Field::Milestone => IssueProperty::Milestone(id),
-        Field::Cycle => IssueProperty::Cycle(id),
-    })
 }
 pub(super) fn project_choice(project: &Project) -> IssueChoice {
     IssueChoice::new(&project.id, format!("{} · {}", project.key, project.name))

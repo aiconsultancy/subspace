@@ -44,8 +44,11 @@ pub(super) fn available(board: &Issues, editor: &IssueEditor, field: Field) -> V
         _ => field
             .source(&editor.properties, &board.projects)
             .and_then(|source| editor.catalogues.get(&source))
+            .into_iter()
+            .flatten()
+            .filter(|choice| field != Field::Owner || choice.human_id().is_some())
             .cloned()
-            .unwrap_or_default(),
+            .collect(),
     }
 }
 

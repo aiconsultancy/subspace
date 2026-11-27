@@ -44,7 +44,7 @@ impl IssueChoice {
         &self.name
     }
 
-    /// Whether this member can be the human maker of a decision.
+    /// The member ID if this choice names a human.
     pub fn human_id(&self) -> Option<&str> {
         self.human.then_some(self.id.as_str())
     }
