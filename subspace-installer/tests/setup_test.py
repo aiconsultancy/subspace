@@ -54,6 +54,17 @@ check_usage_guard_source = fleet_setup.check_usage_guard_source
 fleet_setup.check_usage_guard_source = lambda *_args: None
 check_officer_tool_source = fleet_setup.check_officer_tool_source
 fleet_setup.check_officer_tool_source = lambda *_args: None
+require_decision_dm_source = runtime.require_decision_dm_source
+
+
+def fixture_decision_dm_source(*_args, **_kwargs):
+    raise runtime.Invalid("The fixture Stargate lacks signed decision outcome DMs.")
+
+
+def setUpModule():
+    patcher = patch.object(runtime, "require_decision_dm_source", side_effect=fixture_decision_dm_source)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 def fleet_installer(root, output=None):
@@ -1593,6 +1604,185 @@ class AgentDispatchSetupTests(unittest.TestCase):
     def test_dispatch_needs_the_api(self):
         with self.assertRaisesRegex(fleet_setup.SetupError, "needs the API on this VM"):
             answers_for([*self.argv, "--agent-dispatch", "--no-api"])
+
+    def test_local_signed_access_uses_the_same_audience_as_the_gateway(self):
+        answers, _, _ = answers_for(self.argv)
+        env, listener = fleet_setup.api_environment(answers, {})
+        self.assertFalse(listener)
+        self.assertEqual(env["AGENT_TOKEN_AUDIENCE"], fleet_setup.local_api_origin())
+        self.assertEqual(fleet_setup.planned_api_block(answers)["url"], env["AGENT_TOKEN_AUDIENCE"])
+        legacy, listener = fleet_setup.api_environment({**answers, "agentListener": True}, {})
+        self.assertTrue(listener)
+        self.assertNotIn("AGENT_TOKEN_AUDIENCE", legacy)
+        fleet_setup.write_private(fleet_setup.INPUTS / "api.env",
+                                  f'{fleet_setup.SIGNED_LOCAL_API}\n'
+                                  f'AGENT_TOKEN_AUDIENCE="{fleet_setup.local_api_origin()}" # local signing\n')
+        quoted, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(quoted["AGENT_TOKEN_AUDIENCE"], fleet_setup.local_api_origin())
+        with patch.dict(os.environ, {"AGENT_TOKEN_AUDIENCE": "https://wrong.example.test"}), \
+                patch.object(fleet_setup, "run") as run:
+            fleet_setup.compose("up", "--detach")
+        self.assertEqual(run.call_args.kwargs["env"]["AGENT_TOKEN_AUDIENCE"], fleet_setup.local_api_origin())
+
+    def test_decision_dms_default_for_new_compatible_signed_fleets(self):
+        bundle = fleet_setup.INPUTS / "payload"
+        signed = {**self.api, "enrolment": True}
+        fresh, _, _ = answers_for(self.argv)
+        self.assertEqual(fresh["decisionOutcomeMode"], "auto")
+        with patch.object(fleet_setup, "PAYLOAD", bundle), patch.object(
+                fleet_setup, "planned_api_block", return_value=signed), patch.object(
+                fleet_setup.runtime, "require_decision_dm_source") as supported:
+            fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "a" * 40)
+            self.assertNotIn("decisionOutcomeDms", fresh)
+            feed = bundle / "subspace-api/src/decision-outcomes.ts"
+            feed.parent.mkdir(parents=True)
+            feed.touch()
+            fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "a" * 40)
+            self.assertIs(fresh["decisionOutcomeDms"], True)
+            fleet_setup.save_answers(fresh)
+            saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+            self.assertEqual(saved["decisionOutcomeMode"], "auto")
+            self.assertNotIn("decisionOutcomeDms", saved)
+            supported.side_effect = fleet_setup.runtime.Invalid("unsupported")
+            fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "b" * 40)
+            self.assertNotIn("decisionOutcomeDms", fresh)
+            self.assertEqual(fresh["decisionOutcomeMode"], "auto")
+            supported.side_effect = runtime.StargateSourceUnavailable("GitHub unavailable")
+            with self.assertRaisesRegex(fleet_setup.SetupError, "GitHub unavailable"):
+                fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "a" * 40)
+            supported.side_effect = None
+            fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "a" * 40)
+            self.assertTrue(fresh["decisionOutcomeDms"])
+            remote = {**fresh, "irc": "remote"}
+            fleet_setup.configure_decision_outcome_dms(remote, "atlas", "a" * 40)
+            self.assertNotIn("decisionOutcomeDms", remote)
+
+    def test_decision_dms_keep_explicit_preferences_and_validate_before_writes(self):
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"agentDispatch": {"decisionOutcomeDms": False}})
+        answers, _, _ = answers_for(self.argv)
+        self.assertEqual(answers["decisionOutcomeMode"], "off")
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", *self.argv])
+        self.assertEqual(fleet_setup.gather(args, {**answers, "decisionOutcomeMode": "auto"})["decisionOutcomeMode"],
+                         "off")
+        explicit, _, _ = answers_for([*self.argv, "--decision-outcome-dms", "--no-api"])
+        self.assertEqual(explicit["decisionOutcomeMode"], "on")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "need the bundled Subspace API and signed officer access"):
+            fleet_setup.configure_decision_outcome_dms(explicit, "atlas", "a" * 40)
+        self.assertFalse((fleet_setup.INPUTS / "answers.json").exists())
+
+    def test_remote_irc_change_requires_a_fresh_opt_in(self):
+        answers, _, _ = answers_for([*self.argv, "--decision-outcome-dms"])
+        args = ["--non-interactive", "--operator", "operator", "--irc", "remote",
+                "--irc-host", "irc.example.test"]
+        remote = fleet_setup.gather(fleet_setup.parse_args(args), answers)
+        self.assertEqual(remote["decisionOutcomeMode"], "off")
+        chosen = fleet_setup.gather(fleet_setup.parse_args([*args, "--decision-outcome-dms"]), answers)
+        self.assertEqual(chosen["decisionOutcomeMode"], "on")
+        self.assertEqual(fleet_setup.gather(fleet_setup.parse_args(args), chosen)["decisionOutcomeMode"], "on")
+        previous = {"irc": {"mode": "remote", "host": "irc.example.test", "port": fleet_setup.IRC_TLS},
+                    "agentDispatch": {"decisionOutcomeDms": True}}
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", previous)
+        guided_argv = ["--non-interactive", "--operator", "operator", *self.argv,
+                       "--irc", "remote", "--irc-host", "irc.example.test"]
+        guided = fleet_setup.parse_args(guided_argv)
+        self.assertEqual(fleet_setup.gather(guided, {})["decisionOutcomeMode"], "on")
+        password = fleet_setup.parse_args([*guided_argv, "--irc-auth", "password"])
+        self.assertEqual(fleet_setup.gather(password, {})["decisionOutcomeMode"], "off")
+
+    @unittest.skipUnless(shutil.which("git"), "git is required")
+    def test_capability_check_uses_the_pinned_git_object(self):
+        root = fleet_setup.INPUTS
+
+        def git(*args):
+            return subprocess.check_output(["git", "-C", checkout, *args], text=True).strip()
+
+        checkout = str(root / "repo")
+        subprocess.run(["git", "init", "--quiet", checkout], check=True)
+        git("config", "user.email", "test@example.test")
+        git("config", "user.name", "Installer test")
+        git("config", "commit.gpgsign", "false")
+        git("commit", "--quiet", "--allow-empty", "-m", "Older gateway")
+        old = git("rev-parse", "HEAD")
+        files = {
+            "src/config/composition.ts": "decisionOutcomeDms: Schema.optional\nassignmentRequests: Schema.optional",
+            "src/config/settings-schema.ts": "settingsStruct({ socketPath: absolutePath })",
+            "src/transports/irc/config.ts": "decisionOutcomeSender: Schema.optional",
+        }
+        for name, content in files.items():
+            path = Path(checkout) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content + "\n")
+        git("add", ".")
+        git("commit", "--quiet", "-m", "Signed decision DMs")
+        new = git("rev-parse", "HEAD")
+        with patch.object(runtime, "APP", root):
+            # Even if a cached worktree contains the new files, the selected old commit must be refused.
+            cache = root / "src" / f"stargate-{old}"
+            cache.parent.mkdir()
+            cache.symlink_to(checkout, target_is_directory=True)
+            with self.assertRaisesRegex(runtime.Invalid, "with signed dispatch"):
+                require_decision_dm_source(checkout, old)
+            require_decision_dm_source(checkout, new)
+
+    def test_decision_dms_and_issue_dispatch_share_enrolled_identity(self):
+        answers, rear, captains = answers_for([*self.argv, "--agent-dispatch", "--no-assignment-requests"])
+        answers["decisionOutcomeDms"] = True
+        members = fleet_setup.roster(answers, rear, captains)
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        with patch.object(fleet_setup, "planned_api_block", return_value={**self.api, "enrolment": True}):
+            config, secrets = fleet_setup.planned_run_inputs(answers, members, store, "b" * 40)
+        self.assertNotIn("rearAdmiralApiToken", secrets)
+        cfg = validate(config, secrets, check_files=False)
+        with patch.object(runtime, "stargate_has_assignment_requests", return_value=True):
+            settings, environment = runtime.agent_dispatch_settings(cfg)
+        self.assertTrue(settings["enabled"])
+        self.assertTrue(settings["decisionOutcomeDms"])
+        self.assertIsNone(settings["assignmentRequests"])
+        self.assertEqual(environment, {})
+        self.assertEqual(settings["api"], {"socketPath": str(runtime.agent_socket(rear))})
+
+    def test_rename_preflight_checks_explicit_decision_dms_before_writing_inputs(self):
+        answers, _, _ = answers_for([*self.argv, "--decision-outcome-dms"])
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(
+                fleet_setup, "stargate_release", return_value=("fixture", "a" * 40)), patch.object(
+                fleet_setup, "planned_api_block", return_value={**self.api, "enrolment": True}), patch.object(
+                fleet_setup.runtime, "require_decision_dm_source",
+                side_effect=fleet_setup.runtime.Invalid("unsupported Stargate")), patch.object(
+                fleet_setup, "planned_run_inputs") as plan:
+            with self.assertRaisesRegex(fleet_setup.SetupError, "unsupported Stargate"):
+                fleet_setup.check_switch(answers)
+            plan.assert_not_called()
+
+    def test_decision_dms_render_without_issue_dispatch_or_a_bearer(self):
+        answers, rear, captains = answers_for([*self.argv, "--decision-outcome-dms"])
+        answers["decisionOutcomeDms"] = True
+        members = fleet_setup.roster(answers, rear, captains)
+        signed = {**self.api, "enrolment": True}
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, signed, False, "b" * 40)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None),
+                                            members, answers["admin"], "", True, certificates=True)
+        self.assertEqual(config["agentDispatch"], {"enabled": False, "decisionOutcomeDms": True})
+        cfg = validate(config, secrets, check_files=False)
+        with patch.object(fleet_setup.runtime, "stargate_has_assignment_requests", return_value=True):
+            settings, environment = fleet_setup.runtime.agent_dispatch_settings(cfg)
+        self.assertFalse(settings["enabled"])
+        self.assertTrue(settings["decisionOutcomeDms"])
+        self.assertNotIn("assignmentRequests", settings)
+        self.assertNotIn("readyOffers", settings)
+        rear, captain = cfg["members"][:2]
+        self.assertEqual(settings["api"], {"socketPath": str(fleet_setup.runtime.agent_socket(rear["id"]))})
+        self.assertEqual(environment, {})
+        self.assertNotIn("rearAdmiralApiToken", secrets)
+        agents = fleet_setup.runtime.subspace_agents_settings(cfg, fleet_setup.INPUTS)
+        self.assertEqual(agents["officers"][0]["socketPath"], settings["api"]["socketPath"])
+        registration = {"backend": {"directory": "/workspace"}}
+        irc = fleet_setup.runtime.irc_officer(cfg, captain, registration)
+        self.assertEqual(irc["dmPolicy"], "redirect")
+        self.assertEqual(irc["decisionOutcomeSender"], rear["account"])
+        answers.pop("decisionOutcomeDms")
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        downgrade = fleet_setup.fleet_config(answers, members, "b" * 40, signed, False, "b" * 40)
+        self.assertNotIn("decisionOutcomeDms", downgrade["agentDispatch"])
 
     def test_the_rear_admiral_signs_in_as_its_own_agent_record(self):
         answers, config, secrets = self.config([*self.argv, "--agent-dispatch"], self.api)

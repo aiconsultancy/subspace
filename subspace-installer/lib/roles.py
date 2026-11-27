@@ -218,7 +218,7 @@ def dispatch_guidance(cfg, person):
     """How Stargate's agent dispatch works in fleet command, as this officer meets it (docs/agent-dispatch.md)."""
     dispatch = cfg.get("agentDispatch")
     command = cfg["irc"]["commandChannel"]
-    if not dispatch:
+    if not dispatch or not dispatch.get("enabled", True):
         return ("## Agent dispatch\n\nAgent dispatch is off in this fleet: the rear admiral hands out issues in "
                 f"{command} by tagging a captain.")
     minutes = dispatch["answerTimeoutSeconds"] / 60

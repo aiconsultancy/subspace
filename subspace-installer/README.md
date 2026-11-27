@@ -1082,11 +1082,10 @@ The rear admiral joins every standard channel. Each captain joins its own
 ship channel, fleet command and the other ship channels. Allowlisted humans
 wake the rear admiral in Starbase and the owning captain in its ship channel.
 Elsewhere, fleet command included, tag an agent by its current IRC nick to
-wake it; the rear admiral tags a captain the same way. Direct messages are
-for people only: the installer sets Stargate's `dmPolicy` to `redirect`, so a
-direct message to the rear admiral or a captain starts no turn, and the agent
-answers a signed-in sender with a notice pointing at its own channel
-(Starbase for the rear admiral, the ship channel for a captain). Stargate verifies the
+wake it; the rear admiral tags a captain the same way. The installer sets
+Stargate's `dmPolicy` to `redirect`. A plain DM gets a notice pointing a
+signed-in sender to the officer's own channel. A verified decision outcome
+DM from the rear admiral can wake the receiving captain. Stargate verifies the
 sender's SASL account and keeps human authority separate from agent
 requests. Crew are not on IRC: ask the captain, who relays to its crew
 through Stargate's crew tools. Stargate uses IRC message IDs for strict wake
@@ -1975,6 +1974,23 @@ switch it on (`--agent-dispatch`); in `fleet.json` it is:
 }
 ```
 
+New guided fleets using the bundled Subspace API enable `decisionOutcomeDms`
+when they use the bundled IRC server, signed officer access and a compatible
+Stargate release and an OpenCode rear admiral. The
+rear admiral's gateway signs its requests with its enrolled identity and
+sends the recording captain an IRC DM with the reference and outcome. Other
+DMs still redirect to the captain's channel. Use `--no-decision-outcome-dms`
+to opt out. Existing fleets can opt in with `--decision-outcome-dms` using
+the compatible local API. For a remote IRC server, opt in after confirming
+it verifies accounts in WHOIS, supports `echo-message` and `message-tags`,
+and includes a server `msgid` in the echoed DM. Verify one test delivery.
+Run setup with `--decision-outcome-dms` again after changing the remote
+IRC connection. With the standalone fleet installer, set
+`agentDispatch.decisionOutcomeDms: true` and `api.enrolment: true` in its
+inputs and use a compatible API and gateway. Both decisions and
+issue dispatch use a single signing socket when decision DMs are on. Remove
+`rearAdmiralApiToken` from hand-written inputs when switching to that socket.
+
 The timings are Stargate's defaults and may be left out: the poll interval
 (30 to 3,600 seconds), the time each captain has to answer an offer (60 to
 3,600 seconds) and the waits between rounds (at most ten, each 60 to
@@ -2053,7 +2069,8 @@ The installer refuses to switch dispatch on without an `api` registration,
 without captains, without a captain with crew, on a `claude-sdk` rear
 admiral (its gateway would run as the rear admiral's own user, so its model
 could read the token, and it cannot be pinned), without
-`rearAdmiralApiToken` or with the administrator's token in its place, and
+a signing socket or the rear admiral's own bearer credential (an
+administrator's token is refused), and
 when a captain's `harness.permissions` has rules that Stargate's fleet tools
 reject: an `ask`, or a pattern other than an exact name, `*` or a prefix
 followed by `*`, for a rule that could match a fleet tool.

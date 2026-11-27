@@ -1052,6 +1052,31 @@ class InstalledFleet(unittest.TestCase):
                                 side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
         return config, secrets, extra, token, sockets, tmpfiles
 
+    def test_new_signed_fleet_creates_officer_groups_before_signing_socket_directories(self):
+        config, secrets, extra, _, _, _ = self.hosted()
+        config["api"]["url"] = "http://127.0.0.1:3000"
+        config["agentDispatch"] = {"decisionOutcomeDms": True}
+        accounts = set()
+
+        def account(user, home, mode=0o700):
+            accounts.add(user)
+            return home
+
+        def directory(path, mode, owner="root", group=None):
+            if group and group.startswith("ss-"):
+                self.assertIn(group, accounts, f"Create {group} before its signing directory {path}")
+
+        with patch.object(runtime, "account", side_effect=account), \
+                patch.object(runtime, "directory", side_effect=directory), \
+                patch.object(runtime, "stargate_has_assignment_requests", return_value=True):
+            runtime.render(runtime.validate(config, secrets), extra)
+
+        stargate = json.loads((self.etc / "stargate.json").read_text())
+        dispatch = stargate["agentDispatch"]
+        self.assertTrue(dispatch["decisionOutcomeDms"])
+        self.assertFalse(dispatch["enabled"])
+        self.assertEqual(dispatch["api"]["socketPath"], stargate["subspaceAgents"]["officers"][0]["socketPath"])
+
     def test_a_hosted_api_gives_every_officer_stargates_bridge_and_no_agent_header(self):
         config, secrets, extra, token, sockets, tmpfiles = self.hosted()
         cfg = runtime.validate(config, secrets)

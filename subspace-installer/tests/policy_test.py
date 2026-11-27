@@ -1436,10 +1436,11 @@ class AgentDispatchTests(unittest.TestCase):
         self.config["agentDispatch"] = {"enabled": False, "pollIntervalSeconds": 60}
         self.assertIsNone(validate(self.config, self.secrets)["agentDispatch"])
 
-    def test_dispatch_block_uses_the_command_channel_and_stargate_defaults(self):
+    def test_legacy_dispatch_block_uses_the_command_channel_and_stargate_defaults(self):
         self.enable()
         cfg = validate(self.config, self.secrets)
-        block, environment = runtime.agent_dispatch_settings(cfg)
+        with patch.object(runtime, "stargate_has_assignment_requests", return_value=False):
+            block, environment = runtime.agent_dispatch_settings(cfg)
         self.assertEqual(block, {
             "enabled": True, "fleet": "example-fleet",
             "api": {"baseUrl": "https://subspace.example.com/api", "tokenEnv": "SUBSPACE_DISPATCH_TOKEN"},

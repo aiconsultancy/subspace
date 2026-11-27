@@ -85,8 +85,8 @@ STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 # Stargate's latest release and the commit its tag names; every install gets exactly that commit. Agent
 # dispatch on the rear admiral's gateway needs v0.43.0 or later. scripts/stargate-pin.py checks the two
 # against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
-STARGATE_RELEASE = "v0.51.0"
-STARGATE_REF = "902646782d9b547597add50a582699ce9256c36d"
+STARGATE_RELEASE = "v0.52.0"
+STARGATE_REF = "dd89f0b67211482cc9243fbac4691453fc532671"
 # A hosted Subspace API (api.enrolment): Stargate's subspaceAgents section, its signing proxy and its MCP bridge,
 # first in this commit; a checkout has them when it has SUBSPACE_AGENTS_FILE. Releases up to v0.43 lack them.
 SUBSPACE_AGENTS_COMMIT = "5630a5ce9ca1e7cd533bc7a5ab951bb4681757be"
@@ -455,7 +455,7 @@ def slack_plan(cfg):
 
 def rear_root(cfg):
     """Whether the rear admiral has a pinned root: agent dispatch needs one, and its own Slack bot shares it."""
-    return bool(cfg["agentDispatch"] or "slack" in cfg["members"][0])
+    return bool(issue_dispatch_enabled(cfg) or "slack" in cfg["members"][0])
 
 
 def listener(value, label, default_port, allow_bind=False):
@@ -602,9 +602,11 @@ def agent_dispatch_config(value, api, agents):
 
     Timings default to Stargate's own and use its ranges, so the generated block always passes its check.
     """
-    value = fields(value, "agentDispatch", "enabled pollIntervalSeconds answerTimeoutSeconds retryLadderSeconds "
+    value = fields(value, "agentDispatch", "enabled decisionOutcomeDms pollIntervalSeconds answerTimeoutSeconds retryLadderSeconds "
                    "assignmentRequests assignmentReminderSeconds readyOffers")
     settings = {
+        "enabled": boolean(value.get("enabled", False)),
+        "decisionOutcomeDms": boolean(value.get("decisionOutcomeDms", False)),
         "pollIntervalSeconds": dispatch_seconds(value.get("pollIntervalSeconds", DISPATCH_DEFAULTS["pollIntervalSeconds"]),
                                                 "agentDispatch.pollIntervalSeconds", 30, 3600),
         "answerTimeoutSeconds": dispatch_seconds(value.get("answerTimeoutSeconds", DISPATCH_DEFAULTS["answerTimeoutSeconds"]),
@@ -619,24 +621,27 @@ def agent_dispatch_config(value, api, agents):
                                                              "agentDispatch.assignmentReminderSeconds", 3600, 604800)
     settings["retryLadderSeconds"] = [dispatch_seconds(wait, "Each agentDispatch.retryLadderSeconds entry", 60, 604800)
                                       for wait in ladder]
-    if not boolean(value.get("enabled", False)):
+    if not (settings["enabled"] or settings["decisionOutcomeDms"]):
         return None
-    require(api is not None, "Agent dispatch is on, but this fleet has no Subspace API registration. The rear admiral's "
-            "gateway polls the API for issues: set api.url (with apiToken) or switch agentDispatch.enabled off.")
+    option = "agentDispatch.decisionOutcomeDms" if settings["decisionOutcomeDms"] else "agentDispatch.enabled"
+    require(api is not None, f"Dispatch is on but the fleet has no Subspace API registration. Set api.url or switch {option} off.")
+    if settings["decisionOutcomeDms"]:
+        require(api.get("enrolment"), "Decision outcome DMs require signed officer access (api.enrolment). "
+                "Set it up, or switch agentDispatch.decisionOutcomeDms off.")
     rear, captains = agents[0], agents[1:]
-    require(captains, "Agent dispatch is on, but the fleet has no captains to offer issues to. Add a captain or switch "
-            "agentDispatch.enabled off.")
+    require(captains, f"Dispatch is on but the fleet has no captains. Add a captain or switch {option} off.")
     require(rear["harness"]["type"] == "opencode",
-            "Agent dispatch is on, but the rear admiral uses claude-sdk. Dispatch runs in the rear admiral's gateway, "
-            "which for a Claude Agent SDK rear admiral runs as the rear admiral's own Linux user, so its model could read "
-            "the dispatcher's API token; and captains recognise their rear admiral by its pinned OpenCode session, which "
-            "a Claude Agent SDK harness cannot have. Use an OpenCode rear admiral or switch agentDispatch.enabled off.")
+            f"The rear admiral uses claude-sdk. Select OpenCode for its shared gateway, or switch {option} off.")
     # Stargate's answer tool needs a captain with a pinned OpenCode root, which only crew-hosting captains have.
-    require(any(person["crew"] for person in captains),
+    require(not settings["enabled"] or any(person["crew"] for person in captains),
             "Agent dispatch is on, but no captain can answer an offer: Stargate's fleet_answer_offer tool needs a captain "
             "with a pinned OpenCode session, and only captains with crew (an OpenCode harness, crew counts above 0 and "
             "at least one repository) have one. Give a captain crew or switch agentDispatch.enabled off.")
     return settings
+
+
+def issue_dispatch_enabled(cfg):
+    return bool(cfg["agentDispatch"] and cfg["agentDispatch"]["enabled"])
 
 
 def fleet_ipc_policy(rules, label):
@@ -1178,13 +1183,51 @@ def require_officer_tool_sources(cfg, installed_only=False):
     contracts(result.stdout)
 
 
-def check_stargate_source(source, repo, ref, path, message, installed_only, marker=None):
-    file = source / path
-    if file.is_file() and (not marker or marker in file.read_text()):
+class StargateSourceUnavailable(Invalid):
+    """The selected Stargate revision could not be inspected."""
+
+
+def require_decision_dm_source(repo, ref, installed_only=False):
+    check_stargate_source(
+        APP / "src" / f"stargate-{ref}", repo, ref, "src/config/composition.ts",
+        "Decision outcome DMs require a Stargate revision with signed dispatch and IRC decision DMs. "
+        "Choose a compatible --stargate-ref.", installed_only,
+        marker="decisionOutcomeDms: Schema.optional", pinned=True, also=(
+            ("src/config/settings-schema.ts", "settingsStruct({ socketPath: absolutePath })"),
+            ("src/transports/irc/config.ts", "decisionOutcomeSender: Schema.optional"),
+            (ASSIGNMENT_REQUESTS_SOURCE, ASSIGNMENT_REQUESTS_MARKER),
+        ),
+    )
+
+
+def check_stargate_source(source, repo, ref, path, message, installed_only, marker=None, pinned=False, also=()):
+    checks = ((path, marker), *also)
+
+    def matches_file(path, marker):
+        file = source / path
+        return file.is_file() and (not marker or marker in file.read_text())
+
+    if (installed_only or not pinned) and all(matches_file(path, marker) for path, marker in checks):
         return
-    # A repeat install restores tracked files before rendering. Preflight checks
-    # the requested revision when the installed tree needs that repair.
     require(not installed_only, message)
+
+    def check_object(directory, revision):
+        for path, marker in checks:
+            args = (["grep", "-q", "-F", marker, revision, "--", str(path)] if marker else
+                    ["cat-file", "-e", f"{revision}:{path}"])
+            check = subprocess.run(["git", "-C", directory, *args], capture_output=True, timeout=20)
+            require(check.returncode == 0, message)
+
+    # A repeat install restores tracked files. Prove the requested Git object, even if the working file was patched.
+    if pinned and (source / ".git").exists():
+        try:
+            commit = subprocess.run(["git", "-C", source, "cat-file", "-e", ref + "^{commit}"],
+                                    capture_output=True, timeout=20)
+            if commit.returncode == 0:
+                check_object(source, ref)
+                return
+        except (OSError, subprocess.SubprocessError):
+            raise StargateSourceUnavailable(f"Could not check feature support in Stargate {ref[:12]}.") from None
 
     with tempfile.TemporaryDirectory(prefix="subspace-stargate-check-") as work:
         try:
@@ -1192,16 +1235,12 @@ def check_stargate_source(source, repo, ref, path, message, installed_only, mark
                            capture_output=True, timeout=20)
             subprocess.run(["git", "-C", work, "fetch", "--quiet", "--no-tags", "--depth", "1", repo, ref],
                            check=True, capture_output=True, timeout=60)
-            args = ["grep", "-q", "-F", marker, "FETCH_HEAD", "--", str(path)] if marker else [
-                "cat-file", "-e", f"FETCH_HEAD:{path}"]
-            check = subprocess.run(["git", "-C", work, *args],
-                                   capture_output=True, timeout=20)
+            check_object(work, "FETCH_HEAD")
         except FileNotFoundError:
-            raise Invalid("Install git before checking feature support for a custom Stargate revision.") from None
+            raise StargateSourceUnavailable("Install git before checking feature support for a custom Stargate revision.") from None
         except (OSError, subprocess.SubprocessError):
-            raise Invalid(f"Could not check feature support in Stargate {ref[:12]}. Check GitHub access "
+            raise StargateSourceUnavailable(f"Could not check feature support in Stargate {ref[:12]}. Check GitHub access "
                           "or choose a known Stargate release.") from None
-        require(check.returncode == 0, message)
 
 
 def usage_guard_config(value):
@@ -1472,6 +1511,8 @@ def validate(config, credentials, check_files=True):
     else:
         require(token == "", "An API token requires API configuration.")
     dispatch_token = private.get("rearAdmiralApiToken") or None
+    if (dispatch or {}).get("decisionOutcomeDms"):
+        require(dispatch_token is None, "Decision outcome DMs use signed officer access. Remove rearAdmiralApiToken.")
     if dispatch and (dispatch_token is not None or not api.get("enrolment")):
         require(dispatch_token is not None, "Agent dispatch is on: supply rearAdmiralApiToken in the secrets file, a "
                 "bearer token for the rear admiral's own Subspace API agent identity (rank rearAdmiral, in this fleet).")
@@ -1506,7 +1547,7 @@ def validate(config, credentials, check_files=True):
         if extra := person["harness"]["extraPermissions"]:
             # After the starter policy or an explicit harness.permissions, so the operator's rules win.
             person["harness"]["permissions"] = [*person["harness"]["permissions"], *extra]
-        if (dispatch or peer_messages) and person["crew"]:
+        if (peer_messages or (dispatch and dispatch["enabled"])) and person["crew"]:
             fleet_ipc_policy(person["harness"]["permissions"], f"Captain {person['id']}'s harness.permissions")
     if api:
         # fleetctl register records the officers, their ships and the standard channels in the API.
@@ -2145,7 +2186,7 @@ def captain_permissions(cfg, person, *, flint=False):
     if not person["crew"]:
         return harness_permissions(cfg, person, flint=flint)
     permissions = harness_permissions(cfg, person, CREW_EFFORT_GRANTS, flint=flint)
-    return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
+    return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if issue_dispatch_enabled(cfg) else [])]
 
 
 def crew_options(cfg, person, home, engine_port, session_id, captain_directory=None):
@@ -2357,7 +2398,7 @@ def rear_root_lines(cfg):
     if pinned_directory(rear):
         lines = [f"The rear admiral's root session is pinned in {where}."]
     else:
-        reasons = [reason for reason, on in (("agent dispatch is on", cfg["agentDispatch"]),
+        reasons = [reason for reason, on in (("issue dispatch is on", issue_dispatch_enabled(cfg)),
                                              ("it has its own Slack bot", "slack" in rear)) if on]
         lines = [f"The rear admiral's root session will be pinned in {where}, because {' and '.join(reasons)}."]
     if in_reference:
@@ -2390,7 +2431,7 @@ def fleet_control(cfg, person, pin, rear_session, gateway_home, pins=None):
     if person["role"] != "captain" or not person["crew"] or not pin:
         return None
     targets = []
-    if cfg["agentDispatch"] and rear_session:
+    if issue_dispatch_enabled(cfg) and rear_session:
         rear = cfg["members"][0]
         targets.append({"id": rear["id"], "account": rear["account"], "role": "rear_admiral",
                         "channel": person["channel"], "sessionID": rear_session})
@@ -2815,6 +2856,11 @@ def irc_officer(cfg, person, registration):
     medical = cfg["medical"]
     if medical and medical["target"] and medical["target"]["id"] == person["id"]:
         peers = [medical["account"], *peers[:49]]
+    decision_sender = None
+    if role == "captain" and (cfg["agentDispatch"] or {}).get("decisionOutcomeDms"):
+        decision_sender = cfg["members"][0]["account"]
+        if decision_sender not in peers:
+            peers = [*peers[:49], decision_sender]
     access = {"allCallWords": [], "channelRequests": "nick-mention", "peerCaptains": peers,
               "humanWakeChannels": [{"channel": room, "replies": "all"}]}
     return {
@@ -2823,6 +2869,7 @@ def irc_officer(cfg, person, registration):
         # Direct messages are for people only: an agent answers one with a notice naming its first
         # channel, Starbase for the rear admiral and its ship for a captain, and starts no turn.
         "dmPolicy": "redirect",
+        **({"decisionOutcomeSender": decision_sender} if decision_sender else {}),
         # Route by authenticated account in strict mode.
         "features": {"botMode": False},
         "fleetPolicy": {"role": role, "humanAccounts": cfg["irc"]["allowedAccounts"],
@@ -3508,13 +3555,14 @@ def agent_dispatch_settings(cfg):
         "baseUrl": cfg["api"]["url"], "tokenEnv": DISPATCH_TOKEN_ENV,
     }
     block = {
-        "enabled": True, "fleet": cfg["slug"],
+        "enabled": dispatch["enabled"], "fleet": cfg["slug"],
         "api": api,
         "messaging": {"type": "irc", "registration": rear["id"], "channel": cfg["irc"]["commandChannel"]},
         "captainAccounts": accounts,
+        **({"decisionOutcomeDms": True} if dispatch["decisionOutcomeDms"] else {}),
         **{key: dispatch[key] for key in DISPATCH_DEFAULTS},
     }
-    if supports_assignment_requests:
+    if supports_assignment_requests and dispatch["enabled"]:
         block["readyOffers"] = dispatch["readyOffers"]
         block["assignmentRequests"] = {
             "reminderSeconds": dispatch["assignmentReminderSeconds"],
@@ -3642,7 +3690,6 @@ def render(cfg, extra, prune=False):
         # key and signing-proxy socket.
         require_subspace_agents(cfg)
         own_file(gateway_home / ENROLMENT_TOKEN, extra["tokens"][ENROLMENT_TOKEN] + "\n", GATEWAY)
-        sockets = agent_socket_directories(cfg)
         write(SUBSPACE_REQUEST, subspace_request_script(cfg), 0o755)
     elif AGENT_TMPFILES.exists():
         AGENT_TMPFILES.unlink()
@@ -3690,6 +3737,9 @@ def render(cfg, extra, prune=False):
                 ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "cloud", str(prune).lower()],
                 input=json_text(files), text=True, check=True,
             )
+    if enrolled(cfg):
+        # The socket directories are owned by groups created with the officer accounts above.
+        sockets = agent_socket_directories(cfg)
     configure_github_officer_tools(cfg, homes)
     reconcile_workspaces(cfg, homes)
     databases, engines = [], []
@@ -4045,6 +4095,9 @@ def main(args):
         require_usage_guard_source(cfg, installed_only=verb == "render")
         require_peer_message_source(cfg, installed_only=verb == "render")
         require_officer_tool_sources(cfg, installed_only=verb == "render")
+        if (cfg["agentDispatch"] or {}).get("decisionOutcomeDms"):
+            require_decision_dm_source(cfg["stargate"]["repo"], cfg["stargate"]["ref"],
+                                       installed_only=verb == "render")
         if verb == "render":
             # Say once per install which captains keep a root other than the workspace, and why.
             for root in captain_roots(cfg).values():
@@ -4137,12 +4190,15 @@ def main(args):
                 count = sum(bool(person["crew"]) for person in cfg["members"][1:])
                 print(f"Captain peer messages requested for {count} crew-hosting captains. "
                       "Routes become available once two or more are pinned.")
-            if dispatch := cfg["agentDispatch"]:
+            if issue_dispatch_enabled(cfg):
+                dispatch = cfg["agentDispatch"]
                 print(f"Agent dispatch is on: the rear admiral checks {cfg['api']['url']} every "
                       f"{dispatch['pollIntervalSeconds']} seconds as its own API agent and offers issues in "
                       f"{cfg['irc']['commandChannel']}.")
             else:
                 print("Agent dispatch is off.")
+            if (cfg["agentDispatch"] or {}).get("decisionOutcomeDms"):
+                print("Decision outcome DMs are on for recording captains.")
             if enrolled(cfg):
                 print(f"Subspace API at {cfg['api']['origin']}: each officer enrols its own key through "
                       "Stargate and uses its signing proxy. No administrator token is kept in the fleet configuration.")

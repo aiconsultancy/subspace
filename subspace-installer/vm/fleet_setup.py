@@ -328,6 +328,8 @@ def parse_args(argv):
                         help="ask captains to take assigned issues when crew are ready (default on with agent dispatch)")
     parser.add_argument("--ready-for-agents-offers", action=argparse.BooleanOptionalAction, default=None,
                         help="offer unassigned Ready for agents issues (default on with agent dispatch)")
+    parser.add_argument("--decision-outcome-dms", action=argparse.BooleanOptionalAction, default=None,
+                        help="Send decision outcomes by DM when the local API and Stargate support it.")
     parser.add_argument("--operator", help="Linux login that may SSH in and tunnel (default: the sudo user)")
     parser.add_argument("--access", choices=["ssh", "tailscale", "cloudflare"],
                         help="how you reach the VM; tailscale limits SSH to the tailnet, cloudflare to cloudflared")
@@ -455,7 +457,7 @@ def gather(args, saved):
         answers["captainPeerMessages"] = args.captain_peer_messages
     if args.captain_tools is not None:
         answers["captainTools"] = args.captain_tools
-    elif not saved and not (INPUTS / "fleet.json").exists() and not (FLEET_ETC / "fleet.json").exists():
+    elif new_fleet(saved):
         # A new fleet: captains with crew leave coding to them. A fleet set up before captainTools existed has no
         # answer and keeps the standard policy, which a fleet.json without captainTools means.
         policy = prompt("Captain tools: delegate (crew edit, commit and push; captains plan, review and open pull "
@@ -668,6 +670,20 @@ def gather(args, saved):
         answers["impeccable"] = args.impeccable
     elif "impeccable" not in answers:
         answers["impeccable"] = installed.get("impeccable", True)
+    previous_dms = installed_dispatch.get("decisionOutcomeDms") if isinstance(installed_dispatch, dict) else None
+    if args.decision_outcome_dms is not None:
+        answers["decisionOutcomeMode"] = "on" if args.decision_outcome_dms else "off"
+    elif previous_dms is False:
+        answers["decisionOutcomeMode"] = "off"
+    elif "decisionOutcomeMode" not in answers:
+        answers["decisionOutcomeMode"] = (
+            "on" if previous_dms is True else "auto" if new_fleet(saved) else "off"
+        )
+    if (args.decision_outcome_dms is None and answers["decisionOutcomeMode"] == "on"
+            and answers["irc"] == "remote" and not same_remote_irc(answers, saved, installed)):
+        answers["decisionOutcomeMode"] = "off"
+        say("Decision outcome DMs are off on the new IRC connection. Confirm it supports delivery, then "
+            "run setup with --decision-outcome-dms to opt in.")
     answers["usageGuard"] = usage_guard_answers(args, answers)
     answers["stargateApi"] = args.stargate_api or answers.get("stargateApi", "auto")
     if args.fleet_api_url == "tunnel":
@@ -868,6 +884,7 @@ def check_answers(answers):
                 "--fleet-api-url is the address of Stargate's Fleet API, which --stargate-api off turns off. Pass "
                 "--fleet-api-url tunnel, or switch the Fleet API on.")
     require(isinstance(answers.get("agentDispatch", False), bool), "Agent dispatch is on or off.")
+    require(answers["decisionOutcomeMode"] in ("auto", "on", "off"), "Invalid saved decision outcome DM setting.")
     require(not answers.get("agentDispatch") or answers["api"] or answers.get("apiUrl"),
             "Agent dispatch needs the API on this VM or a hosted API URL: drop --no-api, configure --api-url, or pass "
             "--no-agent-dispatch.")
@@ -1050,7 +1067,7 @@ def roster(answers, rear, captains):
 def save_answers(answers):
     # Repositories and merge policy live in fleet.json. The listener setting lives in api.env.
     write_json(INPUTS / "answers.json", {key: value for key, value in answers.items()
-                                        if key not in {"repositories", "captainMergeRepositories", "agentListener"}})
+                                        if key not in {"repositories", "captainMergeRepositories", "agentListener", "decisionOutcomeDms"}})
 
 
 def demo_channels():
@@ -1355,9 +1372,12 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     elif answers.get("apiUrl"):
         # A hosted API: the officers enrol through Stargate, and this VM keeps no administrator token.
         config["api"] = {"url": answers["apiUrl"], "enrolment": True}
-    # Timings someone set by hand stay; the answer switches dispatch on or off. It needs the API block.
+    # Keep hand-set timings and omit unsupported feature keys when their effective value is off.
     dispatch = previous.get("agentDispatch") if isinstance(previous.get("agentDispatch"), dict) else {}
+    dispatch = {key: value for key, value in dispatch.items() if key != "decisionOutcomeDms"}
     dispatch_options = {key: answers[key] for key in ("assignmentRequests", "readyOffers") if key in answers}
+    if answers.get("decisionOutcomeDms") and (config.get("api") or {}).get("enrolment"):
+        dispatch_options["decisionOutcomeDms"] = True
     if dispatch or answers.get("agentDispatch") or dispatch_options:
         config["agentDispatch"] = {
             **dispatch, **dispatch_options, "enabled": bool(answers.get("agentDispatch") and config.get("api")),
@@ -1898,27 +1918,74 @@ def stargate_release(answers):
     return latest_stargate()
 
 
+def dispatch_uses_api(answers):
+    return bool(answers.get("agentDispatch") or answers.get("decisionOutcomeDms"))
+
+
+def new_fleet(saved):
+    return not saved and not (INPUTS / "fleet.json").exists() and not (FLEET_ETC / "fleet.json").exists()
+
+
+def same_remote_irc(answers, saved, installed):
+    """Compare the selected IRC connection to the effective settings of the last install."""
+    prior = installed.get("irc") or {}
+    previous_auth = (prior.get("auth", "certificate") if prior.get("mode") == "remote"
+                     else saved.get("ircAuth", "password"))
+    return (prior.get("mode", saved.get("irc")) == "remote"
+            and prior.get("host", saved.get("ircHost")) == answers.get("ircHost")
+            and prior.get("port", saved.get("ircPort", IRC_TLS)) == answers.get("ircPort")
+            and previous_auth == answers.get("ircAuth"))
+
+
+def configure_decision_outcome_dms(answers, rear, ref):
+    """Resolve the saved preference against local API and Stargate capabilities before any writes."""
+    mode = answers["decisionOutcomeMode"]
+    answers.pop("decisionOutcomeDms", None)
+    if mode == "off" or (mode == "auto" and answers.get("irc") != "local"):
+        return
+    supported = (answers["api"] and not answers.get("apiUrl")
+                 and local_signed_api({"api": planned_api_block(answers)})
+                 and (PAYLOAD / "subspace-api/src/decision-outcomes.ts").is_file())
+    if not supported:
+        require(mode == "auto", "Decision outcome DMs need the bundled Subspace API and signed officer access. "
+                "Use the local API with signed access, or pass --no-decision-outcome-dms.")
+        return
+    if rear_harness_type(rear) != "opencode":
+        require(mode == "auto",
+                "Decision outcome DMs need an OpenCode rear admiral. Pass --no-decision-outcome-dms to opt out.")
+        return
+    try:
+        runtime.require_decision_dm_source(STARGATE_REPO, ref)
+    except runtime.Invalid as error:
+        if mode == "on" or isinstance(error, runtime.StargateSourceUnavailable):
+            raise SetupError(str(error)) from None
+        say(f"Leaving decision outcome DMs off. {error}")
+        return
+    answers["decisionOutcomeDms"] = True
+
+
+def rear_harness_type(rear):
+    # The installed fleet's harness types stay in effect when setup changes models or effort.
+    previous = read_json(INPUTS / "fleet.json", {})
+    harness = previous.get("harness") or {}
+    officer = previous.get("rearAdmiral") or {}
+    role_type = (harness.get("rearAdmiral") or {}).get("type", harness.get("type", "opencode"))
+    return (officer.get("harness") or {}).get("type", role_type) if officer.get("id") == rear else role_type
+
+
 def check_usage_guard_source(answers, rear, ref):
-    # Setup changes officer models and effort, while the saved harness types stay in effect.
     previous = read_json(INPUTS / "fleet.json", {})
     try:
         runtime.require_peer_message_source({
             "captainPeerMessages": answers.get("captainPeerMessages", previous.get("captainPeerMessages")),
             "stargate": {"repo": STARGATE_REPO, "ref": ref},
         })
-    except runtime.Invalid as error:
-        raise SetupError(str(error)) from None
-    harness = previous.get("harness") or {}
-    officer = previous.get("rearAdmiral") or {}
-    role_type = (harness.get("rearAdmiral") or {}).get("type", harness.get("type", "opencode"))
-    officer_type = (officer.get("harness") or {}).get("type", role_type) if officer.get("id") == rear else role_type
-    if officer_type == "opencode":
-        try:
+        if rear_harness_type(rear) == "opencode":
             runtime.require_usage_guard_source({
                 "usageGuard": answers["usageGuard"], "stargate": {"repo": STARGATE_REPO, "ref": ref},
             })
-        except runtime.Invalid as error:
-            raise SetupError(str(error)) from None
+    except runtime.Invalid as error:
+        raise SetupError(str(error)) from None
 
 
 def check_officer_tool_source(answers, members, ref):
@@ -1959,7 +2026,8 @@ def planned_run_inputs(answers, members, secret_store, stargate_ref):
     """The inputs a real run writes, as far as is known before the API runs, for the installer's check: the
     API settings it will have (planned_api_block), with stand-ins for the tokens it will get."""
     block = planned_api_block(answers)
-    dispatch = PLANNED_TOKENS["rearAdmiralApiToken"] if block and answers["agentDispatch"] else ""
+    legacy_dispatch = block and answers.get("agentDispatch") and not answers.get("decisionOutcomeDms")
+    dispatch = PLANNED_TOKENS["rearAdmiralApiToken"] if legacy_dispatch else ""
     return run_inputs(answers, members, secret_store, stargate_ref, hashlib.sha1(b"dry-run").hexdigest(), block,
                       False, PLANNED_TOKENS["apiToken"] if block else "", dispatch_token=dispatch)
 
@@ -2007,10 +2075,14 @@ def confirm_fleet_api(requested, source):
 # Subspace API ----------------------------------------------------------------
 
 def compose(*args, capture=False, check=True, env=None, input_text=None):
+    api_env = INPUTS / "api.env"
+    if api_env.is_file() and SIGNED_LOCAL_API in api_env.read_text().splitlines():
+        # Compose gives the caller's environment precedence over --env-file.
+        env = {**(os.environ if env is None else env), "AGENT_TOKEN_AUDIENCE": local_api_origin()}
     # Docker Compose passes its standard input to 'exec' and 'run' commands, which would otherwise read on from
     # setup's own, so it gets none unless it has input of its own.
     return run("docker", "compose", "--project-name", API_PROJECT, "--project-directory", API_DIR,
-               "--env-file", INPUTS / "api.env", "-f", API_DIR / "compose.yaml", "-f", INPUTS / "api.override.yaml",
+               "--env-file", api_env, "-f", API_DIR / "compose.yaml", "-f", INPUTS / "api.override.yaml",
                *args, capture=capture, check=check, env=env, input_text=input_text, keep_stdin=False)
 
 
@@ -2517,12 +2589,24 @@ def api_environment(answers, environment, external=False):
         merged.pop("AGENT_ORGANISATION", None)
     if merged.get("NODE_ENV") == "production":
         merged["AGENT_PORT"] = ""
-    return merged, str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+    listener = str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+    if signed_local_access(answers, merged, listener):
+        audience = merged.get("AGENT_TOKEN_AUDIENCE", "").strip()
+        origin = re.escape(local_api_origin())
+        # Accept the canonical origin in Compose's quoted or unquoted form, with an optional comment.
+        require(not audience or re.fullmatch(rf"""(['"]?){origin}\1(?:\s+#.*)?""", audience),
+                "Signed officer access on this VM requires AGENT_TOKEN_AUDIENCE to match the local API origin.")
+        merged["AGENT_TOKEN_AUDIENCE"] = local_api_origin()
+    return merged, listener
+
+
+def local_api_origin():
+    return f"http://{LOOPBACK}:{API_PORT}"
 
 
 def local_api_block(answers, initiatives, listener):
     """The fleet installer's api block for the API on this VM, which setup registers with as its admin."""
-    block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": initiatives}
+    block = {"url": local_api_origin(), "initiatives": initiatives}
     if answers.get("vmHost"):
         block["vmHost"] = answers["vmHost"]  # The fleet's record in the API names the VM.
     if listener:
@@ -3502,6 +3586,7 @@ def configure(args):
     check_usage_guard_source(answers, rear, stargate_ref)
     members = roster(answers, rear, captains)
     check_officer_tool_source(answers, members, stargate_ref)
+    configure_decision_outcome_dms(answers, rear, stargate_ref)
     enrolment = None
     if answers.get("apiUrl"):
         # Every check of the hosted API comes before setup saves anything, so a refused run, a switch from an
@@ -3658,16 +3743,16 @@ def configure(args):
                 require(re.fullmatch(runtime.ENROLMENT_TOKEN_TEXT, grant),
                         "The local API did not return a fleet enrolment token.")
                 store_enrolment_token(grant)
-            if answers["agentDispatch"]:
+            if answers["agentDispatch"] and not answers.get("decisionOutcomeDms"):
                 dispatch_token = rear_admiral_token(answers, records)
         else:
             say("the API no longer offers development sign-in, so setup leaves its fleet registration, "
                 "initiative and demo data as they are")
             # Without development sign-in, setup writes no API settings, which dispatch needs.
-            require(not answers["agentDispatch"],
+            require(not dispatch_uses_api(answers),
                     "Agent dispatch needs the API's registration in the fleet's inputs, which setup writes only while "
-                    "the API offers development sign-in. Pass --no-agent-dispatch, and configure api, agentDispatch "
-                    "and rearAdmiralApiToken for the fleet installer by hand (subspace-installer/README.md, "
+                    "the API offers development sign-in. Pass --no-agent-dispatch and --no-decision-outcome-dms, "
+                    "and configure api and agentDispatch for the fleet installer by hand (subspace-installer/README.md, "
                     "'Agent dispatch').")
 
     if certificates and operator:
@@ -3679,7 +3764,7 @@ def configure(args):
     installer(config_path)
     if not answers["api"]:
         api_down()
-    if answers["agentDispatch"] or answers["api"]:
+    if dispatch_uses_api(answers) or answers["api"]:
         # The installer has created the officers' users and Stargate's gateway user: let the gateway, and only it,
         # reach the API's port, and the officers, and only they, reach the agent listener.
         run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
@@ -3733,12 +3818,14 @@ def configure(args):
         say("the installed Stargate has no Fleet API, so the fleet records no Fleet API address.")
     if answers["agentDispatch"]:
         say(f"agent dispatch is on: {DISPATCH_SUMMARY}.")
-        if api_block and dispatch_token:
-            say("WARNING: the rear admiral's development sign-in token lasts eight hours. Run setup again to renew "
-                "it, or move the API to WorkOS or Entra and give the rear admiral a long-lived token "
-                "(installer README, 'Agent dispatch').")
     else:
         say("agent dispatch is off; 'subspace-setup --agent-dispatch' switches it on.")
+    if (read_json(config_path, {}).get("agentDispatch") or {}).get("decisionOutcomeDms"):
+        say("captains receive accepted or rejected decisions by private IRC message.")
+    if dispatch_token:
+        say("WARNING: the rear admiral's development sign-in token lasts eight hours. Run setup again to renew "
+            "it, or move the API to WorkOS or Entra and give the rear admiral a long-lived token "
+            "(installer README, 'Agent dispatch').")
     if not local_irc:
         say(remote_irc_next_step(answers, operator))
     say(f"forward these loopback ports to reach it: {values['SUBSPACE_PORTS']}")
@@ -3775,7 +3862,7 @@ def isolation_args(answers):
             args += ["--operator-only-port", str(runtime.SUBSPACE_DATABASE_PORT)]  # Bundled PostgreSQL.
         try:
             pwd.getpwnam(GATEWAY_USER)
-            gateway = answers.get("agentDispatch") or (answers["api"] and local_signed_api(
+            gateway = dispatch_uses_api(answers) or (answers["api"] and local_signed_api(
                 {"api": planned_api_block(answers)}))
         except KeyError:
             gateway = False  # Not yet created: setup isolates again once the installer has run.
@@ -3932,8 +4019,9 @@ def check_switch(answers):
             switch = gather(parse_args(["--non-interactive"]), json.loads(json.dumps(answers)))
             rear, captains = check_answers(switch)
             members = roster(switch, rear, captains)
-            config, private = planned_run_inputs(switch, members, Secrets(INPUTS, switch["slug"], None),
-                                                 stargate_release(switch)[1])
+            ref = stargate_release(switch)[1]
+            configure_decision_outcome_dms(switch, rear, ref)
+            config, private = planned_run_inputs(switch, members, Secrets(INPUTS, switch["slug"], None), ref)
             try:
                 cfg = runtime.validate(config, private, check_files=False)
             except runtime.Invalid as error:

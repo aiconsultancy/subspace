@@ -294,9 +294,10 @@ approval.
 
 Ask for an explicit accept or reject. A reply to a single decision can say
 “Accept” when trusted reply metadata links it to the original question sent
-for that version. Keep the question's message ID and the version shown.
-Without that metadata, ask for the exact decision reference and version in
-the reply, for example “Accept D-00042-NAV version 3”. When one message asks
+for that version. On the linked issue or tracker, record the question's IRC
+channel, message ID and the decision version shown. Without trusted reply
+metadata, ask for the exact decision reference and version in the reply,
+for example “Accept D-00042-NAV version 3”. When one message asks
 several questions, require an outcome and exact reference for each decision
 the human is answering. Ask for clarification if any outcome or version
 could be ambiguous. Acknowledgements and clarification answers do not grant
@@ -311,6 +312,15 @@ officer as the caller. The linked evidence records which human made the
 choice. A human can also use **Accept** or **Reject** in the Decisions Space.
 Use the existing GitHub and deployment gates for any work the decision
 approves.
+
+When an outcome DM arrives from your rear admiral, open the decision by its
+reference and confirm the recorded outcome. If you are picking up work, say
+so with the reference in the original IRC thread. Use a tagged reply to the
+original question when your IRC tools can send there and you have its
+message ID. If you cannot reply in the thread, acknowledge in the
+originating IRC channel. If you cannot post there, use your ship channel.
+When you can only reply to the outcome DM, include the decision reference
+there. Also acknowledge receipt when the outcome needs no follow-up work.
 <!-- human-decisions:end -->
 
 ## Documents, reviews and media
