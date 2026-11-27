@@ -269,6 +269,20 @@ events and 8 MiB.
   its first part, with **Try again** reading that part; an event covered
   by the snapshot in flight never fetching again; **Load in parts** for an
   item larger than the room; and a turn ID with `:` keeping its part.
+- Round 11 of review: the caption beside **Load the latest** after
+  moving to another part now says the move set the latest version
+  aside, true whether its read was under way or had failed, where it
+  said the move stopped a load that had already failed. A room that
+  shrinks past a whole **Load the latest** under way no longer withdraws
+  it without a word: **Load the latest** comes back beside a caption
+  that the latest version no longer fitted beside what is shown. Every
+  withdrawal of the latest now says why: a new read shows **Loading the
+  latest…**, moving to another part the set-aside caption and a room
+  squeeze its own. It added: moving to another part after **Load the
+  latest** failed, which drops the error and shows the set-aside
+  caption; and a room squeezed to nothing while a whole **Load the
+  latest** is read, which keeps what was shown within the floor and
+  offers **Load the latest** again beside the squeeze caption.
 - Not in this change: opening the turns from the status line, crew
   activity, and **View diff**.
 
