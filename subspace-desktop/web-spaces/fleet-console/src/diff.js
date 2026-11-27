@@ -412,6 +412,15 @@ function defaultTimer(callback, ms) {
  * takes the fingerprint the `ship` event carries for this checkout. `budget`
  * is the diff view's scope of the console's budget (SUB decision 75c3ed93
  * §3); without one the view has a budget of its own.
+ *
+ * @param {object} options
+ * @param {any} options.client
+ * @param {{ship: string, member: string, project: string}} options.target
+ * @param {string} [options.mode]
+ * @param {() => void} options.onChange
+ * @param {import("./budget.js").ViewBudget} [options.budget]
+ * @param {(callback: () => void, ms: number) => unknown} [options.setTimer]
+ * @param {(timer: unknown) => void} [options.clearTimer]
  */
 export function createDiffWatcher({ client, target, mode: startMode = "branch", onChange, budget = createBudget(DEFAULT_ROOM_BYTES), setTimer = defaultTimer, clearTimer = clearTimeout }) {
   const timers = { setTimer, clearTimer };

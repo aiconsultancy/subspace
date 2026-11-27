@@ -30,7 +30,7 @@ import { createPager } from "./pager.js";
 
 /**
  * @param {object} options
- * @param {ReturnType<import("./budget.js").createBudget>} options.budget  the diff view's scope of the console's budget
+ * @param {import("./budget.js").ViewBudget} options.budget  the diff view's scope of the console's budget
  * @param {string} options.key        the source's key: fingerprint, mode, path (and side)
  * @param {string} options.version    the fingerprint every page is pinned to
  * @param {number} options.partBytes  the most one part holds
@@ -118,6 +118,9 @@ export function createPartSource({ budget, key, version, partBytes, drawn, first
  * Where a stretch of patch text starts: the old and new line numbers of
  * its next line, and the kind of the line it starts inside, when a page or
  * window boundary split one (else null).
+ *
+ * @typedef {{old: number, new: number, open: string|null}} PatchStart
+ * @type {Readonly<PatchStart>}
  */
 export const PATCH_START = Object.freeze({ old: 0, new: 0, open: null });
 

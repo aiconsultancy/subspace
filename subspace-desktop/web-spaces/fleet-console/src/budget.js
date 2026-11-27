@@ -17,6 +17,13 @@
 // other entry from then on.
 
 /**
+ * What a view holds content in: a budget of its own, or its `scope` of the
+ * console's (the same calls, less `scope`).
+ *
+ * @typedef {Omit<ReturnType<typeof createBudget>, "scope">} ViewBudget
+ */
+
+/**
  * @param {number} limit  bytes the view may hold in all
  */
 export function createBudget(limit) {

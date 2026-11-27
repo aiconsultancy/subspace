@@ -88,7 +88,7 @@ export class PagerError extends Error {
 
 /**
  * @param {object} options
- * @param {ReturnType<import("./budget.js").createBudget>} options.budget  the view's budget
+ * @param {import("./budget.js").ViewBudget} options.budget  the view's budget
  * @param {string} options.key            this pager's key in the budget
  * @param {(request: PartRequest) => Promise<PartReply>} options.read
  * @param {number} options.partBytes      the most one part holds; reserved before each read

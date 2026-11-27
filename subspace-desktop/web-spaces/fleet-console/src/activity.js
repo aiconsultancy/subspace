@@ -275,7 +275,7 @@ function bytesOfTurn(turn) {
  * @param {(view: object) => void} options.onChange
  * @param {boolean} [options.awaitStream]  read the snapshot only on `reopened()`, once the stream answered with this agent
  * @param {number} [options.maxLoadedBytes]  the view's budget (`view.budget`): items read, and what the panel formats and mounts
- * @param {ReturnType<import("./budget.js").createBudget>} [options.budget]  that budget, when the console shares one
+ * @param {import("./budget.js").ViewBudget} [options.budget]  that budget, when the console shares one
  *   (a `scope` of it, SUB decision 75c3ed93 §3); `stop` gives up this view's keys only
  * @param {(callback: () => void, ms: number) => unknown} [options.setTimer]  schedules the backoff retries and polls (tests pass fake timers)
  * @param {(timer: unknown) => void} [options.clearTimer]  cancels a timer `setTimer` returned
