@@ -1,0 +1,31 @@
+/* Twilight Two mapped to AgentsView 0.47's kit-ui tokens. Inline role colours
+ * and patterns from AgentsView's own settings still take precedence. */
+:root:not(.high-contrast):not([data-kit-theme]) {
+  color-scheme: dark;
+  --bg-primary: #131312;
+  --bg-surface: #1a1a18;
+  --bg-surface-hover: #2e2b22;
+  --bg-inset: #111110;
+  --border-default: #34322d;
+  --border-muted: #2b2a27;
+  --text-primary: #d6d3cc;
+  --text-secondary: #b8b4a8;
+  --text-muted: #96938a;
+  --accent-blue: #cfa95e;
+  --accent-blue-foreground: #17150f;
+  --accent-red: #ef6f66;
+  --accent-green: #a3bd6c;
+  --accent-amber: #e2c47e;
+  --accent-purple: #c49bc0;
+  --accent-orange: #e0a94a;
+  --role-user-accent: #8aa4c8;
+  --role-user-accent-foreground: #17150f;
+  --role-assistant-accent-foreground: #17150f;
+  --role-thinking-accent: #96938a;
+  --user-bg: color-mix(in srgb, var(--role-user-accent) 10%, var(--bg-primary));
+  --assistant-bg: color-mix(in srgb, var(--role-assistant-accent) 8%, var(--bg-primary));
+  --thinking-bg: var(--bg-surface);
+  --tool-bg: color-mix(in srgb, var(--role-tool-accent) 8%, var(--bg-primary));
+  --code-bg: #111110;
+  --code-text: #d6d3cc;
+}

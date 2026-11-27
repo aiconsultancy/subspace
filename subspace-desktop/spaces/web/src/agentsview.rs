@@ -10,7 +10,7 @@ use gpui_kit::{
     ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div,
 };
 use subspace_framework::dashboard::{
-    Dashboard, DashboardEvent, Services, Tokens, feedback,
+    Dashboard, DashboardEvent, Services, ThemeId, Tokens, feedback,
     settings::{BoardSettings, SettingsEditorFactory},
     workspace,
 };
@@ -62,6 +62,7 @@ pub struct AgentsView {
     active: bool,
     covered: bool,
     _settings: Subscription,
+    _theme: Subscription,
     _poll: gpui_kit::Task<()>,
     mirror: crate::mirror::Mirror,
 }
@@ -232,6 +233,11 @@ impl Dashboard for AgentsView {
                 cx.notify();
             }
         });
+        let theme = cx.observe_global::<ThemeId>(|board, cx| {
+            if let (Ok(Some(connection)), Some(page)) = (&board.connection, board.state.page()) {
+                page.update_agentsview_appearance(connection, cx);
+            }
+        });
         let poll = cx.spawn(async |this, cx| {
             loop {
                 cx.background_executor().timer(crate::POLL_INTERVAL).await;
@@ -247,6 +253,7 @@ impl Dashboard for AgentsView {
             active: false,
             covered: false,
             _settings: settings,
+            _theme: theme,
             _poll: poll,
             mirror: crate::mirror::Mirror::new(),
         }

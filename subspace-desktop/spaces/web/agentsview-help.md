@@ -19,6 +19,10 @@ The Space shows the fleet's own AgentsView interface. Its navigation and
 session list come from that server. The Subspace status bar shows whether
 the connection is ready.
 
+When Subspace uses Twilight Two, the embedded view uses its warm surfaces
+and gold accents. AgentsView’s Light and high-contrast modes and custom
+message colours take precedence.
+
 ## Toolbar and filters
 
 Search and filter sessions using the embedded interface. Use Subspace's

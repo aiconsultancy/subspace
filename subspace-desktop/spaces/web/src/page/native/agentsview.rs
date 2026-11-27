@@ -2,9 +2,10 @@
 
 use std::cell::Cell;
 
-use gpui_kit::{Context, Window};
+use gpui_kit::{App, Context, Window};
 #[cfg(windows)]
 use subspace_framework::dashboard::Dashboard as _;
+use subspace_framework::dashboard::ThemeId;
 
 use super::{Admission, Page, PageEvent, View, capture_visible, channel};
 use crate::agentsview::{Connection, ConnectionEvent};
@@ -20,6 +21,20 @@ fn first_document(home: String) -> impl Fn(&str) -> Admission {
             Admission::Refuse
         }
     }
+}
+
+fn appearance_script(connection: &Connection, cx: &App) -> String {
+    let twilight = cx
+        .try_global::<ThemeId>()
+        .is_some_and(|id| id.0 == "twilight-two");
+    let config = serde_json::json!({
+        "origin": connection.address.origin().ascii_serialization(),
+        "css": twilight.then_some(include_str!("../../agentsview/twilight-two.css")),
+    });
+    include_str!("../../agentsview/appearance.js").replace(
+        "/*__SUBSPACE_AGENTSVIEW_APPEARANCE__*/",
+        &config.to_string(),
+    )
 }
 
 impl Page {
@@ -52,6 +67,7 @@ impl Page {
         let builder = builder
             .with_incognito(true)
             .with_initialization_script_for_main_only(script, true)
+            .with_initialization_script_for_main_only(appearance_script(connection, cx), true)
             .with_ipc_handler(move |request| {
                 if Connection::admits(&home, &request.uri().to_string())
                     && let Some(event) = ConnectionEvent::parse(request.body())
@@ -73,6 +89,10 @@ impl Page {
         let page = Self::adopt(raw, inbox, store, window, cx);
         page.set_shown(false, cx);
         Ok(page)
+    }
+
+    pub(crate) fn update_agentsview_appearance(&self, connection: &Connection, cx: &App) {
+        self.push(&appearance_script(connection, cx), cx);
     }
 }
 

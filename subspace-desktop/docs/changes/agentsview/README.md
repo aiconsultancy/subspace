@@ -27,6 +27,10 @@ into AgentsView.
   requests at document start. The Space shows the page after the upstream
   settings request succeeds. If the fleet rejects the key, the Space closes
   the page and directs the user to Settings. The key stays out of the view's URLs and browser storage.
+- The embedded page adopts Twilight Two when Subspace selects it. Changing
+  the Subspace theme updates the current page without reloading the session.
+  AgentsView's Light mode, high contrast and custom message colours still
+  apply. The standalone page keeps its own appearance.
 
 ## Delivery and tasks
 
@@ -34,6 +38,8 @@ into AgentsView.
 - [x] Check the token boundary and configuration with focused tests.
 - [x] Verify the authenticated and rejected native views against the fleet's
   pinned AgentsView release using local fixture data.
+- [x] Check the embedded Twilight Two palette against a live, authenticated
+  AgentsView instance and cover its appearance overrides with focused tests.
 
 ### Board checklist
 
@@ -74,6 +80,8 @@ saving opened the session browser in the same launch.
 | Key rejected | [API key required](evidence/key-required.png) |
 | Masked replacement | [Settings](evidence/settings.png) |
 | Fleet opts out at install time | [Space hidden](evidence/disabled.png) |
+| Twilight Two shell with the default AgentsView palette | [Before theme matching](evidence/twilight-before.png) |
+| Twilight Two shell and embedded page | [After theme matching](evidence/twilight-after.png) |
 
 Windows PowerShell parsing and installer command regression checks run on
 macOS. Windows WebView2 and Windows file ACL behaviour need a Windows run.
