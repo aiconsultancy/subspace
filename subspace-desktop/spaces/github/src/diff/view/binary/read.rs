@@ -1,14 +1,14 @@
 //! Snapshot-pinned reads of a single side of a Fleet binary.
 
-use gpui_kit::{AppContext as _, Context};
+use gpui_kit::Context;
 use subspace_client_fleet::{
     Error, FleetClient,
     diff::{DiffContent, DiffFilePage, DiffRead, DiffSide, DiffTarget},
 };
 use subspace_framework::dashboard::Toast;
 
-use super::{DiffView, Move, Position, Retry};
-use crate::diff::view::{DiffEvent, DiffSource, pages::validate_page};
+use super::{ByteResult, DiffView, Move, Position, Retry};
+use crate::diff::view::{DiffEvent, DiffSource, pages::validate_page, read_executor::ReadExecutor};
 
 impl DiffView {
     pub(super) fn read_binary(&mut self, direction: Move, cx: &mut Context<Self>) {
@@ -52,16 +52,16 @@ impl DiffView {
         binary.retry = None;
         binary.clock = None;
         binary.read = Some(cx.spawn(async move |view, cx| {
-            let result = cx
-                .background_spawn(async move {
-                    let blob = Blob {
-                        path: &path,
-                        at: &at,
-                        side,
-                    };
-                    blob.read(&client, source.request(mode), &position, &closed)
-                })
-                .await;
+            let read = move || {
+                Blob {
+                    path: &path,
+                    at: &at,
+                    side,
+                }
+                .read(&client, source.request(mode), &position, &closed)
+            };
+            let worker = cx.update(|cx| ReadExecutor::start(cx, Box::new(read)));
+            let result = worker.await;
             _ = view.update(cx, |view, cx| {
                 if guard.check().is_ok() {
                     view.finish_binary(result, destination, direction, cx);
@@ -73,7 +73,7 @@ impl DiffView {
 
     fn finish_binary(
         &mut self,
-        result: Result<(DiffContent, bool), Error>,
+        result: ByteResult,
         position: Position,
         direction: Move,
         cx: &mut Context<Self>,

@@ -8,6 +8,8 @@ use subspace_framework::client_test_support::Mock;
 
 use super::{ReadGate, fixture, mount, refresh::snapshot, threaded_reads::ThreadedReads};
 
+mod binary;
+
 #[gpui_kit::test]
 fn a_current_patch_401_clears_the_snapshot(cx: &mut TestAppContext) {
     check_patch_reply(cx, 401, false);

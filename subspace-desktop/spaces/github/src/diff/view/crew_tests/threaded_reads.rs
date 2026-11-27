@@ -3,6 +3,7 @@ use std::thread::{self, JoinHandle};
 use gpui_kit::{App, Global, Task, VisualTestContext};
 use tokio::sync::oneshot;
 
+use super::super::binary::ByteResult;
 use super::super::pages::PageResult;
 use super::super::read_executor::{ReadExecutor, ReadResult, ReadWork};
 
@@ -21,6 +22,7 @@ impl ThreadedReads {
             cx.set_global(Self::default());
             cx.set_global(ReadExecutor::<ReadResult>(Self::start));
             cx.set_global(ReadExecutor::<PageResult>(Self::start));
+            cx.set_global(ReadExecutor::<ByteResult>(Self::start));
         });
     }
 

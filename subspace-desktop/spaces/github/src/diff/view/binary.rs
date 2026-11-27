@@ -25,6 +25,8 @@ mod tests;
 pub(super) use hold::BinaryHolds;
 use preview::{Preview, PreviewRead};
 
+pub(super) type ByteResult = Result<(DiffContent, bool), subspace_client_fleet::Error>;
+
 #[derive(Clone, Default)]
 struct Position {
     cursor: Option<String>,
