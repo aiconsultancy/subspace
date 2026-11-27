@@ -135,6 +135,7 @@ mod tests {
             stop_background: |_| panic!("Headless initialization must not stop monitoring"),
             retain_when_disabled: false,
             configuration: None,
+            default_order: usize::MAX,
             artwork: subspace_dashboard::BoardArtwork::default(),
             connection: Default::default(),
             contracts: Default::default(),

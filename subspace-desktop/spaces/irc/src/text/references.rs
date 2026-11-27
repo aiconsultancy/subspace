@@ -142,7 +142,7 @@ impl MarkdownPlugin for References {
 /// Issue and pull request references are chips with the shared text menu,
 /// in literal and formatted rows alike.
 fn chip(found: &Opens) -> bool {
-    matches!(found, Opens::Ref(Ref::Issue(_) | Ref::PullRequest(_)))
+    matches!(found, Opens::Ref(found) if found.is_record())
 }
 
 /// What a pull request chip shows: `repo#n`, with the owner only when the

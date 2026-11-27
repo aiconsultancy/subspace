@@ -2,30 +2,53 @@ import { createHash, X509Certificate, type KeyObject } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Effect, Result, Schema } from "effect";
 import { decodeProtectedHeader, importSPKI, jwtVerify, type JWTPayload } from "jose";
-import { agentTokenIssuer, externalClockTolerance } from "./auth";
+import { agentTokenIssuer, deviceTokenIssuer, externalClockTolerance } from "./auth";
 import { type Provider } from "./config";
 import { Database } from "./db";
-import { type AgentCredentialUse, type Member } from "./identity";
+import { type KeyCredentialUse, type Member } from "./identity";
 import { databaseFailure } from "./middleware";
-import { problem } from "./problems";
+import { isProblem, problem } from "./problems";
 import { agentCredentials, agentTokenIds, fleets, organisations, ships, users } from "./schema";
 
 /**
- * Agent key credentials. An agent holds an X.509 certificate, normally self-signed, with an
- * Ed25519 or ECDSA P-256 key. Its fingerprint is the SHA-256 of the certificate's DER encoding in
- * lower-case hex, the value Ergo reports as certfp. Only the key and the fingerprint identify the
- * agent: no other field of the certificate is trusted, and its validity dates are not enforced,
- * because a self-signed certificate's dates are only what its holder asserted. Revocation is what
- * ends a key's use.
+ * Key credentials. An agent, or a person's paired device, holds an X.509 certificate, normally
+ * self-signed, with an Ed25519 or ECDSA P-256 key. Its fingerprint is the SHA-256 of the
+ * certificate's DER encoding in lower-case hex, the value Ergo reports as certfp. Only the key and
+ * the fingerprint identify the member: no other field of the certificate is trusted, and its
+ * validity dates are not enforced, because a self-signed certificate's dates are only what its
+ * holder asserted. Revocation is what ends a key's use.
  *
  * An agent token is a JWT the agent signs with that key and sends as a bearer token to the main
  * listener: header `alg` (EdDSA or ES256), `typ` `subspace-agent+jwt` and `kid` the fingerprint;
  * claims `iss` `subspace-agent`, `sub` the fingerprint, `aud` the API's public origin
  * (AGENT_TOKEN_AUDIENCE), `iat`, `exp` at most 300 seconds after `iat`, and a unique `jti`, which
- * is accepted once.
+ * is accepted once. A device token is the same with `typ` `subspace-device+jwt` and `iss`
+ * `subspace-device`, signed with a person's device credential: each kind of token is accepted
+ * only for its own kind of member.
  */
 export const agentTokenType = "subspace-agent+jwt";
+export const deviceTokenType = "subspace-device+jwt";
 export const agentTokenMaxLifetime = 300;
+
+/** What a key token must match: the audience of each kind, null when that kind is off. */
+export interface KeyTokenPolicy {
+  readonly agentAudience: string | null;
+  readonly deviceAudience: string | null;
+  /** The providers of the organisations this deployment serves. */
+  readonly providers: ReadonlySet<Provider>;
+}
+
+interface TokenKind {
+  readonly issuer: string;
+  /** Whether the credential must be an agent's, or else a person's. */
+  readonly agent: boolean;
+  readonly audience: (policy: KeyTokenPolicy) => string | null;
+}
+
+const tokenKinds: ReadonlyMap<unknown, TokenKind> = new Map([
+  [agentTokenType, { issuer: agentTokenIssuer, agent: true, audience: (p) => p.agentAudience }],
+  [deviceTokenType, { issuer: deviceTokenIssuer, agent: false, audience: (p) => p.deviceAudience }],
+]);
 export const maxCertificateLength = 16_384;
 export const fingerprintPattern = /^[0-9a-f]{64}$/u;
 
@@ -124,18 +147,18 @@ export const certificateProblemDetail = {
   key: "Use a certificate with an Ed25519 or ECDSA P-256 key.",
 } as const;
 
-/** The agent an agent token names, with the credential it was signed with and its expiry. */
-export interface AgentPrincipal {
+/** The member a key token names, with the credential it was signed with and its expiry. */
+export interface KeyPrincipal {
   readonly member: Member;
-  readonly credential: AgentCredentialUse;
+  readonly credential: KeyCredentialUse;
   readonly expiresAt: number;
 }
 
 const invalid = "The bearer access token is invalid or expired.";
 
-/** A refusal of an agent token, with the reason for a debug log line. Never the token. */
+/** A refusal of a key token, with the reason for a debug log line. Never the token. */
 const refuse = (reason: string, fingerprint?: string) =>
-  Effect.logDebug("Agent token refused", { reason, ...(fingerprint ? { fingerprint } : {}) }).pipe(
+  Effect.logDebug("Key token refused", { reason, ...(fingerprint ? { fingerprint } : {}) }).pipe(
     Effect.andThen(Effect.fail(problem(401, invalid))),
   );
 
@@ -169,19 +192,8 @@ export const touchCredential = (id: string) =>
       ),
   );
 
-/**
- * What an agent token must match: the API's public origin, null when agent tokens are off, and the
- * providers of the organisations this deployment serves.
- */
-export interface AgentTokenPolicy {
-  readonly audience: string | null;
-  readonly providers: ReadonlySet<Provider>;
-}
-
-const checkAgentToken = (token: string, policy: AgentTokenPolicy) =>
+const checkKeyToken = (token: string, policy: KeyTokenPolicy) =>
   Effect.gen(function* () {
-    const { audience } = policy;
-    if (!audience) return yield* refuse("agent tokens are not configured");
     if (token.length > 8192) return yield* refuse("size");
     let header: ReturnType<typeof decodeProtectedHeader>;
     try {
@@ -189,7 +201,10 @@ const checkAgentToken = (token: string, policy: AgentTokenPolicy) =>
     } catch {
       return yield* refuse("header");
     }
-    if (header.typ !== agentTokenType) return yield* refuse("typ");
+    const kind = tokenKinds.get(header.typ);
+    if (!kind) return yield* refuse("typ");
+    const audience = kind.audience(policy);
+    if (!audience) return yield* refuse("this kind of token is not configured");
     if (header.alg !== "EdDSA" && header.alg !== "ES256") return yield* refuse("alg");
     const fingerprint = typeof header.kid === "string" ? header.kid.toLowerCase() : "";
     if (!fingerprintPattern.test(fingerprint)) return yield* refuse("kid");
@@ -225,10 +240,10 @@ const checkAgentToken = (token: string, policy: AgentTokenPolicy) =>
     const verified = yield* Effect.tryPromise(async () => {
       const key = await importSPKI(credential.publicKey, credential.algorithm);
       return jwtVerify(token, key, {
-        issuer: agentTokenIssuer,
+        issuer: kind.issuer,
         audience,
         algorithms: [credential.algorithm],
-        typ: agentTokenType,
+        typ: header.typ,
         clockTolerance: externalClockTolerance,
         requiredClaims: ["iss", "sub", "aud", "iat", "exp", "jti"],
       });
@@ -239,12 +254,18 @@ const checkAgentToken = (token: string, policy: AgentTokenPolicy) =>
     const claims = claimsProblem(payload, fingerprint, audience, now);
     if (claims) return yield* refuse(claims, fingerprint);
 
-    if (!member.agentRank) return yield* refuse("not an agent", fingerprint);
+    if (Boolean(member.agentRank) !== kind.agent)
+      return yield* refuse(kind.agent ? "not an agent" : "not a person", fingerprint);
     // An organisation whose identity provider this deployment does not accept is not served.
     if (!policy.providers.has(provider)) return yield* refuse("organisation", fingerprint);
     if (!member.active)
       return yield* Effect.fail(
-        problem(403, `Agent '${member.displayName}' is deactivated. Ask a human to reactivate it.`),
+        problem(
+          403,
+          member.agentRank
+            ? `Agent '${member.displayName}' is deactivated. Ask a human to reactivate it.`
+            : "An active organisation membership is required.",
+        ),
       );
 
     // Recorded until it can no longer be accepted, so a replay to any instance is refused.
@@ -268,39 +289,39 @@ const checkAgentToken = (token: string, policy: AgentTokenPolicy) =>
       },
       credential: { id: credential.id, scopes: credential.scopes },
       expiresAt: payload.exp!,
-    } satisfies AgentPrincipal;
+    } satisfies KeyPrincipal;
   });
 
 type Refusal = ReturnType<typeof problem<401>> | ReturnType<typeof problem<403>>;
 type Failure = Refusal | ReturnType<typeof problem<500>>;
 
-const isRefusal = (error: unknown): error is Refusal =>
-  typeof error === "object" && error !== null && "type" in error && error.type === "about:blank";
+const isRefusal = (error: unknown): error is Refusal => isProblem(error);
 
 /**
- * The agent an agent token names, if every rule of the contract holds, in this order: the header
- * (`typ`, an allowed `alg`, a fingerprint `kid`); one active credential with that fingerprint and
- * scope `api`, whose key's algorithm is the header's; the signature under that key; the issuer,
- * the audience, the subject, the times and the lifetime; an agent record of an organisation this
- * deployment serves; an active agent (403 otherwise); and a `jti` not seen before, recorded so
+ * The member an agent or device token names, if every rule of the contract holds, in this order:
+ * the header (`typ` of either kind, an allowed `alg`, a fingerprint `kid`); one active credential
+ * with that fingerprint and scope `api`, whose key's algorithm is the header's; the signature
+ * under that key; the kind's issuer, the audience, the subject, the times and the lifetime; an
+ * agent record for an agent token, or a person's for a device token, of an organisation this
+ * deployment serves; an active member (403 otherwise); and a `jti` not seen before, recorded so
  * that no instance accepts it again. Everything else is 401, with the same detail whatever the
  * reason. A database failure is 500.
  */
-export const verifyAgentToken = (token: string, policy: AgentTokenPolicy) =>
-  checkAgentToken(token, policy).pipe(
+export const verifyKeyToken = (token: string, policy: KeyTokenPolicy) =>
+  checkKeyToken(token, policy).pipe(
     Effect.catch((error): Effect.Effect<never, Failure> =>
       isRefusal(error)
         ? Effect.fail(error)
-        : Effect.logError("The agent token could not be checked", databaseFailure(error)).pipe(
-            Effect.andThen(Effect.fail(problem(500, "The agent token could not be checked."))),
+        : Effect.logError("The key token could not be checked", databaseFailure(error)).pipe(
+            Effect.andThen(Effect.fail(problem(500, "The key token could not be checked."))),
           ),
     ),
   );
 
 /**
- * Removes the record of agent tokens that expired more than five minutes ago, by the database's
- * clock. The margin covers a difference between the database's and the instances' clocks, so a
- * token is always refused by its expiry before its record goes.
+ * Removes the record of agent and device tokens that expired more than five minutes ago, by the
+ * database's clock. The margin covers a difference between the database's and the instances'
+ * clocks, so a token is always refused by its expiry before its record goes.
  */
 export const purgeAgentTokenIds = Effect.flatMap(Database, (db) =>
   db.delete(agentTokenIds).where(sql`${agentTokenIds.expiresAt} < now() - interval '5 minutes'`),

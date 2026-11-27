@@ -33,6 +33,9 @@ test "$(SUBSPACE_BUILD_CONFIG="$fixture/no-api.json" no_api_suffix subspace -no-
 
 : >"$fixture/actions.log"
 metadata="$fixture/metadata/subspace.json"
+native_metadata="$fixture/metadata/native.json"
+jq -e 'any(.boards[]; . == "agentsview")' "$native_metadata" >/dev/null
+jq -e 'all(.boards[]; . != "agentsview")' "$metadata" >/dev/null
 binary="$(jq -r .binary_name "$metadata")"
 name="$(jq -r .display_name "$metadata")"
 version="$(jq -r .version "$metadata")"
@@ -65,11 +68,12 @@ for target in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
     if [[ "$target" == *windows* ]]; then
         unzip -q "$fixture/dist/$prefix.zip" -d "$fixture/unpacked-$target"
         test -f "$fixture/unpacked-$target/$binary.exe"
+        cmp "$native_metadata" "$fixture/unpacked-$target/product.json"
     else
         tar -xzf "$fixture/dist/$prefix.tar.gz" -C "$fixture/unpacked-$target"
         test -x "$fixture/unpacked-$target/$binary"
+        cmp "$metadata" "$fixture/unpacked-$target/product.json"
     fi
-    cmp "$metadata" "$fixture/unpacked-$target/product.json"
     test -f "$fixture/unpacked-$target/README.md"
     cmp "$root/licenses/charts/README.md" "$fixture/unpacked-$target/licenses/charts/README.md"
 done
@@ -189,7 +193,7 @@ test "$(plutil -extract CFBundleDisplayName raw -o - "$app/Contents/Info.plist")
 test "$(plutil -extract LSMinimumSystemVersion raw -o - "$app/Contents/Info.plist")" = 15.0
 icon_name="$(plutil -extract CFBundleIconFile raw -o - "$app/Contents/Info.plist")"
 test -f "$app/Contents/Resources/$icon_name.icns"
-cmp "$metadata" "$app/Contents/Resources/product.json"
+cmp "$native_metadata" "$app/Contents/Resources/product.json"
 cmp "$root/licenses/charts/README.md" "$app/Contents/Resources/licenses/charts/README.md"
 test "$(command -v codesign)" = "$fixture/bin/codesign"
 test -x "$app/Contents/Resources/bin/mise"
@@ -241,7 +245,7 @@ fi
 grep -Fxq terminal "$fixture/mise.log"
 installed="$fixture/home/Applications/$name.app"
 test -x "$installed/Contents/MacOS/$binary"
-cmp "$metadata" "$installed/Contents/Resources/product.json"
+cmp "$native_metadata" "$installed/Contents/Resources/product.json"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos \
     FEATURES=terminal,capture TARGET="$host_target"

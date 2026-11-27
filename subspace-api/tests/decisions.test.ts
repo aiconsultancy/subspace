@@ -60,6 +60,7 @@ function row(id: string, actor: Member, status: Row["decision"]["status"] = "pro
     decision: {
       id,
       organisationId: org,
+      identifier: "D-00001-EXA",
       projectId,
       recordedById: actor.id,
       title: "Example decision",
@@ -210,6 +211,7 @@ test("list items carry recordedBy and madeBy but not the detail's fields", async
   expect(response.status).toBe(200);
   const body = (await response.json()) as { items: Record<string, unknown>[] };
   expect(body.items[0]).toMatchObject({
+    identifier: "D-00001-EXA",
     recordedBy: items[0]!.recordedBy,
     madeBy: items[0]!.madeBy,
   });

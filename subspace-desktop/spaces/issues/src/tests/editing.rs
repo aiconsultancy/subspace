@@ -3,6 +3,7 @@ mod elsewhere;
 mod properties;
 mod review;
 mod summary;
+mod tracker;
 const CREATE_SUMMARY: &str = "Explain the work so people can decide what to do next.";
 use super::offline::{Offline, board_with_hub, offline_with, row, settle_board};
 use super::{has, render};

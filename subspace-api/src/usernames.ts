@@ -11,6 +11,7 @@ import {
   type SQLWrapper,
 } from "drizzle-orm";
 import { Context, Effect, Schedule } from "effect";
+import { type Provider } from "./config";
 import { type Database } from "./db";
 import { auditLogs, fleets, organisations, retiredUsernames, users } from "./schema";
 
@@ -369,7 +370,7 @@ export const settableUsername = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/u;
 /** Why an explicit username could not be set or released. Safe to show to the administrator. */
 export class UsernameRefused extends Error {}
 
-type OrganisationRef = { provider: "workos" | "entra" | "dev"; externalOrganisation: string };
+type OrganisationRef = { provider: Provider; externalOrganisation: string };
 
 /** The organisation's row, locked as every username change locks it. */
 const lockedOrganisation = (db: Db, organisation: OrganisationRef) =>

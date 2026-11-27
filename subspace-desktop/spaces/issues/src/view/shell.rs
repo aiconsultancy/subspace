@@ -11,7 +11,9 @@ use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
     TestSupportExt as _, div, px,
 };
-use subspace_framework::dashboard::action::{Intent, action_button};
+use subspace_framework::dashboard::Dashboard as _;
+use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
+use subspace_framework::dashboard::icon_button::IconButton;
 use subspace_framework::dashboard::tabs::{self, TabSpec};
 use subspace_framework::dashboard::tokens::ButtonRole;
 use subspace_framework::dashboard::toolbar_label::{self, ToolbarLabel};
@@ -105,7 +107,7 @@ fn bare_toolbar(
 }
 
 /// Search and filters on the leading side; how the list is grouped, the
-/// Sub-issues switch and New issue… on the trailing side. The count is the
+/// Sub-issues switch, Refresh and New issue… trail. The count is the
 /// status bar's.
 fn list_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Toolbar {
     scoped_toolbar(issues, shown, cx)
@@ -117,16 +119,19 @@ fn list_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Tool
             toolbar.trailing(grouping(cx))
         })
         .trailing(sub_issues_button(issues, cx))
+        .trailing(refresh_button(cx))
         .when(issues.can_create_issue(), |toolbar| {
             toolbar.trailing(crate::editing::view::new_button(cx))
         })
 }
 
-/// The activity feed has no search or filters; New issue… stays.
+/// Refresh and New issue… stay beside the activity feed.
 fn activity_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Toolbar {
-    scoped_toolbar(issues, shown, cx).when(issues.can_create_issue(), |toolbar| {
-        toolbar.trailing(crate::editing::view::new_button(cx))
-    })
+    scoped_toolbar(issues, shown, cx)
+        .trailing(refresh_button(cx))
+        .when(issues.can_create_issue(), |toolbar| {
+            toolbar.trailing(crate::editing::view::new_button(cx))
+        })
 }
 
 /// The pane's toolbar, led by what the hidden navigator would hold.
@@ -136,6 +141,16 @@ fn scoped_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> To
         .fold(Toolbar::new("issues-toolbar"), |toolbar, control| {
             toolbar.leading(control)
         })
+}
+
+fn refresh_button(cx: &Context<Issues>) -> IconButton {
+    icon_button(
+        "issues-refresh",
+        Intent::Quiet,
+        IconName::RefreshCw,
+        "Refresh",
+    )
+    .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx)))
 }
 
 /// While the navigator is hidden, what it holds stays in reach: the view

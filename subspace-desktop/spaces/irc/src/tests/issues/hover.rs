@@ -144,7 +144,7 @@ fn chip_hover_reveals_tracker_progress_without_accent_priority(cx: &mut TestAppC
 fn inline_hover_keeps_notes_and_updates_to_the_card_in_place(cx: &mut TestAppContext) {
     let (_, _, tracker, cx) = open_board(cx, true, "TST-12");
     let tracker = tracker.unwrap();
-    answer(&tracker, ResolutionState::Pending, cx);
+    answer(&tracker, ResolutionState::SignedOut, cx);
     hover(INLINE, cx);
     for (state, expected) in [
         (ResolutionState::Pending, "Loading TST-12…"),
@@ -174,6 +174,9 @@ fn inline_hover_keeps_notes_and_updates_to_the_card_in_place(cx: &mut TestAppCon
         assert!(!text.contains("Loading") && !text.contains("Couldn't reach"));
         assert_card(cx);
     }
+    answer(&tracker, ResolutionState::Pending, cx);
+    assert!(visible_text(cx).contains("3 of 7 done"));
+    assert_card(cx);
 }
 
 #[gpui_kit::test]

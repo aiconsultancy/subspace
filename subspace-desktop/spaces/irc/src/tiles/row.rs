@@ -17,7 +17,14 @@ pub(crate) fn row(
     context: &RowContext,
     cx: &App,
 ) -> Option<AnyElement> {
-    let owned = owned(entry.seq, refs, context);
+    let hub = context.hub.upgrade();
+    let mut owned = owned(entry.seq, refs, context);
+    owned.retain(|found| match found {
+        Ref::Issue(identifier) => !hub
+            .as_ref()
+            .is_some_and(|hub| hub.read(cx).issues.is_unavailable(identifier)),
+        _ => true,
+    });
     if owned.is_empty() {
         return None;
     }
@@ -58,6 +65,6 @@ fn tile(entry: &Entry, found: &Ref, context: &RowContext, cx: &App) -> AnyElemen
     match found {
         Ref::Issue(identifier) => crate::issues::slot(entry, identifier, context, cx),
         Ref::PullRequest(found) => crate::pull_requests::slot(entry, found, context, cx),
-        Ref::Channel(_) | Ref::Nick(_) => gpui_kit::div().into_any_element(),
+        Ref::Channel(_) | Ref::Nick(_) | Ref::Decision(_) => gpui_kit::div().into_any_element(),
     }
 }

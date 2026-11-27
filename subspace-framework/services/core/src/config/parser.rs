@@ -11,12 +11,16 @@ mod mcp;
 mod web;
 mod web_boards;
 
-pub(super) fn parse(text: &str, file: &std::path::Path) -> (Config, Vec<Notice>) {
+pub(super) fn parse(
+    text: &str,
+    file: &std::path::Path,
+    renames: &crate::former_ids::Renames,
+) -> (Config, Vec<Notice>) {
     let mut parser = Parser {
         file,
         notices: Vec::new(),
     };
-    let config = parser.config(text);
+    let config = parser.config(text, renames);
     (config, parser.notices)
 }
 
@@ -35,9 +39,9 @@ impl Parser<'_> {
         });
     }
 
-    fn config(&mut self, text: &str) -> Config {
+    fn config(&mut self, text: &str, renames: &crate::former_ids::Renames) -> Config {
         let mut config = Config::default();
-        let root = match serde_json::from_str::<Value>(text) {
+        let mut root = match serde_json::from_str::<Value>(text) {
             Ok(Value::Object(root)) => root,
             Ok(_) => {
                 self.warn("", "expected a JSON object; using the defaults");
@@ -48,6 +52,7 @@ impl Parser<'_> {
                 return config;
             }
         };
+        crate::former_ids::rename_config(&mut root, renames);
 
         let chat = self.section(&root, "chat");
         config.chat.engine = self.chat_engine(chat);

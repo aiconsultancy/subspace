@@ -9,6 +9,7 @@
 #                       [--port-user PORT:USER]... [--protect-metadata] [--metadata-user USER]...
 #   lockdown.sh apply   --operator USER [--operator USER2] [--ssh-from CIDR]...
 #                       [--tailscale | --cloudflare] [--ssh-port PORT]... [--allow-port PORT]...
+#                       [--private-ingress INTERFACE,ADDRESS,CLIENT-CIDR[,PORT,PORT]]
 #                       [isolate options] [--timeout SECONDS] [--confirm-now]
 #   lockdown.sh confirm [ID]   keep the pending change (only if its ID is ID) and load it at boot
 #   lockdown.sh rollback [--from-timer]
@@ -49,6 +50,7 @@ isolation=$state/isolation.nft
 sshd_conf=/etc/ssh/sshd_config.d/00-subspace-lockdown.conf
 backup=$state/sshd-previous.conf
 rollback_unit=subspace-lockdown-rollback
+private_ingress_unit=subspace-private-network.service
 boot_unit=/etc/systemd/system/subspace-lockdown.service
 stable=/usr/local/sbin/subspace-lockdown
 self=$(realpath -- "${BASH_SOURCE[0]}")
@@ -62,6 +64,22 @@ private_v4='{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 }'
 private_v6='{ fc00::/7, fe80::/10 }'
 
 unique_list() { printf '%s\n' "$@" | awk 'NF && !seen[$0]++' | paste -sd, -; }
+
+parse_private_ingress() {
+    [[ $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,14},[0-9a-fA-F:.]+,[0-9a-fA-F:.]+/[0-9]{1,3}(,[1-9][0-9]{0,4},[1-9][0-9]{0,4})?$ ]] \
+        || die 'Invalid --private-ingress.'
+    IFS=, read -r private_if private_ip private_clients private_https private_irc <<<"$1"
+    if [[ -z $private_https ]]; then
+        # Also accept the original three-field option when invoked directly through setup.
+        local ports
+        ports=$(python3 -B "${self%/*}/private_network.py" ports) || die 'Could not read the managed ingress ports.'
+        IFS=, read -r private_https private_irc <<<"$ports"
+    fi
+    (( private_https >= 1 && private_https <= 65535 && private_irc >= 1 && private_irc <= 65535 &&
+       private_https != private_irc )) || die 'Invalid private ingress ports.'
+    private_family=ip
+    [[ $private_ip != *:* ]] || private_family=ip6
+}
 
 ssh_listen_ports() {
     # Every port sshd is configured for, plus ssh.socket's when SSH is socket-activated
@@ -79,6 +97,7 @@ parse() {
     operators=() v4=() v6=() allow=() protected=() ssh_ports=() metadata_users=() port_users=()
     uids=(0) metadata_uids=() port_uids=()
     tailscale=false cloudflare=false protect_metadata=false
+    private_ip=''
     local user source uid
     while (( $# )); do
         case $1 in
@@ -91,6 +110,9 @@ parse() {
             --tailscale) tailscale=true; shift ;;
             --cloudflare) cloudflare=true; shift ;;
             --allow-port) [[ ${2:?} =~ ^[0-9]{1,5}$ ]] || die 'Invalid --allow-port.'; allow+=("$2"); shift 2 ;;
+            --private-ingress)
+                parse_private_ingress "${2:?}"
+                shift 2 ;;
             --operator-only-port) [[ ${2:?} =~ ^[0-9]{1,5}$ ]] || die 'Invalid --operator-only-port.'; protected+=("$2"); shift 2 ;;
             --ssh-port) [[ ${2:?} =~ ^[0-9]{1,5}$ ]] || die 'Invalid --ssh-port.'; ssh_ports+=("$2"); shift 2 ;;
             --protect-metadata) protect_metadata=true; shift ;;
@@ -155,6 +177,50 @@ render_isolation() {
     } > "$1"
 }
 
+private_ingress_rules() {
+    printf 'iifname "%s" %s saddr %s accept\ndrop\n' "$private_if" "$private_family" "$1"
+}
+
+input_hook='type filter hook input'
+input_policy='policy drop;'
+input_prefix() {
+    # input_prefix [FIRST SECOND]: the private ports in this order, by default as configured.
+    printf 'iif "lo" accept\n'
+    if [[ -n $private_ip ]]; then
+        printf 'ct state invalid drop\n%s daddr %s tcp dport { %s, %s } jump private_ingress\n' \
+            "$private_family" "$private_ip" "${1:-$private_https}" "${2:-$private_irc}"
+    fi
+}
+
+live_chain() {
+    timeout -k 1s 10s nft list chain inet subspace_lockdown "$1" 2>/dev/null | awk '
+        { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
+        NF && $0 != "}" && $0 !~ /^(table |chain )/ { print }
+    '
+}
+
+check_private_ingress() {
+    local clients rules header prefix
+    parse_private_ingress "$1"
+    clients=$private_clients
+    # nft lists singleton networks as bare addresses.
+    case "$private_family:${clients##*/}" in ip:32|ip6:128) clients=${clients%/*} ;; esac
+    rules=$(live_chain private_ingress) || die 'Private network command failed (nft list).'
+    [[ $rules == "$(private_ingress_rules "$clients")" ]] \
+        || die 'The private ingress allow-list or its default drop is missing.'
+    rules=$(live_chain input) || die 'Private network command failed (nft list).'
+    header=${rules%%$'\n'*}
+    rules=${rules#*$'\n'}
+    # The restriction must run before any general accepts, including established traffic. nft
+    # lists the elements of the two-port set in an order of its own, so accept either.
+    for prefix in "$(input_prefix "$private_https" "$private_irc")" "$(input_prefix "$private_irc" "$private_https")"; do
+        if [[ $header == "$input_hook "*"$input_policy" && ( $rules == "$prefix" || $rules == "$prefix"$'\n'* ) ]]; then
+            return 0
+        fi
+    done
+    die 'Lockdown does not apply the allow-list to the private TLS listeners.'
+}
+
 render_lockdown() {
     local rules_new=$1 sshd_new=$2 ssh_port_set allow_set
     if (( ${#ssh_ports[@]} == 0 )); then
@@ -166,6 +232,11 @@ render_lockdown() {
     {
         printf 'add table inet subspace_lockdown\ndelete table inet subspace_lockdown\n'
         printf 'table inet subspace_lockdown {\n'
+        if [[ -n $private_ip ]]; then
+            printf '    chain private_ingress {\n'
+            private_ingress_rules "$private_clients" | sed 's/^/        /'
+            printf '    }\n'
+        fi
         if (( ${#allow[@]} )); then
             # Filter allowed ports before Docker's DNAT sends published ones through FORWARD.
             printf '    chain prerouting {\n'
@@ -177,10 +248,12 @@ render_lockdown() {
             printf '    }\n'
         fi
         printf '    chain input {\n'
-        printf '        type filter hook input priority filter - 10; policy drop;\n'
-        printf '        iif "lo" accept\n'
+        printf '        %s priority filter - 10; %s\n' "$input_hook" "$input_policy"
+        input_prefix | sed 's/^/        /'
         printf '        ct state established,related accept\n'
-        printf '        ct state invalid drop\n'
+        if [[ -z $private_ip ]]; then
+            printf '        ct state invalid drop\n'
+        fi
         printf '        meta l4proto icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } limit rate 20/second accept\n'
         printf '        meta l4proto ipv6-icmp accept\n'
         printf '        udp sport 67 udp dport 68 accept\n'
@@ -260,6 +333,27 @@ stop_rollback_timer() {
     systemctl stop "$rollback_unit.timer" >/dev/null 2>&1 || true
 }
 
+stop_private_ingress() {
+    if [[ -f /etc/systemd/system/$private_ingress_unit ]]; then
+        # Do not block SSH recovery if systemd cannot stop the relay: its own checker also verifies the firewall.
+        systemctl "$@" "$private_ingress_unit" || say "could not stop private ingress; check $private_ingress_unit after recovery."
+    fi
+}
+
+start_private_ingress() {
+    local expected=$1 current=$state/rules.id
+    # Serialise the entire activation with rollback, not just the firewall check in ExecStartPre.
+    lock_state
+    if [[ -f $pending ]]; then current=$state/pending.id; fi
+    [[ -n $expected && -f $current && $(<"$current") == "$expected" ]] ||
+        die 'The lockdown change rolled back or was replaced before private ingress could start. Run setup again.'
+    # Wait for readiness, but bound the time this can hold up SSH recovery.
+    if ! timeout -k 2s 30s systemctl enable --now "$private_ingress_unit"; then
+        timeout -k 2s 5s systemctl disable --now --no-block "$private_ingress_unit" || true
+        die 'Could not start private ingress. Check the systemd journal and run setup again.'
+    fi
+}
+
 install_boot_unit() {
     install -o root -g root -m 0755 -- "$self" "$stable.new" &&
         mv -f -- "$stable.new" "$stable" || return 1
@@ -334,6 +428,7 @@ apply() (
         render_isolation "$staging/isolation.nft"
         load_isolation "$staging/isolation.nft"
     fi
+    if [[ -z $private_ip ]]; then stop_private_ingress stop; fi
     cancel_rollback
     if [[ ! -f $pending ]]; then
         if cmp -s -- "$staging/rules.nft.new" "$rules" && cmp -s -- "$staging/sshd.conf.new" "$sshd_conf"; then
@@ -432,6 +527,11 @@ rollback() {
     lock_state
     if [[ $from_timer == --from-timer ]]; then stop_rollback_timer; else cancel_rollback; fi
     if [[ -f $pending ]]; then
+        if [[ -f $rules ]] && grep -Eq '^[[:space:]]*chain private_ingress[[:space:]]*\{' "$rules"; then
+            stop_private_ingress stop
+        else
+            stop_private_ingress disable --now
+        fi
         restore_pending
         if [[ -f $rules ]]; then
             nft -f "$rules"
@@ -448,6 +548,7 @@ rollback() {
     elif [[ $from_timer == --from-timer ]]; then
         return
     else
+        stop_private_ingress disable --now
         delete_table
         rm -f -- "$rules" "$state/rules.id" "$sshd_conf" "$backup"
         if [[ ! -f $isolation ]]; then
@@ -491,5 +592,7 @@ case ${1:-} in
     status) status ;;
     boot) boot ;;
     applied-id) cat "$state/applied.id" 2>/dev/null ;;
+    check-private-ingress) check_private_ingress "${2:-}" ;;
+    start-private-ingress) start_private_ingress "${2:-}" ;;
     *) sed -n '2,/^set -euo pipefail/{ /^#/p; }' "$self" >&2; exit 2 ;;
 esac

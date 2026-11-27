@@ -12,6 +12,7 @@ mod compose;
 mod config;
 mod context;
 mod conversation;
+mod decision_references;
 mod dock;
 mod editor;
 mod fleet;

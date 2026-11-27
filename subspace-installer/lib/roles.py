@@ -7,6 +7,9 @@ from string import Template
 import sys
 
 from agent_files import MAX_BYTES, agent_directory, write_private
+from github_policy import officer_github_repositories
+import screenshots
+import mockups
 
 
 ROLES = Path(__file__).parent / "roles"
@@ -17,7 +20,7 @@ API_SKILL_SOURCES = (
     Path(__file__).parent / "agent-skills" / API_SKILL / "SKILL.md",
     Path(__file__).resolve().parents[2] / "agent-skills" / "opencode" / API_SKILL / "SKILL.md",
 )
-SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew", API_SKILL)
+SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew", API_SKILL, mockups.SKILL)
 
 
 API_SKILL_MISSING = ("The Subspace API skill agent-skills/opencode/subspace-tracker/SKILL.md is missing, and "
@@ -49,7 +52,7 @@ the index, branches, tags, the stash or Git's configuration (such as add,
 checkout, merge, rebase, reset, restore and switch), and `sed -i` and
 `perl -i`. Everything else runs, chained or piped: reading and searching,
 `git fetch`, `git log`, `git diff`, `git branch -a`, builds and tests, and
-`subspace-github gh pr create`. The refusals match command text, so they are
+any configured GitHub tools. The refusals match command text, so they are
 a working agreement, not a lock: never get round them with an interpreter, a
 script, a redirect or another spelling. Assign the change to a crew member
 instead. A read that names one of those Git words after a global option, such
@@ -182,7 +185,7 @@ def default_permissions(role, references, *, delegate=False, worktrees=None):
     reads; delegate gives a captain the delegate policy: no edits, and an open shell but for writes.
     """
     rules = [{"action": "*", "resource": "*", "effect": "deny"}]
-    rules.extend({"action": action, "resource": "*", "effect": "allow"} for action in ("read", "glob", "grep", "question", "skill"))
+    rules.extend({"action": action, "resource": "*", "effect": "allow"} for action in ("read", "glob", "grep", "skill"))
     if references and role == "rear_admiral":
         rules.append({"action": "external_directory", "resource": f"{references}/*", "effect": "allow"})
     if delegate:
@@ -215,7 +218,7 @@ def dispatch_guidance(cfg, person):
     """How Stargate's agent dispatch works in fleet command, as this officer meets it (docs/agent-dispatch.md)."""
     dispatch = cfg.get("agentDispatch")
     command = cfg["irc"]["commandChannel"]
-    if not dispatch:
+    if not dispatch or not dispatch.get("enabled", True):
         return ("## Agent dispatch\n\nAgent dispatch is off in this fleet: the rear admiral hands out issues in "
                 f"{command} by tagging a captain.")
     minutes = dispatch["answerTimeoutSeconds"] / 60
@@ -267,9 +270,25 @@ def render(role, name, values):
     return Template((ROLES / role / name).read_text()).substitute(values)
 
 
-def role_documents(cfg, person, references, home):
+def github_officer_operations(cfg, person):
+    app = person.get("githubApp")
+    if not app or not officer_github_repositories(cfg):
+        return []
+    operations = ["check", "pr-status", "review-context"]
+    if person["role"] == "captain" and app.get("contents", "write") == "write":
+        operations.extend(("pr-create", "pr-edit", "ready"))
+        if not person.get("delegatesCoding"):
+            operations.extend(("push", "publish", "branch-create"))
+        if person.get("mergeCheckouts"):
+            operations.append("merge")
+    return operations
+
+
+def role_documents(cfg, person, references, home, *, flint=False):
     """Instructions and skills for an officer, plus a system prompt per crew member it hosts."""
     role = person["role"].replace("_", "-")
+    api = cfg.get("api") or {}
+    has_tracker = api.get("agentMcpUrl") or api.get("enrolment")
     repositories = list(cfg["repositories"])
     values = {
         "agent": person["name"], "fleet": cfg["name"], "channel": person["channel"],
@@ -282,9 +301,14 @@ def role_documents(cfg, person, references, home):
     values["dispatch"] = dispatch_guidance(cfg, person)
     guard_status = "on" if (cfg.get("usageGuard") or {}).get("enabled") else "off"
     values["guardStatus"] = f"The automated usage guard is {guard_status} for this fleet."
+    github_ops = github_officer_operations(cfg, person)
+    claude = (person.get("harness") or {}).get("type") == "claude-sdk"
+    github_tool = "`github_officer.operate`" if claude else "`subspace-github-officer`"
+    pull_request = (f"Open the pull request with {github_tool}, using `pr-create`." if "pr-create" in github_ops
+                    else "Ask an authorised officer to open the pull request.")
     values["completion"] = (
         "4. Have crew resolve overlaps, run the checks and push the reviewed branch.\n"
-        "   Inspect their work and open the pull request with `subspace-github gh pr create`.\n"
+        f"   Inspect their work. {pull_request}\n"
         "5. Report the result, the pull request and any remaining risk in " + values["channel"] + "."
         if person.get("delegatesCoding") else
         "4. Resolve overlaps and review the combined diff. Crew commit as you, so check\n"
@@ -299,16 +323,89 @@ def role_documents(cfg, person, references, home):
     else:
         values["crew"] = "You have no crew in this fleet. Do the work yourself in your checkout."
     instructions = render(role, "AGENTS.md", values)
+    if flint:
+        instructions += (
+            "\n## Flint charts\n\n"
+            "Use the local `flint` MCP server for charts from data. Load the chart authoring skill "
+            "with `get_flint_skill` and use `validate_chart` before exporting. Include data as "
+            "inline `data.values`. For an IRC chart, send a PNG. Pass the same Flint JSON on "
+            "standard input to `flint-render /tmp/flint-chart.png`, using a fresh file name. "
+            "A shell heredoc can provide the JSON directly.\n"
+        )
+        if has_tracker:
+            instructions += (
+                "Upload the PNG with `subspace_files` tool `upload_file`, then put the returned UPL "
+                "reference in your IRC reply.\n"
+            )
+    instructions += (
+        "\n## Clarifying requests\n\n"
+        "Ask for clarification in a plain-text reply to the originating conversation. Number the questions "
+        "when there are several and end the turn so the requester can answer in that conversation. "
+        "Do not open a native question form.\n"
+    )
+    if has_tracker:
+        instructions += (
+            "\nFor a choice that needs human approval, follow **Ask a human to decide** in the "
+            "`subspace-tracker` skill. Look for an existing decision or log a proposed one linked to the "
+            "affected issue or tracker. In your reply, include the recommendation, decision reference and "
+            "version, and ask for an explicit outcome.\n"
+            "\n## Filing Subspace issues\n\n"
+            "If the request names an issue, read it with `subspace_get_issue` and use its key in any hand-off. "
+            "Before creating an issue, search the repository's tracker with `subspace_list_issues`, "
+            "using `filters.q` and `includeArchived: true` with no state filter. Search by outcome as well "
+            "as title. If you know the parent tracker, also list its children with `filters.parent` so you "
+            "can spot work filed under a different title. Follow the pages until you find a match or exhaust "
+            "the results. Follow duplicate links to the issue that owns the work.\n\n"
+            "Keep related findings from one working session together. Add a small follow-up to the existing "
+            "issue as a comment or to-do. If a new issue is needed, agree which officer will file it before "
+            "handing off the work, then pass the issue key to the other officers and crew. See the "
+            "`subspace-tracker` skill for the full filing rules.\n"
+            "\n## Preparing files\n\n"
+            "Use the `prepare_file` tool on the `subspace_publish` server for an issue attachment, existing "
+            "chat upload, new text or a file staged in your private outbox at "
+            f"`{Path(home) / 'outbox'}`. The limit is 10 MiB per file. "
+            "Use `upload_file` on `subspace_files` for the existing IRC attachment workflow. "
+            "For Markdown or plain text in Teams, request `preview: teams` and post the returned PNG marker.\n"
+        )
+        if role == "captain":
+            instructions += (
+                "\n## Closing Subspace issues\n\n"
+                "You are responsible for closing each Subspace issue you finish, including work delegated to crew. "
+                "Once the work is complete, including any required pull request merges, to-dos and verification, "
+                "move the issue to Done (or the project's equivalent completed state) if it is still open. "
+                "Find that state with `subspace_list_issue_statuses` and set `stateId` with `subspace_update_issue` "
+                "using the issue's current version. Before reporting "
+                "completion, read each finished issue with `subspace_get_issue` and verify that its saved state "
+                "is Done or its equivalent. If you cannot confirm completion in the tracker, report "
+                "the issue key and what prevented you from confirming it. A tracker's state follows its direct "
+                "children, so verify that state after closing the last open child.\n"
+            )
+    if github_ops and (not claude or person["role"] == "captain"):
+        names = ", ".join(f"`{name}`" for name in github_ops)
+        repository_option = "its `repo` field" if claude else "`--repo`"
+        instructions += (
+            "\n## GitHub repository operations\n\n"
+            f"Use {github_tool} with {repository_option} set to a configured repository key. "
+            f"Your available operations are {names}.\n"
+        )
+        if role == "captain" and not claude:
+            instructions += (
+                "\nTo post a comment or submit a review as your GitHub App, use "
+                "`subspace-github gh pr comment` or `subspace-github gh pr review` "
+                "with the PR number, `--repo OWNER/REPO` and `--body-file`. These commands work on PRs "
+                "from any author in repositories your App can access when it has Pull requests write. "
+                "Use `--comment` for a comment-only review. Follow the repository's review rules.\n"
+            )
     if person.get("delegatesCoding"):
         instructions += DELEGATE_GUIDANCE
-    if checkouts := person.get("mergeCheckouts"):
-        repos = ", ".join(f"`{name}`" for name in checkouts)
+    if "merge" in github_ops:
+        repos = ", ".join(f"`{name}`" for name in person["mergeCheckouts"])
+        expected_head = "the `expected-head` field" if claude else "`--expected-head`"
         instructions += (
-            f"\n## Merging pull requests\n\n"
+            "\n## Merging pull requests\n\n"
             f"You may squash-merge pull requests from the root of your own checkout of {repos}. "
-            "Check the repository's approval and CI requirements first. Run "
-            "`subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA` "
-            "with the head SHA you reviewed. Handle the merge yourself.\n"
+            f"Check repository approvals and CI first, then use the `merge` operation in {github_tool}. "
+            f"Pass the full SHA you reviewed in {expected_head}. Handle the merge yourself.\n"
         )
     if person.get("slack"):
         # Stargate's pinned Slack turns carry a source line that the officer's definition explains once.
@@ -330,9 +427,21 @@ def role_documents(cfg, person, references, home):
                 "model": worker["model"], "family": worker["family"].title(), "worktrees": worktrees,
                 "pullRequests": crew_prs,
             })
-    if (cfg.get("api") or {}).get("agentMcpUrl") or (cfg.get("api") or {}).get("enrolment"):
+            if mockups.enabled(cfg, person):
+                crew[worker["id"]] += ("\nWhen your captain asks you to stage a mockup, build in your worktree "
+                                        f"and copy only the finished static files into a named directory under "
+                                        f"`{mockups.staging(Path(home))}`. Leave all source files in your worktree.\n")
+    if has_tracker:
         # The officer reaches the API through its MCP server at the agent listener; its crew share the skill.
         skills[API_SKILL] = api_skill()
+    if mockups.enabled(cfg, person):
+        skills[mockups.SKILL] = render("captain", "MOCKUP.md", {"staging": str(mockups.staging(Path(home)))})
+        instructions += "\nUse the fleet-mockup skill when asked to build, show, revise or withdraw a live mockup.\n"
+    impeccable = role == "captain" and cfg.get("impeccable", False)
+    if impeccable:
+        instructions += "\n## Interface design\n\nLoad Impeccable for frontend design work.\n"
+        if claude:
+            instructions += f"Read `{mockups.IMPECCABLE_PATH}/SKILL.md` for the installed skill and its references.\n"
     procedure = skills[f"fleet-{role}"].partition("\n---\n")
     if not procedure[1]:
         raise ValueError("Fleet skill templates need Markdown front matter.")
@@ -340,12 +449,16 @@ def role_documents(cfg, person, references, home):
     if API_SKILL in skills:
         # Stargate's Claude backend loads no skill files, so a Claude officer gets the API skill in its prompt.
         claude_prompt += "\n" + skills[API_SKILL].partition("\n---\n")[2]
+    if mockups.SKILL in skills:
+        claude_prompt += "\n" + skills[mockups.SKILL].partition("\n---\n")[2]
     return {
         "role": role,
         "instructions": instructions,
         "skills": skills,
         "crew": crew,
         "claudePrompt": claude_prompt,
+        **({"flint": True} if flint else {}),
+        **({"impeccable": True} if impeccable else {}),
     }
 
 
@@ -526,10 +639,19 @@ def provision_role(documents):
         raise ValueError("Unknown fleet role.")
     directory = agent_directory(".config", "opencode")
     write_private(directory / "AGENTS.md", documents["instructions"].encode())
+    destination = agent_directory(".config", "opencode", "skills") / mockups.IMPECCABLE
+    managed = destination.is_symlink() and Path(os.readlink(destination)) == mockups.IMPECCABLE_PATH
+    if documents.get("impeccable") and not os.path.lexists(destination):
+        destination.symlink_to(mockups.IMPECCABLE_PATH, target_is_directory=True)
+    elif managed and not documents.get("impeccable"):
+        destination.unlink()
+
     skills = documents["skills"]
     if not set(skills) <= set(SKILLS):
         raise ValueError("Unknown fleet skill.")
-    for name in SKILLS:
+    if documents.get("flint"):
+        skills = {**skills, **{name: screenshots.flint_skill(name).read_text() for name in screenshots.FLINT_SKILLS}}
+    for name in (*SKILLS, *screenshots.FLINT_SKILLS):
         path = directory / "skills" / name / "SKILL.md"
         if name in skills:
             write_private(agent_directory(".config", "opencode", "skills", name) / "SKILL.md", skills[name].encode())

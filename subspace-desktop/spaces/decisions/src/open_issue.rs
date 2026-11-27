@@ -5,15 +5,17 @@
 //! the Issues Space or depends on its crate.
 
 use gpui_kit::Context;
+use subspace_framework::contracts::decisions::OpenDecision;
 use subspace_framework::contracts::issues::{CurrentScope, IssueScope};
 use subspace_framework::dashboard::contracts::{self, BoardContracts, Declaration, MessageKey};
 use subspace_framework::dashboard::{BoardNavigation, DashboardEvent, Toast};
 
 use crate::{Decisions, ID, page};
 
-/// The Space asks for the issue scope; it answers and publishes nothing.
-pub(crate) const CONTRACTS: BoardContracts =
-    BoardContracts::new(&[Declaration::requests::<CurrentScope>()]);
+pub(crate) const CONTRACTS: BoardContracts = BoardContracts::new(&[
+    Declaration::requests::<CurrentScope>(),
+    Declaration::responds::<OpenDecision>(),
+]);
 
 /// The address the answering Space opens for `identifier`, bound to its
 /// profile, or none when the scope does not recognise the identifier.

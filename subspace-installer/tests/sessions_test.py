@@ -355,6 +355,7 @@ def secrets_for(*accounts):
 def crew_fleet(*captains):
     config = fixture.legacy_names(json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text()))
     config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+    config.update(mockupPreviews={"enabled": False}, impeccable=False)
     config["irc"]["auth"] = "password"
     # Without captainTools, as a fleet installed before it existed: captains keep the standard policy.
     config.pop("captainTools")
@@ -394,6 +395,10 @@ class InstalledFleet(unittest.TestCase):
         for name, value in (("ETC", self.etc), ("STATE", self.state), ("SYSTEMD", self.systemd),
                             ("SESSIONS", self.etc / "sessions")):
             self.start(patch.object(runtime, name, value))
+        self.start(patch.object(runtime, "OFFICER_EXPORT_TMPFILES",
+                                root / "tmpfiles.d" / runtime.OFFICER_EXPORT_TMPFILES.name))
+        self.start(patch.object(runtime.mockups, "TMPFILES", root / "tmpfiles.d" / "preview.conf"))
+        self.start(patch.object(runtime.mockups, "SOCKETS", root / "run" / "previews"))
         self.start(patch.object(runtime, "write", side_effect=write))
         self.start(patch.object(runtime.sessions, "write_durable", side_effect=durable))
         for name in ("directory", "run", "configure_git", "install_toolchains", "install_screenshots"):
@@ -424,6 +429,45 @@ class InstalledFleet(unittest.TestCase):
         self.events.clear()
         runtime.render(runtime.validate(config, secrets), {"tokens": MANAGEMENT_KEY, "cloud": {}})
 
+    def test_default_mockups_and_impeccable_are_wired_and_retire_independently(self):
+        config, secrets = crew_fleet("orion")
+        config.pop("mockupPreviews")
+        config.pop("impeccable")
+        self.render(config, secrets)
+
+        preview_unit = "subspace-fleet-preview.service"
+        broker_unit = "subspace-fleet-preview-publisher.service"
+        units = (self.etc / "units").read_text().splitlines()
+        self.assertIn(preview_unit, units)
+        self.assertIn(broker_unit, units)
+        self.assertIn("bind 127.0.0.1", (self.etc / "preview.Caddyfile").read_text())
+        self.assertIn("http://127.0.0.1:8090/", (self.systemd / broker_unit).read_text())
+        engine = json.loads((self.etc / "opencode-orion.json").read_text())
+        self.assertIn("officer-previews.ts", json.dumps(engine))
+        self.assertIn("stargate_serve", json.dumps(engine))
+        self.assertIn("impeccable", json.dumps(engine))
+        rear = (self.etc / "opencode-atlas.json").read_text()
+        self.assertNotIn("officer-previews.ts", rear)
+
+        config["mockupPreviews"] = {"url": "https://previews.example.com"}
+        config["impeccable"] = False
+        self.render(config, secrets)
+        self.assertIn("https://previews.example.com/", (self.systemd / broker_unit).read_text())
+        self.assertNotIn("impeccable", (self.etc / "opencode-orion.json").read_text())
+
+        config["mockupPreviews"]["url"] = "HTTP://PREVIEWS.EXAMPLE.COM:8080/"
+        self.render(config, secrets)
+        self.assertIn("http://previews.example.com:8080/", (self.systemd / broker_unit).read_text())
+        self.assertIn("bind 127.0.0.1", (self.etc / "preview.Caddyfile").read_text())
+
+        config["mockupPreviews"]["enabled"] = False
+        config["impeccable"] = True
+        self.render(config, secrets)
+        retired = (self.etc / "retired-units").read_text().splitlines()
+        self.assertCountEqual(retired, [preview_unit, broker_unit])
+        self.assertNotIn("stargate_serve", (self.etc / "opencode-orion.json").read_text())
+        self.assertIn("impeccable", (self.etc / "opencode-orion.json").read_text())
+
     def pin(self, captain="orion"):
         server = FakeOpenCode()
         expected = {**EXPECTED, "directory": str(self.state / f"agents/{captain}/workspace/project"),
@@ -436,6 +480,27 @@ class InstalledFleet(unittest.TestCase):
         config = json.loads((self.etc / "stargate.json").read_text())
         unit = (self.systemd / "subspace-fleet-gateway.service").read_text()
         return {entry["id"]: entry["backend"] for entry in config["irc"]}, unit
+
+    def test_disabling_agentsview_retires_only_its_service(self):
+        config, secrets = crew_fleet("orion")
+        unit = "subspace-fleet-view.service"
+        current = self.etc / "units"
+        retired = self.etc / "retired-units"
+        self.render(config, secrets)
+        all_units = set(current.read_text().splitlines())
+        self.assertIn(unit, all_units)
+
+        config["agentsview"] = {"enabled": False}
+        runtime.render_view.reset_mock()
+        self.render(config, secrets)
+        runtime.render_view.assert_not_called()
+        self.assertEqual(set(current.read_text().splitlines()), all_units - {unit})
+        self.assertEqual(retired.read_text().splitlines(), [unit])
+
+        config["agentsview"]["enabled"] = True
+        self.render(config, secrets)
+        self.assertEqual(set(current.read_text().splitlines()), all_units)
+        self.assertFalse(retired.exists())
 
     def test_the_gateway_waits_for_a_rendered_pin_not_just_a_confirmed_record(self):
         config, secrets = crew_fleet("orion")
@@ -474,7 +539,8 @@ class InstalledFleet(unittest.TestCase):
 
     def test_the_dry_run_prints_each_officers_policy_changes_against_the_installed_one(self):
         config, secrets = crew_fleet("orion")
-        self.render(config, secrets)
+        with patch.object(runtime.screenshots, "flint_ready", return_value=True):
+            self.render(config, secrets)
         self.assertEqual(runtime.policy_lines(runtime.validate(config, secrets)),
                          ["Tool policy unchanged: atlas, orion."])
         # Delegate captains, a new captain and an extra rule for every officer.
@@ -500,7 +566,7 @@ class InstalledFleet(unittest.TestCase):
                       "matching rule wins):", lines)
         self.assertIn('  + shell "kubectl get *" allow', lines[lines.index(next(
             line for line in lines if line.startswith("Tool policy of atlas"))) + 1])
-        lyra = len(runtime.harness_permissions(cfg, cfg["members"][2]))
+        lyra = len(runtime.harness_permissions(cfg, cfg["members"][2], flint=True))
         self.assertEqual(lines[-1], f"Tool policy of officers with none installed yet: lyra ({lyra} rules).")
         # One whose installed policy this user cannot read is named.
         with patch.object(runtime.os, "access", side_effect=lambda path, mode: not str(path).endswith("orion.json")):
@@ -691,7 +757,7 @@ class InstalledFleet(unittest.TestCase):
             paths.append(Path(self.root.name) / name)
             paths[-1].write_text(json.dumps(value))
             paths[-1].chmod(0o600)
-        with patch.object(sys, "stdout", io.StringIO()) as output:
+        with patch.object(runtime, "require_officer_tool_sources"), patch.object(sys, "stdout", io.StringIO()) as output:
             runtime.main(["plan", *map(str, paths), "", "false"])
         text = output.getvalue()
         self.assertIn(f"Captain orion's root session is pinned in {self.workspace}, its checkout of the first "
@@ -939,6 +1005,7 @@ class InstalledFleet(unittest.TestCase):
         # The same fleet as a new one is set up now: plain officer names and named crew.
         plain = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
         plain.update(repositories=config["repositories"], irc={**plain["irc"], "auth": "password"},
+                     mockupPreviews={"enabled": False}, impeccable=False,
                      captains=[plain["captains"][0], {"id": "vega", "name": "Vega", **{
                          key: config["captains"][1][key] for key in ("harness", "crew")}}])
         return {"local-api": ({**config, "api": api}, {**secrets, "apiToken": "aaa.bbb.admin"}),
@@ -985,6 +1052,31 @@ class InstalledFleet(unittest.TestCase):
                                 side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
         return config, secrets, extra, token, sockets, tmpfiles
 
+    def test_new_signed_fleet_creates_officer_groups_before_signing_socket_directories(self):
+        config, secrets, extra, _, _, _ = self.hosted()
+        config["api"]["url"] = "http://127.0.0.1:3000"
+        config["agentDispatch"] = {"decisionOutcomeDms": True}
+        accounts = set()
+
+        def account(user, home, mode=0o700):
+            accounts.add(user)
+            return home
+
+        def directory(path, mode, owner="root", group=None):
+            if group and group.startswith("ss-"):
+                self.assertIn(group, accounts, f"Create {group} before its signing directory {path}")
+
+        with patch.object(runtime, "account", side_effect=account), \
+                patch.object(runtime, "directory", side_effect=directory), \
+                patch.object(runtime, "stargate_has_assignment_requests", return_value=True):
+            runtime.render(runtime.validate(config, secrets), extra)
+
+        stargate = json.loads((self.etc / "stargate.json").read_text())
+        dispatch = stargate["agentDispatch"]
+        self.assertTrue(dispatch["decisionOutcomeDms"])
+        self.assertFalse(dispatch["enabled"])
+        self.assertEqual(dispatch["api"]["socketPath"], stargate["subspaceAgents"]["officers"][0]["socketPath"])
+
     def test_a_hosted_api_gives_every_officer_stargates_bridge_and_no_agent_header(self):
         config, secrets, extra, token, sockets, tmpfiles = self.hosted()
         cfg = runtime.validate(config, secrets)
@@ -1015,12 +1107,20 @@ class InstalledFleet(unittest.TestCase):
         self.assertIn(f"ReadWritePaths={sockets / 'orion'}", unit)
         # OpenCode engines and the Claude officer's own gateway run Stargate's bridge to their own socket.
         engine = json.loads((self.etc / "opencode-orion.json").read_text())
-        self.assertEqual(engine["mcp"]["servers"]["subspace_files"]["command"][-3:], ["socket", str(sockets / "orion/api.sock"), "example-orion"])
+        publish = engine["mcp"]["servers"]["subspace_publish"]["command"]
+        self.assertIn("--exports", publish)
+        self.assertNotIn("--legacy-upload", publish)
+        self.assertIn(str(sockets / "orion/api.sock"), publish)
+        self.assertEqual(engine["mcp"]["servers"]["subspace_files"]["command"][-3:], ["/tmp", "--socket", str(sockets / "orion/api.sock")])
         self.assertEqual(engine["mcp"]["servers"]["subspace"], {
             "type": "local", "command": [*bridge, "--socket", str(sockets / "orion/api.sock")]})
         self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
         vega = json.loads((self.etc / "stargate-gateway-agent-vega.json").read_text())["irc"][0]["backend"]
-        self.assertEqual(vega["mcpServers"]["subspace_files"]["args"][-3:], ["socket", str(sockets / "vega/api.sock"), "example-vega"])
+        publish = vega["mcpServers"]["subspace_publish"]["args"]
+        self.assertIn("--exports", publish)
+        self.assertNotIn("--legacy-upload", publish)
+        self.assertIn(str(sockets / "vega/api.sock"), publish)
+        self.assertEqual(vega["mcpServers"]["subspace_files"]["args"][-3:], ["/tmp", "--socket", str(sockets / "vega/api.sock")])
         self.assertEqual(vega["mcpServers"]["subspace"], {
             "type": "stdio", "command": bridge[0], "args": [*bridge[1:], "--socket", str(sockets / "vega/api.sock")]})
         self.assertNotIn("subspaceAgents", json.loads((self.etc / "stargate-gateway-agent-vega.json").read_text()))
@@ -1234,7 +1334,8 @@ class InstalledFleet(unittest.TestCase):
         self.assertFalse([line for line in gateway if line.startswith(("Memory", "TasksMax", "OOMPolicy"))])
         # The hand-made limits are neither removed nor loosened nor repeated: the installer writes no drop-in.
         self.assertEqual({path: path.read_text() for path in hand}, hand)
-        self.assertEqual(sorted(path for path in root.rglob("*.conf") if path.is_file()), sorted(hand))
+        self.assertEqual(sorted(path for parent in (control, system) for path in parent.rglob("*.conf")
+                                if path.is_file()), sorted(hand))
         # The dry run and the summary say which win, against the installer's values, and how to hand them over.
         with patch.object(runtime.memory, "swap_state", return_value={
                 "active": [{"name": "/swapfile", "size": 8192, "used": 0}], "configured": [], "agent": None,

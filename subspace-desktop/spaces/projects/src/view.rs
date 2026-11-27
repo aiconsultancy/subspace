@@ -14,10 +14,13 @@ use gpui_kit::{
     Render, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div, px,
 };
 use subspace_api_client::initiatives::{NO_MEMBERSHIPS, not_a_member};
+use subspace_framework::dashboard::Dashboard as _;
 use subspace_framework::dashboard::{
     Tokens,
-    action::{Intent, action_button, main_action},
-    feedback, rich,
+    action::{Intent, action_button, icon_button, main_action},
+    feedback,
+    icon_button::IconButton,
+    rich,
     row_menu::MenuChat,
     workspace,
 };
@@ -88,6 +91,7 @@ fn toolbar(this: &Projects, cx: &mut Context<Projects>) -> workspace::Toolbar {
             );
         }
     }
+    bar = bar.trailing(refresh_button(cx));
     if this.milestone_pages.detail.is_some() {
         bar = bar.leading(
             action_button(
@@ -117,6 +121,16 @@ fn toolbar(this: &Projects, cx: &mut Context<Projects>) -> workspace::Toolbar {
         );
     }
     bar
+}
+
+fn refresh_button(cx: &mut Context<Projects>) -> IconButton {
+    icon_button(
+        "projects-refresh",
+        Intent::Quiet,
+        IconName::RefreshCw,
+        "Refresh",
+    )
+    .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx)))
 }
 
 fn content(this: &Projects, tokens: &Tokens, cx: &mut Context<Projects>) -> AnyElement {

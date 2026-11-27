@@ -4,7 +4,9 @@
 
 use gpui_kit::component::Disableable as _;
 use gpui_kit::{AnyElement, ClickEvent, Context, WeakEntity};
-use subspace_framework::dashboard::action::{Intent, action_button, main_action, menu_button};
+use subspace_framework::dashboard::action::{
+    Intent, action_button, icon_button, main_action, menu_button,
+};
 use subspace_framework::dashboard::icon_button::IconButton;
 use subspace_framework::dashboard::workspace;
 use subspace_framework::lucide::IconName;
@@ -23,6 +25,15 @@ pub(crate) fn render(this: &Actions, cx: &mut Context<Actions>) -> workspace::To
         .leading(filter_popup::button(this, cx))
         .leading(picker(this, Picker::Account, cx))
         .leading(picker(this, Picker::Log, cx))
+        .trailing(
+            icon_button(
+                "actions-refresh",
+                Intent::Quiet,
+                IconName::RefreshCw,
+                "Refresh",
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.refresh_all(cx))),
+        )
         .trailing(trigger(this))
 }
 

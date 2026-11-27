@@ -13,6 +13,8 @@ pub enum IssueProperty {
     Description(Option<String>),
     State(String),
     Assignee(Option<String>),
+    AssignUnassignedChildren,
+    MoveOpenChildren,
     /// The Ready for agents flag. The API refuses `true` on an assigned,
     /// closed or tracker issue.
     ReadyForAgents(bool),
@@ -42,6 +44,10 @@ pub struct IssueChanges {
     state_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     assignee_id: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assign_unassigned_children: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    move_open_children: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ready_for_agents: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -80,6 +86,8 @@ impl IssueChanges {
 
     fn set_context(&mut self, property: IssueProperty) {
         match property {
+            IssueProperty::AssignUnassignedChildren => self.assign_unassigned_children = Some(true),
+            IssueProperty::MoveOpenChildren => self.move_open_children = Some(true),
             IssueProperty::ReadyForAgents(ready) => self.ready_for_agents = Some(ready),
             IssueProperty::Type(kind) => self.kind = Some(kind),
             IssueProperty::Parent(id) => self.parent_id = Some(id),
@@ -184,7 +192,7 @@ impl IssueChanges {
     }
 
     pub(crate) fn tracker_properties(&self) -> bool {
-        self.state_id.is_some()
+        (self.state_id.is_some() && self.move_open_children != Some(true))
             || self.estimate.is_some()
             || self.cycle_id.as_ref().is_some_and(Option::is_some)
     }

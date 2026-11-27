@@ -14,7 +14,11 @@ use crate::Github;
 /// else what a read of it said.
 pub(super) fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     let (Some(_), Some(login)) = (&board.client, board.account.as_deref()) else {
-        return Some(ResolutionState::SignedOut);
+        return Some(if board._accounts_task.is_some() {
+            ResolutionState::Pending
+        } else {
+            ResolutionState::SignedOut
+        });
     };
     if board.references.signed_out.contains(&login.to_lowercase()) {
         return Some(ResolutionState::SignedOut);
@@ -110,7 +114,11 @@ fn loaded<'a>(board: &'a Github, key: &str) -> Option<Loaded<'a>> {
     let detail = account
         .details
         .values()
-        .find(|detail| same(&detail.item) && is_pr(&detail.item))
+        .find(|detail| {
+            same(&detail.item)
+                && is_pr(&detail.item)
+                && !account.unconfirmed_details.contains(&detail.item.key)
+        })
         .map(|detail| Loaded::Opened(&detail.item, detail.check_runs.as_slice()));
     let listed = || {
         account

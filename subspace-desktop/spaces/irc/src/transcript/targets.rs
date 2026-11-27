@@ -57,7 +57,7 @@ fn with_rendered_refs(
     let mut kept: Vec<_> = targets
         .into_iter()
         .filter(|(range, target)| {
-            !matches!(target, Opens::Ref(Ref::Issue(_) | Ref::PullRequest(_))) && !overlaps(range)
+            !matches!(target, Opens::Ref(found) if found.is_record()) && !overlaps(range)
         })
         .chain(
             rendered

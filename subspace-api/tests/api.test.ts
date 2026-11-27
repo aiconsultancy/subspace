@@ -794,6 +794,117 @@ describe.skipIf(!baseUrl)("desktop API against Compose PostgreSQL", () => {
     expect((await json<Issue>(200, `/issues/${tracker.id}`, admin)).state.type).toBe("completed");
   });
 
+  test("tracker assignment and derived state update children only with confirmation", async () => {
+    type Assigned = Issue & { assignee: { userId: string } | null; readyForAgents: boolean };
+    const states = await json<Page<{ id: string; type: string }>>(
+      200,
+      `/projects/${key}/workflow-states`,
+      admin,
+    );
+    const backlog = states.items.find((state) => state.type === "backlog")!.id;
+    const todo = states.items.find((state) => state.type === "unstarted")!.id;
+    const done = states.items.find((state) => state.type === "completed")!.id;
+    const tracker = await json<Assigned>(201, "/issues", admin, "POST", {
+      projectId,
+      type: "tracker",
+      title: "Coordinator fixture",
+      summary: "Group child changes",
+    });
+    const child = (title: string, stateId: string, fields = {}) =>
+      json<Assigned>(201, "/issues", admin, "POST", {
+        projectId,
+        title,
+        summary: title,
+        parentId: tracker.id,
+        stateId,
+        ...fields,
+      });
+    const waiting = await child("Waiting fixture", backlog, { readyForAgents: true });
+    const assigned = await child("Already assigned", backlog, { assigneeId: adminId });
+    const completed = await child("Already completed", done);
+    const archived = await child("Archived child", backlog);
+    await json(200, `/issues/${archived.id}/archive`, admin, "POST", { version: archived.version });
+
+    const read = (id: string) => json<Assigned>(200, `/issues/${id}`, admin);
+    const patch = (status: number, version: number, changes: object) =>
+      json<Assigned>(status, `/issues/${tracker.id}`, admin, "PATCH", { version, ...changes });
+    const current = await read(tracker.id);
+    const onlyTracker = await patch(200, current.version, { assigneeId: ordinaryId });
+    expect(onlyTracker.assignee?.userId).toBe(ordinaryId);
+    expect((await read(waiting.id)).assignee).toBeNull();
+
+    await patch(400, onlyTracker.version, { moveOpenChildren: false });
+    await patch(400, onlyTracker.version, { assignUnassignedChildren: false });
+    expect((await read(tracker.id)).version).toBe(onlyTracker.version);
+    await patch(400, onlyTracker.version, { stateId: todo });
+    await patch(409, current.version, { assigneeId: ordinaryId, assignUnassignedChildren: true });
+    const updated = await patch(200, onlyTracker.version, {
+      assigneeId: ordinaryId,
+      assignUnassignedChildren: true,
+      stateId: todo,
+      moveOpenChildren: true,
+    });
+    expect(updated.assignee?.userId).toBe(ordinaryId);
+    expect(updated.state.type).toBe("started");
+    expect(await read(waiting.id)).toMatchObject({
+      assignee: { userId: ordinaryId },
+      state: { id: todo },
+      readyForAgents: false,
+      version: waiting.version + 1,
+    });
+    expect(await read(assigned.id)).toMatchObject({
+      assignee: { userId: adminId },
+      state: { id: todo },
+    });
+    expect((await read(completed.id)).state.id).toBe(done);
+    expect(await read(archived.id)).toMatchObject({ assignee: null, state: { id: backlog } });
+    const activity = await json<Page<{ kind: string }>>(
+      200,
+      `/issues/${waiting.id}/activity`,
+      admin,
+    );
+    expect(activity.items.some((item) => item.kind === "issue.changed")).toBe(true);
+
+    const childProject = await json<{ id: string; version: number }>(
+      201,
+      "/projects",
+      admin,
+      "POST",
+      {
+        key: "SIDE",
+        name: "Child project fixture",
+      },
+    );
+    await json<Assigned>(201, "/issues", admin, "POST", {
+      projectId: childProject.id,
+      title: "A child in another project",
+      summary: "Check atomic refusal.",
+      parentId: tracker.id,
+    });
+    await json(200, `/projects/${childProject.id}/archive`, admin, "POST", {
+      version: childProject.version,
+    });
+    const unchanged = await read(tracker.id);
+    const refused = await request(
+      `/issues/${tracker.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          version: unchanged.version,
+          stateId: backlog,
+          moveOpenChildren: true,
+        }),
+      },
+      admin,
+    );
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      errors: { trackerChildren: ["A child belongs to an archived project."] },
+    });
+    expect((await read(tracker.id)).version).toBe(unchanged.version);
+    expect((await read(waiting.id)).state.id).toBe(todo);
+  });
+
   test("todo batch, versioned changes, reorder, deletion and Issue detail", async () => {
     const issue = await createIssue("Issue with todos");
     type Todo = {

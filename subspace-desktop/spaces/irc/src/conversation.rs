@@ -498,7 +498,9 @@ pub(crate) fn mentions(this: &Conversation, cx: &App) -> Mentions {
         .buffer(&this.buffer)
         .map(|held| Mentions::new(held.members.iter().map(|member| member.nick.as_str())))
         .unwrap_or_default();
-    nicks.with_issues(hub.issues.keys().clone())
+    nicks
+        .with_issues(hub.issues.keys().clone())
+        .with_decisions(crate::decision_references::available(hub, cx))
 }
 
 /// Reference clicks become the conversation's [`ConversationEvent::Open`].

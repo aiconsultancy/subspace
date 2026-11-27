@@ -79,21 +79,35 @@ pub struct SettingsFile {
     github_token_present: bool,
     /// The native boards' own files opened so far, keyed by board id.
     boards: BTreeMap<String, board_file::BoardFile>,
+    /// The former Space ids the file was read with.
+    renames: crate::former_ids::Renames,
 }
 
 impl SettingsFile {
+    /// Opens the config file for editing. Settings saved under a Space's
+    /// former id are read, and later saved, as the Space's own (see
+    /// [`crate::former_ids`]).
     pub fn open(file: &Path) -> Result<Self, SettingsError> {
+        Self::open_with(file, &crate::former_ids::installed())
+    }
+
+    /// As [`SettingsFile::open`], with the former ids `renames`.
+    pub(crate) fn open_with(
+        file: &Path,
+        renames: &crate::former_ids::Renames,
+    ) -> Result<Self, SettingsError> {
         let original = read_existing(file)?;
-        let root = match original.as_deref() {
+        let mut root = match original.as_deref() {
             None => Map::new(),
             Some(text) => match serde_json::from_str::<Value>(text)? {
                 Value::Object(v) => v,
                 _ => return Err(SettingsError::Invalid),
             },
         };
+        crate::former_ids::rename_config(&mut root, renames);
         let (config, notices) = match original.as_deref() {
             None => (Config::default(), Vec::new()),
-            Some(text) => config::parse(text, file),
+            Some(text) => config::parse_with(text, file, renames),
         };
         if notices
             .iter()
@@ -110,6 +124,7 @@ impl SettingsFile {
             values,
             github_token_present,
             boards: BTreeMap::new(),
+            renames: renames.clone(),
         })
     }
     pub fn values(&self) -> &ServiceSettings {
@@ -119,12 +134,18 @@ impl SettingsFile {
     /// and returns its saved settings. A missing file has none.
     pub fn open_board_file(&mut self, id: &str) -> Result<Map<String, Value>, SettingsError> {
         if !self.boards.contains_key(id) {
-            let file = config::board_file(&self.file, id);
+            let file = self.board_path(id);
             let opened = board_file::BoardFile::open(file.clone())
                 .map_err(|error| board_error(&file, error))?;
             self.boards.insert(id.to_owned(), opened);
         }
         Ok(self.board_file_values(id))
+    }
+    /// Native board `id`'s settings file as it resolves now (see
+    /// [`config::board_file`]).
+    fn board_path(&self, id: &str) -> PathBuf {
+        let dir = self.file.parent().unwrap_or_else(|| Path::new(""));
+        crate::former_ids::board_file(dir, id, &self.renames)
     }
     /// The saved settings of native board `id`'s opened file.
     pub fn board_file_values(&self, id: &str) -> Map<String, Value> {
@@ -199,7 +220,7 @@ impl SettingsFile {
                 continue;
             };
             let root = board
-                .edited(changes)
+                .edited_at(&self.board_path(id), changes)
                 .map_err(|error| board_error(board.path(), error))?;
             edited.push((id.clone(), root));
         }

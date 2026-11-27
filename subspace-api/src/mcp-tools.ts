@@ -34,6 +34,7 @@ import {
   countDecisions,
   createDecision,
   DecisionEdit,
+  DecisionRef,
   getDecision,
   listDecisions,
   listRevisions,
@@ -206,7 +207,7 @@ export const mcpInstructions = `This is the Subspace tracker. The subspace-track
 5. Group related issues under a tracker (type "tracker", children by parentId). Reuse a tracker that fits before creating one, keep trees shallow, and do not park unrelated issues under a tracker: its state follows its direct children.`;
 
 const { projectId: _projectId, ...decisionFields } = NewDecision.fields;
-const decision = { decisionId: Uuid };
+const decision = { decisionId: DecisionRef };
 const document = { document: Ref };
 const comment = { ...issue, commentId: Uuid };
 const view = { viewId: Uuid };
@@ -597,7 +598,7 @@ export const mcpTools = {
     (member, { filters }) => countDecisions(member, filters ?? {}),
   ),
   subspace_get_decision: tool(
-    "Get the current project decision.",
+    "Get the current project decision by UUID or identifier, such as D-00042-EXA.",
     true,
     Schema.Struct(decision),
     (member, { decisionId }) =>
@@ -733,7 +734,7 @@ export const mcpTools = {
       }),
   ),
   subspace_update_issue: tool(
-    `Patch an issue using its current version. Extend an existing issue (description, to-dos, comments) rather than filing a new one for a small follow-up. Keep the one-line summary current when the scope changes, especially after folding or regrouping issues; a tracker's summary says what it groups. Set parentId to group an issue under a tracker of related work; a tracker's state follows its direct children, so keep unrelated issues out. ${asPerson} any description you write with ${onBehalfMarker}, and add a one-line comment with that marker for a change with no text of its own; a fleet agent (kind "agent") uses no marker. ${fullRules} A fleet agent that sets a non-null assigneeId or sends readyForAgents receives 403 when the issue's project belongs to another fleet.`,
+    `Patch an issue using its current version. Extend an existing issue (description, to-dos, comments) rather than filing a new one for a small follow-up. Keep the one-line summary current when the scope changes, especially after folding or regrouping issues; a tracker's summary says what it groups. Set parentId to group an issue under a tracker of related work; a tracker's state follows its direct children, so keep unrelated issues out. On a tracker, assigneeId only changes the tracker unless assignUnassignedChildren is true. Ask for confirmation before setting that flag. A tracker state change needs moveOpenChildren: true and a Backlog or Todo stateId; ask for confirmation before moving the open direct issue children. ${asPerson} any description you write with ${onBehalfMarker}, and add a one-line comment with that marker for a change with no text of its own; a fleet agent (kind "agent") uses no marker. ${fullRules} A fleet agent that sets a non-null assigneeId or sends readyForAgents receives 403 when the issue's project belongs to another fleet.`,
     false,
     Schema.Struct({ ...issue, changes: EditIssue }),
     (member, args) => editIssue(member, args.issue, args.changes),

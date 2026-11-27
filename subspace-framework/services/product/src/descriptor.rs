@@ -24,7 +24,11 @@ pub enum CommandMount {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardDescriptor {
     pub id: String,
+    /// Extra command words for the Space; nothing else.
     pub aliases: Vec<String>,
+    /// Ids the Space had in earlier versions of the product. Settings and
+    /// state saved under one are read as the Space's own.
+    pub former_ids: Vec<String>,
     pub default_enabled: bool,
 }
 
@@ -71,6 +75,7 @@ impl ProductDescriptor {
 pub struct ValidatedBoard {
     pub id: Identity,
     pub aliases: Vec<Identity>,
+    pub former_ids: Vec<Identity>,
     pub default_enabled: bool,
 }
 
@@ -114,6 +119,7 @@ pub fn validate_product(descriptor: &ProductDescriptor) -> Result<ValidatedProdu
     let mut themes = parse_identities(&descriptor.themes)?;
     let default_theme = resolve_default_theme(&mut themes, descriptor.default_theme.as_deref())?;
     let boards = parse_boards(&descriptor.boards)?;
+    crate::former::validate(&boards)?;
     require_single_space_for_root(descriptor.command_mount, &boards)?;
     let commands = command_map(&boards)?;
     let release_repository = validate_release_repository(&descriptor.release_repository)?;
@@ -241,6 +247,7 @@ fn parse_board(descriptor: &BoardDescriptor) -> Result<ValidatedBoard, ProductEr
     Ok(ValidatedBoard {
         id: parse_identity(&descriptor.id)?,
         aliases: parse_identities(&descriptor.aliases)?,
+        former_ids: parse_identities(&descriptor.former_ids)?,
         default_enabled: descriptor.default_enabled,
     })
 }
@@ -328,6 +335,7 @@ mod tests {
         BoardDescriptor {
             id: id.into(),
             aliases: Vec::new(),
+            former_ids: Vec::new(),
             default_enabled: true,
         }
     }

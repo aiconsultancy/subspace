@@ -170,9 +170,7 @@ fn reference(word: &str, mentions: &Mentions, first: bool) -> Option<Piece> {
     let label = label(&word[range.clone()]);
     let piece = Piece::text(format!("{leading}[{label}]({target})"), &word[..range.end]);
     Some(Piece {
-        found: found
-            .filter(|found| matches!(found, Ref::Issue(_) | Ref::PullRequest(_)))
-            .map(|found| (range, found)),
+        found: found.filter(Ref::is_record).map(|found| (range, found)),
         ..piece
     })
 }

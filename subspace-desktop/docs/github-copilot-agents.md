@@ -1,5 +1,8 @@
 # Copilot Agents dashboard
 
+Copilot Agents and its Settings page are available in builds with the
+`copilot` feature. The Space starts disabled in those builds.
+
 The Copilot Agents dashboard lists the Copilot **cloud agent tasks** of the work
 GitHub account and the selected engine's **local chat sessions**, and watches the tasks
 the user asked it to watch.

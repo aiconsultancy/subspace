@@ -37,6 +37,10 @@ impl Projects {
         cx: &mut Context<Self>,
     ) {
         self.directory_task = None;
+        if matches!(result, Err(Error::Network)) && self.projects.is_ok() {
+            cx.notify();
+            return;
+        }
         self.projects = result.map(|mut rows| {
             rows.sort_by_cached_key(|project| (project.archived, project.name.to_lowercase()));
             rows
@@ -69,6 +73,11 @@ impl Projects {
 
     fn apply_record(&mut self, result: Result<Record, Error>, cx: &mut Context<Self>) {
         self.record_task = None;
+        if matches!(result, Err(Error::Network)) && self.record.as_ref().is_some_and(Result::is_ok)
+        {
+            cx.notify();
+            return;
+        }
         if let Ok(record) = &result {
             if self.editor.is_none() {
                 self.blocked_write = false;

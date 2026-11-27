@@ -44,6 +44,7 @@ pub(super) fn product() -> ValidatedProduct {
         .map(|id| BoardDescriptor {
             id: (*id).into(),
             aliases: Vec::new(),
+            former_ids: Vec::new(),
             default_enabled: *id != "gamma",
         })
         .collect();

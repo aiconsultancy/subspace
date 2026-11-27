@@ -5,8 +5,8 @@
 
 use gpui_kit::{App, Context, Entity};
 use subspace_client_irc::BufferKey;
-use subspace_framework::contracts::github::Changed;
 use subspace_framework::contracts::github::recognition::PullRequestLink;
+use subspace_framework::contracts::github::{AccessChanged, Changed};
 use subspace_framework::dashboard::{DashboardEvent, Toast, contracts, links};
 
 use crate::hub::Hub;
@@ -23,14 +23,22 @@ pub(crate) fn attach(hub: &Entity<Hub>, cx: &mut App) {
     _ = contracts::subscribe(
         ID,
         hub,
-        |hub: &mut Hub, _: &Changed, cx| changed(hub, cx),
+        |hub: &mut Hub, _: &AccessChanged, cx| {
+            hub.pull_requests.changed();
+            cx.notify();
+        },
         cx,
     );
-}
-
-fn changed(hub: &mut Hub, cx: &mut Context<Hub>) {
-    hub.pull_requests.changed();
-    cx.notify();
+    _ = contracts::subscribe(
+        ID,
+        hub,
+        |hub: &mut Hub, _: &Changed, cx| {
+            if hub.pull_requests.refreshed() {
+                cx.notify();
+            }
+        },
+        cx,
+    );
 }
 
 /// Notes the pull requests a row shows. The first new one of a frame

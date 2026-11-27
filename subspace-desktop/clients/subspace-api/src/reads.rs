@@ -143,6 +143,25 @@ impl Client {
         self.get(&["decisions"], &query.parameters(page)?)
     }
 
+    /// Observes whether the connected Subspace API returns decision identifiers.
+    /// An empty list is inconclusive, so callers may check again later.
+    pub fn supports_decision_identifiers(&self) -> Result<bool, Error> {
+        if self.backend != Backend::Subspace {
+            return Ok(false);
+        }
+        #[derive(serde::Deserialize)]
+        struct Identifier {
+            identifier: Option<String>,
+        }
+        let sample: Page<Identifier> = self.get(&["decisions"], &[("limit".into(), "1".into())])?;
+        self.current()?;
+        Ok(sample.items.iter().any(|item| {
+            item.identifier
+                .as_deref()
+                .is_some_and(subspace_framework::contracts::decisions::is_identifier)
+        }))
+    }
+
     pub fn decision(&self, id: &str) -> Result<model::DecisionDetail, Error> {
         if self.backend == Backend::Nett {
             return self.nett_decision(id);

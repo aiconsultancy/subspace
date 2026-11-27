@@ -21,7 +21,7 @@ const FORBIDDEN: &str =
     r#"{"data":null,"errors":[{"type":"FORBIDDEN","message":"SAML enforcement"}]}"#;
 pub(super) const V2: &str = "Add paging to the work items endpoint (v2)";
 
-fn node() -> serde_json::Value {
+pub(super) fn node() -> serde_json::Value {
     json!({
         "__typename":"PullRequest", "id":"fixture-pr", "number":421, "title":V2,
         "url":URL, "state":"OPEN",
@@ -41,7 +41,7 @@ pub(super) fn github_v2(request: &Request) -> (u16, String) {
     (200, body.to_string())
 }
 
-fn is_detail_read(request: &Request) -> bool {
+pub(super) fn is_detail_read(request: &Request) -> bool {
     request.body.contains("issueOrPullRequest")
 }
 
@@ -205,4 +205,85 @@ fn a_landed_detail_announces_changed(cx: &mut TestAppContext) {
     );
     assert_eq!(title(&ask(KEY, cx)).as_deref(), Some(V2));
     assert_eq!(mock.requests().len(), 1, "only the panel's own read");
+}
+
+#[gpui_kit::test]
+fn reload_announces_invalidation_before_any_github_read_lands(cx: &mut TestAppContext) {
+    let mock = Mock::new(github_v2);
+    let (board, listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, seed);
+    let before = count(&listener, cx);
+    board.update_in(cx, |board, window, cx| board.reload(window, cx));
+    assert!(mock.requests().is_empty(), "the replacement reads are held");
+    assert!(
+        count(&listener, cx) > before,
+        "Channels can immediately ask again"
+    );
+}
+
+#[gpui_kit::test]
+fn opening_an_unconfirmed_detail_rechecks_access_after_reload(cx: &mut TestAppContext) {
+    let mock = Mock::new(|request| {
+        if is_detail_read(request) {
+            (200, FORBIDDEN.into())
+        } else {
+            (502, "Bad gateway".into())
+        }
+    });
+    let (board, _, cx) = reloaded(cx, &mock);
+    board.update(cx, |board, cx| assert!(board.open_link(URL, cx)));
+    board.read_with(cx, |board, _| {
+        assert!(board.data["octo-dev"].details.contains_key(KEY));
+    });
+    cx.executor().advance_clock(crate::DETAIL_DEBOUNCE);
+    cx.run_until_parked();
+
+    assert!(mock.requests().iter().any(is_detail_read));
+    board.read_with(cx, |board, _| {
+        let account = &board.data["octo-dev"];
+        assert!(
+            !account.details.contains_key(KEY),
+            "access to the cached detail was refused"
+        );
+        assert!(
+            account.detail_errors.contains_key(KEY),
+            "the inspector can show the refusal"
+        );
+    });
+    assert!(matches!(ask(KEY, cx), ResolutionState::Unavailable));
+    board.update(cx, |board, cx| board.poll_visible_detail(cx));
+    assert!(
+        board.read_with(cx, |board, _| board.data["octo-dev"]
+            .detail_errors
+            .contains_key(KEY)),
+        "keep the refusal visible while a newer read is pending"
+    );
+}
+
+#[gpui_kit::test]
+fn channels_waits_for_initial_account_discovery(cx: &mut TestAppContext) {
+    let mock = Mock::new(|request| {
+        if request.body.contains("query Viewer") {
+            (
+                200,
+                json!({"data":{"viewer":{"login":"octo-dev"}}}).to_string(),
+            )
+        } else {
+            github_v2(request)
+        }
+    });
+    let (board, listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, |board, _| {
+        board.started = false;
+        board.account = None;
+    });
+
+    assert!(matches!(ask(KEY, cx), ResolutionState::Pending));
+    assert!(
+        mock.requests().is_empty(),
+        "account discovery is still held"
+    );
+    cx.run_until_parked();
+    assert!(count(&listener, cx) > 0, "account discovery wakes Channels");
+    assert_eq!(title(&ask(KEY, cx)).as_deref(), Some(V2));
 }

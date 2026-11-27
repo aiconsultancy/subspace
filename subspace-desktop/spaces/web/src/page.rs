@@ -14,6 +14,8 @@ pub(crate) enum PageEvent {
     /// The page asked for a new window, which opens in the browser.
     NewWindow(String),
     Download,
+    #[cfg(all(feature = "agentsview", any(target_os = "macos", windows)))]
+    AgentsView(crate::agentsview::ConnectionEvent),
     /// A native session's site sent the view to its signal, which the view
     /// never loads (`SessionScope::with_signal`).
     #[cfg(target_os = "macos")]

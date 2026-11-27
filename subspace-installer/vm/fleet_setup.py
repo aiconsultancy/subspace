@@ -57,7 +57,9 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 import fleet_records  # noqa: E402
 import irc_accounts  # noqa: E402
 import memory  # noqa: E402
+import mockups  # noqa: E402
 import postgres_check  # noqa: E402
+import private_network  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
 import toolchains  # noqa: E402
@@ -66,12 +68,14 @@ API_DIR = Path("/opt/subspace/api")
 FLEET_APP = Path("/opt/subspace-fleet")
 FLEET_ETC = Path("/etc/subspace-fleet")
 API_PROJECT = "subspace-api"
-API_PORT = 3000
+API_PORT = runtime.SUBSPACE_API_PORT
+API_IRC_MOUNT = "/run/subspace-managed-irc"
+API_IRC_HOOK_SETTINGS = {"IRC_AUTH_ORGANISATION", "IRC_AUTH_SERVERS", "IRC_AUTH_HOOK_TOKEN",
+                         "IRC_AUTH_HOOK_TOKEN_FILE", "IRC_CREDENTIAL_SECRET", "IRC_CREDENTIAL_SECRET_FILE"}
 # The API's agent-only listener: a fleet agent names itself in a header there and needs no token. It serves no
 # sign-in or administrator route, so unlike API_PORT the agents' Linux users may reach it.
-AGENT_API_PORT = 3001
-# The line in api.env that records setup has offered the agent listener, so an operator's "off" is kept.
-AGENT_OFFERED = "# subspace-setup has offered the agent listener (AGENT_PORT=3001); AGENT_PORT= keeps it off."
+AGENT_API_PORT = runtime.SUBSPACE_AGENT_API_PORT
+SIGNED_LOCAL_API = "# subspace-setup: signed local officer access selected"
 STARGATE_API_PORT = 8484
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 OUTBOUND_TIMEOUT = 8
@@ -102,6 +106,7 @@ DEV_AUTH = {"AUTH_PROVIDERS": "dev", "ENABLE_DEV_AUTH": "true", "NODE_ENV": "dev
 # Stand-ins, shaped as bearer JWTs, for the tokens a real run gets from the API: the installer checks inputs that
 # name the API before the API runs (planned_inputs), and the dry run never signs in.
 PLANNED_TOKENS = {"apiToken": "planned.administrator.token", "rearAdmiralApiToken": "planned.rear-admiral.token"}
+PLANNED_ENROLMENT_TOKEN = "senr1." + "A" * 64
 CIDR = re.compile(r"[0-9a-fA-F:.]+(?:/[0-9]{1,3})?")
 # Agent dispatch: what switching it on does, in the words the prompt and the summary use.
 DISPATCH_SUMMARY = ("issues flagged Ready for agents are offered to the captains in fleet command, and issues "
@@ -283,6 +288,8 @@ def parse_args(argv):
                         "'' removes it")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
+    parser.add_argument("--agent-listener", action=argparse.BooleanOptionalAction,
+                        help="use the legacy loopback agent listener; --no-agent-listener selects signed access")
     parser.add_argument("--shared-api-target", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
                         "PostgreSQL container here: absolute path to a root-only file (mode 0600) holding its "
@@ -291,6 +298,8 @@ def parse_args(argv):
                         "PostgreSQL server, when the system trust store lacks it; '' removes it")
     parser.add_argument("--migrate", action="store_true", help="apply the API's database migrations to that existing "
                         "PostgreSQL on this run (never by default; see the installer README)")
+    parser.add_argument("--agentsview", action=argparse.BooleanOptionalAction, default=None,
+                        help="install the AgentsView session browser (default on; remembers your choice)")
     parser.add_argument("--usage-guard", action=argparse.BooleanOptionalAction, default=None,
                         help="enable Claude and Codex quota notices and crew cutoffs (default on)")
     parser.add_argument("--usage-guard-warning", action="append", default=[], metavar="[PROVIDER=]PERCENT",
@@ -299,6 +308,13 @@ def parse_args(argv):
                         help=f"block crew starts and resumptions at this quota (default {runtime.USAGE_GUARD_DEFAULTS['cutoff']})")
     parser.add_argument("--stargate-api", choices=["auto", "on", "off"],
                         help="enable Stargate's Fleet API (default auto: when the pinned Stargate has it)")
+    parser.add_argument("--mockup-previews", action=argparse.BooleanOptionalAction, default=None,
+                        help="install Caddy and the captain preview tool (default on; keeps the saved choice)")
+    parser.add_argument("--impeccable", action=argparse.BooleanOptionalAction, default=None,
+                        help="install the Impeccable skill for captains (default on; keeps the saved choice)")
+    parser.add_argument("--preview-url", help="dedicated private HTTP or HTTPS preview origin; "
+                                             "'tunnel' restores the SSH default")
+    parser.add_argument("--preview-proxy-user", help="Linux account of the local private gateway, allowed to reach Caddy")
     parser.add_argument("--fleet-api-url", help="the HTTPS address at which a desktop reaches Stargate's Fleet API, "
                         "such as a Tailscale or Cloudflare name, recorded in the Subspace API; 'tunnel' (the default) "
                         "records the SSH tunnel's end on the desktop, http://127.0.0.1:8484")
@@ -309,12 +325,23 @@ def parse_args(argv):
     parser.add_argument("--agent-dispatch", dest="agent_dispatch", action="store_true", default=None,
                         help="switch on Stargate's agent dispatch: " + DISPATCH_SUMMARY + " (default off; needs the API)")
     parser.add_argument("--no-agent-dispatch", dest="agent_dispatch", action="store_false")
+    parser.add_argument("--assignment-requests", action=argparse.BooleanOptionalAction, default=None,
+                        help="ask captains to take assigned issues when crew are ready (default on with agent dispatch)")
+    parser.add_argument("--ready-for-agents-offers", action=argparse.BooleanOptionalAction, default=None,
+                        help="offer unassigned Ready for agents issues (default on with agent dispatch)")
+    parser.add_argument("--decision-outcome-dms", action=argparse.BooleanOptionalAction, default=None,
+                        help="Send decision outcomes by DM when the local API and Stargate support it.")
     parser.add_argument("--operator", help="Linux login that may SSH in and tunnel (default: the sudo user)")
     parser.add_argument("--access", choices=["ssh", "tailscale", "cloudflare"],
                         help="how you reach the VM; tailscale limits SSH to the tailnet, cloudflare to cloudflared")
     parser.add_argument("--ssh-from", help="comma-separated source addresses or CIDRs allowed to SSH in")
     parser.add_argument("--allow-port", help="comma-separated TCP ports to accept from private networks only, "
                         "for example 443 for an nginx listener on the tailnet")
+    parser.add_argument("--private-network", metavar="NAME,INTERFACE,ADDRESS,CLIENT-CIDR",
+                        help="serve HTTPS and TLS IRC on an existing private route; remembered on reruns (or set off)")
+    parser.add_argument("--accept-officer-tracker-access-loss", action="store_true",
+                        help="allow private ingress to remove an existing local API's officer tracker tools, "
+                        "signed enrolment and dispatch; not saved")
     parser.add_argument("--agent-egress", action="append", metavar="HOST:PORT",
                         help="allow a private TCP destination for officers. Repeat to set several; "
                         "use --agent-egress '' to clear the saved list")
@@ -436,7 +463,7 @@ def gather(args, saved):
         answers["captainPeerMessages"] = args.captain_peer_messages
     if args.captain_tools is not None:
         answers["captainTools"] = args.captain_tools
-    elif not saved and not (INPUTS / "fleet.json").exists() and not (FLEET_ETC / "fleet.json").exists():
+    elif new_fleet(saved):
         # A new fleet: captains with crew leave coding to them. A fleet set up before captainTools existed has no
         # answer and keeps the standard policy, which a fleet.json without captainTools means.
         policy = prompt("Captain tools: delegate (crew edit, commit and push; captains plan, review and open pull "
@@ -582,6 +609,9 @@ def gather(args, saved):
         # A fleet set up with --no-api: asking for an existing PostgreSQL asks for the API that uses it.
         answers["api"] = True
     answers.setdefault("api", True)
+    require(args.agent_listener is not True or answers["api"],
+            "--agent-listener requires a Subspace API on this VM.")
+    answers["agentListener"] = args.agent_listener
     # An existing PostgreSQL for the API: the file's path is kept, never the URL. --migrate is for this run only.
     require(not (args.database_url_file and args.api is False),
             "--database-url-file runs the API on this VM, which --no-api leaves out. Pass one or the other.")
@@ -614,6 +644,52 @@ def gather(args, saved):
         # Off unless asked: an unattended run never switches it on.
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
+    installed = read_json(INPUTS / "fleet.json", {}) or {}
+    installed_dispatch = installed.get("agentDispatch")
+    for key, flag in (("assignmentRequests", args.assignment_requests),
+                      ("readyOffers", args.ready_for_agents_offers)):
+        if flag is not None:
+            answers[key] = flag
+        elif isinstance(installed_dispatch, dict) and key in installed_dispatch:
+            answers[key] = installed_dispatch[key]
+    installed_view = installed.get("agentsview", {})
+    if args.agentsview is not None:
+        answers["agentsview"] = args.agentsview
+    elif "enabled" in installed_view:
+        answers["agentsview"] = installed_view["enabled"]
+    elif "agentsview" not in answers:
+        answers["agentsview"] = yes_no("Install the AgentsView session browser (recommended)?", True, interactive)
+    preview = {**installed.get("mockupPreviews", {}), **answers.get("mockupPreviews", {})}
+    if args.mockup_previews is not None:
+        preview["enabled"] = args.mockup_previews
+    if args.preview_url == "tunnel":
+        preview["url"] = None
+    elif args.preview_url is not None:
+        try:
+            preview["url"] = mockups.origin(args.preview_url)
+        except fleet_records.Refused as error:
+            raise SetupError(str(error)) from None
+    if args.preview_proxy_user is not None:
+        preview["proxyUser"] = args.preview_proxy_user or None
+    answers["mockupPreviews"] = preview
+    if args.impeccable is not None:
+        answers["impeccable"] = args.impeccable
+    elif "impeccable" not in answers:
+        answers["impeccable"] = installed.get("impeccable", True)
+    previous_dms = installed_dispatch.get("decisionOutcomeDms") if isinstance(installed_dispatch, dict) else None
+    if args.decision_outcome_dms is not None:
+        answers["decisionOutcomeMode"] = "on" if args.decision_outcome_dms else "off"
+    elif previous_dms is False:
+        answers["decisionOutcomeMode"] = "off"
+    elif "decisionOutcomeMode" not in answers:
+        answers["decisionOutcomeMode"] = (
+            "on" if previous_dms is True else "auto" if new_fleet(saved) else "off"
+        )
+    if (args.decision_outcome_dms is None and answers["decisionOutcomeMode"] == "on"
+            and answers["irc"] == "remote" and not same_remote_irc(answers, saved, installed)):
+        answers["decisionOutcomeMode"] = "off"
+        say("Decision outcome DMs are off on the new IRC connection. Confirm it supports delivery, then "
+            "run setup with --decision-outcome-dms to opt in.")
     answers["usageGuard"] = usage_guard_answers(args, answers)
     answers["stargateApi"] = args.stargate_api or answers.get("stargateApi", "auto")
     if args.fleet_api_url == "tunnel":
@@ -632,6 +708,9 @@ def gather(args, saved):
     if args.allow_port is not None:
         answers["allowPorts"] = [value.strip() for value in args.allow_port.split(",") if value.strip()]
     answers.setdefault("allowPorts", [])
+    if args.private_network is not None:
+        network = private_network.Network.parse(args.private_network)
+        answers["privateNetwork"] = network.choice if network else "off"
     if args.agent_egress is not None:
         answers["agentEgress"] = list(dict.fromkeys(value for value in args.agent_egress if value))
     if args.key_vault is not None:
@@ -814,8 +893,9 @@ def check_answers(answers):
                 "--fleet-api-url is the address of Stargate's Fleet API, which --stargate-api off turns off. Pass "
                 "--fleet-api-url tunnel, or switch the Fleet API on.")
     require(isinstance(answers.get("agentDispatch", False), bool), "Agent dispatch is on or off.")
-    require(not answers.get("agentDispatch") or answers["api"],
-            "Agent dispatch polls the Subspace API, so it needs the API on this VM: drop --no-api, or pass "
+    require(answers["decisionOutcomeMode"] in ("auto", "on", "off"), "Invalid saved decision outcome DM setting.")
+    require(not answers.get("agentDispatch") or answers["api"] or answers.get("apiUrl"),
+            "Agent dispatch needs the API on this VM or a hosted API URL: drop --no-api, configure --api-url, or pass "
             "--no-agent-dispatch.")
     require(answers["operator"] and answers["operator"] != "root",
             "Run setup with sudo from your own login, or pass --operator with the Linux user that SSHes in.")
@@ -994,9 +1074,9 @@ def roster(answers, rear, captains):
 
 
 def save_answers(answers):
-    # The repository list and merge policy live in fleet.json, where the operator can edit them.
+    # Repositories and merge policy live in fleet.json. The listener setting lives in api.env.
     write_json(INPUTS / "answers.json", {key: value for key, value in answers.items()
-                                        if key not in {"repositories", "captainMergeRepositories"}})
+                                        if key not in {"repositories", "captainMergeRepositories", "agentListener", "decisionOutcomeDms"}})
 
 
 def demo_channels():
@@ -1159,6 +1239,8 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     }
     if history:
         config["irc"]["compose"]["history"] = history
+    if answers["irc"] == "local" and answers.get("api") and automatic_irc_hook(INPUTS / "api.env"):
+        config["irc"]["compose"]["localApiIrcHook"] = str(INPUTS / "api-irc-auth" / "hook-token")
     if answers["irc"] == "local" and answers.get("ircAuth") == "certificate":
         tls = INPUTS / "irc-tls"
         config["irc"].update(auth="certificate", tls=True, port=IRC_TLS, caFile=str(tls / "cert.pem"))
@@ -1194,6 +1276,15 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 "githubPolicy", "dashboard", "proxy", "agentsview", "screenshots", "memory"):
         if key in previous:
             config[key] = previous[key]
+    preview = {**previous.get("mockupPreviews", {}), **answers.get("mockupPreviews", {})}
+    for key in ("url", "proxyUser"):
+        if preview.get(key) is None:
+            preview.pop(key, None)
+    config["mockupPreviews"] = {**preview, "enabled": preview.get("enabled", True) and len(members) > 1}
+    config["impeccable"] = answers.get("impeccable", previous.get("impeccable", True))
+    view = config.get("agentsview", {})
+    if not answers.get("agentsview", True) or "enabled" in view:
+        config["agentsview"] = {**view, "enabled": answers.get("agentsview", True)}
     if "captainMergeRepositories" in answers:
         config["githubPolicy"] = {**config.get("githubPolicy", {}),
                                   "captainMergeRepositories": answers["captainMergeRepositories"]}
@@ -1290,10 +1381,16 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     elif answers.get("apiUrl"):
         # A hosted API: the officers enrol through Stargate, and this VM keeps no administrator token.
         config["api"] = {"url": answers["apiUrl"], "enrolment": True}
-    # Timings someone set by hand stay; the answer switches dispatch on or off. It needs the API block.
+    # Keep hand-set timings and omit unsupported feature keys when their effective value is off.
     dispatch = previous.get("agentDispatch") if isinstance(previous.get("agentDispatch"), dict) else {}
-    if dispatch or answers.get("agentDispatch"):
-        config["agentDispatch"] = {**dispatch, "enabled": bool(answers.get("agentDispatch") and api_block)}
+    dispatch = {key: value for key, value in dispatch.items() if key != "decisionOutcomeDms"}
+    dispatch_options = {key: answers[key] for key in ("assignmentRequests", "readyOffers") if key in answers}
+    if answers.get("decisionOutcomeDms") and (config.get("api") or {}).get("enrolment"):
+        dispatch_options["decisionOutcomeDms"] = True
+    if dispatch or answers.get("agentDispatch") or dispatch_options:
+        config["agentDispatch"] = {
+            **dispatch, **dispatch_options, "enabled": bool(answers.get("agentDispatch") and config.get("api")),
+        }
     return config
 
 
@@ -1798,13 +1895,29 @@ def preflight(config, private, before="the API changes", quiet=False):
     """Check the fleet's inputs as the installer will (configuration, credentials, the secrets directory and
     pinned sessions), before setup changes the API or its database. A run the installer would refuse then
     migrates nothing and restarts nothing."""
-    secrets_dir = INPUTS / "fleet.secrets"
     with tempfile.TemporaryDirectory(prefix="subspace-setup-check-") as scratch:
         config_path = Path(scratch) / "fleet.json"
         write_json(config_path, config)
         write_json(Path(scratch) / "fleet.secrets.json", private)
+        secrets_dir = planned_secrets(config, Path(scratch))
         say(f"checking the fleet's configuration before {before}")
-        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None, quiet=quiet)
+        installer(config_path, dry_run=True, secrets_dir=secrets_dir, quiet=quiet)
+
+
+def planned_secrets(config, scratch):
+    """A local API issues the real enrolment token only after its fleet is registered."""
+    source = INPUTS / "fleet.secrets"
+    if not local_signed_api(config):
+        return source if source.is_dir() else None
+    planned = scratch / "planned-secrets"
+    if source.is_dir():
+        shutil.copytree(source, planned, symlinks=True)
+    else:
+        planned.mkdir(mode=0o700)
+    token = planned / runtime.ENROLMENT_TOKEN
+    if not token.exists() and not token.is_symlink():
+        write_private(token, PLANNED_ENROLMENT_TOKEN + "\n")
+    return planned
 
 
 def stargate_release(answers):
@@ -1814,34 +1927,103 @@ def stargate_release(answers):
     return latest_stargate()
 
 
+def dispatch_uses_api(answers):
+    return bool(answers.get("agentDispatch") or answers.get("decisionOutcomeDms"))
+
+
+def new_fleet(saved):
+    return not saved and not (INPUTS / "fleet.json").exists() and not (FLEET_ETC / "fleet.json").exists()
+
+
+def same_remote_irc(answers, saved, installed):
+    """Compare the selected IRC connection to the effective settings of the last install."""
+    prior = installed.get("irc") or {}
+    previous_auth = (prior.get("auth", "certificate") if prior.get("mode") == "remote"
+                     else saved.get("ircAuth", "password"))
+    return (prior.get("mode", saved.get("irc")) == "remote"
+            and prior.get("host", saved.get("ircHost")) == answers.get("ircHost")
+            and prior.get("port", saved.get("ircPort", IRC_TLS)) == answers.get("ircPort")
+            and previous_auth == answers.get("ircAuth"))
+
+
+def configure_decision_outcome_dms(answers, rear, ref):
+    """Resolve the saved preference against local API and Stargate capabilities before any writes."""
+    mode = answers["decisionOutcomeMode"]
+    answers.pop("decisionOutcomeDms", None)
+    if mode == "off" or (mode == "auto" and answers.get("irc") != "local"):
+        return
+    supported = (answers["api"] and not answers.get("apiUrl")
+                 and local_signed_api({"api": planned_api_block(answers)})
+                 and (PAYLOAD / "subspace-api/src/decision-outcomes.ts").is_file())
+    if not supported:
+        require(mode == "auto", "Decision outcome DMs need the bundled Subspace API and signed officer access. "
+                "Use the local API with signed access, or pass --no-decision-outcome-dms.")
+        return
+    if rear_harness_type(rear) != "opencode":
+        require(mode == "auto",
+                "Decision outcome DMs need an OpenCode rear admiral. Pass --no-decision-outcome-dms to opt out.")
+        return
+    try:
+        runtime.require_decision_dm_source(STARGATE_REPO, ref)
+    except runtime.Invalid as error:
+        if mode == "on" or isinstance(error, runtime.StargateSourceUnavailable):
+            raise SetupError(str(error)) from None
+        say(f"Leaving decision outcome DMs off. {error}")
+        return
+    answers["decisionOutcomeDms"] = True
+
+
+def rear_harness_type(rear):
+    # The installed fleet's harness types stay in effect when setup changes models or effort.
+    previous = read_json(INPUTS / "fleet.json", {})
+    harness = previous.get("harness") or {}
+    officer = previous.get("rearAdmiral") or {}
+    role_type = (harness.get("rearAdmiral") or {}).get("type", harness.get("type", "opencode"))
+    return (officer.get("harness") or {}).get("type", role_type) if officer.get("id") == rear else role_type
+
+
 def check_usage_guard_source(answers, rear, ref):
-    # Setup changes officer models and effort, while the saved harness types stay in effect.
     previous = read_json(INPUTS / "fleet.json", {})
     try:
         runtime.require_peer_message_source({
             "captainPeerMessages": answers.get("captainPeerMessages", previous.get("captainPeerMessages")),
             "stargate": {"repo": STARGATE_REPO, "ref": ref},
         })
-    except runtime.Invalid as error:
-        raise SetupError(str(error)) from None
-    harness = previous.get("harness") or {}
-    officer = previous.get("rearAdmiral") or {}
-    role_type = (harness.get("rearAdmiral") or {}).get("type", harness.get("type", "opencode"))
-    officer_type = (officer.get("harness") or {}).get("type", role_type) if officer.get("id") == rear else role_type
-    if officer_type == "opencode":
-        try:
+        if rear_harness_type(rear) == "opencode":
             runtime.require_usage_guard_source({
                 "usageGuard": answers["usageGuard"], "stargate": {"repo": STARGATE_REPO, "ref": ref},
             })
-        except runtime.Invalid as error:
-            raise SetupError(str(error)) from None
+    except runtime.Invalid as error:
+        raise SetupError(str(error)) from None
+
+
+def check_officer_tool_source(answers, members, ref):
+    # Build the same capabilities as the actual fleet using only public settings.
+    planned = fleet_config(answers, members, '0' * 40, planned_api_block(answers), stargate_ref=ref)
+    try:
+        dispatch = planned.get("agentDispatch", {})
+        if dispatch.get("enabled") and (answers.get("apiUrl") or dispatch.get("readyOffers") is False
+                                        or dispatch.get("assignmentRequests") is False):
+            runtime.require_assignment_requests_source(ref, STARGATE_REPO)
+        api = dict(planned.get("api") or {})
+        if api.get("agentUrl"):
+            api["agentMcpUrl"] = api["agentUrl"]
+        runtime.require_officer_tool_sources({
+            **planned, "stargate": {**planned["stargate"], "repo": STARGATE_REPO},
+            "repositories": runtime.repository_config(planned["repositories"]),
+            "integrations": runtime.integrations_config(planned),
+            "api": api, "members": [planned["rearAdmiral"], *planned["captains"]],
+        })
+    except runtime.Invalid as error:
+        raise SetupError(str(error)) from None
 
 
 def run_inputs(answers, members, secret_store, stargate_ref, irc_ref, api_block=None, stargate_api=False, token="",
                history=None, dispatch_token=""):
     """The fleet installer's inputs, fleet.json and its secrets, as a run writes them."""
     config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
-    private = fleet_secrets(secret_store, members, answers["admin"], token, answers["irc"] == "local",
+    admin_token = "" if local_signed_api(config) else token
+    private = fleet_secrets(secret_store, members, answers["admin"], admin_token, answers["irc"] == "local",
                             certificates=answers.get("ircAuth") == "certificate",
                             dispatch_token=dispatch_token if api_block else "")
     if history:
@@ -1853,7 +2035,8 @@ def planned_run_inputs(answers, members, secret_store, stargate_ref):
     """The inputs a real run writes, as far as is known before the API runs, for the installer's check: the
     API settings it will have (planned_api_block), with stand-ins for the tokens it will get."""
     block = planned_api_block(answers)
-    dispatch = PLANNED_TOKENS["rearAdmiralApiToken"] if block and answers["agentDispatch"] else ""
+    legacy_dispatch = block and answers.get("agentDispatch") and not answers.get("decisionOutcomeDms")
+    dispatch = PLANNED_TOKENS["rearAdmiralApiToken"] if legacy_dispatch else ""
     return run_inputs(answers, members, secret_store, stargate_ref, hashlib.sha1(b"dry-run").hexdigest(), block,
                       False, PLANNED_TOKENS["apiToken"] if block else "", dispatch_token=dispatch)
 
@@ -1901,10 +2084,14 @@ def confirm_fleet_api(requested, source):
 # Subspace API ----------------------------------------------------------------
 
 def compose(*args, capture=False, check=True, env=None, input_text=None):
+    api_env = INPUTS / "api.env"
+    if api_env.is_file() and SIGNED_LOCAL_API in api_env.read_text().splitlines():
+        # Compose gives the caller's environment precedence over --env-file.
+        env = {**(os.environ if env is None else env), "AGENT_TOKEN_AUDIENCE": local_api_origin()}
     # Docker Compose passes its standard input to 'exec' and 'run' commands, which would otherwise read on from
     # setup's own, so it gets none unless it has input of its own.
     return run("docker", "compose", "--project-name", API_PROJECT, "--project-directory", API_DIR,
-               "--env-file", INPUTS / "api.env", "-f", API_DIR / "compose.yaml", "-f", INPUTS / "api.override.yaml",
+               "--env-file", api_env, "-f", API_DIR / "compose.yaml", "-f", INPUTS / "api.override.yaml",
                *args, capture=capture, check=check, env=env, input_text=input_text, keep_stdin=False)
 
 
@@ -1945,8 +2132,6 @@ def hosted_api(args, answers, saved):
             "--api-url uses an API on another host, which keeps its own database: leave out --database-url-file, "
             "--database-ca-file and --migrate.")
     require(not args.demo, "Demo data is fictional and never goes into a hosted API: drop --demo.")
-    require(not args.agent_dispatch, "Agent dispatch needs a rear admiral token that setup mints from an API on this "
-            "VM; with --api-url, leave out --agent-dispatch.")
     origin = f"https://{parts.netloc.lower()}"
     # The fleet's tracker is in an API on this VM, with its own PostgreSQL or an existing one: switching leaves it.
     tracker = not saved.get("apiUrl") and saved.get("api", True) and (
@@ -2384,11 +2569,9 @@ def api_environment(answers, environment, external=False):
     """
     previous = INPUTS / "api.env"
     kept = {}
-    offered = False
     if previous.exists():
         # Keep what the operator set, such as WorkOS or Entra and turning development sign-in off.
         for line in previous.read_text().splitlines():
-            offered = offered or line == AGENT_OFFERED
             key, _, value = line.partition("=")
             if key and not key.startswith("#") and key not in environment:
                 kept[key] = value
@@ -2396,14 +2579,16 @@ def api_environment(answers, environment, external=False):
         # The API's own PostgreSQL: never a URL an earlier run, or anyone, left in api.env, which Compose would
         # prefer to the local database and the image would migrate on start.
         kept.pop("DATABASE_URL", None)
-    # The agent listener answers for the development sign-in organisation, which the fleet's agents are
-    # registered in. Setup offers it once: after that, an operator who sets AGENT_PORT= or deletes it keeps
-    # it off, and setup never turns it back on. The API refuses the listener in production.
-    agent = {} if offered else {"AGENT_PORT": AGENT_API_PORT, "AGENT_ORGANISATION": f"dev:{answers['organisation']}"}
-    merged = {**environment, **DEV_AUTH, **agent, **kept}
-    if offered and "AGENT_PORT" not in kept:
+    merged = {**environment, **DEV_AUTH, "AGENT_PORT": "", **kept}
+    requested = answers.get("agentListener")
+    if requested is True:
+        require(dev_sign_in(merged) and merged.get("NODE_ENV") != "production",
+                "--agent-listener requires development sign-in outside production.")
+        merged["AGENT_PORT"] = AGENT_API_PORT
+    elif requested is False:
         merged["AGENT_PORT"] = ""
-    if re.fullmatch(r"dev:[a-z0-9][a-z0-9-]{0,62}", merged.get("AGENT_ORGANISATION", "")):
+    organisation = merged.get("AGENT_ORGANISATION", "")
+    if (not organisation and merged["AGENT_PORT"]) or re.fullmatch(r"dev:[a-z0-9][a-z0-9-]{0,62}", organisation):
         # The installer's own form follows the fleet's development sign-in organisation.
         merged["AGENT_ORGANISATION"] = f"dev:{answers['organisation']}"
     if not dev_sign_in(merged) and merged.get("AGENT_ORGANISATION", "").startswith("dev:"):
@@ -2413,18 +2598,45 @@ def api_environment(answers, environment, external=False):
         merged.pop("AGENT_ORGANISATION", None)
     if merged.get("NODE_ENV") == "production":
         merged["AGENT_PORT"] = ""
-    return merged, str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+    listener = str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+    if signed_local_access(answers, merged, listener):
+        audience = merged.get("AGENT_TOKEN_AUDIENCE", "").strip()
+        origin = re.escape(local_api_origin())
+        # Accept the canonical origin in Compose's quoted or unquoted form, with an optional comment.
+        require(not audience or re.fullmatch(rf"""(['"]?){origin}\1(?:\s+#.*)?""", audience),
+                "Signed officer access on this VM requires AGENT_TOKEN_AUDIENCE to match the local API origin.")
+        merged["AGENT_TOKEN_AUDIENCE"] = local_api_origin()
+    return merged, listener
+
+
+def local_api_origin():
+    return f"http://{LOOPBACK}:{API_PORT}"
 
 
 def local_api_block(answers, initiatives, listener):
     """The fleet installer's api block for the API on this VM, which setup registers with as its admin."""
-    block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": initiatives}
+    block = {"url": local_api_origin(), "initiatives": initiatives}
     if answers.get("vmHost"):
         block["vmHost"] = answers["vmHost"]  # The fleet's record in the API names the VM.
     if listener:
         # Officers get the API's MCP server at the agent listener, as their own agent records.
         block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"
     return block
+
+
+def local_signed_api(config):
+    api = config.get("api") or {}
+    return bool(api.get("enrolment") and urlsplit(api["url"]).hostname == LOOPBACK)
+
+
+def signed_local_access(answers, environment, listener):
+    """Default new fleets to signed access and keep earlier operator choices."""
+    if listener or not dev_sign_in(environment):
+        return False
+    previous = INPUTS / "api.env"
+    return (answers.get("agentListener") is False or not previous.is_file()
+            or SIGNED_LOCAL_API in previous.read_text().splitlines()
+            or local_signed_api(read_json(INPUTS / "fleet.json", {})))
 
 
 def planned_api_block(answers):
@@ -2436,7 +2648,10 @@ def planned_api_block(answers):
     environment, listener = api_environment(answers, {})
     if not dev_sign_in(environment):
         return None
-    return local_api_block(answers, [answers["initiativeId"]] if answers.get("initiativeId") else [], listener)
+    block = local_api_block(answers, [answers["initiativeId"]] if answers.get("initiativeId") else [], listener)
+    if signed_local_access(answers, environment, listener):
+        block["enrolment"] = True
+    return block
 
 
 def api_up(answers, secret_store, migrate=False):
@@ -2460,7 +2675,9 @@ def api_up(answers, secret_store, migrate=False):
         "DEV_IRC_PORT": irc_endpoint(answers)[1],
     }
     merged, listener = api_environment(answers, environment, external=bool(external))
-    write_private(INPUTS / "api.env", AGENT_OFFERED + "\n" + "".join(
+    irc_volumes = api_irc_hook(answers, merged, secret_store)
+    signing_marker = SIGNED_LOCAL_API + "\n" if signed_local_access(answers, merged, listener) else ""
+    write_private(INPUTS / "api.env", signing_marker + "".join(
         f"{key}={value}\n" for key, value in merged.items()))
     if external:
         ca = ""
@@ -2470,7 +2687,7 @@ def api_up(answers, secret_store, migrate=False):
             ca = hashlib.sha256(Path(answers["databaseCaFile"]).read_bytes()).hexdigest()
             shutil.copyfile(answers["databaseCaFile"], database_ca_copy())
             os.chmod(database_ca_copy(), 0o644)
-        write_private(INPUTS / "api.override.yaml", external_override(listener, ca))
+        write_private(INPUTS / "api.override.yaml", external_override(listener, ca, irc_volumes))
         external_schema(answers, migrate)
         say("building and starting the Subspace API (loopback only) against the existing PostgreSQL")
         compose("up", "--detach", "--wait", "--wait-timeout", "300", "--build")
@@ -2486,6 +2703,7 @@ def api_up(answers, secret_store, migrate=False):
         "    ports: !override",
         f'      - "{LOOPBACK}:{API_PORT}:3000"',
         *([f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"'] if listener else []),
+        *(["    volumes:", *irc_volumes] if irc_volumes else []),
         "",
     ]))
     say("building and starting the Subspace API and PostgreSQL (loopback only)")
@@ -2497,7 +2715,43 @@ def database_ca_copy():
     return API_DIR.with_name("database-ca.pem")
 
 
-def external_override(listener, ca):
+def automatic_irc_hook(path):
+    return path.is_file() and f"IRC_AUTH_HOOK_TOKEN_FILE={API_IRC_MOUNT}/hook-token" in path.read_text().splitlines()
+
+
+def api_irc_hook(answers, environment, secret_store):
+    """Wire the private link from local Ergo to a development API that setup manages."""
+    file_settings = {"IRC_CREDENTIAL_SECRET_FILE": "credential-secret", "IRC_AUTH_HOOK_TOKEN_FILE": "hook-token"}
+    managed = {
+        **{setting: f"{API_IRC_MOUNT}/{name}" for setting, name in file_settings.items()},
+        "IRC_AUTH_ORGANISATION": f"dev:{answers['organisation']}",
+        "IRC_AUTH_SERVERS": f"{LOOPBACK}:{IRC_PLAIN},{LOOPBACK}:{IRC_TLS}",
+    }
+    configured = {key: environment[key] for key in API_IRC_HOOK_SETTINGS if environment.get(key)}
+    if answers.get("irc") == "local" and dev_sign_in(environment):
+        if not configured:
+            environment.update(managed)
+    elif configured == managed:
+        for key in managed:
+            del environment[key]
+
+    directory = INPUTS / "api-irc-auth"
+    files = {name: directory / name for setting, name in file_settings.items()
+             if environment.get(setting) == f"{API_IRC_MOUNT}/{name}"}
+    if not files:
+        return []
+
+    directory.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(directory, 0o700)
+    for name, path in files.items():
+        if not path.is_file():
+            write_private(path, secret_store.password(f"irc-{name}") + "\n")
+        # Containers run under distinct UIDs. The owner-only host directory protects both files.
+        os.chmod(path, 0o444)
+    return [f"      - {json.dumps(f'{path}:{API_IRC_MOUNT}/{name}:ro')}" for name, path in files.items()]
+
+
+def external_override(listener, ca, irc_volumes=()):
     """The Compose override for an API that uses an existing PostgreSQL (--database-url-file).
 
     The postgres service moves to a profile nothing activates, so no container or volume is created for it, and
@@ -2518,8 +2772,10 @@ def external_override(listener, ca):
         "    ports: !override",
         f'      - "{LOOPBACK}:{API_PORT}:3000"',
         *([f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"'] if listener else []),
-        *(["    environment:", f"      NODE_EXTRA_CA_CERTS: {DATABASE_CA}", f"      SUBSPACE_DATABASE_CA_SHA256: {ca}",
-           "    volumes:", f'      - "{database_ca_copy()}:{DATABASE_CA}:ro"'] if ca else []),
+        *(["    environment:", f"      NODE_EXTRA_CA_CERTS: {DATABASE_CA}", f"      SUBSPACE_DATABASE_CA_SHA256: {ca}"]
+          if ca else []),
+        *(["    volumes:", *([f'      - "{database_ca_copy()}:{DATABASE_CA}:ro"'] if ca else []), *irc_volumes]
+          if ca or irc_volumes else []),
         "",
     ])
 
@@ -2784,12 +3040,12 @@ def unknown_initiative(answers, saved):
                      "fleet's current one.")
 
 
-def adopt_initiative(token, slug, initiative):
+def adopt_initiative(token, slug, initiative, *, adopt=True):
     """Assign the initiative --initiative names on this run to this fleet, moving it from any other: the one move
     of an initiative from another fleet setup makes, and only when asked."""
     fleet = api_call(token, "GET", f"/fleets/{slug}")["id"]
     row = api_call(token, "GET", f"/initiatives/{initiative}")
-    if row.get("fleetId") != fleet:
+    if row.get("fleetId") != fleet and (adopt or not row.get("fleetId")):
         api_call(token, "PUT", f"/initiatives/{initiative}/fleet", {"fleetId": fleet})
         say(f"assigned initiative {row.get('name')} ({initiative}) to this fleet"
             + (f", moving it from {fleet_label(row)}" if row.get("fleetId") else ""))
@@ -2800,10 +3056,10 @@ def agent_reader(answers, members):
     through its signing-proxy socket and with an API on this VM through the agent listener, so it sees what the
     fleet's officers see; or None and the reason there is none yet."""
     rear = members[0]
-    if answers.get("apiUrl"):
+    if answers.get("apiUrl") or (answers.get("api") and local_signed_api(read_json(INPUTS / "fleet.json", {}))):
         source, socket = installed_stargate_source(), runtime.agent_socket(rear["id"])
         if not source or not socket.is_socket():
-            return None, "the officers have not enrolled with the hosted API yet"
+            return None, "the officers have not enrolled with the Subspace API yet"
 
         def get(path):
             try:
@@ -3252,13 +3508,23 @@ def irc_bundle(answers, members, secret_store, certificates=None):
 
 def summary(answers, members, stargate_api, lockdown_id=""):
     local = answers["irc"] == "local"
-    ports = [DASHBOARD, AGENTSVIEW]
+    installed = read_json(INPUTS / "fleet.json", {}) or {}
+    view = installed.get("agentsview", {})
+    previews = {"port": mockups.PORT, **installed.get("mockupPreviews", answers.get("mockupPreviews", {}))}
+    previews_on = len(members) > 1 and previews.get("enabled", True)
+    agentsview = view.get("enabled", answers.get("agentsview", True))
+    view_port = view.get("port", AGENTSVIEW)
+    ports = [DASHBOARD]
+    if agentsview:
+        ports.append(view_port)
     if local:
         ports = [IRC_PLAIN, IRC_TLS, *ports]
     if answers["api"]:
         ports.insert(0, API_PORT)
     if stargate_api:
         ports.append(STARGATE_API_PORT)
+    if previews_on:
+        ports.append(previews["port"])
     values = {
         "SUBSPACE_FLEET_SLUG": answers["slug"],
         "SUBSPACE_FLEET_NAME": answers["name"],
@@ -3274,7 +3540,10 @@ def summary(answers, members, stargate_api, lockdown_id=""):
         "SUBSPACE_API": "1" if answers["api"] else "0",
         "SUBSPACE_STARGATE_API": "1" if stargate_api else "0",
         "SUBSPACE_STARGATE_API_PORT": str(STARGATE_API_PORT),
+        "SUBSPACE_AGENTSVIEW": "1" if agentsview else "0",
+        "SUBSPACE_AGENTSVIEW_PORT": str(view_port),
         "SUBSPACE_PORTS": " ".join(str(port) for port in ports),
+        "SUBSPACE_PREVIEW_URL": mockups.address(previews) if previews_on else "",
         "SUBSPACE_OPERATOR": answers["operator"],
         "SUBSPACE_ACCESS": answers["access"],
         "SUBSPACE_LOCKDOWN": "1" if answers["lockdown"] else "0",
@@ -3286,6 +3555,30 @@ def summary(answers, members, stargate_api, lockdown_id=""):
 
 
 # Main ------------------------------------------------------------------------
+
+def planned_private_ingress(network, answers, *, accept_officer_tracker_access_loss=False):
+    require(answers["api"] and answers["irc"] == "local" and answers["lockdown"],
+            "--private-network requires an API and Ergo on this VM and lockdown enabled.")
+    require(not answers["agentDispatch"], "Guided agent dispatch still uses development sign-in; pass --no-agent-dispatch.")
+    https, irc_tls = private_network.PORTS
+    require(not (set(map(int, answers["allowPorts"])) & {https, irc_tls}),
+            f"Private ingress sets its own firewall policy for TCP {https} and {irc_tls}. Remove them from --allow-port.")
+    for path in (FLEET_ETC / "fleet.json", INPUTS / "fleet.json"):
+        api = read_json(path, {}).get("api") or {}
+        if urlsplit(api.get("url", "")).hostname in {"localhost", LOOPBACK, "::1"}:
+            impact = ("Production sign-in removes officers' installer-managed tracker access (Subspace MCP and REST "
+                      "tools, signed enrolment and dispatch) until setup supports SSO fleet registration.")
+            require(accept_officer_tracker_access_loss,
+                    f"{impact} Leave private ingress off or pass --accept-officer-tracker-access-loss.")
+            say(f"WARNING: {impact}")
+            break
+    private_network.require_sso(api_environment(answers, {}, external=external_database(answers))[0])
+    ingress = private_network.IngressPlan.prepare(network, INPUTS, API_PORT, IRC_PLAIN,
+                                                 secret_file=secret_file, write_private=write_private, run=run)
+    say(f"private workstations: https://{network.name} and TLS IRC at {network.name}:{irc_tls} "
+        f"(on {network.interface}, from {network.clients}); other endpoints stay on loopback")
+    return ingress
+
 
 def setup(args):
     global INPUTS
@@ -3313,6 +3606,12 @@ def configure(args):
     answers = gather(args, saved)
     check_outbound(answers)
     rear, captains = check_answers(answers)
+    network = private_network.Network.parse(answers.get("privateNetwork"))
+    require(answers["lockdown"] or not private_network.UNIT.is_file(),
+            "Remove existing private ingress with --private-network off and lockdown enabled before skipping it.")
+    ingress = planned_private_ingress(
+        network, answers, accept_officer_tracker_access_loss=args.accept_officer_tracker_access_loss,
+    ) if network else None
     if saved.get("slug") and saved["slug"] != answers["slug"]:
         raise SetupError("The fleet ID cannot change on an installed VM. Reinstall on a fresh VM to rename it.")
     # The API has run here with its own PostgreSQL (setup writes api.env only then): its tracker is in that
@@ -3324,6 +3623,9 @@ def configure(args):
     stargate_tag, stargate_ref = stargate_release(answers)
     say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
     check_usage_guard_source(answers, rear, stargate_ref)
+    members = roster(answers, rear, captains)
+    check_officer_tool_source(answers, members, stargate_ref)
+    configure_decision_outcome_dms(answers, rear, stargate_ref)
     enrolment = None
     if answers.get("apiUrl"):
         # Every check of the hosted API comes before setup saves anything, so a refused run, a switch from an
@@ -3335,12 +3637,14 @@ def configure(args):
         say(f"Stargate {stargate_ref[:12]} has subspaceAgents ({runtime.SUBSPACE_AGENTS_FILE})")
         enrolment = enrolment_token(args, saved)
         hosted_checks(answers, enrolment)
+    if not args.dry_run and not ingress:
+        # Disable ingress before recording off. An interrupted run must not bring it back on boot.
+        private_network.remove()
     save_answers(answers)
     if enrolment:
         store_enrolment_token(enrolment)
     # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
     secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
-    members = roster(answers, rear, captains)
     # The toolchains as confirmed, with this run's choices: fleet.json's toolchains and systemPackages come from it.
     record, changes = update_toolchains(args, answers)
     for line in changes:
@@ -3400,17 +3704,33 @@ def configure(args):
         write_json(secrets_path, private)
         if answers["agentDispatch"] and not config["agentDispatch"]["enabled"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
-        installer(config_path, dry_run=True)
+        if local_signed_api(config):
+            with tempfile.TemporaryDirectory(prefix="subspace-planned-secrets-") as scratch:
+                installer(config_path, dry_run=True, secrets_dir=planned_secrets(config, Path(scratch)))
+        else:
+            installer(config_path, dry_run=True)
         ownership_check(answers, members, read_json(config_path, {}), adopt=bool(args.initiative))
         if answers["toolchains"] == "derive":
             propose_safely(read_json(config_path, {}), read_json(INPUTS / TOOLCHAIN_RECORD) or record, save=False)
         say("dry run complete; nothing on this VM changed")
         return
 
+    if ingress:
+        # Never proxy the API while changing its sign-in settings, even if setup is interrupted.
+        ingress.quiesce(write_private=write_private, run=run)
+    local_signing = False
     if answers["api"]:
         # The API comes first (its token and registration go into the fleet's inputs), so check now that the
         # installer will accept those inputs: with --migrate, a refused run must not have migrated the database.
-        preflight(*planned_inputs())
+        config, private = planned_inputs()
+        preflight(config, private)
+        local_signing = local_signed_api(config)
+        if local_signing:
+            try:
+                runtime.directory(runtime.STATE, 0o755)
+                runtime.account(GATEWAY_USER, runtime.STATE / "gateway")
+            except runtime.Invalid as error:
+                raise SetupError(str(error)) from None
 
     irc_ref = irc_source() if local_irc else None
     # Releases from v0.40.0 have the Fleet API; a pinned commit is checked after it is installed.
@@ -3422,7 +3742,7 @@ def configure(args):
     # same PostgreSQL (a second database), so the fleet installer runs once with both.
     # Keep the agents away from operator-only ports and cloud metadata before any service starts.
     # This never blocks the operator, so it applies at once and is never rolled back.
-    run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
+    run(HERE / "lockdown.sh", "isolate", *isolation_args(answers, ingress))
     api_block, token, history = None, "", None
     if answers["api"]:
         run(HERE / "docker.sh")
@@ -3457,18 +3777,27 @@ def configure(args):
             # admiral's agent record. The installer's 'fleetctl register' sends the same records again, and
             # assigns the initiative when it belongs to no fleet; an adopted one setup moves here itself.
             records = register_own(token, *inputs(irc_ref, api_block, bool(stargate_api), token, history))
-            if adopt:
-                adopt_initiative(token, answers["slug"], initiative)
-            if answers["agentDispatch"]:
+            if local_signing:
+                api_block["enrolment"] = True
+            if initiative and (adopt or api_block.get("enrolment")):
+                adopt_initiative(token, answers["slug"], initiative, adopt=adopt)
+            if api_block.get("enrolment"):
+                # Refresh the short-lived grant when installing. Existing keys stay valid and use none.
+                grant = api_call(token, "POST", f"/fleets/{answers['slug']}/enrolment-tokens",
+                                 {"expiresInSeconds": 3600, "maxUses": len(members)})["token"]
+                require(re.fullmatch(runtime.ENROLMENT_TOKEN_TEXT, grant),
+                        "The local API did not return a fleet enrolment token.")
+                store_enrolment_token(grant)
+            if answers["agentDispatch"] and not answers.get("decisionOutcomeDms"):
                 dispatch_token = rear_admiral_token(answers, records)
         else:
             say("the API no longer offers development sign-in, so setup leaves its fleet registration, "
                 "initiative and demo data as they are")
             # Without development sign-in, setup writes no API settings, which dispatch needs.
-            require(not answers["agentDispatch"],
+            require(not dispatch_uses_api(answers),
                     "Agent dispatch needs the API's registration in the fleet's inputs, which setup writes only while "
-                    "the API offers development sign-in. Pass --no-agent-dispatch, and configure api, agentDispatch "
-                    "and rearAdmiralApiToken for the fleet installer by hand (subspace-installer/README.md, "
+                    "the API offers development sign-in. Pass --no-agent-dispatch and --no-decision-outcome-dms, "
+                    "and configure api and agentDispatch for the fleet installer by hand (subspace-installer/README.md, "
                     "'Agent dispatch').")
 
     if certificates and operator:
@@ -3480,14 +3809,17 @@ def configure(args):
     installer(config_path)
     if not answers["api"]:
         api_down()
-    if answers["agentDispatch"] or answers["api"]:
+    if dispatch_uses_api(answers) or answers["api"]:
         # The installer has created the officers' users and Stargate's gateway user: let the gateway, and only it,
         # reach the API's port, and the officers, and only they, reach the agent listener.
-        run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
+        run(HERE / "lockdown.sh", "isolate", *isolation_args(answers, ingress))
     if stargate_api is None:
         stargate_api = confirm_fleet_api(None, installed_stargate_source())
         if stargate_api:
             # Again with the Fleet API: its listener, firewall rule and token, and its address in the fleet's record.
+            if api_block and api_block.get("enrolment"):
+                register_own(token, *inputs(irc_ref, {key: value for key, value in api_block.items()
+                                                     if key != "enrolment"}, True, token, history))
             write_inputs(irc_ref, api_block, True, token, history)
             installer(config_path)
     elif stargate_api:
@@ -3504,17 +3836,30 @@ def configure(args):
 
     lockdown_id = ""
     if answers["lockdown"]:
-        lockdown = [HERE / "lockdown.sh", "apply", *isolation_args(answers)]
+        lockdown = [HERE / "lockdown.sh", "apply", *isolation_args(answers, ingress)]
         for address in answers["sshFrom"]:
             lockdown += ["--ssh-from", address]
         for value in answers["allowPorts"]:
             lockdown += ["--allow-port", str(value)]
         if answers["access"] in ("tailscale", "cloudflare"):
             lockdown.append(f"--{answers['access']}")
+        if ingress:
+            lockdown.extend(["--private-ingress", ingress.network.firewall_target])
         run(*lockdown)
         lockdown_id = run(HERE / "lockdown.sh", "applied-id", capture=True)
     else:
         say("WARNING: lockdown skipped. Run 'sudo subspace-setup lockdown apply' before putting anything on this VM.")
+    retirement = None
+    if ingress:
+        ingress.enable(lockdown_id, write_private=write_private, run=run)
+    else:
+        try:
+            private_network.retire_account(run=run)
+        except private_network.RetirementBlocked as error:
+            # The proxy is stopped and isolation no longer exempts the account. Stopping now would only skip the
+            # host's confirmation of this lockdown, so it rolls back, and fail every later run the same way.
+            retirement = error
+            say(f"WARNING: {error}")
     values = summary(answers, members, stargate_api, lockdown_id)
     if run(HERE / "audit.sh", check=False):
         say("WARNING: the privacy audit found problems (FAIL lines above). Fix them before using this fleet.")
@@ -3531,12 +3876,14 @@ def configure(args):
         say("the installed Stargate has no Fleet API, so the fleet records no Fleet API address.")
     if answers["agentDispatch"]:
         say(f"agent dispatch is on: {DISPATCH_SUMMARY}.")
-        if api_block:
-            say("WARNING: the rear admiral's development sign-in token lasts eight hours. Run setup again to renew "
-                "it, or move the API to WorkOS or Entra and give the rear admiral a long-lived token "
-                "(installer README, 'Agent dispatch').")
     else:
         say("agent dispatch is off; 'subspace-setup --agent-dispatch' switches it on.")
+    if (read_json(config_path, {}).get("agentDispatch") or {}).get("decisionOutcomeDms"):
+        say("captains receive accepted or rejected decisions by private IRC message.")
+    if dispatch_token:
+        say("WARNING: the rear admiral's development sign-in token lasts eight hours. Run setup again to renew "
+            "it, or move the API to WorkOS or Entra and give the rear admiral a long-lived token "
+            "(installer README, 'Agent dispatch').")
     if not local_irc:
         say(remote_irc_next_step(answers, operator))
     say(f"forward these loopback ports to reach it: {values['SUBSPACE_PORTS']}")
@@ -3546,6 +3893,9 @@ def configure(args):
     if run(HERE / "providers.sh", "status", check=False):
         say("next: bring the agents online by signing CLIProxyAPI in to a provider account "
             "(INSTALL.md, 'Bring the agents online').")
+    if retirement:
+        # Again last, where the summary and audit cannot scroll it away.
+        say(f"WARNING: {retirement}")
 
 
 def remote_irc_next_step(answers, operator):
@@ -3562,28 +3912,31 @@ def remote_irc_next_step(answers, operator):
             "'sudo subspace-setup irc-server add <file>' (the host installer does this with --irc-server).")
 
 
-def isolation_args(answers):
+def isolation_args(answers, ingress=None):
     """lockdown.sh options that keep the agents away from operator-only ports and cloud metadata."""
     args = ["--operator", answers["operator"], "--protect-metadata"]
     if answers["api"] or (INPUTS / "api.env").is_file():
         # The API (development sign-in) and PostgreSQL, also through their container addresses,
         # and still after a switch to --no-api in case stopping them failed.
         args += ["--operator-only-port", str(API_PORT)]
+        if ingress:
+            args += ingress.isolation_args
         if not answers.get("databaseUrlFile"):
-            args += ["--operator-only-port", "5432"]  # The API's own PostgreSQL; an existing one is elsewhere.
+            args += ["--operator-only-port", str(runtime.SUBSPACE_DATABASE_PORT)]  # Bundled PostgreSQL.
         try:
             pwd.getpwnam(GATEWAY_USER)
-            gateway = answers.get("agentDispatch")
+            gateway = dispatch_uses_api(answers) or (answers["api"] and local_signed_api(
+                {"api": planned_api_block(answers)}))
         except KeyError:
             gateway = False  # Not yet created: setup isolates again once the installer has run.
         if gateway:
             # Agent dispatch: Stargate's gateway polls the API as the rear admiral. Agents never reach this port.
             args += ["--port-user", f"{API_PORT}:{GATEWAY_USER}"]
-        # The agent listener: only the operator and the officers' own users (crew run as their captain's),
-        # never the fleet's other service users or containers.
+        # Keep the legacy port restricted even when it is off. Admit officers only while setup enables it.
         args += ["--operator-only-port", str(AGENT_API_PORT)]
-        for user in officer_users():
-            args += ["--port-user", f"{AGENT_API_PORT}:{user}"]
+        if answers["api"] and api_environment(answers, {})[1]:
+            for user in officer_users():
+                args += ["--port-user", f"{AGENT_API_PORT}:{user}"]
     for user in metadata_users(answers):
         args += ["--metadata-user", user]
     return args
@@ -3729,8 +4082,9 @@ def check_switch(answers):
             switch = gather(parse_args(["--non-interactive"]), json.loads(json.dumps(answers)))
             rear, captains = check_answers(switch)
             members = roster(switch, rear, captains)
-            config, private = planned_run_inputs(switch, members, Secrets(INPUTS, switch["slug"], None),
-                                                 stargate_release(switch)[1])
+            ref = stargate_release(switch)[1]
+            configure_decision_outcome_dms(switch, rear, ref)
+            config, private = planned_run_inputs(switch, members, Secrets(INPUTS, switch["slug"], None), ref)
             try:
                 cfg = runtime.validate(config, private, check_files=False)
             except runtime.Invalid as error:
@@ -4112,7 +4466,7 @@ def main(argv):
 if __name__ == "__main__":
     try:
         main(sys.argv[1:])
-    except SetupError as error:
+    except (SetupError, private_network.PrivateNetworkError) as error:
         sys.exit(f"subspace-setup: {error}")
     except KeyboardInterrupt:
         sys.exit(130)

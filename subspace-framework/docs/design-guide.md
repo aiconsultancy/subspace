@@ -31,7 +31,7 @@ app imports it as `subspace_framework::dashboard::workspace`.
 | --- | --- | --- | --- |
 | Navigator, the leading dock | The Space's name in its header, then where you are looking: views, projects, networks, repositories, groups. The signed-in account may sit in its footer. | Filters, actions on the selection, the detail of an item. | `--nav-w` wide; header `--strip-h` high; rows `--row-h` high |
 | Tab strip, the top of the pane | What is open: the list or view on show, and an opened item beside it. | The Space's views; those are navigator rows. | `--strip-h` high |
-| Toolbar, under the tab strip | Search and filters on the leading side, actions for what is open on the trailing side. | A Space title, a line of context, actions that need a selection to make sense, the dock switches. | at least `--toolbar-h` high |
+| Toolbar, under the tab strip | Search and filters on the leading side, actions for what is open on the trailing side. | A Space title, a line of context, selection actions outside the [Decisions exception](#contextual-action-in-decisions), the dock switches. | at least `--toolbar-h` high |
 | Content | The list, the page, the conversation or the graph. | A heading for the Space, its own outer padding. | the rest of the pane |
 | Inspector or detail panel, the trailing dock | The detail of the selection, with the actions that act on it in its footer. Tabs only under [Inspector tabs](#inspector-tabs). | Views, filters, the Space's own state. | `--inspector-w` wide, or the detail panel's own width; header `--strip-h` high |
 | Status bar, the shell's | Account, connection, counts and sync time, from `Dashboard::status`; the navigator's switch at its leading end and the inspector's at its trailing end, from `Dashboard::docks`. | Any other control of the Space's. Besides the dock switches, it holds only the shell's own commands, such as About and Help. | the shell's |
@@ -83,9 +83,10 @@ nothing to this control.
 8. **One primary action per toolbar.** A pane toolbar has at most one
    primary action: the Space's main one, at the trailing end, such as
    **New issue…**, **Trigger…** or **New project**, built with
-   `action::main_action`. Every other toolbar action is neutral or quiet. In
-   a dialog or a footer, `Intent::Primary` marks the action that completes a
-   decision, such as Save.
+   `action::main_action`. Every other toolbar action is neutral or quiet.
+   [Decisions](#contextual-action-in-decisions) can replace its usual primary
+   action with Accept for an eligible selection. In a dialog or a footer,
+   `Intent::Primary` marks the action that completes a decision, such as Save.
 9. **Shared components and tokens only.** No literal colours or sizes, no
    one-off styled controls. Read sizes from `Tokens::current(cx)`.
 
@@ -122,7 +123,7 @@ only on these terms:
 - Actions that act on the selection sit with it, in the inspector's footer
   or the detail panel's footer (`ListDashboard::panel_footer`). Do not add a
   row of buttons to the toolbar that stay disabled until something is
-  selected.
+  selected. The Decisions toolbar has [one contextual exception](#contextual-action-in-decisions).
 - Each Space remembers whether its navigator and its inspector show, both
   shown by default, and reports both through `Dashboard::docks`. The shell
   puts their switches at the two ends of the status bar.
@@ -140,6 +141,14 @@ only on these terms:
   A click chooses a row without taking the keyboard focus, so j and k keep
   driving the list. A row reached from the keyboard shows its focus as an
   accent border on its fill.
+
+### Contextual action in Decisions
+
+Selecting a proposed decision that you can review makes **Accept** the one
+primary action at the trailing end of the list toolbar. If you can create
+decisions, **New decision** takes neutral styling while Accept is present
+and regains primary styling on deselection. **Accept** opens the same confirmation as the decision page.
+An open decision page has its own review controls.
 
 ## Context menus
 
@@ -313,7 +322,8 @@ and the web Space's toolbar (`spaces/web/src/toolbar.rs`).
    ```
 
    That Space returns `workspace::text_edge` from `list_side_inset` and puts
-   the actions on the selection in `ListDashboard::panel_footer`.
+   the actions on the selection in `ListDashboard::panel_footer`. See the
+   [Decisions exception](#contextual-action-in-decisions).
 
 4. **The inspector.** A title, sections of facts, and the actions on the
    selection in the footer. `Inspector::footer` draws the footer bar itself,
@@ -444,7 +454,8 @@ A reviewer ticks:
       labels show in capitals.
 - [ ] The open tab joins the content by its surface and text, with no accent
       line on any edge, in every tab bar.
-- [ ] Each toolbar has at most one primary action, the Space's main one.
+- [ ] Each toolbar has at most one primary action. Check the
+      [Decisions exception](#contextual-action-in-decisions) when a proposal is selected.
 - [ ] Inspector tabs, if any, are at most three subjects of the same
       selection, never views or destinations.
 - [ ] The dock switches end the status bar, the navigator's first and the

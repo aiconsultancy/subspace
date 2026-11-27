@@ -58,10 +58,45 @@ pub fn subspace_descriptor() -> ProductDescriptor {
 /// `space-lab` and `component-gallery` features, which the app turns on with
 /// its own, and start off in every build profile.
 pub fn subspace_descriptor_for(channel: Channel) -> ProductDescriptor {
-    descriptor_for_version(channel, VERSION)
+    descriptor_for_version(
+        channel,
+        VERSION,
+        cfg!(all(
+            feature = "agentsview",
+            any(target_os = "macos", windows)
+        )),
+    )
 }
 
-fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor {
+/// Metadata for a release built with the app's default features. The metadata
+/// helper runs on the packaging host, even when the app is cross-compiled.
+pub fn subspace_descriptor_for_release_target(target: &str) -> ProductDescriptor {
+    descriptor_for_version(Channel::current(), VERSION, release_has_agentsview(target))
+}
+
+fn release_has_agentsview(target: &str) -> bool {
+    target.ends_with("-apple-darwin") || target.contains("-windows-")
+}
+
+fn descriptor_for_version(channel: Channel, version: &str, agentsview: bool) -> ProductDescriptor {
+    let mut boards = vec![
+        board("irc", true),
+        board("issues", true),
+        board("github", true),
+        #[cfg(feature = "copilot")]
+        board("github-copilot-agents", false),
+        board("projects", true),
+        board("decisions", true),
+        #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
+        board("space-lab", false),
+    ];
+    if agentsview {
+        boards.push(board("agentsview", true));
+    }
+    boards.push(board("actions", true));
+    #[cfg(feature = "component-gallery")]
+    boards.push(board("component-gallery", false));
+
     ProductDescriptor {
         id: SUBSPACE_PRODUCT_ID.into(),
         binary_name: SUBSPACE_BINARY_NAME.into(),
@@ -76,19 +111,7 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
         // new installs get NEW_INSTALL_THEME recorded instead.
         default_theme: Some(DEFAULT_THEME.into()),
         command_mount: Default::default(),
-        boards: vec![
-            board("github", true),
-            board("github-copilot-agents", false),
-            board("irc", true),
-            board("issues", true),
-            board("projects", true),
-            board("decisions", true),
-            #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
-            board("space-lab", false),
-            board("actions", true),
-            #[cfg(feature = "component-gallery")]
-            board("component-gallery", false),
-        ],
+        boards,
         update: (!is_integration_version(version)).then(|| {
             release_source(
                 channel,
@@ -150,12 +173,51 @@ fn board(id: &str, default_enabled: bool) -> BoardDescriptor {
     BoardDescriptor {
         id: id.into(),
         aliases: Vec::new(),
+        former_ids: Vec::new(),
         default_enabled,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agentsview_is_listed_only_in_supported_feature_builds() {
+        let descriptor = super::subspace_descriptor();
+        let agentsview = descriptor
+            .boards
+            .iter()
+            .find(|board| board.id == "agentsview");
+        assert_eq!(
+            agentsview.map(|board| board.default_enabled),
+            cfg!(all(
+                feature = "agentsview",
+                any(target_os = "macos", windows)
+            ))
+            .then_some(true)
+        );
+    }
+
+    #[test]
+    fn packaged_agentsview_follows_the_release_target() {
+        for (target, enabled) in [
+            ("aarch64-apple-darwin", true),
+            ("x86_64-pc-windows-msvc", true),
+            ("x86_64-unknown-linux-gnu", false),
+            ("aarch64-unknown-linux-gnu", false),
+        ] {
+            let descriptor = super::subspace_descriptor_for_release_target(target);
+            let view = descriptor
+                .boards
+                .iter()
+                .find(|board| board.id == "agentsview");
+            assert_eq!(
+                view.map(|board| board.default_enabled),
+                enabled.then_some(true),
+                "{target}"
+            );
+        }
+    }
+
     #[test]
     fn space_lab_is_listed_only_with_its_feature_and_starts_off() {
         let full = super::subspace_descriptor();
@@ -225,6 +287,7 @@ mod tests {
         let integration = super::descriptor_for_version(
             Channel::Stable,
             "0.3.0-feat-subspace-desktop.202611151345.gabc1234",
+            false,
         );
         assert!(integration.update.is_none());
         assert_eq!(integration.release_repository, super::RELEASE_REPOSITORY);
@@ -338,14 +401,17 @@ mod tests {
         assert_eq!(
             board_ids,
             [
-                "github",
-                "github-copilot-agents",
                 "irc",
                 "issues",
+                "github",
+                #[cfg(feature = "copilot")]
+                "github-copilot-agents",
                 "projects",
                 "decisions",
                 #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
                 "space-lab",
+                #[cfg(all(feature = "agentsview", any(target_os = "macos", windows)))]
+                "agentsview",
                 "actions",
                 #[cfg(feature = "component-gallery")]
                 "component-gallery"
@@ -362,6 +428,7 @@ mod tests {
             ("projects", true),
             ("decisions", true),
             ("github", true),
+            #[cfg(feature = "copilot")]
             ("github-copilot-agents", false),
             ("actions", true),
         ] {

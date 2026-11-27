@@ -632,6 +632,13 @@ With the Issues board off or unavailable, identifiers are plain text and
 links are ordinary links. Channels keeps issue titles in memory only: they
 are not stored with your messages or searchable.
 
+### Decision references
+
+A decision reference such as `D-00042-EXA` becomes a chip when the Decisions
+Space is available with Subspace API. Point at it, or focus it with `Tab`,
+to read the current title and status. Click it or press `Enter` to open the
+decision. **Back** on the decision returns to that conversation.
+
 ### Pull request references
 
 Channels shows a GitHub pull request as an inline chip: the pull request glyph

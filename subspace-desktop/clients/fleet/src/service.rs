@@ -275,10 +275,7 @@ impl FleetApi {
     }
 
     fn info(&self, record: &FleetRecord) -> FleetInfo {
-        let link = self
-            .feeds
-            .get(&record.id)
-            .map(|followed| followed.feed.link());
+        let link = self.feeds.get(&record.id).map(|followed| followed.link);
         FleetInfo {
             address: directory::address_of(record).ok(),
             state: directory::state_of(record, self.token_load(&record.id), link),

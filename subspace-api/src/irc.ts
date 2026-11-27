@@ -154,10 +154,10 @@ export const ircCredentialHandlers =
         if (!listedServer(servers, payload.host, payload.port))
           return yield* Effect.fail(problem(404, "No account sign-in for this server"));
         const member = yield* CurrentMember;
-        // An agent signed in with a key credential reaches IRC only if that credential may.
-        if (member.agentCredential && !member.agentCredential.scopes.includes("irc"))
+        // A member signed in with a key credential reaches IRC only if that credential may.
+        if (member.keyCredential && !member.keyCredential.scopes.includes("irc"))
           return yield* Effect.fail(
-            problem(403, "This agent credential does not have the irc scope."),
+            problem(403, "This key credential does not have the irc scope."),
           );
         if (!member.username)
           return yield* Effect.fail(

@@ -112,7 +112,8 @@ if ! "$no_systemd"; then
 fi
 
 scratch=$(mktemp -d)
-trap 'rm -rf -- "$scratch"' EXIT
+impeccable_stage=
+trap 'rm -rf -- "$scratch"; if [[ -n $impeccable_stage ]]; then rm -rf -- "$impeccable_stage"; fi' EXIT
 
 install_file() {
     local source=$1 destination=$2 mode=$3
@@ -123,19 +124,42 @@ install_file() {
     fi
 }
 
+disable_units() {
+    local unit
+    local -a regular=() instances=()
+    for unit; do
+        if [[ $unit == *@.service ]]; then
+            instances+=("${unit/@./@*.}")
+        else
+            regular+=("$unit")
+        fi
+    done
+    # Stop sockets before stopping any connections they accepted.
+    if (( ${#regular[@]} )); then
+        systemctl disable --now "${regular[@]}"
+    fi
+    if (( ${#instances[@]} )); then
+        systemctl stop "${instances[@]}"
+    fi
+}
+
 uninstall() {
     local unit
     local -a units=() enabled=()
+    local -a ingress_cleanup=(remove)
+    if "$no_systemd"; then ingress_cleanup+=(--no-systemd); fi
+    # Keep the account until guided setup removes its UID's firewall exception.
+    python3 -B "$here/vm/private_network.py" "${ingress_cleanup[@]}"
     if [[ -f $etc/units || -f $etc/retired-units ]]; then
         mapfile -t units < <(sort -u -- "$etc/"*units)
         for unit in "${units[@]}"; do
-            [[ $unit =~ ^subspace-fleet-[a-z0-9@-]+\.(service|timer|target)$ ]] || die 'Invalid installed unit name.'
+            [[ $unit =~ ^subspace-fleet-[a-z0-9@-]+\.(service|socket|timer|target)$ ]] || die 'Invalid installed unit name.'
             if [[ -f /etc/systemd/system/$unit ]]; then
                 enabled+=("$unit")
             fi
         done
         if ! "$no_systemd" && (( ${#enabled[@]} )); then
-            systemctl disable --now "${enabled[@]}"
+            disable_units "${enabled[@]}"
         fi
         for unit in "${enabled[@]}"; do
             rm -f -- "/etc/systemd/system/$unit"
@@ -233,6 +257,8 @@ install_releases() {
     local tool target_arch version repo asset checksum member tag record previous
     while read -r tool target_arch version repo asset checksum member; do
         [[ $target_arch == "$arch" ]] || continue
+        [[ $tool != agentsview || ! -e $scratch/skip-agentsview ]] || continue
+        [[ $tool != caddy || ! -e $scratch/skip-caddy ]] || continue
         record="$app/bin/.$tool"
         if [[ -x $app/bin/$tool && -f $record ]] &&
             read -r previous < "$record" && [[ $previous == "$checksum" ]]; then
@@ -254,6 +280,36 @@ install_releases() {
         printf '%s\n' "$checksum" > "$record"
         printf 'Installed %s %s\n' "$tool" "$version"
     done < "$here/lib/releases.tsv"
+}
+
+install_impeccable() {
+    [[ ! -e $scratch/skip-impeccable ]] || return 0
+    local skill=4.11.1 engine=0.1.31 architecture checksum release destination
+    case $arch in
+        amd64) architecture=x64; checksum=01c642862b0e505277bb8810b1a74aacc42b2b38eb24bc69bc0bcf324089be77 ;;
+        arm64) architecture=arm64; checksum=fd488471ae6df728e260bb54c26d0f7fa9235765777f8ee2ff28e9d3dba0dc6b ;;
+    esac
+    release=https://github.com/pbakaus/impeccable/releases/download
+    destination="$app/share/impeccable-$skill-$engine"
+    if [[ ! -x $destination/scripts/bin/linux-$architecture/impeccable ]]; then
+        install -d -m 0755 "$app/share"
+        impeccable_stage=$(mktemp -d "$app/share/.impeccable.XXXXXXXX")
+        curl -fsSL --retry 3 "$release/skill-v$skill/universal.zip" -o "$scratch/impeccable.zip"
+        printf '%s  %s\n' c0907957a5892b7a0eae6f8d6fb12420ec370a16dfad27115e09e946285e9531 "$scratch/impeccable.zip" |
+            sha256sum --check --status
+        unzip -q "$scratch/impeccable.zip" '.opencode/skills/impeccable/*' -d "$impeccable_stage"
+        local package="$impeccable_stage/.opencode/skills/impeccable"
+        curl -fsSL --retry 3 "$release/engine-v$engine/impeccable-linux-$architecture" -o "$scratch/impeccable-engine"
+        printf '%s  %s\n' "$checksum" "$scratch/impeccable-engine" | sha256sum --check --status
+        install -D -m 0755 "$scratch/impeccable-engine" "$package/scripts/bin/linux-$architecture/impeccable"
+        chmod 0755 "$package/scripts/impeccable"
+        chmod -R a+rX "$package"
+        mv -T "$package" "$destination"
+    fi
+    if [[ $(readlink "$app/share/impeccable") != "$destination" ]]; then
+        ln -sfnT "$destination" "$app/share/impeccable"
+        touch "$state/pending"
+    fi
 }
 
 checkout_source() {
@@ -288,7 +344,7 @@ checkout_source() {
 
 start_services() {
     local unit
-    local -a units=() retired=()
+    local -a units=() retired=() removing=()
     if "$no_systemd"; then
         printf 'Service definitions installed. Activation skipped (--no-systemd).\n'
         return
@@ -303,9 +359,12 @@ start_services() {
     done < "$etc/units"
     for unit in "${retired[@]}"; do
         if [[ -f /etc/systemd/system/$unit ]]; then
-            systemctl disable --now "$unit"
-            rm -f -- "/etc/systemd/system/$unit"
+            removing+=("$unit")
         fi
+    done
+    disable_units "${removing[@]}"
+    for unit in "${removing[@]}"; do
+        rm -f -- "/etc/systemd/system/$unit"
     done
     if [[ -e $state/pending ]]; then
         systemctl daemon-reload
@@ -373,6 +432,7 @@ if [[ -d $scratch/irc-certs ]]; then
     done
 fi
 install_releases
+install_impeccable
 checkout_source stargate "${source[0]}" "${source[1]}"
 stargate=$app/src/stargate-${source[1]}
 if [[ ! -f $stargate/.subspace-deps ]]; then
@@ -385,12 +445,12 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py repo_refresh.py officer_upload.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py standard_channels.py fleet_records.py toolchains.py screenshots.py memory.py mockups.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
 done
 # The screenshot tools' pinned versions and renderer, which runtime.py render installs from.
 install -d -m 0755 "$app/lib/screenshots"
-for asset in package.json package-lock.json mermaid-render.cjs; do
+for asset in package.json package-lock.json mermaid-render.cjs flint-render.mjs; do
     install_file "$here/lib/screenshots/$asset" "$app/lib/screenshots/$asset" 0644
 done
 install -d -m 0755 "$app/lib/git-hooks"

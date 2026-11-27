@@ -94,7 +94,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
 fn saved_tab(cx: &gpui_kit::App) -> Tab {
     prefs::get(cx, TAB_PREF)
         .and_then(|key| Tab::from_key(&key))
-        .unwrap_or_default()
+        .unwrap_or(Tab::All)
 }
 
 /// How sub-issues showed in the last run, or the default.

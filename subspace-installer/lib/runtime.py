@@ -14,6 +14,7 @@ from pathlib import Path
 import pwd
 import re
 import secrets
+import shlex
 import socket
 import ssl
 import stat
@@ -25,10 +26,12 @@ from urllib.parse import urlsplit
 
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
+from github_policy import github_repository, officer_github_repositories
 import memory
+import mockups
 import network
-from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions, provision_role
-from roles import role_documents
+from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions
+from roles import github_officer_operations, provision_role, role_documents
 from roles import provision_workspace, workspace_documents
 import screenshots
 import sessions
@@ -82,8 +85,8 @@ STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 # Stargate's latest release and the commit its tag names; every install gets exactly that commit. Agent
 # dispatch on the rear admiral's gateway needs v0.43.0 or later. scripts/stargate-pin.py checks the two
 # against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
-STARGATE_RELEASE = "v0.47.0"
-STARGATE_REF = "f25631eb3a7e880fb819df2c4521c7d400e3067c"
+STARGATE_RELEASE = "v0.52.0"
+STARGATE_REF = "dd89f0b67211482cc9243fbac4691453fc532671"
 # A hosted Subspace API (api.enrolment): Stargate's subspaceAgents section, its signing proxy and its MCP bridge,
 # first in this commit; a checkout has them when it has SUBSPACE_AGENTS_FILE. Releases up to v0.43 lack them.
 SUBSPACE_AGENTS_COMMIT = "5630a5ce9ca1e7cd533bc7a5ab951bb4681757be"
@@ -93,6 +96,7 @@ SUBSPACE_AGENTS_RELEASE = (0, 44, 0)
 # engine group only. /run is emptied at boot, so a tmpfiles.d entry makes the directories again.
 AGENT_SOCKETS = Path("/run/subspace-fleet/agents")
 AGENT_TMPFILES = Path("/etc/tmpfiles.d/subspace-fleet-agents.conf")
+OFFICER_EXPORT_TMPFILES = Path("/etc/tmpfiles.d/subspace-fleet-file-exports.conf")
 ENROLMENT_TOKEN = "subspace-enrolment-token"
 ENROLMENT_TOKEN_TEXT = r"senr1\.[A-Za-z0-9_-]{64}"
 # Fleet API browser origins: macOS Spaces, and the built-in Fleet Console's WebView2 origin on
@@ -100,6 +104,9 @@ ENROLMENT_TOKEN_TEXT = r"senr1\.[A-Za-z0-9_-]{64}"
 FLEET_API_ORIGINS = ["subspace://*", "https://subspace.fleet-console"]
 SUBSPACE_REPO = "https://github.com/aiconsultancy/subspace.git"
 LOOPBACK = "127.0.0.1"
+SUBSPACE_API_PORT = 3000
+SUBSPACE_AGENT_API_PORT = 3001
+SUBSPACE_DATABASE_PORT = 5432
 # Matches the Ergo container's service group in subspace-irc/Dockerfile.
 ERGO_GID = 10001
 ACCOUNT = r"[a-zA-Z][a-zA-Z0-9_-]{0,31}"
@@ -448,7 +455,7 @@ def slack_plan(cfg):
 
 def rear_root(cfg):
     """Whether the rear admiral has a pinned root: agent dispatch needs one, and its own Slack bot shares it."""
-    return bool(cfg["agentDispatch"] or "slack" in cfg["members"][0])
+    return bool(issue_dispatch_enabled(cfg) or "slack" in cfg["members"][0])
 
 
 def listener(value, label, default_port, allow_bind=False):
@@ -485,9 +492,9 @@ def irc_config(value, slug, check_files, plain=False):
     if "compose" in value:
         require(mode == "local", "IRC compose settings require local mode.")
     if mode == "local":
-        compose = fields(value.get("compose", {}), "irc.compose", "repo ref tlsBind tlsPort tlsCert tlsKey serverName operator channels history", ["operator"])
+        compose = fields(value.get("compose", {}), "irc.compose", "repo ref tlsBind tlsPort tlsCert tlsKey serverName operator channels history localApiIrcHook", ["operator"])
         irc["compose"] = source({key: compose[key] for key in ("repo", "ref") if key in compose}, "IRC source", SUBSPACE_REPO)
-        for key in ("tlsCert", "tlsKey"):
+        for key in ("tlsCert", "tlsKey", "localApiIrcHook"):
             if key in compose:
                 irc["compose"][key] = absolute_file(compose[key], check_files)
         bind = ip(compose.get("tlsBind", LOOPBACK))
@@ -595,8 +602,11 @@ def agent_dispatch_config(value, api, agents):
 
     Timings default to Stargate's own and use its ranges, so the generated block always passes its check.
     """
-    value = fields(value, "agentDispatch", "enabled pollIntervalSeconds answerTimeoutSeconds retryLadderSeconds")
+    value = fields(value, "agentDispatch", "enabled decisionOutcomeDms pollIntervalSeconds answerTimeoutSeconds retryLadderSeconds "
+                   "assignmentRequests assignmentReminderSeconds readyOffers")
     settings = {
+        "enabled": boolean(value.get("enabled", False)),
+        "decisionOutcomeDms": boolean(value.get("decisionOutcomeDms", False)),
         "pollIntervalSeconds": dispatch_seconds(value.get("pollIntervalSeconds", DISPATCH_DEFAULTS["pollIntervalSeconds"]),
                                                 "agentDispatch.pollIntervalSeconds", 30, 3600),
         "answerTimeoutSeconds": dispatch_seconds(value.get("answerTimeoutSeconds", DISPATCH_DEFAULTS["answerTimeoutSeconds"]),
@@ -605,26 +615,33 @@ def agent_dispatch_config(value, api, agents):
     ladder = value.get("retryLadderSeconds", DISPATCH_DEFAULTS["retryLadderSeconds"])
     require(isinstance(ladder, list) and len(ladder) <= 10,
             "agentDispatch.retryLadderSeconds must be an array of at most 10 waits ([] means a single round).")
+    settings["assignmentRequests"] = boolean(value.get("assignmentRequests", True))
+    settings["readyOffers"] = boolean(value.get("readyOffers", True))
+    settings["assignmentReminderSeconds"] = dispatch_seconds(value.get("assignmentReminderSeconds", 14400),
+                                                             "agentDispatch.assignmentReminderSeconds", 3600, 604800)
     settings["retryLadderSeconds"] = [dispatch_seconds(wait, "Each agentDispatch.retryLadderSeconds entry", 60, 604800)
                                       for wait in ladder]
-    if not boolean(value.get("enabled", False)):
+    if not (settings["enabled"] or settings["decisionOutcomeDms"]):
         return None
-    require(api is not None, "Agent dispatch is on, but this fleet has no Subspace API registration. The rear admiral's "
-            "gateway polls the API for issues: set api.url (with apiToken) or switch agentDispatch.enabled off.")
+    option = "agentDispatch.decisionOutcomeDms" if settings["decisionOutcomeDms"] else "agentDispatch.enabled"
+    require(api is not None, f"Dispatch is on but the fleet has no Subspace API registration. Set api.url or switch {option} off.")
+    if settings["decisionOutcomeDms"]:
+        require(api.get("enrolment"), "Decision outcome DMs require signed officer access (api.enrolment). "
+                "Set it up, or switch agentDispatch.decisionOutcomeDms off.")
     rear, captains = agents[0], agents[1:]
-    require(captains, "Agent dispatch is on, but the fleet has no captains to offer issues to. Add a captain or switch "
-            "agentDispatch.enabled off.")
+    require(captains, f"Dispatch is on but the fleet has no captains. Add a captain or switch {option} off.")
     require(rear["harness"]["type"] == "opencode",
-            "Agent dispatch is on, but the rear admiral uses claude-sdk. Dispatch runs in the rear admiral's gateway, "
-            "which for a Claude Agent SDK rear admiral runs as the rear admiral's own Linux user, so its model could read "
-            "the dispatcher's API token; and captains recognise their rear admiral by its pinned OpenCode session, which "
-            "a Claude Agent SDK harness cannot have. Use an OpenCode rear admiral or switch agentDispatch.enabled off.")
+            f"The rear admiral uses claude-sdk. Select OpenCode for its shared gateway, or switch {option} off.")
     # Stargate's answer tool needs a captain with a pinned OpenCode root, which only crew-hosting captains have.
-    require(any(person["crew"] for person in captains),
+    require(not settings["enabled"] or any(person["crew"] for person in captains),
             "Agent dispatch is on, but no captain can answer an offer: Stargate's fleet_answer_offer tool needs a captain "
             "with a pinned OpenCode session, and only captains with crew (an OpenCode harness, crew counts above 0 and "
             "at least one repository) have one. Give a captain crew or switch agentDispatch.enabled off.")
     return settings
+
+
+def issue_dispatch_enabled(cfg):
+    return bool(cfg["agentDispatch"] and cfg["agentDispatch"]["enabled"])
 
 
 def fleet_ipc_policy(rules, label):
@@ -903,17 +920,6 @@ def repository_config(value):
     return repos
 
 
-def github_repository(address):
-    """A GitHub HTTPS repository URL's owner/repository, as Stargate reads a remote
-    (src/api/v1/github-repository.ts), or None for any other URL."""
-    parts = urlsplit(address)
-    if parts.scheme != "https" or (parts.hostname or "").lower() != "github.com" or parts.query or parts.fragment:
-        return None
-    name = parts.path[1:].removesuffix("/").removesuffix(".git")
-    valid = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", name) and not re.search(r"/\.{1,2}$", name)
-    return name if valid else None
-
-
 def pull_request_repositories(cfg, homes):
     """Stargate's api.pullRequestRepositories: each crew worktree of a GitHub repository, keyed by its path as the
     crew plugin names it, and that repository's owner/repository, so the Fleet API can look up the pull request
@@ -975,7 +981,8 @@ def integrations_config(cfg):
                 pattern(val, expression, f"Slack {key} entry")
     teams = None
     if "teams" in stakeholder:
-        teams = fields(stakeholder["teams"], "stakeholders.teams", "botClientId tenantId users channels socketGroup", ["botClientId", "tenantId", "users"])
+        teams = fields(stakeholder["teams"], "stakeholders.teams", "botClientId tenantId users channels socketGroup attachmentFileHosts",
+                       ["botClientId", "tenantId", "users"])
         for key in ("botClientId", "tenantId"):
             pattern(teams[key], UUID, f"Teams {key}")
         require(isinstance(teams["users"], list) and teams["users"], "Teams users requires an explicit allowlist.")
@@ -986,6 +993,11 @@ def integrations_config(cfg):
             string(name, "Teams channel ID", 1024)
         if "socketGroup" in teams:
             pattern(teams["socketGroup"], r"[a-z_][a-z0-9_-]{0,31}", "Teams socket group")
+        hosts = teams.get("attachmentFileHosts", [])
+        require(isinstance(hosts, list) and len(hosts) <= 4, "Teams attachmentFileHosts accepts up to four hosts.")
+        for host in hosts:
+            pattern(host, r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.sharepoint\.com", "Teams attachment file host")
+        require(len(set(hosts)) == len(hosts), "Teams attachmentFileHosts must be unique.")
     usage = fields(cfg.get("usage", {}), "usage", "reportChannel families")
     families = fields(usage.get("families", {}), "usage.families", "claude codex")
     for family, settings in families.items():
@@ -1088,13 +1100,134 @@ def require_peer_message_source(cfg, installed_only=False):
                               installed_only, marker="options.peerMessages")
 
 
-def check_stargate_source(source, repo, ref, path, message, installed_only, marker=None):
-    file = source / path
-    if file.is_file() and (not marker or marker in file.read_text()):
+def require_officer_tool_sources(cfg, installed_only=False):
+    paths = []
+    capabilities = {}
+    manifest = "scripts/officer-tools-contract.json"
+    if cfg.get("repositories"):
+        capabilities["refresh"] = 2
+        paths.extend(("scripts/repo-refresh.ts", "scripts/repo-refresh-host.ts"))
+    if enrolled(cfg) or subspace_mcp_url(cfg):
+        capabilities["files"] = 1
+        capabilities["preview"] = 1
+        capabilities["sandboxFiles"] = 1
+        paths.extend(("scripts/officer-files.ts", "scripts/officer-rest-files.ts", "scripts/markdown-preview.ts",
+                      "scripts/officer-stdio.ts"))
+    if any(person.get("githubApp") for person in cfg.get("members", [])) and officer_github_repositories(cfg):
+        capabilities["github"] = 1
+        paths.extend("scripts/github-" + script + ".ts" for script in
+                     ("officer", "operations", "review", "wire", "local-app", "officer-mcp"))
+        paths.append("scripts/officer-stdio.ts")
+    teams = cfg.get("integrations", {}).get("teams") or {}
+    previews = cfg.get("mockupPreviews", {})
+    if previews.get("enabled"):
+        capabilities["mockupPreviews"] = 1
+        origin = previews.get("url")
+        if isinstance(origin, str) and origin.lower().startswith("http://"):
+            capabilities["mockupPreviewsHttp"] = 1
+        paths.extend(mockups.SCRIPTS)
+    if teams.get("attachmentFileHosts"):
+        capabilities["teamsAttachmentFiles"] = 1
+    if not capabilities:
         return
-    # A repeat install restores tracked files before rendering. Preflight checks
-    # the requested revision when the installed tree needs that repair.
+    ref, repo = cfg["stargate"]["ref"], cfg["stargate"]["repo"]
+    source = stargate_entry(cfg).parents[1]
+    paths = list(dict.fromkeys([*paths, manifest]))
+
+    def compatible(raw):
+        try:
+            version = json.loads(raw)
+        except (TypeError, ValueError):
+            return False
+        return isinstance(version, dict) and all(version.get(key) == value for key, value in capabilities.items())
+
+    def contracts(raw):
+        hint = (" Use an HTTPS origin or --preview-url tunnel to keep an older pin."
+                if "mockupPreviewsHttp" in capabilities else "")
+        require(compatible(raw), f"Stargate {ref[:12]} has incompatible officer tool interfaces. "
+                                 f"Select a compatible --stargate-ref.{hint}")
+
+    present = {path for path in paths if (source / path).is_file()}
+    raw = (source / manifest).read_text() if manifest in present else None
+    if len(present) == len(paths) and compatible(raw):
+        return
+
+    def missing(available):
+        first = next((path for path in paths if path not in available), None)
+        hint = (" Use --no-mockup-previews to keep a pin without preview support."
+                if first == f"scripts/{mockups.SCRIPT}" else "")
+        require(first is None, f"Stargate {ref[:12]} lacks {first}. Select a newer compatible --stargate-ref.{hint}")
+
+    if installed_only:
+        missing(present)
+        contracts(raw)
+        return
+
+    # Fetch the selected revision once even when several interfaces are needed.
+    with tempfile.TemporaryDirectory(prefix="subspace-officer-tools-") as work:
+        try:
+            subprocess.run(["git", "init", "--quiet", "--bare", work], check=True, capture_output=True, timeout=20)
+            subprocess.run(["git", "-C", work, "fetch", "--quiet", "--no-tags", "--depth", "1", repo, ref],
+                           check=True, capture_output=True, timeout=60)
+            listing = subprocess.run(["git", "-C", work, "ls-tree", "-r", "FETCH_HEAD", "--", "scripts"],
+                                     check=True, capture_output=True, text=True, timeout=20)
+            missing({line.split("\t", 1)[1] for line in listing.stdout.splitlines()
+                     if line.startswith(("100644 blob ", "100755 blob ")) and "\t" in line})
+            result = subprocess.run(["git", "-C", work, "show", f"FETCH_HEAD:{manifest}"],
+                                    check=True, capture_output=True, text=True, timeout=20)
+        except FileNotFoundError:
+            raise Invalid("Install git before checking officer tools for a custom Stargate revision.") from None
+        except (OSError, subprocess.SubprocessError):
+            raise Invalid(f"Could not verify officer tools in Stargate {ref[:12]}. Check GitHub access "
+                          "or choose a compatible Stargate release.") from None
+    contracts(result.stdout)
+
+
+class StargateSourceUnavailable(Invalid):
+    """The selected Stargate revision could not be inspected."""
+
+
+def require_decision_dm_source(repo, ref, installed_only=False):
+    check_stargate_source(
+        APP / "src" / f"stargate-{ref}", repo, ref, "src/config/composition.ts",
+        "Decision outcome DMs require a Stargate revision with signed dispatch and IRC decision DMs. "
+        "Choose a compatible --stargate-ref.", installed_only,
+        marker="decisionOutcomeDms: Schema.optional", pinned=True, also=(
+            ("src/config/settings-schema.ts", "settingsStruct({ socketPath: absolutePath })"),
+            ("src/transports/irc/config.ts", "decisionOutcomeSender: Schema.optional"),
+            (ASSIGNMENT_REQUESTS_SOURCE, ASSIGNMENT_REQUESTS_MARKER),
+        ),
+    )
+
+
+def check_stargate_source(source, repo, ref, path, message, installed_only, marker=None, pinned=False, also=()):
+    checks = ((path, marker), *also)
+
+    def matches_file(path, marker):
+        file = source / path
+        return file.is_file() and (not marker or marker in file.read_text())
+
+    if (installed_only or not pinned) and all(matches_file(path, marker) for path, marker in checks):
+        return
     require(not installed_only, message)
+
+    def check_object(directory, revision):
+        for path, marker in checks:
+            args = (["grep", "-q", "-F", marker, revision, "--", str(path)] if marker else
+                    ["cat-file", "-e", f"{revision}:{path}"])
+            check = subprocess.run(["git", "-C", directory, *args], capture_output=True, timeout=20)
+            require(check.returncode == 0, message)
+
+    # A repeat install restores tracked files. Prove the requested Git object, even if the working file was patched.
+    if pinned and (source / ".git").exists():
+        try:
+            commit = subprocess.run(["git", "-C", source, "cat-file", "-e", ref + "^{commit}"],
+                                    capture_output=True, timeout=20)
+            if commit.returncode == 0:
+                check_object(source, ref)
+                return
+        except (OSError, subprocess.SubprocessError):
+            raise StargateSourceUnavailable(f"Could not check feature support in Stargate {ref[:12]}.") from None
 
     with tempfile.TemporaryDirectory(prefix="subspace-stargate-check-") as work:
         try:
@@ -1102,16 +1235,12 @@ def check_stargate_source(source, repo, ref, path, message, installed_only, mark
                            capture_output=True, timeout=20)
             subprocess.run(["git", "-C", work, "fetch", "--quiet", "--no-tags", "--depth", "1", repo, ref],
                            check=True, capture_output=True, timeout=60)
-            args = ["grep", "-q", "-F", marker, "FETCH_HEAD", "--", str(path)] if marker else [
-                "cat-file", "-e", f"FETCH_HEAD:{path}"]
-            check = subprocess.run(["git", "-C", work, *args],
-                                   capture_output=True, timeout=20)
+            check_object(work, "FETCH_HEAD")
         except FileNotFoundError:
-            raise Invalid("Install git before checking feature support for a custom Stargate revision.") from None
+            raise StargateSourceUnavailable("Install git before checking feature support for a custom Stargate revision.") from None
         except (OSError, subprocess.SubprocessError):
-            raise Invalid(f"Could not check feature support in Stargate {ref[:12]}. Check GitHub access "
+            raise StargateSourceUnavailable(f"Could not check feature support in Stargate {ref[:12]}. Check GitHub access "
                           "or choose a known Stargate release.") from None
-        require(check.returncode == 0, message)
 
 
 def usage_guard_config(value):
@@ -1176,7 +1305,7 @@ def usage_guard_settings(cfg, home):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch agentEgress operatorUsers toolchains systemPackages screenshots maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch agentEgress operatorUsers toolchains systemPackages screenshots mockupPreviews impeccable maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
     naming = pattern(cfg.get("officerNames", "prefixed"), "|".join(standard_channels.NAMING),
@@ -1259,7 +1388,8 @@ def validate(config, credentials, check_files=True):
     require(len(accounts) == len(agents), "Member SASL accounts must be unique.")
     require(not accounts.intersection(name.lower() for name in irc["allowedAccounts"]), "Human and fleet SASL accounts must differ.")
     dashboard = listener(cfg.get("dashboard", {}), "dashboard", 8070, True)
-    view = listener(cfg.get("agentsview", {}), "agentsview", 8080)
+    view_options = fields(cfg.get("agentsview", {}), "agentsview", "enabled port")
+    view = {"enabled": boolean(view_options.get("enabled", True)), "port": port(view_options.get("port", 8080))}
     proxy = fields(cfg.get("proxy", {}), "proxy", "port requestRetries")
     proxy_port = port(proxy.get("port", 8317))
     retries = proxy.get("requestRetries", 2)
@@ -1276,13 +1406,37 @@ def validate(config, credentials, check_files=True):
             pattern(origin, r"[a-z][a-z0-9+.-]*://[a-z0-9*](?:[a-z0-9*.-]*[a-z0-9*])?(?::[0-9]{1,5})?",
                     "Fleet API CORS origin")
         stargate_api = {"port": port(options.get("port", 8484)), "corsOrigins": origins}
-    listeners = [dashboard["port"], proxy_port, view["port"]]
+    listeners = [dashboard["port"], proxy_port]
+    if view["enabled"]:
+        listeners.append(view["port"])
     if stargate_api:
         listeners.append(stargate_api["port"])
     if irc["mode"] == "local":
         listeners += [6667 if irc["tls"] else irc["port"], irc["compose"]["tlsPort"], 8097]
-    require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
     api = api_config(cfg["api"]) if "api" in cfg else None
+    memory_options = memory_config(memory.config, cfg.get("memory", {}))
+    previews = fields(cfg.get("mockupPreviews", {}), "mockupPreviews", "enabled port url proxyUser")
+    previews = {**previews, "enabled": boolean(previews.get("enabled", True)) and bool(cfg["captains"]),
+                "port": port(previews.get("port", mockups.PORT))}
+    if "url" in previews:
+        try:
+            previews["url"] = mockups.origin(previews["url"])
+        except fleet_records.Refused as error:
+            raise Invalid(str(error)) from None
+    if "proxyUser" in previews:
+        pattern(previews["proxyUser"], ACCOUNT, "preview proxy Linux user")
+    if previews["enabled"]:
+        occupied = ({SUBSPACE_API_PORT, SUBSPACE_AGENT_API_PORT, SUBSPACE_DATABASE_PORT}
+                    if memory_options["localApi"] else set())
+        for key in ("url", "agentMcpUrl"):
+            if endpoint := (api or {}).get(key):
+                parts = urlsplit(endpoint)
+                if parts.hostname in {"localhost", LOOPBACK, "::1"}:
+                    occupied.add(parts.port or (443 if parts.scheme == "https" else 80))
+        require(previews["port"] >= 1024, "The unprivileged preview port must be at least 1024.")
+        require(previews["port"] not in occupied, "The preview port conflicts with a local Subspace API service.")
+        listeners.append(previews["port"])
+    require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
     require(not (api or {}).get("fleetApiUrl") or stargate_api,
             "api.fleetApiUrl is the address of Stargate's Fleet API, which is off: set stargate.api, or remove it.")
     peer_messages = boolean(cfg.get("captainPeerMessages", False))
@@ -1345,7 +1499,8 @@ def validate(config, credentials, check_files=True):
                 "themselves.")
         require(any(person["harness"]["type"] == "opencode" for person in agents),
                 "api.enrolment needs an OpenCode officer: the shared gateway that holds the officers' keys serves "
-                "OpenCode officers, and a fleet of Claude Agent SDK officers has none.")
+                "OpenCode officers, and a fleet of Claude Agent SDK officers has none. With a local API, "
+                "subspace-setup --agent-listener enables the legacy listener instead.")
         release = tuple(int(part) for part in re.findall(r"\d+", STARGATE_RELEASE)[:3])
         require(stargate.get("ref", STARGATE_REF) != STARGATE_REF or release >= SUBSPACE_AGENTS_RELEASE,
                 f"api.enrolment needs a Stargate with its subspaceAgents section, from commit "
@@ -1356,7 +1511,9 @@ def validate(config, credentials, check_files=True):
     else:
         require(token == "", "An API token requires API configuration.")
     dispatch_token = private.get("rearAdmiralApiToken") or None
-    if dispatch:
+    if (dispatch or {}).get("decisionOutcomeDms"):
+        require(dispatch_token is None, "Decision outcome DMs use signed officer access. Remove rearAdmiralApiToken.")
+    if dispatch and (dispatch_token is not None or not api.get("enrolment")):
         require(dispatch_token is not None, "Agent dispatch is on: supply rearAdmiralApiToken in the secrets file, a "
                 "bearer token for the rear admiral's own Subspace API agent identity (rank rearAdmiral, in this fleet).")
         require(isinstance(dispatch_token, str) and len(dispatch_token) <= 16384 and re.fullmatch(JWT, dispatch_token),
@@ -1364,7 +1521,7 @@ def validate(config, credentials, check_files=True):
         # The dispatcher must act as the rear admiral; an administrator's token is refused by Stargate.
         require(dispatch_token != token, "rearAdmiralApiToken must be the rear admiral agent's own token, not apiToken, "
                 "which belongs to an organisation administrator.")
-    else:
+    elif not dispatch:
         require(dispatch_token is None, "rearAdmiralApiToken is only for agent dispatch. Remove it, or switch "
                 "agentDispatch.enabled on.")
     require(not any(repo["private"] for repo in repositories.values()) or len(applications) == len(agents),
@@ -1390,7 +1547,7 @@ def validate(config, credentials, check_files=True):
         if extra := person["harness"]["extraPermissions"]:
             # After the starter policy or an explicit harness.permissions, so the operator's rules win.
             person["harness"]["permissions"] = [*person["harness"]["permissions"], *extra]
-        if (dispatch or peer_messages) and person["crew"]:
+        if (peer_messages or (dispatch and dispatch["enabled"])) and person["crew"]:
             fleet_ipc_policy(person["harness"]["permissions"], f"Captain {person['id']}'s harness.permissions")
     if api:
         # fleetctl register records the officers, their ships and the standard channels in the API.
@@ -1413,6 +1570,7 @@ def validate(config, credentials, check_files=True):
         "systemPackages": toolchains.package_config(cfg.get("systemPackages", [])),
         # The base screenshot tools (lib/screenshots.py): on unless fleet.json says "screenshots": false.
         "screenshots": boolean(cfg.get("screenshots", True)),
+        "mockupPreviews": previews, "impeccable": boolean(cfg.get("impeccable", True)),
         "maintenance": maintenance_config(cfg.get("maintenance", {})),
         "stargate": {**source({key: stargate[key] for key in ("repo", "ref") if key in stargate},
                               "Stargate source", STARGATE_REPO, STARGATE_REF), "api": stargate_api},
@@ -1424,7 +1582,7 @@ def validate(config, credentials, check_files=True):
         "historyPassword": history_password(irc, private),
         "captainTools": captain_tools,
         "captainPeerMessages": peer_messages,
-        "memory": memory_config(memory.config, cfg.get("memory", {})),
+        "memory": memory_options,
     }
 
 
@@ -1716,6 +1874,47 @@ def configure_git(person, user, home, prune, protected):
             run("git", "config", "--global", "--replace-all", "--", key, value, user=user)
 
 
+def configure_github_officer_tools(cfg, homes):
+    registry_path = ETC / "officer-github.json"
+    wrapper_path = APP / "bin/subspace-github-officer"
+    registry = {}
+    repositories = officer_github_repositories(cfg)
+    for person in cfg["members"]:
+        app = person.get("githubApp")
+        if not app or not repositories:
+            continue
+        home = homes[person["id"]]
+        repos = {}
+        for key, repository in repositories.items():
+            owner, name = repository.split("/")
+            row = {"owner": owner, "name": name}
+            if person.get("mergeCheckouts", {}).get(key) == f"{owner}/{name}":
+                row["mergeCheckout"] = str(home / "workspace" / key)
+            repos[key] = row
+        registry["ss-" + person["id"]] = {
+            "home": str(home), "role": person["role"], "login": app["botLogin"],
+            "contents": app.get("contents", "write") if person["role"] == "captain" else "read",
+            "directPublication": not person.get("delegatesCoding"),
+            "protectedBranches": cfg.get("protectedBranches", []),
+            "repos": repos,
+        }
+    if not registry:
+        registry_path.unlink(missing_ok=True)
+        wrapper_path.unlink(missing_ok=True)
+        return
+    write(registry_path, json_text(registry), 0o644)
+    command = [*stargate_tool(cfg, "github-officer.ts"),
+               str(stargate_entry(cfg).parents[1] / "scripts/github-local-app.ts")]
+    write(wrapper_path, "#!/bin/sh\nSTARGATE_GITHUB_APP_CONFIG=" + shlex.quote(str(registry_path)) +
+          ' exec ' + shlex.join(command) + ' "$@"\n', 0o755)
+
+
+def github_officer_mcp_command(cfg):
+    return ["/usr/bin/env", f"STARGATE_GITHUB_APP_CONFIG={ETC / 'officer-github.json'}",
+            *stargate_tool(cfg, "github-officer-mcp.ts"),
+            str(stargate_entry(cfg).parents[1] / "scripts/github-local-app.ts")]
+
+
 def model_ref(family, model, effort=None):
     """OpenCode's provider/model reference, with #effort for a reasoning-effort variant."""
     return f"{PROVIDERS[family]}/{model}" + (f"#{effort}" if effort else "")
@@ -1763,7 +1962,7 @@ def subspace_mcp_url(cfg):
 
 
 def enrolled(cfg):
-    """Whether the fleet's officers reach a hosted API through Stargate's signing proxy (api.enrolment)."""
+    """Whether the fleet's officers reach the API through Stargate's signing proxy (api.enrolment)."""
     return bool((cfg.get("api") or {}).get("enrolment"))
 
 
@@ -1775,11 +1974,39 @@ def stargate_entry(cfg):
     return APP / "src" / f"stargate-{cfg['stargate']['ref']}" / "src/main.ts"
 
 
+def stargate_tool(cfg, script):
+    return [str(APP / "bin/bun"), "--config=/dev/null", "--no-env-file", "--no-install",
+            str(stargate_entry(cfg).parents[1] / "scripts" / script)]
+
+
+def officer_media_target(cfg, person):
+    # The signing proxy selects the caller from its socket. Only the agent listener takes an actor header.
+    return (["--socket", str(agent_socket(person["id"]))] if enrolled(cfg)
+            else ["--endpoint", subspace_mcp_url(cfg), "--actor", person["account"]])
+
+
 def officer_upload_command(cfg, person):
-    # The issuer and transport come from the installed profile, never from a tool argument.
-    target = (["socket", str(agent_socket(person["id"]))] if enrolled(cfg)
-              else ["http", subspace_mcp_url(cfg)])
-    return ["/usr/bin/python3", "-I", str(APP / "lib/officer_upload.py"), *target, person["account"]]
+    return [*stargate_tool(cfg, "officer-files.ts"), "--legacy-upload", "--rest", "--staging", "/tmp",
+            *officer_media_target(cfg, person)]
+
+
+def mockup_command(cfg, person):
+    home = STATE / "agents" / person["id"]
+    return [*stargate_tool(cfg, mockups.SCRIPT), "mcp", str(mockups.socket(person["id"])), str(mockups.staging(home))]
+
+
+def officer_file_exports(person):
+    return STATE / "file-exports" / person["id"]
+
+
+def officer_publish_command(cfg, person):
+    stage = STATE / "agents" / person["id"] / "outbox"
+    command = [*stargate_tool(cfg, "officer-files.ts"), "--rest", "--staging", str(stage),
+               "--exports", str(officer_file_exports(person)), *officer_media_target(cfg, person)]
+    if cfg["screenshots"]:
+        command.extend(["--playwright", str(APP / "playwright/node_modules/playwright/index.mjs"),
+                        "--browser-cache", str(APP / "browsers")])
+    return command
 
 
 def subspace_bridge(cfg, agent_id):
@@ -1839,6 +2066,22 @@ def stargate_has_pull_request_repositories(cfg):
     return False
 
 
+ASSIGNMENT_REQUESTS_SOURCE = "src/config/composition.ts"
+ASSIGNMENT_REQUESTS_MARKER = "assignmentRequests: Schema.optional"
+
+
+def stargate_has_assignment_requests(cfg):
+    schema = APP / "src" / f"stargate-{cfg['stargate']['ref']}" / ASSIGNMENT_REQUESTS_SOURCE
+    return schema.is_file() and ASSIGNMENT_REQUESTS_MARKER in schema.read_text()
+
+
+def require_assignment_requests_source(ref, repo):
+    check_stargate_source(APP / "src" / f"stargate-{ref}", repo, ref, ASSIGNMENT_REQUESTS_SOURCE,
+                          "Agent dispatch needs a Stargate revision with assignment requests. "
+                          "Select a compatible --stargate-ref or use --no-agent-dispatch.",
+                          False, marker=ASSIGNMENT_REQUESTS_MARKER)
+
+
 def require_subspace_agents(cfg):
     require(stargate_has_subspace_agents(cfg),
             f"api.enrolment needs a Stargate with its subspaceAgents section ({SUBSPACE_AGENTS_FILE}), from commit "
@@ -1879,7 +2122,7 @@ def agent_socket_directories(cfg):
     return [agent_socket(person["id"]).parent for person in cfg["members"]]
 
 
-def harness_permissions(cfg, person, starter_grants=()):
+def harness_permissions(cfg, person, starter_grants=(), *, flint=False):
     """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener or a hosted API is
     configured, and with a hosted API the officer's REST command (SUBSPACE_REQUEST).
 
@@ -1889,7 +2132,23 @@ def harness_permissions(cfg, person, starter_grants=()):
     any operator rule that matches the command, such as a deny of `subspace-*`, decides.
     """
     permissions = person["harness"]["permissions"]
+    if permissions is None:
+        return permissions
     commands = list(starter_grants)
+    if mockups.enabled(cfg, person):
+        staging = mockups.staging(STATE / "agents" / person["id"])
+        commands.extend((
+            {"action": f"{mockups.MCP}_*", "resource": "*", "effect": "allow"},
+            {"action": "external_directory", "resource": f"{staging}/*", "effect": "allow"},
+        ))
+    if cfg.get("impeccable") and person["role"] == "captain":
+        commands.append({"action": "shell", "resource": f"{mockups.IMPECCABLE_PATH}/scripts/impeccable context*",
+                         "effect": "allow"})
+    if flint:
+        commands.extend((
+            {"action": "flint_*", "resource": "*", "effect": "allow"},
+            {"action": "shell", "resource": "flint-render *", "effect": "allow"},
+        ))
     if cfg.get("captainPeerMessages") and person["crew"]:
         commands.extend({"action": "fleet_peer_message", "resource": peer["id"], "effect": "allow"}
                         for peer in cfg["members"] if peer["crew"] and peer["id"] != person["id"])
@@ -1898,7 +2157,18 @@ def harness_permissions(cfg, person, starter_grants=()):
                         for tool in ("refresh_origin", "read_origin_file"))
     if enrolled(cfg):
         commands.append(SUBSPACE_REQUEST_GRANT)
+    if operations := github_officer_operations(cfg, person):
+        commands.append({"action": "shell", "resource": "subspace-github-officer --help", "effect": "allow"})
+        commands.extend({"action": "shell", "resource": f"subspace-github-officer {operation} *", "effect": "allow"}
+                        for operation in operations)
+        if person["role"] == "captain":
+            commands.extend({"action": "shell", "resource": f"subspace-github gh pr {verb} *", "effect": "allow"}
+                            for verb in ("comment", "review"))
+        if person.get("delegatesCoding"):
+            commands.extend({"action": "shell", "resource": f"subspace-github-officer {operation} *", "effect": "deny"}
+                            for operation in ("push", "publish", "branch-create"))
     if person.get("mergeCheckouts"):
+        # Commissioned captains may still use the original wrapper. It also requires the exact reviewed head.
         commands.append({"action": "shell", "resource": "subspace-github gh pr merge *", "effect": "allow"})
     granted = permissions
     if commands:
@@ -1910,13 +2180,13 @@ def harness_permissions(cfg, person, starter_grants=()):
     return granted
 
 
-def captain_permissions(cfg, person):
+def captain_permissions(cfg, person, *, flint=False):
     """The captain root's stored grants: its harness policy plus the crew tools when it hosts crew, and the
     dispatch answer tool when agent dispatch is on."""
     if not person["crew"]:
-        return harness_permissions(cfg, person)
-    permissions = harness_permissions(cfg, person, CREW_EFFORT_GRANTS)
-    return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
+        return harness_permissions(cfg, person, flint=flint)
+    permissions = harness_permissions(cfg, person, CREW_EFFORT_GRANTS, flint=flint)
+    return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if issue_dispatch_enabled(cfg) else [])]
 
 
 def crew_options(cfg, person, home, engine_port, session_id, captain_directory=None):
@@ -2128,7 +2398,7 @@ def rear_root_lines(cfg):
     if pinned_directory(rear):
         lines = [f"The rear admiral's root session is pinned in {where}."]
     else:
-        reasons = [reason for reason, on in (("agent dispatch is on", cfg["agentDispatch"]),
+        reasons = [reason for reason, on in (("issue dispatch is on", issue_dispatch_enabled(cfg)),
                                              ("it has its own Slack bot", "slack" in rear)) if on]
         lines = [f"The rear admiral's root session will be pinned in {where}, because {' and '.join(reasons)}."]
     if in_reference:
@@ -2161,7 +2431,7 @@ def fleet_control(cfg, person, pin, rear_session, gateway_home, pins=None):
     if person["role"] != "captain" or not person["crew"] or not pin:
         return None
     targets = []
-    if cfg["agentDispatch"] and rear_session:
+    if issue_dispatch_enabled(cfg) and rear_session:
         rear = cfg["members"][0]
         targets.append({"id": rear["id"], "account": rear["account"], "role": "rear_admiral",
                         "channel": person["channel"], "sessionID": rear_session})
@@ -2224,7 +2494,8 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         models = catalogue.setdefault(worker["family"], [])
         if worker["model"] not in models:
             models.append(worker["model"])
-    permissions = harness_permissions(cfg, person)
+    flint = documents.get("flint", False)
+    permissions = harness_permissions(cfg, person, flint=flint)
     engine = {
         "model": harness_model(harness), "permissions": permissions,
         "providers": {PROVIDERS[family]: model_provider(cfg, family, models) for family, models in catalogue.items()},
@@ -2240,10 +2511,19 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
             "type": "remote", "url": mcp_url, "headers": {AGENT_HEADER: person["account"]},
         }}}
     if "mcp" in engine:
-        engine["mcp"]["servers"]["subspace_files"] = {"type": "local", "command": officer_upload_command(cfg, person)}
+        engine["mcp"]["servers"]["subspace_files"] = {"type": "local", "command": officer_upload_command(cfg, person), "timeout": 95_000}
+        engine["mcp"]["servers"]["subspace_publish"] = {"type": "local", "command": officer_publish_command(cfg, person), "timeout": 95_000}
+    if flint:
+        engine.setdefault("mcp", {"servers": {}})["servers"]["flint"] = {
+            "type": "local", "command": [str(screenshots.FLINT_MCP)],
+        }
+    if mockups.enabled(cfg, person):
+        engine.setdefault("mcp", {"servers": {}})["servers"][mockups.MCP] = {
+            "type": "local", "command": mockup_command(cfg, person), "timeout": 35_000,
+        }
     if has_repository_refresh(cfg, person):
         servers = engine.setdefault("mcp", {"servers": {}})["servers"]
-        servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(), "timeout": 110000}
+        servers["repo_refresh"] = {"type": "local", "command": repository_refresh_command(cfg), "timeout": 110000}
     password = hmac.new(seed, agent_id.encode(), hashlib.sha256).hexdigest()
     header = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
     environment = {
@@ -2283,7 +2563,8 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
                     "options": options,
                 })
             backend["sessionID"] = session_id
-        backend.update(agent=sessions.CAPTAIN_AGENT, permissions=captain_permissions(cfg, person), enforcePermissions=True)
+        backend.update(agent=sessions.CAPTAIN_AGENT, permissions=captain_permissions(cfg, person, flint=flint),
+                       enforcePermissions=True)
     elif person["role"] == "rear_admiral" and session_id:
         # Agent dispatch pins the rear admiral's IRC registration to one root, which captains name as their
         # rear admiral. Slack and Teams keep their own sessions (render passes them an unpinned copy).
@@ -2296,7 +2577,9 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
     unit = serve_unit(
         f"engine-{agent_id}", f"OpenCode engine {agent_id}",
         f"{APP}/lib/runtime.py engine {settings}", user, [f"{PREFIX}proxy.service"],
-        user_paths=[home, database_dir], post_start=f"{APP}/lib/runtime.py share-database {settings}",
+        user_paths=[home, database_dir] + ([officer_file_exports(person)]
+                   if "subspace_publish" in engine.get("mcp", {}).get("servers", {}) else []),
+        post_start=f"{APP}/lib/runtime.py share-database {settings}",
         toolchain=False,
         # The officer's memory and task limits (lib/memory.py); its crew run in this engine, within them.
         service_options=memory.unit_options(limits) if limits else (),
@@ -2366,8 +2649,18 @@ def claude_backend(cfg, person, workspace, documents):
     if "mcpServers" in backend:
         command, *args = officer_upload_command(cfg, person)
         backend["mcpServers"]["subspace_files"] = {"type": "stdio", "command": command, "args": args}
+        command, *args = officer_publish_command(cfg, person)
+        backend["mcpServers"]["subspace_publish"] = {"type": "stdio", "command": command, "args": args}
+    if mockups.enabled(cfg, person):
+        command, *args = mockup_command(cfg, person)
+        backend.setdefault("mcpServers", {})[mockups.MCP] = {"type": "stdio", "command": command, "args": args}
+    if documents.get("flint"):
+        backend.setdefault("mcpServers", {})["flint"] = {"type": "stdio", "command": str(screenshots.FLINT_MCP)}
+    if person["role"] == "captain" and github_officer_operations(cfg, person):
+        command, *args = github_officer_mcp_command(cfg)
+        backend.setdefault("mcpServers", {})["github_officer"] = {"type": "stdio", "command": command, "args": args}
     if has_repository_refresh(cfg, person):
-        command, *args = repository_refresh_command()
+        command, *args = repository_refresh_command(cfg)
         backend.setdefault("mcpServers", {})["repo_refresh"] = {"type": "stdio", "command": command, "args": args}
     return backend
 
@@ -2563,6 +2856,11 @@ def irc_officer(cfg, person, registration):
     medical = cfg["medical"]
     if medical and medical["target"] and medical["target"]["id"] == person["id"]:
         peers = [medical["account"], *peers[:49]]
+    decision_sender = None
+    if role == "captain" and (cfg["agentDispatch"] or {}).get("decisionOutcomeDms"):
+        decision_sender = cfg["members"][0]["account"]
+        if decision_sender not in peers:
+            peers = [*peers[:49], decision_sender]
     access = {"allCallWords": [], "channelRequests": "nick-mention", "peerCaptains": peers,
               "humanWakeChannels": [{"channel": room, "replies": "all"}]}
     return {
@@ -2571,6 +2869,7 @@ def irc_officer(cfg, person, registration):
         # Direct messages are for people only: an agent answers one with a notice naming its first
         # channel, Starbase for the rear admiral and its ship for a captain, and starts no turn.
         "dmPolicy": "redirect",
+        **({"decisionOutcomeSender": decision_sender} if decision_sender else {}),
         # Route by authenticated account in strict mode.
         "features": {"botMode": False},
         "fleetPolicy": {"role": role, "humanAccounts": cfg["irc"]["allowedAccounts"],
@@ -2610,6 +2909,40 @@ def render_view(cfg, session_roots, home):
     )
 
 
+def render_mockups(cfg):
+    options = cfg["mockupPreviews"]
+    if not options["enabled"]:
+        mockups.TMPFILES.unlink(missing_ok=True)
+        return []
+    home = account(mockups.USER, STATE / "previews")
+    caddy_state = home / "caddy"
+    directory(caddy_state, 0o700, mockups.USER)
+    sockets = mockups.SOCKETS
+    directory(sockets.parent, 0o711)
+    directory(sockets, 0o711)
+    tmpfiles = [f"d {sockets.parent} 0711 root root -", f"d {sockets} 0711 root root -"]
+    captains = [person["id"] for person in cfg["members"] if mockups.enabled(cfg, person)]
+    private_sockets = []
+    for captain in captains:
+        path = mockups.socket(captain).parent
+        group = f"ss-{captain}"
+        directory(path, 0o2750, mockups.USER, group)
+        tmpfiles.append(f"d {path} 2750 {mockups.USER} {group} -")
+        private_sockets.append(path)
+    write(mockups.TMPFILES, "\n".join(tmpfiles) + "\n", 0o644)
+
+    broker = [*stargate_tool(cfg, mockups.SCRIPT), "broker", str(home), str(sockets),
+              mockups.address(options) + "/", *captains]
+    publisher = serve_unit("preview-publisher", "Stargate mockup publisher", " ".join(broker), mockups.USER,
+                           user_paths=[home, *private_sockets], toolchain=False)
+    config = ETC / "preview.Caddyfile"
+    write(config, mockups.caddyfile(home, options["port"]), 0o644)
+    command = f"{APP}/bin/caddy run --adapter caddyfile --config {config}"
+    caddy = serve_unit("preview", "Caddy mockup preview server", command, mockups.USER, [publisher],
+                       user_paths=[caddy_state], toolchain=False)
+    return [publisher, caddy]
+
+
 def agent_egress(values):
     require(isinstance(values, list) and all(isinstance(value, str) for value in values),
             "agentEgress must be an array of HOST:PORT entries.")
@@ -2641,12 +2974,29 @@ def render_firewall(cfg):
         dns = network.resolvers()
     except OSError as error:
         raise Invalid(f"Could not resolve the officer network policy: {error}") from None
-    ports = {service: cfg[service]["port"] for service in ("dashboard", "agentsview", "proxy")}
+    ports = {service: cfg[service]["port"] for service in ("dashboard", "proxy")}
+    if cfg["agentsview"]["enabled"]:
+        ports["agentsview"] = cfg["agentsview"]["port"]
     if cfg["stargate"]["api"]:
         ports["stargate-api"] = cfg["stargate"]["api"]["port"]
+    preview_clients = set()
+    previews = cfg["mockupPreviews"]
+    if previews["enabled"]:
+        ports["previews"] = previews["port"]
+        preview_clients = {officers[person["id"]] for person in cfg["members"] if mockups.enabled(cfg, person)}
+        for uid in preview_clients:
+            allowed.update(network.destinations(LOOPBACK, ports["previews"], uid))
+        if proxy_user := previews.get("proxyUser"):
+            try:
+                proxy_uid = pwd.getpwnam(proxy_user).pw_uid
+            except KeyError:
+                raise Invalid("mockupPreviews.proxyUser must name an existing Linux account.") from None
+            require(proxy_uid not in service_ids, "mockupPreviews.proxyUser cannot be a fleet service account.")
+            preview_clients.add(proxy_uid)
     config = ETC / "firewall.nft"
     write(config, network.rules(ports, admins, clients, pwd.getpwnam(VIEW).pw_uid,
-                                officers=officers.values(), dns=dns, allowed=allowed), 0o600)
+                                officers=officers.values(), dns=dns, allowed=allowed,
+                                preview_clients=preview_clients), 0o600)
     write(SYSTEMD / FIREWALL, "\n".join([
         "[Unit]", "Description=Subspace fleet local service firewall",
         "After=nftables.service",
@@ -2914,7 +3264,7 @@ def policy_lines(cfg):
         if person["harness"]["type"] != "opencode":
             continue
         path = ETC / f"opencode-{person['id']}.json"
-        policy = [text(rule) for rule in harness_permissions(cfg, person)]
+        policy = [text(rule) for rule in harness_permissions(cfg, person, flint=cfg["screenshots"])]
         if not path.exists():
             new.append(f"{person['id']} ({len(policy)} rules)")
             continue
@@ -3065,6 +3415,20 @@ def render_irc(cfg, extra):
             override["networks"] = {history["network"]: {"external": True}}
     else:
         history_path.unlink(missing_ok=True)
+    hook_path = config_dir / "api-hook-token"
+    if "localApiIrcHook" in local:
+        token = Path(local["localApiIrcHook"]).read_text().strip()
+        require(re.fullmatch(r"[0-9a-f]{48}", token), "The local API IRC hook token is invalid.")
+        write(hook_path, token + "\n", 0o440, ERGO_GID)
+        volumes.append(f"{hook_path}:/run/subspace/api-hook-token:ro")
+        service_env.update(IRC_AUTH_API_URL="http://api:3000",
+                           IRC_AUTH_API_TOKEN_FILE="/run/subspace/api-hook-token", IRC_AUTH_API_ALLOW_HTTP="true")
+        api_network = "subspace-api_default"
+        if api_network not in service.setdefault("networks", ["default"]):
+            service["networks"].append(api_network)
+        override.setdefault("networks", {})[api_network] = {"external": True}
+    else:
+        hook_path.unlink(missing_ok=True)
     write(config_dir / "override.json", json_text(override))
     write(config_dir / "source", str(APP / "src" / f"irc-{local['ref']}" / "subspace-irc") + "\n")
     unit = f"{PREFIX}irc.service"
@@ -3152,6 +3516,8 @@ def stakeholder_settings(cfg, tokens, backend, user, data, environment):
             "tenantId": teams["tenantId"], "botClientId": teams["botClientId"], "socketPath": str(socket_dir / "bot.sock"),
             "access": {"users": teams["users"], "channels": teams.get("channels", [])},
         }]
+        if hosts := teams.get("attachmentFileHosts"):
+            settings["teams"][0]["attachmentFileHosts"] = hosts
     usage = integrations["usage"]
     if "reportChannel" in usage:
         settings["quotaWatch"] = {
@@ -3180,21 +3546,66 @@ def agent_dispatch_settings(cfg):
         for name in (person["id"], person["name"]):
             if re.fullmatch(r"[A-Za-z0-9-]{1,64}", name) and name != person["account"]:
                 accounts[name] = person["account"]
-    return {
-        "enabled": True, "fleet": cfg["slug"],
-        "api": {"baseUrl": cfg["api"]["url"], "tokenEnv": DISPATCH_TOKEN_ENV},
+    supports_assignment_requests = stargate_has_assignment_requests(cfg)
+    signed = dispatch["token"] is None
+    if signed or not dispatch["readyOffers"] or not dispatch["assignmentRequests"]:
+        require(supports_assignment_requests, "This agent dispatch configuration needs a Stargate that supports "
+                "assignment requests. Set stargate.ref to a compatible merged revision.")
+    api = {"socketPath": str(agent_socket(rear["id"]))} if signed else {
+        "baseUrl": cfg["api"]["url"], "tokenEnv": DISPATCH_TOKEN_ENV,
+    }
+    block = {
+        "enabled": dispatch["enabled"], "fleet": cfg["slug"],
+        "api": api,
         "messaging": {"type": "irc", "registration": rear["id"], "channel": cfg["irc"]["commandChannel"]},
         "captainAccounts": accounts,
+        **({"decisionOutcomeDms": True} if dispatch["decisionOutcomeDms"] else {}),
         **{key: dispatch[key] for key in DISPATCH_DEFAULTS},
-    }, {DISPATCH_TOKEN_ENV: dispatch["token"]}
+    }
+    if supports_assignment_requests and dispatch["enabled"]:
+        block["readyOffers"] = dispatch["readyOffers"]
+        block["assignmentRequests"] = {
+            "reminderSeconds": dispatch["assignmentReminderSeconds"],
+            "shipChannels": {person["account"]: person["channel"] for person in captains if person["crew"]},
+        } if dispatch["assignmentRequests"] else None
+    return block, {} if signed else {DISPATCH_TOKEN_ENV: dispatch["token"]}
 
 
 def has_repository_refresh(cfg, person):
     return person["role"] == "rear_admiral" and bool(cfg.get("repositories"))
 
 
-def repository_refresh_command():
-    return ["/usr/bin/python3", str(APP / "lib/repo_refresh.py"), "mcp"]
+def repository_refresh_command(cfg):
+    return [*stargate_tool(cfg, "repo-refresh.ts"), "mcp", "--socket", "/run/subspace-fleet-repo-refresh.sock"]
+
+
+def repository_refresh_policy(tool, repository, peer):
+    from workspaces import private_credentials
+    policy = read_json(ETC / "repo-refresh.json")
+    require(tool in {"refresh_origin", "read_origin_file"} and repository in policy["repositories"],
+            "Unknown configured repository operation.")
+    repo = policy["repositories"][repository]
+    rear = policy["rearAdmiral"]
+    reader = f"ss-{rear}"
+    owner = "ss-fleet-repos"
+    caller_uid = pwd.getpwnam(reader).pw_uid
+    require(str(peer) == str(caller_uid), "Repository refresh socket caller differs from the authorised officer.")
+    checkout = STATE / "references" / rear / repository
+    origin = repo["url"]
+    mirror = STATE / "repositories" / f"{repository}.git"
+    credentials = (private_credentials(APP / "lib/github_app.py", origin, reader, timeout=18)
+                   if repo["private"] and tool == "refresh_origin" else
+                   {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": ""})
+    return {
+        "checkout": str(checkout), "checkoutUid": pwd.getpwnam(owner).pw_uid,
+        "callerUid": caller_uid, "origin": origin,
+        "expectedOrigin": origin if repo["private"] else str(mirror),
+        "gitRunner": ["/usr/sbin/runuser", "-u", owner, "--"],
+        "gitOptions": ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                       "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.http.allow=always"],
+        "gitEnvironment": {"PATH": "/usr/bin:/bin", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+                           "GIT_CONFIG_GLOBAL": "/dev/null", **credentials},
+    }
 
 
 def repository_refresh_units(cfg):
@@ -3222,10 +3633,12 @@ RemoveOnStop=yes
 [Install]
 WantedBy=sockets.target
 """, 0o644)
+    broker = " ".join([*stargate_tool(cfg, "repo-refresh.ts"), "serve", "--", "/usr/bin/python3",
+                       str(APP / "lib/runtime.py"), "repo-refresh-policy"])
     write(SYSTEMD / service_unit, f"""[Unit]
 Description=Fetch rear admiral repository origin refs
 [Service]
-ExecStart=/usr/bin/python3 {APP}/lib/repo_refresh.py serve
+ExecStart={broker}
 StandardInput=socket
 StandardOutput=null
 RuntimeMaxSec=100
@@ -3260,6 +3673,7 @@ def render(cfg, extra, prune=False):
     units = [render_proxy(cfg, tokens), *repository_refresh_units(cfg)]
     # Every officer's memory and task limits, sized from this VM's memory and the fleet (lib/memory.py).
     limits = memory_plan(cfg)["limits"]
+    # Keep the session directory's group stable when the optional viewer is switched off and on.
     view_home = account(VIEW, STATE / "view")
     for path in (STATE / "agents", STATE / "sessions"):
         directory(path, 0o711)
@@ -3276,7 +3690,6 @@ def render(cfg, extra, prune=False):
         # key and signing-proxy socket.
         require_subspace_agents(cfg)
         own_file(gateway_home / ENROLMENT_TOKEN, extra["tokens"][ENROLMENT_TOKEN] + "\n", GATEWAY)
-        sockets = agent_socket_directories(cfg)
         write(SUBSPACE_REQUEST, subspace_request_script(cfg), 0o755)
     elif AGENT_TMPFILES.exists():
         AGENT_TMPFILES.unlink()
@@ -3284,6 +3697,11 @@ def render(cfg, extra, prune=False):
         SUBSPACE_REQUEST.unlink(missing_ok=True)
     if "caFile" in cfg["irc"]:
         write(ETC / "irc-ca.pem", Path(cfg["irc"]["caFile"]).read_text(), 0o644)
+    # The root-owned parent makes the wildcard safe for active and retired
+    # officer exports. systemd-tmpfiles ages contents without following links.
+    write(OFFICER_EXPORT_TMPFILES, f"e {STATE}/file-exports/* - - - 30d -\n", 0o644)
+    install_screenshots(cfg)
+    flint = cfg["screenshots"] and screenshots.flint_ready(screenshots.pins())
     homes = {}
     documents = {}
     for person in cfg["members"]:
@@ -3292,8 +3710,14 @@ def render(cfg, extra, prune=False):
         home = homes[agent_id] = account(user, STATE / "agents" / agent_id)
         run("mkdir", "-p", "--", home / "workspace", user=user)
         configure_git(person, user, home, prune, cfg["protectedBranches"])
+        if subspace_mcp_url(cfg) or enrolled(cfg):
+            run("mkdir", "-p", "-m", "700", "--", home / "outbox", user=user)
+            directory(STATE / "file-exports", 0o711)
+            directory(officer_file_exports(person), 0o2750, user, GATEWAY)
+        if mockups.enabled(cfg, person):
+            run("mkdir", "-p", "-m", "700", "--", mockups.staging(home), user=user)
         references = STATE / "references" / agent_id if cfg["repositories"] else None
-        documents[agent_id] = role_documents(cfg, person, references, home)
+        documents[agent_id] = role_documents(cfg, person, references, home, flint=flint)
         if enrolled(cfg):
             add_request_guidance(documents[agent_id], [SUBSPACE_REQUEST.name])
         subprocess.run(
@@ -3313,6 +3737,10 @@ def render(cfg, extra, prune=False):
                 ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "cloud", str(prune).lower()],
                 input=json_text(files), text=True, check=True,
             )
+    if enrolled(cfg):
+        # The socket directories are owned by groups created with the officer accounts above.
+        sockets = agent_socket_directories(cfg)
+    configure_github_officer_tools(cfg, homes)
     reconcile_workspaces(cfg, homes)
     databases, engines = [], []
     registrations, environments = {}, {}
@@ -3370,6 +3798,8 @@ def render(cfg, extra, prune=False):
         if native:
             # A Claude Agent SDK officer's gateway runs its tools, as its own user, as an engine does.
             opts["environment"].update(officer_tool_environment(cfg, person, home))
+            if enrolled(cfg) or subspace_mcp_url(cfg):
+                opts["writable"].append(officer_file_exports(person))
         # A Claude Agent SDK officer's own gateway runs its tools, so it takes the officer's limits, as an engine
         # does; the shared gateway has no cap (memory.SHARED_OPTIONS).
         opts["service"] = memory.unit_options(limits[agent_id]) if native else memory.SHARED_OPTIONS
@@ -3455,11 +3885,12 @@ def render(cfg, extra, prune=False):
     dash = cfg["dashboard"]
     bind = dash["bind"]
     units.append(serve_unit("dashboard", "Stargate dashboard", f"{APP}/lib/dashboard.py {bind} {dash['port']} {dashboard_socket}", dashboard_user, [f"{PREFIX}gateway.service"]))
-    units.append(render_view(cfg, databases, view_home))
+    if cfg["agentsview"]["enabled"]:
+        units.append(render_view(cfg, databases, view_home))
+    units.extend(render_mockups(cfg))
     units.insert(0, render_firewall(cfg))
     write(ETC / "toolchains.toml", toolchains.mise_config(cfg["toolchains"]), 0o644)
     install_toolchains(cfg, homes)
-    install_screenshots(cfg)
     units.extend(maintenance_units(cfg))
 
     path = ETC / "units"
@@ -3482,6 +3913,7 @@ def commission(prune, existing=False):
     reaches the session before the gateway restarts with it. That pass is best effort and renders nothing.
     """
     cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True))
+    flint = cfg["screenshots"] and screenshots.flint_ready(screenshots.pins())
     pinned, failed = [], []
     for person in cfg["members"]:
         # Captains with crew, and the rear admiral while agent dispatch is on (captains name its root).
@@ -3499,7 +3931,7 @@ def commission(prune, existing=False):
                 "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
                 "crew": [worker["id"] for worker in person["crew"]],
                 "model": session_model(harness),
-                "permissions": harness_permissions(cfg, person) if rear else captain_permissions(cfg, person),
+                "permissions": (harness_permissions if rear else captain_permissions)(cfg, person, flint=flint),
             }
             if person["crew"]:
                 # Stargate's crew state names the first repository's checkout as the default project, whether
@@ -3662,6 +4094,10 @@ def main(args):
         prune = tail[-1] == "true"
         require_usage_guard_source(cfg, installed_only=verb == "render")
         require_peer_message_source(cfg, installed_only=verb == "render")
+        require_officer_tool_sources(cfg, installed_only=verb == "render")
+        if (cfg["agentDispatch"] or {}).get("decisionOutcomeDms"):
+            require_decision_dm_source(cfg["stargate"]["repo"], cfg["stargate"]["ref"],
+                                       installed_only=verb == "render")
         if verb == "render":
             # Say once per install which captains keep a root other than the workspace, and why.
             for root in captain_roots(cfg).values():
@@ -3709,6 +4145,12 @@ def main(args):
             # The base screenshot tools' packages for this distribution, unless screenshots are off.
             wanted = screenshots.packages(screenshots.pins(), screenshots.release()) if cfg["screenshots"] else []
             (stage / "screenshot-packages").write_text("".join(f"{name}\n" for name in wanted))
+            if not cfg["agentsview"]["enabled"]:
+                (stage / "skip-agentsview").touch()
+            if not cfg["mockupPreviews"]["enabled"]:
+                (stage / "skip-caddy").touch()
+            if not cfg["impeccable"] or len(cfg["members"]) == 1:
+                (stage / "skip-impeccable").touch()
             sources = [cfg["stargate"]["repo"], cfg["stargate"]["ref"], cfg["irc"]["mode"]]
             if cfg["irc"]["mode"] == "local":
                 sources.extend(cfg["irc"]["compose"][key] for key in ("repo", "ref"))
@@ -3726,6 +4168,7 @@ def main(args):
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
             print(officer_models_line(cfg))
+            print(f"AgentsView: {'on' if cfg['agentsview']['enabled'] else 'off'}.")
             if cfg["usageGuard"]["enabled"] and saved_config and "usageGuard" not in saved_config:
                 print("This upgrade enables the usage guard. Pass --no-usage-guard in guided setup to keep it off.")
             print(usage_guard_line(cfg["usageGuard"], cfg["members"][0]))
@@ -3747,17 +4190,18 @@ def main(args):
                 count = sum(bool(person["crew"]) for person in cfg["members"][1:])
                 print(f"Captain peer messages requested for {count} crew-hosting captains. "
                       "Routes become available once two or more are pinned.")
-            if dispatch := cfg["agentDispatch"]:
+            if issue_dispatch_enabled(cfg):
+                dispatch = cfg["agentDispatch"]
                 print(f"Agent dispatch is on: the rear admiral checks {cfg['api']['url']} every "
                       f"{dispatch['pollIntervalSeconds']} seconds as its own API agent and offers issues in "
                       f"{cfg['irc']['commandChannel']}.")
             else:
                 print("Agent dispatch is off.")
+            if (cfg["agentDispatch"] or {}).get("decisionOutcomeDms"):
+                print("Decision outcome DMs are on for recording captains.")
             if enrolled(cfg):
-                print(f"The Subspace API is hosted at {cfg['api']['origin']}: each officer enrols its own key through "
-                      "Stargate with the fleet's enrolment token and reaches the API through its signing proxy. This "
-                      "VM keeps no administrator token and registers nothing; the API's administrators keep the "
-                      "fleet's records.")
+                print(f"Subspace API at {cfg['api']['origin']}: each officer enrols its own key through "
+                      "Stargate and uses its signing proxy. No administrator token is kept in the fleet configuration.")
                 if (APP / "src" / f"stargate-{cfg['stargate']['ref']}").is_dir():
                     require_subspace_agents(cfg)
                 else:
@@ -3785,6 +4229,10 @@ def main(args):
                 print(line)
             for line in screenshots.plan_lines(cfg["screenshots"], screenshots.pins(), screenshots.release()):
                 print(line)
+            preview = cfg["mockupPreviews"]
+            print(f"Captain previews: Caddy on loopback port {preview['port']}; links use {mockups.address(preview)}."
+                  if preview["enabled"] else "Captain previews are off.")
+            print("Captain Impeccable skill is " + ("on." if cfg["impeccable"] else "off."))
             for line in memory_lines(cfg, managed=managed):
                 print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
@@ -3826,6 +4274,9 @@ def main(args):
     elif verb == "workspace-instructions":
         # Run as the captain: its workspace AGENTS.md and CLAUDE.md, keeping the operator notes.
         provision_workspace(json.load(sys.stdin))
+    elif verb == "repo-refresh-policy":
+        require(len(tail) == 3, "Name an operation, configured repository, and peer UID.")
+        print(json.dumps(repository_refresh_policy(*tail)))
     elif verb == "agent-header":
         # Stargate's Claude backend runs this as the officer for its Subspace MCP server's headers.
         require(len(tail) == 1 and re.fullmatch(r"[a-z][a-z0-9-]{0,23}", tail[0]), "Name one agent account.")

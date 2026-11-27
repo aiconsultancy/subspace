@@ -220,6 +220,9 @@ fn conversation_event(
             view::open_channel(board, &buffer.network, name, cx);
         }
         ConversationEvent::Open(Ref::Issue(identifier)) => issues::open(identifier, &buffer, cx),
+        ConversationEvent::Open(Ref::Decision(identifier)) => {
+            crate::decision_references::open(board, identifier, &buffer, cx);
+        }
         ConversationEvent::Open(Ref::PullRequest(found)) => {
             pull_requests::open(found, &buffer, cx);
         }

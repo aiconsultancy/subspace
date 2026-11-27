@@ -15,6 +15,7 @@ use std::collections::HashSet;
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum ChoiceSource {
     States(String),
+    TrackerStates(String),
     Assignees,
     Labels,
     Estimates(String),
@@ -74,10 +75,14 @@ impl Client {
             return self.nett_choices(source);
         }
         match source {
-            ChoiceSource::States(project) => {
+            ChoiceSource::States(project) | ChoiceSource::TrackerStates(project) => {
                 let rows: Vec<WorkflowState> = all_pages(|p| self.workflow_states(project, p))?;
                 Ok(rows
                     .into_iter()
+                    .filter(|s| {
+                        !matches!(source, ChoiceSource::TrackerStates(_))
+                            || matches!(s.kind.as_str(), "backlog" | "unstarted")
+                    })
                     .map(|s| IssueChoice::new(s.id, s.name))
                     .collect())
             }
@@ -143,7 +148,7 @@ impl Client {
                 estimate_choices(self.nett_estimate_scale(team)?.as_deref())
             }
             // NETT milestones belong to planning projects, not teams.
-            ChoiceSource::Milestones(_) => Vec::new(),
+            ChoiceSource::Milestones(_) | ChoiceSource::TrackerStates(_) => Vec::new(),
             ChoiceSource::States(team) => {
                 let rows: Vec<WorkflowState> = self.nett_workflow_states(team)?.items;
                 rows.into_iter()

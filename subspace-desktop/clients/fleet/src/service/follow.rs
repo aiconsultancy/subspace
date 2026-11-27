@@ -10,11 +10,11 @@ use gpui_kit::Context;
 use subspace_framework::core::Secret;
 
 use super::FleetApi;
-use crate::feed::Feed;
+use crate::feed::{Feed, Link};
 use crate::{FleetAddress, FleetClient};
 
 /// How often followed fleets are checked for news.
-const TICK: Duration = Duration::from_millis(250);
+pub(super) const TICK: Duration = Duration::from_millis(250);
 
 /// Keeps a fleet followed while held. Dropping the last handle for a fleet
 /// lets its stream close.
@@ -37,6 +37,10 @@ pub(super) struct Followed {
     address: FleetAddress,
     token: Secret,
     revision: u64,
+    /// The feed's link as of the last check, so the service shows only a
+    /// change it has told its observers about, never one the feed's
+    /// thread made since.
+    pub(super) link: Link,
 }
 
 impl Followed {
@@ -46,6 +50,7 @@ impl Followed {
             token: client.token().clone(),
             feed: Feed::start(client),
             revision: u64::MAX,
+            link: Link::Connecting,
         }
     }
 
@@ -124,7 +129,10 @@ impl FleetApi {
         let mut news = self.interest.len() != interested;
         for followed in self.feeds.values_mut() {
             let revision = followed.feed.revision();
-            news |= std::mem::replace(&mut followed.revision, revision) != revision;
+            if std::mem::replace(&mut followed.revision, revision) != revision {
+                followed.link = followed.feed.link();
+                news = true;
+            }
         }
         if news {
             self.revision = self.revision.wrapping_add(1);

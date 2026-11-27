@@ -54,6 +54,8 @@ pub enum DecisionEvidenceKind {
 #[non_exhaustive]
 pub struct DecisionListItem {
     pub id: String,
+    #[serde(default)]
+    pub identifier: Option<String>,
     pub title: String,
     pub status: DecisionStatus,
     pub decided_on: String,

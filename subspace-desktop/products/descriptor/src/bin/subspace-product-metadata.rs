@@ -4,13 +4,21 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let [id, version] = args.as_slice() else {
-        eprintln!("usage: subspace-product-metadata <subspace> <version>");
+    let [id, version, target @ ..] = args.as_slice() else {
+        eprintln!("usage: subspace-product-metadata <subspace> <version> [release-target]");
         return ExitCode::from(2);
     };
-    let descriptor = subspace_descriptor::known_product_descriptors()
-        .into_iter()
-        .find(|product| &product.id == id);
+    let descriptor = match target {
+        [] => subspace_descriptor::known_product_descriptors()
+            .into_iter()
+            .find(|product| &product.id == id),
+        [target] => (id == subspace_descriptor::SUBSPACE_PRODUCT_ID)
+            .then(|| subspace_descriptor::subspace_descriptor_for_release_target(target)),
+        _ => {
+            eprintln!("usage: subspace-product-metadata <subspace> <version> [release-target]");
+            return ExitCode::from(2);
+        }
+    };
     let Some(mut descriptor) = descriptor else {
         eprintln!("unknown product: {id}");
         return ExitCode::from(2);

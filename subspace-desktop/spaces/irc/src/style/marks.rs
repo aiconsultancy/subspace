@@ -29,9 +29,7 @@ fn without_issues(
         .iter()
         .filter(|(link, _)| {
             !found.iter().any(|(range, found)| {
-                matches!(found, Ref::Issue(_) | Ref::PullRequest(_))
-                    && link.start < range.end
-                    && range.start < link.end
+                found.is_record() && link.start < range.end && range.start < link.end
             })
         })
         .cloned()

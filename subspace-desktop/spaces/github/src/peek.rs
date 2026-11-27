@@ -264,6 +264,17 @@ pub(crate) fn review_actions(allowed: Allowed) -> Vec<ItemAction> {
     actions
 }
 
+/// The most useful actions beside the pull request's title.
+pub(crate) fn page_actions(allowed: Allowed) -> impl Iterator<Item = ItemAction> {
+    [
+        (allowed.review, ItemAction::Approve),
+        (allowed.files, ItemAction::Files),
+        (allowed.close, ItemAction::Close),
+    ]
+    .into_iter()
+    .filter_map(|(allowed, action)| allowed.then_some(action))
+}
+
 /// How an action's button looks and what it asks of the Space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ActionLook {

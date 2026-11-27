@@ -216,6 +216,8 @@ struct Account {
     /// Sections shown from before a reload or from the disk cache. The list
     /// shows them; other Spaces get nothing from them until a refresh lands.
     unconfirmed: HashSet<&'static str>,
+    /// Displayed during a manual refresh, with broker answers waiting for a new read.
+    unconfirmed_details: HashSet<String>,
 }
 
 impl Account {
@@ -245,7 +247,6 @@ impl Account {
     }
 
     fn begin_reload(&mut self) -> bool {
-        self.details.clear();
         // Repeated Reload actions share the current manual refresh.
         if self.reloading_sections {
             return false;
@@ -253,6 +254,7 @@ impl Account {
         self.loaded_at = None;
         self.status.clear();
         self.unconfirm();
+        self.unconfirmed_details = self.details.keys().cloned().collect();
         true
     }
 
@@ -263,6 +265,7 @@ impl Account {
             started,
         );
         self.detail_errors.remove(&detail.item.key);
+        self.unconfirmed_details.remove(&detail.item.key);
         patch_sections(&mut self.sections, &detail.item);
         self.details.insert(detail.item.key.clone(), detail);
     }
@@ -540,6 +543,9 @@ impl Github {
     }
 
     fn load_accounts(&mut self, cx: &mut Context<Self>) {
+        if self._accounts_task.is_some() {
+            return;
+        }
         let Some(client) = self.client.clone() else {
             self.accounts_error = Some("GitHub is not configured.".into());
             self.rebuild(cx);
@@ -548,25 +554,29 @@ impl Github {
         self.accounts_error = None;
         self._accounts_task = Some(cx.spawn(async move |this, cx| {
             let result = cx.background_spawn(async move { client.accounts() }).await;
-            _ = this.update(cx, |this, cx| match result {
-                Ok(accounts) => {
-                    // Settings may have changed the saved account since this view started.
-                    let saved = prefs::get(cx, ACCOUNT_KEY).or_else(|| this.account.clone());
-                    let pick = accounts.pick(saved.as_deref());
-                    this.accounts = accounts.logins;
-                    match pick {
-                        Some(login) => this.set_account(login, cx),
-                        None => {
-                            this.accounts_error =
-                                Some("No gh accounts found; run gh auth login.".into());
-                            this.rebuild(cx);
+            _ = this.update(cx, |this, cx| {
+                this._accounts_task = None;
+                match result {
+                    Ok(accounts) => {
+                        // Settings may have changed the saved account since this view started.
+                        let saved = prefs::get(cx, ACCOUNT_KEY).or_else(|| this.account.clone());
+                        let pick = accounts.pick(saved.as_deref());
+                        this.accounts = accounts.logins;
+                        match pick {
+                            Some(login) => this.set_account(login, cx),
+                            None => {
+                                this.accounts_error =
+                                    Some("No gh accounts found; run gh auth login.".into());
+                                this.rebuild(cx);
+                            }
                         }
                     }
+                    Err(error) => {
+                        this.accounts_error = Some(error_text(&error));
+                        this.rebuild(cx);
+                    }
                 }
-                Err(error) => {
-                    this.accounts_error = Some(error_text(&error));
-                    this.rebuild(cx);
-                }
+                references::announce(cx);
             });
         }));
     }
@@ -690,7 +700,7 @@ impl Github {
             .unwrap_or_default()
     }
 
-    fn invalidate_for_reload(&mut self) {
+    fn invalidate_for_reload(&mut self, cx: &mut Context<Self>) {
         let Some(account_key) = self.account.as_ref().map(|login| login.to_lowercase()) else {
             return;
         };
@@ -700,6 +710,8 @@ impl Github {
             .is_none_or(Account::begin_reload)
         {
             self.advance_read_generation(account_key);
+            references::reset_reads(self);
+            references::announce(cx);
         }
     }
 
@@ -744,6 +756,7 @@ impl Github {
         self.detail_key = Some(key.clone());
         let fresh = self.find_item(&key).is_some_and(|item| {
             self.account_data()
+                .filter(|account| !account.unconfirmed_details.contains(&key))
                 .and_then(|account| account.details.get(&key))
                 .is_some_and(|detail| detail.item.updated_at == item.updated_at)
         });
@@ -783,15 +796,20 @@ impl Github {
     }
 
     fn poll_visible_detail(&mut self, cx: &mut Context<Self>) {
-        if self.writing
-            || self
-                ._detail_task
-                .as_ref()
-                .is_some_and(|task| !task.is_ready())
+        if self
+            ._detail_task
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
         {
             return;
         }
-        if let Some(key) = self.visible_detail_key().map(str::to_owned) {
+        self.refresh_visible_detail(cx);
+    }
+
+    fn refresh_visible_detail(&mut self, cx: &mut Context<Self>) {
+        if !self.writing
+            && let Some(key) = self.visible_detail_key().map(str::to_owned)
+        {
             self.fetch_detail(key, false, cx);
         }
     }
@@ -800,9 +818,6 @@ impl Github {
         let (Some(client), Some(login)) = (self.client.clone(), self.account.clone()) else {
             return;
         };
-        if let Some(account) = self.account_data_mut() {
-            account.detail_errors.remove(&key);
-        }
         search_index::load(
             self,
             search_index::Request {
@@ -1448,7 +1463,9 @@ impl Github {
             _ = weak.update(cx, |this, cx| this.set_mode(mode, window, cx));
         });
         Some(
-            div()
+            v_flex()
+                .w_full()
+                .min_w_0()
                 .children(switch)
                 .child(composer.entity.clone())
                 .into_any_element(),
@@ -1513,12 +1530,13 @@ impl Dashboard for Github {
 
     fn contracts() -> subspace_framework::dashboard::contracts::BoardContracts {
         use subspace_framework::contracts::github::OpenPullRequest;
-        use subspace_framework::contracts::github::{Changed, ResolvePullRequests};
+        use subspace_framework::contracts::github::{AccessChanged, Changed, ResolvePullRequests};
         use subspace_framework::dashboard::contracts::{BoardContracts, Declaration};
         const CONTRACTS: BoardContracts = BoardContracts::new(&[
             Declaration::responds::<OpenPullRequest>(),
             Declaration::responds::<ResolvePullRequests>(),
             Declaration::publishes::<Changed>(),
+            Declaration::publishes::<AccessChanged>(),
         ]);
         CONTRACTS
     }
@@ -1791,9 +1809,8 @@ impl Dashboard for Github {
             self.start(cx);
             return;
         }
-        self.invalidate_for_reload();
+        self.invalidate_for_reload(cx);
         self._detail_task = None;
-        references::forget(self, cx);
         if self.account.is_none() || self.accounts.is_empty() {
             self.load_accounts(cx);
             return;

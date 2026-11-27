@@ -2,9 +2,9 @@
 //! IRC never names the Space that answers: the hub asks for short summaries
 //! of the pull requests on screen, the distinct ones a frame shows in one
 //! request of at most 50, keyed by canonical `owner/repo#n`. The answering
-//! Space reads them with its own current account. On `changed` (another
-//! account, a sign-out, or reads that landed) every answer is forgotten, so
-//! no detail outlives the account that could read it. With no answering
+//! Space reads them with its own current account. `changed` revalidates
+//! each answer and keeps it visible while the read runs. `access-changed`
+//! forgets the answers as soon as their account changes. With no answering
 //! Space the chips stay and say their details are unavailable. Answers live
 //! in memory only, never in IRC's store or search.
 
@@ -14,7 +14,7 @@ mod slot;
 mod tile;
 mod tooltip;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use subspace_framework::contracts::github::{
     MAX_RESOLVE, Resolution, ResolutionState, ResolvePullRequests,
@@ -26,10 +26,11 @@ pub(crate) use slot::slot;
 pub(crate) use tooltip::tooltip;
 
 /// What the answering Space said about the pull requests shown, since the
-/// last `changed`.
+/// current account was selected.
 #[derive(Default)]
 pub(crate) struct PullRequestReferences {
     answers: HashMap<String, ResolutionState>,
+    stale: HashSet<String>,
     /// Shown keys to ask about, in the order they were shown.
     wanted: Vec<String>,
     /// Whether a request for `wanted` is already deferred.
@@ -42,17 +43,27 @@ impl PullRequestReferences {
         self.answers.get(key)
     }
 
-    /// After `changed`: forget every answer, so each is asked again.
+    /// After `access-changed`: forget every answer, so each is asked again.
     pub fn changed(&mut self) {
         self.answers.clear();
+        self.stale.clear();
         self.wanted.clear();
+    }
+
+    /// Revalidate summaries without dropping the contents of existing tiles.
+    pub fn refreshed(&mut self) -> bool {
+        let before = self.stale.len();
+        self.stale.extend(self.answers.keys().cloned());
+        self.stale.len() != before
     }
 
     /// Notes the keys a row shows. Those not yet answered are wanted; true
     /// when a request has to be scheduled for them.
     pub fn want(&mut self, keys: impl IntoIterator<Item = String>) -> bool {
         for key in keys {
-            if !self.answers.contains_key(&key) && !self.wanted.contains(&key) {
+            if (!self.answers.contains_key(&key) || self.stale.contains(&key))
+                && !self.wanted.contains(&key)
+            {
                 self.wanted.push(key);
             }
         }
@@ -75,6 +86,14 @@ impl PullRequestReferences {
         let mut changed = false;
         for resolution in answers {
             let key = resolution.key.to_ascii_lowercase();
+            self.stale.remove(&key);
+            if matches!(
+                resolution.state,
+                ResolutionState::Pending | ResolutionState::Failed
+            ) && matches!(self.answers.get(&key), Some(ResolutionState::Available(_)))
+            {
+                continue;
+            }
             let previous = self.answers.insert(key, resolution.state.clone());
             changed |= previous.is_none_or(|previous| previous != resolution.state);
         }

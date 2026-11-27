@@ -111,6 +111,45 @@ Not verified: the system keychain in a release build (capture builds keep
 tokens in `fleet-api-tokens.json`), a real Stargate, more than one fleet,
 and Fleet Console's own fleet beside an API fleet at another address.
 
+## A followed fleet's link changes only when announced
+
+`settings::tests::a_pasted_token_is_saved_replaced_and_cleared_from_settings`
+failed now and then under load, at the second save (the store still held
+`first-token`) or at Clear token (the pasted token stayed in the field).
+Each save starts a feed on its own thread, and in the test it connects to a
+closed port and turns `Unreachable` a few tens of milliseconds later, at a
+moment the test does not control. `FleetApi::info` read the feed's link
+live, so any frame showed the new link, and with it the "Cannot reach this
+address" line above the token buttons, although the service announces
+feed changes only on its check every 250 ms, which never ran in the test.
+A test click renders a frame between moving the pointer, pressing and
+releasing; when the link changed between those frames the button moved
+from under the pointer and the click was lost.
+
+The service now takes each followed fleet's link when its check sees the
+feed's revision change, the same check that notifies observers, and
+`state` and `fleets` show that link. In the app a page could show the
+status line, and move the buttons, up to 250 ms before the service
+announced it; it now changes only with the announcement.
+
+`service::tests::a_followed_fleets_link_changes_only_with_an_announced_check`
+puts a feed with no thread in place of the followed fleet's feed
+(`Feed::detached`, test builds only), changes its link and checks that the
+state keeps the announced link, with no notification, until the next
+check, which shows the new link and notifies once. Before the fix it
+failed straight after the link changed (`left: Followed(Unreachable)`,
+`right: Followed(Connecting)`).
+
+Measured on a 16-core Linux machine, running the compiled test binary
+directly; before is the test commit without the fix.
+
+| Run | Before | After |
+| --- | --- | --- |
+| The new service test | Failed, as above | Passed |
+| The settings test, 200 runs beside three loops of the crate's tests and a busy loop per core | 11 failed: 4 at the second save, 7 at Clear token | 200 passed |
+| The settings test with each `connect` held 26, 27 or 28 ms by strace and a one-certificate bundle, 10 runs each | 26 of 30 failed | 30 passed |
+| The crate's library tests | | 61 passed |
+
 ## Tasks
 
 - [x] `fleetApiUrl` in the API client model and the capture fixture.

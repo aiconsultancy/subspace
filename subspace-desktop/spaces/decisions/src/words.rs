@@ -239,7 +239,10 @@ pub(crate) fn row_label(item: &DecisionListItem, people: &People) -> String {
     let mut parts = vec![
         item.title.clone(),
         status(item.status).to_owned(),
-        item.project_key.clone(),
+        item.identifier
+            .as_ref()
+            .unwrap_or(&item.project_key)
+            .clone(),
         format!("made by {}", maker_short(item, people)),
     ];
     parts.extend(

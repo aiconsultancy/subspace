@@ -25,7 +25,7 @@ impl EditTarget {
     }
     pub(crate) fn property(label: &str, tracker: bool) -> Option<Self> {
         Some(match label {
-            "State" if !tracker => Self::Property(Field::State),
+            "State" if !tracker || !crate::pickers::teams() => Self::Property(Field::State),
             "Project"
                 if !crate::pickers::teams() && subspace_api_client::capabilities().issue_moves =>
             {

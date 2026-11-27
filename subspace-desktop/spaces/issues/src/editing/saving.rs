@@ -5,7 +5,7 @@ use subspace_api_client::{
     model::{IssueDetail, Project},
 };
 
-use super::{Field, IssueEditor, Phase, TextValues};
+use super::{Field, IssueEditor, Phase, TextValues, confirmation::ChildChanges};
 use crate::Issues;
 
 enum Target {
@@ -104,6 +104,15 @@ impl Issues {
     }
 
     pub(super) fn save_issue_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_with_children(ChildChanges::default(), window, cx);
+    }
+
+    pub(super) fn save_with_children(
+        &mut self,
+        children: ChildChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(editor), Some(hub)) = (self.editor.as_mut(), self.hub.clone()) else {
             return;
         };
@@ -112,6 +121,7 @@ impl Issues {
             || matches!(
                 editor.phase,
                 Phase::Conflict(_)
+                    | Phase::ConfirmingChildren(_)
                     | Phase::Unconfirmed
                     | Phase::CheckFailed
                     | Phase::SeveralMatches
@@ -120,7 +130,7 @@ impl Issues {
             return;
         }
         editor.summary_validation = true;
-        let task = match Save::from_editor(editor, cx) {
+        let mut task = match Save::from_editor(editor, cx) {
             Ok(task) => task,
             Err(error) => {
                 editor.phase = Phase::Failed(error);
@@ -128,6 +138,12 @@ impl Issues {
                 return;
             }
         };
+        if let Some(confirmation) = children.confirmation(editor) {
+            editor.phase = Phase::ConfirmingChildren(confirmation);
+            cx.notify();
+            return;
+        }
+        children.install(&mut task.changes);
         let key = editor.key.value();
         editor.phase = Phase::Sending;
         cx.spawn_in(window, async move |this, cx| {

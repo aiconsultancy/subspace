@@ -53,7 +53,9 @@ fn disabled_reason(editor: &IssueEditor, field: Field) -> Option<&'static str> {
         Field::Project if editor.editing_existing() => {
             Some("Move the issue from Properties after saving or discarding this draft.")
         }
-        Field::State if editor.properties.tracker() => {
+        Field::State
+            if editor.properties.tracker() && !editor.properties.can_move_tracker_children() =>
+        {
             Some("Tracker state is derived from its children.")
         }
         Field::Cycle if editor.properties.tracker() => {

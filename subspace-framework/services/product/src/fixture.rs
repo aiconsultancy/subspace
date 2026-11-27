@@ -78,6 +78,7 @@ pub fn descriptor_for(channel: Channel) -> ProductDescriptor {
             .map(|(id, default_enabled)| BoardDescriptor {
                 id: (*id).into(),
                 aliases: Vec::new(),
+                former_ids: Vec::new(),
                 default_enabled: *default_enabled,
             })
             .collect(),

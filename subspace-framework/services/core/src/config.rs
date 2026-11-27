@@ -253,8 +253,19 @@ fn open_to_others(_file: &Path) -> bool {
 }
 
 /// Parses the text of the config file. `file` names the file in notices.
+/// Settings saved under a Space's former id are read as the Space's own (see
+/// [`crate::former_ids`]).
 pub fn parse(text: &str, file: &Path) -> (Config, Vec<Notice>) {
-    parser::parse(text, file)
+    parse_with(text, file, &crate::former_ids::installed())
+}
+
+/// As [`parse`], with the former ids `renames`.
+pub(crate) fn parse_with(
+    text: &str,
+    file: &Path,
+    renames: &crate::former_ids::Renames,
+) -> (Config, Vec<Notice>) {
+    parser::parse(text, file, renames)
 }
 
 /// `owner/name` as `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`.

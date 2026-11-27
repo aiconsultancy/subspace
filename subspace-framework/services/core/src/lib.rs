@@ -11,6 +11,7 @@ pub mod diagnostics;
 mod executable_tests;
 pub mod features;
 pub mod file_id;
+pub mod former_ids;
 pub mod http;
 pub mod keychain;
 pub mod keyed_request;

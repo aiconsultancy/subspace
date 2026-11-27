@@ -51,9 +51,20 @@ pub(crate) fn mount_at(
     cx: &mut TestAppContext,
     width: f32,
 ) -> (Entity<Issues>, &mut VisualTestContext) {
+    mount_with_tab(cx, width, Some(Tab::Active))
+}
+
+pub(crate) fn mount_with_tab(
+    cx: &mut TestAppContext,
+    width: f32,
+    tab: Option<Tab>,
+) -> (Entity<Issues>, &mut VisualTestContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         subspace_framework::dashboard::prefs::init_file(None, cx);
+        if let Some(tab) = tab {
+            subspace_framework::dashboard::prefs::set(cx, "issues.tab", tab.key());
+        }
         subspace_framework::dashboard::bind_keys(cx);
         Issues::bind_keys(cx);
     });

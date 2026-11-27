@@ -21,6 +21,7 @@ pub(super) fn root_context_for(space: &str) -> ProductContext {
     descriptor.boards = vec![BoardDescriptor {
         id: space.into(),
         aliases: vec![],
+        former_ids: vec![],
         default_enabled: true,
     }];
     descriptor.command_mount = CommandMount::Root;

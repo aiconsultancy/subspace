@@ -222,6 +222,10 @@ record. [Change records](changes/README.md) explains the convention.
   listing every decision, built on the workspace shell.
 - [Decision authoring](changes/decision-authoring/README.md): create and review
   proposals, handle version conflicts and read immutable revisions.
+- [Decision references and workspace refinements](changes/desktop-decision-identifiers/README.md):
+  decision links, initiative selection, refresh controls, PR review and typography.
+- [Decision and pull request reference refresh](changes/desktop-reference-refresh/README.md)
+  covers initiative reads, decision chip compatibility and Channels summary refresh.
 - [Fleet roles in Channels](changes/channels-fleet-roles/README.md): rank
   marks for captains and the rear admiral, a ship channel's live status,
   connection commands in **More**, state dots on references and a counted
@@ -258,6 +262,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Unreleased Spaces](changes/unreleased-spaces/intent.md): Space Lab (then
   Board Lab) and the Component gallery as Cargo features left out of release
   builds.
+- [AgentsView Space](changes/agentsview/README.md): the fleet's session
+  browser, included in standard macOS and Windows builds, with installer and
+  in-app connection settings.
 - [Fleet Console built in](changes/fleet-console-built-in/README.md): Fleet
   Console in every macOS and Windows build without an install, and the
   fictional Stargate Fleet API that captures show it live against.

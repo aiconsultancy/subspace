@@ -45,10 +45,14 @@ once.
 The list groups decisions by status: **Proposed**, **Accepted**,
 **Superseded**, then **Rejected**. In **All decisions**, Superseded and
 Rejected start folded; a search opens every group. Within a group the most
-recently decided come first. A row shows the project key, the title, a
+recently decided come first. A row shows the decision reference, such as
+`D-00042-EXA`, the title, a
 **supersedes** or **superseded** mark, the number of linked issues, who made
 the decision (a person's name, or an agent's name and rank) and the date it
-was decided. Superseded and rejected titles read quietly.
+was decided. Superseded and rejected titles read quietly. The detail page
+also shows the reference. Paste it into a Channels message to share the
+decision. **Back** returns to the channel or direct message it came from, or
+to the Decisions list when opened there.
 
 The status bar shows **Subspace API**, the signed-in account, the number of
 decisions and when the list was read. A failed reload keeps the decisions
@@ -69,8 +73,9 @@ the list first, so if its read fails the Space says why and offers
 Type in a menu to find an option. Use the arrow keys and Enter to choose it.
 Escape, Tab or a click outside closes the menu.
 
-**Reload**, or `r`, reads the list again, with the account, its projects and
-its people. Showing the Space reads a list that is more than a minute old.
+**Refresh**, or `r`, rereads the list, account, projects and people. It
+also rereads the decision when its page is open. Showing the Space reads a
+list that is more than a minute old.
 
 ## Details
 
@@ -131,9 +136,10 @@ maker and provide an evidence type and reference. For a Subspace comment, use
 the ID of a comment written by that maker. Evidence stays available on the
 decision page.
 
-Open a proposed decision to **Edit**, **Accept**, or **Reject** it. These
-actions are available on active projects to members allowed to change the
-proposal. If the record changed while you were editing, the app keeps your
+Select a proposed decision in the list and use **Accept** in the toolbar.
+Confirming opens the accepted decision. Open a proposed decision to **Edit**,
+**Accept**, or **Reject** it from the detail page. These actions are
+available on active projects to members allowed to change the proposal. If the record changed while you were editing, the app keeps your
 draft and shows the current revision. Select **Use current version** after
 reviewing it, then save again. Your link and tag changes are applied to the
 current list. If the API returns only some of a decision's linked issues,

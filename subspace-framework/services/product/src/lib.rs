@@ -9,6 +9,7 @@ mod descriptor;
 mod error;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
+mod former;
 mod host_command;
 mod identity;
 mod integration;
@@ -27,6 +28,7 @@ pub use descriptor::{
     validate_known_products, validate_product,
 };
 pub use error::ProductError;
+pub use former::{BoardIdUse, SAVED_NAMES};
 pub use host_command::{
     COMPLETE_WORD_COMMAND, HostCommand, host_command, reserved_group_words, reserved_leaf_words,
 };
@@ -34,7 +36,7 @@ pub use identity::{
     Identity, parse_asset_path, parse_bundle_id, parse_display_name, parse_identity,
 };
 pub use integration::is_integration_version;
-pub use mcp::{MCP_COMMAND, MCP_DEFAULT_BIND, MCP_USAGE};
+pub use mcp::{MCP_APPLICATION_GROUP, MCP_COMMAND, MCP_DEFAULT_BIND, MCP_USAGE};
 pub use metadata::product_metadata;
 pub use paths::{ConfigRoots, board_root, product_config_roots, product_data_name};
 pub use platform::{OsKind, PlatformEnv};

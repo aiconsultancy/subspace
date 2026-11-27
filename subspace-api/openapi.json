@@ -1221,6 +1221,316 @@
         }
       }
     },
+    "/api/v1/fleets/{fleetId}/decision-outcomes": {
+      "get": {
+        "tags": [
+          "fleets"
+        ],
+        "operationId": "fleets.listDecisionOutcomes",
+        "parameters": [
+          {
+            "name": "fleetId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[Ee][+-]?\\d+)?$"
+            },
+            "required": false
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                            "format": "uuid"
+                          },
+                          "identifier": {
+                            "type": "string"
+                          },
+                          "recordedByUserId": {
+                            "type": "string",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                            "format": "uuid"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "accepted",
+                              "rejected"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "identifier",
+                          "recordedByUserId",
+                          "status",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleets/{fleetId}/decision-outcomes/{id}/delivered": {
+      "post": {
+        "tags": [
+          "fleets"
+        ],
+        "operationId": "fleets.acknowledgeDecisionOutcome",
+        "parameters": [
+          {
+            "name": "fleetId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "<No Content>"
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/fleets/{fleetId}/ships": {
       "get": {
         "tags": [
@@ -18365,6 +18675,26 @@
                       }
                     ]
                   },
+                  "assignUnassignedChildren": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "moveOpenChildren": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "version": {
                     "type": "integer",
                     "minimum": 1,
@@ -24017,9 +24347,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           }
@@ -24132,9 +24470,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           }
@@ -24399,9 +24745,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           }
@@ -24551,9 +24905,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           },
@@ -24769,9 +25131,17 @@
             "name": "id",
             "in": "path",
             "schema": {
-              "type": "string",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-              "format": "uuid"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                }
+              ]
             },
             "required": true
           },
@@ -34301,6 +34671,162 @@
         }
       }
     },
+    "/api/v1/pairing": {
+      "get": {
+        "tags": [
+          "pairing"
+        ],
+        "operationId": "pairing.pairingCapabilities",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "PairingCapabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingCapabilities"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          }
+        },
+        "description": "Whether this API pairs devices, and the device token profile a paired device signs with. It needs no token and tells nothing secret, so a client can check it before it sends an invite: an API that predates pairing answers 404, and one that does not pair devices answers enabled false."
+      }
+    },
+    "/api/v1/pairing/redeem": {
+      "post": {
+        "tags": [
+          "pairing"
+        ],
+        "operationId": "pairing.redeemPairingInvite",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "201": {
+            "description": "DevicePaired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicePaired"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "A person's device registers its own certificate as one of the invite's member's device credentials, and spends the invite (201). The invite, which begins spair1., is sent in the JSON body only. Problems carry a stable type: urn:subspace:problem:invalid-request (400) for a missing or unsupported content type, malformed body or fields (including an invite field longer than 256 characters), or a certificate that is not Ed25519 or P-256; urn:subspace:problem:pairing-invite-unusable (401) for an otherwise valid request with an unknown, malformed, expired, revoked or used invite, or one whose member can no longer pair, all with the same detail; urn:subspace:problem:credential-conflict (409) for a certificate already registered or revoked; urn:subspace:problem:pairing-unavailable (404) when this API does not pair devices. A redemption retry with the same invite returns 401 if the first attempt committed. While the outcome is unknown, keep the pending key and certificate. While the invite may still be usable, retry with the same invite and certificate, then check with a freshly signed GET /api/v1/me. A 200 confirms pairing. Even a second /me 401 does not rule out an in-flight commit. Ask for a new invite only after the original invite is refused as unusable and a fresh /me still returns 401 with the audience and clock checked, or after an administrator confirms the original invite cannot be redeemed and the pending device is not active. Otherwise keep the pending record. Asking for a replacement invite never permits discarding a pending key whose outcome is still unknown; pair the replacement with a new key. Expiry is judged by the database's clock, so every API replica gives the same answer.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingRedemption"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
     "/api/v1/audit": {
       "get": {
         "tags": [
@@ -36655,6 +37181,170 @@
         ],
         "additionalProperties": false
       },
+      "DevicePaired": {
+        "type": "object",
+        "properties": {
+          "memberId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "organisationId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "credentialId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "api"
+              ]
+            }
+          },
+          "deviceToken": {
+            "$ref": "#/components/schemas/DeviceTokenProfile"
+          }
+        },
+        "required": [
+          "memberId",
+          "organisationId",
+          "credentialId",
+          "fingerprint",
+          "scopes",
+          "deviceToken"
+        ],
+        "additionalProperties": false
+      },
+      "DeviceTokenProfile": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "subspace-device+jwt"
+            ]
+          },
+          "issuer": {
+            "type": "string",
+            "enum": [
+              "subspace-device"
+            ]
+          },
+          "audience": {
+            "type": "string"
+          },
+          "algorithms": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "EdDSA",
+                "ES256"
+              ]
+            }
+          },
+          "maxLifetimeSeconds": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "clockToleranceSeconds": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "type",
+          "issuer",
+          "audience",
+          "algorithms",
+          "maxLifetimeSeconds",
+          "clockToleranceSeconds"
+        ],
+        "additionalProperties": false
+      },
+      "PairingRedemption": {
+        "type": "object",
+        "properties": {
+          "invite": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "certificate": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "invite",
+          "certificate"
+        ],
+        "additionalProperties": false
+      },
+      "PairingCapabilities": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "inviteVersion": {
+            "type": "string",
+            "enum": [
+              "spair1"
+            ]
+          },
+          "redeemPath": {
+            "type": "string",
+            "enum": [
+              "/api/v1/pairing/redeem"
+            ]
+          },
+          "deviceToken": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeviceTokenProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "enabled",
+          "inviteVersion",
+          "redeemPath",
+          "deviceToken"
+        ],
+        "additionalProperties": false
+      },
       "AgentEnrolmentCheckResult": {
         "type": "object",
         "properties": {
@@ -37704,6 +38394,10 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
             "format": "uuid"
           },
+          "identifier": {
+            "type": "string",
+            "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+          },
           "title": {
             "type": "string",
             "maxLength": 200,
@@ -37790,6 +38484,10 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
                     "format": "uuid"
                   },
+                  "identifier": {
+                    "type": "string",
+                    "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                  },
                   "title": {
                     "type": "string",
                     "maxLength": 200,
@@ -37807,6 +38505,7 @@
                 },
                 "required": [
                   "id",
+                  "identifier",
                   "title",
                   "status"
                 ],
@@ -37827,6 +38526,10 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
                     "format": "uuid"
                   },
+                  "identifier": {
+                    "type": "string",
+                    "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                  },
                   "title": {
                     "type": "string",
                     "maxLength": 200,
@@ -37844,6 +38547,7 @@
                 },
                 "required": [
                   "id",
+                  "identifier",
                   "title",
                   "status"
                 ],
@@ -38101,6 +38805,7 @@
           "rejectedByUserId",
           "provenance",
           "id",
+          "identifier",
           "title",
           "status",
           "decidedOn",
@@ -38285,6 +38990,10 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
             "format": "uuid"
           },
+          "identifier": {
+            "type": "string",
+            "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+          },
           "title": {
             "type": "string",
             "maxLength": 200,
@@ -38371,6 +39080,10 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
                     "format": "uuid"
                   },
+                  "identifier": {
+                    "type": "string",
+                    "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                  },
                   "title": {
                     "type": "string",
                     "maxLength": 200,
@@ -38388,6 +39101,7 @@
                 },
                 "required": [
                   "id",
+                  "identifier",
                   "title",
                   "status"
                 ],
@@ -38408,6 +39122,10 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
                     "format": "uuid"
                   },
+                  "identifier": {
+                    "type": "string",
+                    "pattern": "^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$"
+                  },
                   "title": {
                     "type": "string",
                     "maxLength": 200,
@@ -38425,6 +39143,7 @@
                 },
                 "required": [
                   "id",
+                  "identifier",
                   "title",
                   "status"
                 ],
@@ -38672,6 +39391,7 @@
         },
         "required": [
           "id",
+          "identifier",
           "title",
           "status",
           "decidedOn",
@@ -42479,6 +43199,9 @@
     },
     {
       "name": "enrolment"
+    },
+    {
+      "name": "pairing"
     },
     {
       "name": "audit"

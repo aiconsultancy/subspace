@@ -11,10 +11,10 @@ publish.workspace = true
 subspace-framework = { workspace = true, default-features = false }
 
 [features]
-# Spaces outside the release build. Only the app turns these on, through its
-# features of the same names, so the descriptor never lists a Space the
-# binary does not register. The metadata helper builds without them, as a
-# release does.
+# The app enables descriptor features alongside the matching Space.
+# The host-side packaging helper uses the requested release target instead.
+copilot = []
+agentsview = []
 space-lab = []
 component-gallery = []
 

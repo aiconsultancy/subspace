@@ -83,3 +83,39 @@ fn a_decision_that_is_gone_says_so(cx: &mut TestAppContext) {
     crate::tests::render(cx);
     assert!(has(cx, "decisions-page-gone"));
 }
+
+#[gpui_kit::test]
+fn a_link_reads_by_reference_and_back_restores_its_source(cx: &mut TestAppContext) {
+    use std::{cell::RefCell, rc::Rc};
+    use subspace_framework::dashboard::{DashboardEvent, ReturnPoint};
+
+    let (board, cx) = mount(cx);
+    select(&board, "d3", cx);
+    let origin = ReturnPoint {
+        board: "irc",
+        label: "#ops".into(),
+        location: Some("ops-buffer".into()),
+    };
+    let returned = Rc::new(RefCell::new(None));
+    let _subscription = cx.update(|_, cx| {
+        let received = returned.clone();
+        cx.subscribe(&board, move |_, event: &DashboardEvent, _| {
+            if let DashboardEvent::Return(point) = event {
+                *received.borrow_mut() = Some(point.clone());
+            }
+        })
+    });
+    board.update(cx, |board, cx| {
+        board.arrived_from(Some(origin.clone()), cx);
+        assert!(board.open_link("subspace-decision:d-00002-nav", cx));
+    });
+    crate::tests::render(cx);
+    assert_eq!(
+        label(cx, "decisions-page-reference").as_deref(),
+        Some("D-00002-NAV")
+    );
+    click(cx, "decisions-page-back");
+    assert_eq!(returned.borrow().as_ref(), Some(&origin));
+    assert!(!has(cx, "decisions-page"));
+    assert_eq!(selected(&board, cx).as_deref(), Some("decision:d3"));
+}

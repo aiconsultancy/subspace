@@ -7,7 +7,11 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
-load_product
+if [[ "$(uname -s)" = Darwin ]]; then
+    load_product aarch64-apple-darwin
+else
+    load_product
+fi
 build_args=(build --locked -p "$binary_name")
 if [ -n "${SUBSPACE_BUILD_FEATURES:-}" ]; then
     build_args+=(--features "$SUBSPACE_BUILD_FEATURES")

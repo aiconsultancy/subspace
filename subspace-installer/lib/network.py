@@ -58,12 +58,12 @@ def egress_rules(officers, dns, allowed):
     return ruleset
 
 
-def rules(ports, admins, model_clients, view_user, *, officers=(), dns=(), allowed=()):
+def rules(ports, admins, model_clients, view_user, *, officers=(), dns=(), allowed=(), preview_clients=()):
     """Match local client socket owners, independently of the listener UID."""
     admin_ids = {0, *admins}
     listeners = ", ".join(str(port) for port in sorted(ports.values()))
     output = []
-    service_clients = {"proxy": set(model_clients), "agentsview": {view_user}}
+    service_clients = {"proxy": set(model_clients), "agentsview": {view_user}, "previews": set(preview_clients)}
     for service, port in ports.items():
         users = admin_ids | service_clients.get(service, set())
         ids = ", ".join(str(uid) for uid in sorted(users))

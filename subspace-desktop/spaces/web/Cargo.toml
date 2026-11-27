@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+agentsview = []
+
 [dependencies]
 subspace-framework.workspace = true
 # The fleets and tokens the built-in Fleet Console reads (`fleets.get`).

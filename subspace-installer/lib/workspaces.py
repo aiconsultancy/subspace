@@ -48,14 +48,15 @@ def check_origin(user, repo, source):
         raise ValueError(f"Repository {repo.name} already has a different URL. Use a new repository ID.")
 
 
-def private_credentials(helper, source, member=None):
+def private_credentials(helper, source, member=None, timeout=None):
     if member is None:
         command = f"!{shlex.quote(str(helper))} credential-read"
         token = {}
     else:
         # The reference checkout belongs to a service UID. Mint its read-only
         # token as the rear admiral and hand it to Git without a file or argv.
-        value = as_user(member, helper, "bootstrap-token", source, output=True)
+        limit = ["/usr/bin/timeout", "--kill-after=2s", f"{timeout}s"] if timeout else []
+        value = as_user(member, *limit, helper, "bootstrap-token", source, output=True)
         token = {"SUBSPACE_GIT_TOKEN": value}
         command = """!f() { printf 'username=x-access-token\npassword=%s\n' "$SUBSPACE_GIT_TOKEN"; }; f"""
     return {

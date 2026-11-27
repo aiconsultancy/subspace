@@ -125,11 +125,11 @@ notice, whether or not they are installed. In an app that embeds neither,
 the automatic fonts are used where they are not installed, and the app and
 Settings say so.
 
-It also sets the mock-ups' sizes: 13 px body text and 11.5 px code, 32 px
+It uses 14 px body text and 12.5 px code, 32 px
 rows whose selection is inset 8 px with 6 px corners, text 16 px in from
 every panel's edge, 34 px tab strip and dock headers, a 36 px toolbar whose
-buttons are 24 px high with 12.5 px text and 6 px corners, a 38 px title bar
-with 26 px Space tabs and 13 px tab labels, and flat buttons without Liquid
+buttons are 24 px high with 13.5 px text and 6 px corners, a 38 px title bar
+with 26 px Space tabs and 14 px tab labels, and flat buttons without Liquid
 Glass. Other themes keep their own sizes and colours.
 
 Its syntax colours, and other colours the mock-ups do not set, come from

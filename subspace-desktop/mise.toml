@@ -39,11 +39,12 @@ description = "Run the tests"
 # The workspace with the unreleased Spaces and Copilot chat built in, so
 # their registration, descriptor and audit tests run and the optional Copilot
 # engine keeps compiling; then the release configuration of the app and its
-# descriptor alone, without either. The second run rebuilds what the feature
-# change touches: the Framework facade and the Spaces, clients and app above it.
+# descriptor alone, without either. A third run exercises the build-time
+# AgentsView opt-out while keeping Report issue.
 run = [
     "cargo test --workspace --locked --features subspace/unreleased-spaces,subspace/copilot",
     "cargo test --locked -p subspace -p subspace-descriptor",
+    "cargo test --locked -p subspace -p subspace-descriptor --no-default-features --features subspace/report-issue",
 ]
 
 [tasks.space-lab-examples]
@@ -61,7 +62,7 @@ run = "bash scripts/test-scripts.sh"
 [tasks.web-bridge-test]
 description = "Test the web Space JavaScript bridge without a browser"
 tools = { node = "26.5.0" }
-run = "node --test spaces/web/tests/bridge.test.mjs"
+run = "node --test spaces/web/tests/*.test.mjs"
 
 [tasks.weather-space-test]
 description = "Test the installable Weather web Space without network access"

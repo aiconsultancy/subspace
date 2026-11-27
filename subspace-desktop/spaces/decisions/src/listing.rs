@@ -93,13 +93,18 @@ fn group(status: DecisionStatus, items: &[&DecisionListItem]) -> Group {
     }
 }
 
-/// A row: the project key in the id column, then the title. Its lanes are
+/// A row: the decision reference in the id column, then the title. Its lanes are
 /// drawn by the Space from the decision itself.
 fn row(item: &DecisionListItem) -> Row {
     Row {
         key: row_key(&item.id),
         icon: Glyph::new("", Tone::Muted),
-        id: Some(item.project_key.clone().into()),
+        id: Some(
+            item.identifier
+                .as_deref()
+                .unwrap_or(&item.project_key)
+                .into(),
+        ),
         title: item.title.clone().into(),
         trailing: Vec::new(),
         done: matches!(
@@ -147,6 +152,15 @@ mod tests {
     use crate::model::View;
 
     #[test]
+    fn decision_rows_show_the_reference_with_a_project_fallback() {
+        let mut item = fixtures::item("d2");
+        let row = super::row(&item);
+        assert_eq!(row.id.as_deref(), Some("D-00002-NAV"));
+        item.identifier = None;
+        assert_eq!(super::row(&item).id.as_deref(), Some("NAV"));
+    }
+
+    #[test]
     fn decisions_group_by_status_in_the_lifecycle_order() {
         let groups = groups(&fixtures::items());
         let names: Vec<_> = groups.iter().map(|group| group.name.as_ref()).collect();
@@ -158,7 +172,7 @@ mod tests {
             "a group keeps the read's order, newest decided first"
         );
         assert_eq!(groups[1].count.as_deref(), Some("4"));
-        assert_eq!(groups[2].rows[0].id.as_deref(), Some("NAV"));
+        assert_eq!(groups[2].rows[0].id.as_deref(), Some("D-00006-NAV"));
         assert!(
             groups[2].rows[0].done,
             "a superseded decision reads quietly"

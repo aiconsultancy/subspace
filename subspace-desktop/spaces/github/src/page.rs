@@ -8,7 +8,7 @@
 //! inspector's Open or a link from another Space opens it, and Escape, Back,
 //! the tab's close or the view's tab closes it.
 
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, Context, Div, FontWeight, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
@@ -99,8 +99,20 @@ impl Github {
         let toolbar = Toolbar::new("github-page-toolbar").leading(back);
         match item {
             Some(item) => self.item_tools(toolbar, item, cx),
-            None => toolbar,
+            None => toolbar.trailing(self.page_refresh_button(cx)),
         }
+    }
+
+    fn page_refresh_button(&self, cx: &Context<Self>) -> AnyElement {
+        icon_button(
+            "gh-page-refresh",
+            Intent::Quiet,
+            IconName::RefreshCw,
+            "Refresh",
+        )
+        .disabled(self.writing)
+        .on_click(cx.listener(|this, _, _, cx| this.refresh_visible_detail(cx)))
+        .into_any_element()
     }
 
     /// The open pull request's path, then the review actions its account
@@ -111,16 +123,23 @@ impl Github {
             .and_then(|account| account.details.get(&item.key));
         let on = self.panel_actions();
         let allowed = Allowed::of(item, detail);
-        let toolbar = peek::review_actions(allowed).into_iter().fold(
-            toolbar.leading(path(item, cx)),
-            |toolbar, action| {
-                toolbar.trailing(self.item_action_button(action, "page", allowed.approved, &on))
-            },
+        let merge = crate::merge_pull_request::button(self, item, allowed.merge_is_primary(), cx);
+        let mut buttons: Vec<_> = peek::page_actions(allowed)
+            .map(|action| {
+                self.item_action_button(action, "page", allowed.approved, &on)
+                    .into_any_element()
+            })
+            .chain(merge.map(|button| button.into_any_element()))
+            .collect();
+        buttons.insert(
+            buttons.len().saturating_sub(1),
+            self.page_refresh_button(cx),
         );
-        match crate::merge_pull_request::button(self, item, allowed.merge_is_primary(), cx) {
-            Some(button) => toolbar.trailing(button),
-            None => toolbar,
-        }
+        buttons
+            .into_iter()
+            .fold(toolbar.leading(path(item, cx)), |toolbar, button| {
+                toolbar.trailing(button)
+            })
     }
 
     /// The reading column, centred in the pane, scrolling.

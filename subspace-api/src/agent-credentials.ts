@@ -92,10 +92,11 @@ export const activeCredential = (db: Db, fingerprint: string) =>
   );
 
 /**
- * Registers a certificate as a credential of an agent. Call it in a transaction that holds the
- * organisation's lock, after checking that the agent belongs to it. A certificate that is active
- * anywhere, or was revoked in this organisation, is refused (409): a fingerprint names one active
- * credential, because an agent token names no organisation, and a revoked key stays revoked.
+ * Registers a certificate as a credential of an agent, or of a person's device. Call it in a
+ * transaction that holds the organisation's lock, after checking that the member belongs to it. A
+ * certificate that is active anywhere, or was revoked in this organisation, is refused (409): a
+ * fingerprint names one active credential, because a token names no organisation, and a revoked
+ * key stays revoked.
  */
 export const insertCredential = (
   db: Db,
@@ -107,6 +108,7 @@ export const insertCredential = (
     label?: string | null;
     createdById?: string | null;
     enrolmentTokenId?: string | null;
+    pairingInviteId?: string | null;
   },
 ) =>
   Effect.gen(function* () {
@@ -141,6 +143,7 @@ export const insertCredential = (
         label: values.label ?? null,
         createdById: values.createdById ?? null,
         enrolmentTokenId: values.enrolmentTokenId ?? null,
+        pairingInviteId: values.pairingInviteId ?? null,
       })
       .returning()
       .pipe(
@@ -230,6 +233,8 @@ const revokeCredential = (member: Member, agentId: string, credentialId: string)
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {
         yield* lockOrganisation(tx, member.organisationId);
+        // A person's device credentials are not an agent's, whatever the path names.
+        if (!(yield* findAgent(tx, member, agentId))) return yield* Effect.fail(notFound());
         const [old] = yield* tx
           .select()
           .from(agentCredentials)

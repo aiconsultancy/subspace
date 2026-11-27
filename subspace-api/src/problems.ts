@@ -60,6 +60,40 @@ export function problem<Status extends ProblemStatus>(
   return { type: "about:blank", title: titles[status], status, detail, currentVersion, errors: {} };
 }
 
+/**
+ * Stable problem types a client may branch on, in a problem's `type`. Every other problem is
+ * `about:blank`, and its title and status are all it promises.
+ */
+export const problemTypes = {
+  /** The request's body or fields are malformed (400). */
+  invalidRequest: "urn:subspace:problem:invalid-request",
+  /** A pairing invite that is unknown, malformed, expired, revoked or already used (401). */
+  pairingInviteUnusable: "urn:subspace:problem:pairing-invite-unusable",
+  /** A certificate that is already registered, or was revoked (409). */
+  credentialConflict: "urn:subspace:problem:credential-conflict",
+  /** This API does not pair devices: AUTH_PROVIDERS lacks pairing (404). */
+  pairingUnavailable: "urn:subspace:problem:pairing-unavailable",
+} as const;
+type ProblemType = (typeof problemTypes)[keyof typeof problemTypes];
+const knownTypes: ReadonlySet<string> = new Set(Object.values(problemTypes));
+
+/** A problem with one of the stable types, which a client may branch on. */
+export function typedProblem<Status extends ProblemStatus>(
+  status: Status,
+  type: ProblemType,
+  detail: string,
+) {
+  return { ...problem(status, detail), type };
+}
+
+/** Whether a failure is a problem this API answers with, rather than an unexpected error. */
+export const isProblem = (error: unknown): error is { type: string; status: number } =>
+  typeof error === "object" &&
+  error !== null &&
+  "type" in error &&
+  typeof error.type === "string" &&
+  (error.type === "about:blank" || knownTypes.has(error.type));
+
 export function validationProblem(field: string, message: string) {
   return {
     ...problem(400, "One or more validation errors occurred. Correct the listed fields."),

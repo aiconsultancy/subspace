@@ -95,7 +95,7 @@ flowchart LR
   installer installs it and uses it by default. Stargate can also drive agents
   through the **Claude Agent SDK** or the **OpenAI Codex SDK**, but OpenCode is
   the most tested and the recommended choice. The Stargate dashboard and
-  **AgentsView** show what the agents are doing.
+  optional **AgentsView** session browser show what the agents are doing.
 - **Ergo IRC** carries conversations between you and the agents. Every fleet
   has the same [standard channels](subspace-installer/README.md#channels):
   **Starbase** for talking to the rear admiral, **fleet command** where the
@@ -118,6 +118,24 @@ firewall that drops all inbound traffic except SSH, hardens SSH to key-only
 logins for your user, and keeps the agents' Linux users away from operator
 services, including the API's main port, and from the cloud's metadata
 service, so they cannot use the VM's cloud identity.
+
+## Captain mockup previews
+
+The fleet installs browser previews and the Impeccable design skill by
+default. For workstation-only previews, start or restart the fleet's SSH
+tunnel on the operator's workstation so captain links work there.
+To make an existing shared fleet workstation-only, pass `--preview-url tunnel`
+and include removal of the previous preview listener, DNS entry and access
+rules in the plan. This also withdraws old shared links.
+
+For shared previews, include the private DNS entry, gateway listener and any
+access rules in the plan you confirm with the operator. Pass the resulting
+origin to `--preview-url`. Ask a captain to publish a mockup and open the
+returned link from a second authorised device on the private network. All
+captains on that fleet publish beneath the same origin.
+
+See [live mockup previews](subspace-installer/README.md#live-mockup-previews)
+for an existing Headscale network, port settings and reruns.
 
 ## Decide with the user
 
@@ -247,8 +265,10 @@ answer it now.
      captains have no crew;
    - the GitHub access the captains' GitHub Apps need. Captains push, and
      their crew push as them, so each captain's App needs Contents write on
-     these repositories, plus Pull requests and Issues write to open pull
-     requests and update issues. The rear admiral's App needs Contents read.
+     these repositories. Give each captain's App **Pull requests: Read and
+     write** so it can open, comment on and review pull requests by any
+     author in repositories where it is installed. Give it Issues write if
+     it updates GitHub issues. The rear admiral's App needs Contents read.
 
    Public repositories work straight away; without Apps, the agents can read
    and commit but not push. **Private** repositories need a GitHub App for
@@ -309,9 +329,13 @@ answer it now.
     `--access tailscale` or `--access cloudflare`. If they have no
     preference, use Tailscale: it needs no domain of their own. For a local
     VM the default is the **SSH tunnel**, which needs nothing else. Either
-    way the desktop's ports travel through the SSH tunnel, which for a cloud
-    VM runs over the private network. Ask for any addresses that alone may
-    use SSH (`--ssh-from`). See [Private access](docs/private-access.md).
+    way the desktop's ports normally travel through the SSH tunnel. If
+    workstations and the VM already share the organisation's ZTNA, VPN or
+    routed network, offer [direct private HTTPS and IRC](docs/private-access.md#an-existing-private-network)
+    instead (`--private-network`). This requires configured production SSO
+    and a trusted certificate for the private name; it is not available with
+    the default development sign-in. Ask for any addresses that alone may
+    use SSH (`--ssh-from`). Keep the SSH route for administration.
     Also offer nginx with internal host names if they want browser-friendly
     addresses.
 
@@ -344,17 +368,15 @@ answer it now.
     admiral to Teams. Both need an app the user creates and its tokens, so
     they follow those guides with the user after the fleet runs. **Default:
     neither.**
-15. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on) With it
-    on, issues flagged *Ready for agents* are offered to the captains in
-    fleet command, and issues assigned to a captain are announced to it
-    there (see [Agent dispatch](README.md#agent-dispatch)). It needs the
-    Subspace API on this VM and repositories, because only a captain with
-    crew can accept an offer. Setup registers the rear admiral and captains
-    as the fleet's API agents in any case; with dispatch on it also gives the
-    rear admiral's gateway a development sign-in token, which lasts eight hours: re-run the installer
-    to renew it, or see
-    [Agent dispatch](subspace-installer/README.md#agent-dispatch) for a
-    long-lived token. An unattended run leaves it off.
+15. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on). The
+    rear admiral offers unassigned *Ready for agents* issues in fleet command.
+    With compatible Stargate, it also asks captains to take their assigned
+    Backlog or Todo issues in their ship channels when crew are available.
+    Use `--no-assignment-requests` or `--no-ready-for-agents-offers` to disable
+    either behavior independently. Dispatch needs a Subspace API and at
+    least one captain with crew. A hosted API uses the enrolled rear
+    admiral's signing socket. For a local API bearer token, see
+    [Agent dispatch](subspace-installer/README.md#agent-dispatch).
 16. **An existing PostgreSQL for the tracker?** (**no**: the API keeps its
     own PostgreSQL on the fleet VM.) If they already run one, for example a
     managed server, the fleet's API can use it instead, with no database on
@@ -379,8 +401,9 @@ answer it now.
     the fleet's enrolment token (`senr1.…`, `chmod 600`; never paste it into
     the chat), which one of that API's administrators issues for this fleet
     after creating it there. Pass `--api-url URL --api-enrolment-token-file
-    FILE`. It excludes question 16 and agent dispatch. The default Stargate
-    release supports both `subspaceAgents` and the usage guard. The VM must
+    FILE`. It excludes question 16. For agent dispatch, use a Stargate
+    revision that supports signed assignment requests. The default Stargate
+    release supports `subspaceAgents` and the usage guard. The VM must
     reach the API over HTTPS. On a VM whose API already keeps a tracker,
     switching needs `--switch-to-hosted-api` and leaves that tracker behind:
     ask first. See
@@ -428,7 +451,8 @@ answer it now.
     or hosted deployment, no for a trial on a local VM.**
 21. **Which toolchains do the repositories need?** The VM has Git, Bun, a
     C/C++ build toolchain, Python, Node 24 and the screenshot tools (Xvfb,
-    fonts, Playwright with its Chromium, and offline Mermaid rendering);
+    fonts, Playwright with its Chromium, offline Mermaid rendering and Flint
+    chart tools and skills);
     anything else the repositories build or test with (a .NET SDK, Rust, pnpm, Terraform, GUI
     development libraries) must be installed for the officers and crew. Offer
     three answers:
@@ -485,6 +509,20 @@ answer it now.
     caps add up to more than the VM; the VM looks small for its fleet),
     with the options that change them. **Default: the installer's sizing,
     and swap when the VM has none.**
+23. **Install AgentsView on the fleet VM?** Recommend enabling it so the
+    user can browse their fleet's OpenCode sessions from Subspace Desktop.
+    Ask the user to choose and pass `--agentsview` for yes or `--no-agentsview`
+    for no. Unattended setup defaults to on and remembers the choice on later
+    runs. When off, there is no AgentsView listener or tunnel port and the
+    desktop installer hides the AgentsView Space on the app's next launch.
+24. **Who should be able to open captain previews?** (**This workstation.**)
+    If the user wants to share links, ask which private hostname to use for
+    this fleet, who on the private network should have access, and whether
+    to use HTTPS or private HTTP. With Headscale, offer all users of their
+    tailnet or a group they choose. If the hostname or private route is
+    undecided, keep workstation access and set up sharing on a later run.
+    Offer `--no-mockup-previews` and `--no-impeccable` if they want to turn
+    either feature off. See [Captain mockup previews](#captain-mockup-previews).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -540,8 +578,16 @@ then move to Tailscale or Cloudflare and remove that rule.
 ### Set up the private network
 
 [Private access](docs/private-access.md) has the commands and policies for
-both documented routes; follow it rather than improvising.
+these routes; follow it rather than improvising.
 
+- **An existing ZTNA, VPN or routed private network.** Check routing and
+  private DNS from the workstations and collect the VM's private address,
+  interface, client CIDR and the certificate for the private name. Follow
+  [the direct access steps](docs/private-access.md#an-existing-private-network).
+  Keep a private SSH route for installation and administration. Workstation
+  IRC clients must verify the server's certificate: while the proxy is
+  stopped by its guard or a rollback, a local VM user can bind its private
+  address on port 6697.
 - **Tailscale.** The user, in their browser: signs in to Tailscale, adds
   `tag:fleet` to the tailnet policy as Private access shows, signs this
   computer in to the tailnet, and creates a one-off, pre-approved auth key
@@ -1092,7 +1138,7 @@ subnets in the user's virtual network. Run it only when the user asks.
    - runs the [fleet installer](subspace-installer/README.md): the latest
      Stargate (its newest `vX.Y.Z` release, looked up on every run and pinned
      in `fleet.json`; pass `--stargate-ref <SHA>` to stay on one commit),
-     CLIProxyAPI, OpenCode, AgentsView, the dashboard, a Linux user and tmux
+     CLIProxyAPI, OpenCode, optional AgentsView, the dashboard, a Linux user and tmux
      session for the rear admiral and each captain, the crew's worktrees and
      each captain's pinned session, and Ergo IRC;
    - starts PostgreSQL and the Subspace API on loopback, creates IRC's
@@ -1107,7 +1153,14 @@ subnets in the user's virtual network. Run it only when the user asks.
      rear admiral's own agent record, gives Stargate's gateway user, and no
      agent, access to the API's port, and switches dispatch on in the rear
      admiral's gateway;
-   - applies the lockdown and runs the privacy audit.
+   - applies the lockdown, starts the TLS proxy if direct private access
+     was selected, and runs the privacy audit. Direct private access
+     requires production sign-in; it skips the development sign-in steps
+     above and leaves fleet registration to the operator. For an existing
+     local API, setup refuses this change unless you pass
+     `--accept-officer-tracker-access-loss`: officers lose installer-managed
+     tracker access (MCP and REST tools, signed enrolment and dispatch) until
+     setup supports SSO fleet registration.
 4. Confirms the lockdown over a fresh SSH connection, then runs the audit
    again. If that connection fails, the change rolls itself back after three
    minutes to the last confirmed lockdown, and the installer stops with an
@@ -1158,9 +1211,16 @@ does the same as `./install.sh providers`.
 
 ## Connect the desktop app
 
+If you chose direct private access, follow the
+[private workstation steps](docs/private-access.md#an-existing-private-network)
+to configure the HTTPS API and TLS IRC endpoints, instead of the tunnel and
+development sign-in below. A tunnel is still needed for the dashboards and
+Stargate's Fleet API unless your site separately provides private access.
+
 1. **Start the tunnel.** It forwards the fleet's ports to `127.0.0.1` on your
    computer: the API (3000), IRC (6667 and 6697), the dashboard (8070),
-   AgentsView (8080) and the Stargate Fleet API (8484) when it is on.
+   and the AgentsView (8080) and Stargate Fleet API (8484) ports when those
+   services are enabled.
 
    ```sh
    ./install.sh tunnel --background
@@ -1221,9 +1281,40 @@ does the same as `./install.sh providers`.
      address; `--fleet-api-url tunnel` goes back to the tunnel's). The token is
      still required, and stays on your computer.
 
-Open the dashboard at <http://127.0.0.1:8070> and AgentsView at
-<http://127.0.0.1:8080> while the tunnel runs. They show prompts and code, so
-keep them private.
+Open the dashboard at <http://127.0.0.1:8070> while the tunnel runs. If you
+installed AgentsView, open it at <http://127.0.0.1:8080>. These pages show
+prompts and code, so keep them private.
+
+Standard macOS and Windows desktop builds can open the fleet's session
+browser in the **AgentsView** Space. Close Subspace, then provision an
+AgentsView server that already requires a key using a private local key file:
+
+```sh
+./install.sh desktop --agentsview-url https://fleet.example.com/agentsview/ \
+  --agentsview-key-file /path/to/private/agentsview.key
+```
+
+On macOS, set the key file to mode `0600` and remove extended ACL entries
+with `chmod -N` if they are present. On Windows, use the same options with
+`.\install.ps1 desktop`. You must own the key file, and its ACL can grant
+access to your account, SYSTEM and local Administrators.
+
+Add `--target NAME` to apply the fleet's desktop settings in the same run.
+Use `--target subspace-fleet` if you installed with the default target name.
+Without a target, these options configure the AgentsView connection on its own.
+Rerunning with the same AgentsView address keeps the saved
+key. To use a fleet's SSH tunnel, pass `--agentsview-url http://127.0.0.1:8080`.
+For a server without a key, omit the key file on first setup or pass
+`--agentsview-clear-key` to clear an existing key. Reopen Subspace and select
+**AgentsView**. You can also save these settings directly in
+**Settings › Spaces › AgentsView**.
+Use a different local port for each authenticated fleet's SSH tunnel so
+each saved address continues to identify the same fleet.
+
+The host installer applies the selected fleet's AgentsView visibility to
+Subspace Desktop. Close Subspace before applying the setting. After using
+`subspace-setup` directly on the VM, rerun the host installer to refresh its
+saved fleet summary and apply the choice to the desktop.
 
 ## Use your local agents with the fleet
 
@@ -1284,10 +1375,14 @@ in `fleet/`. To update: bump the pins, sync, review, deploy.
 ./install.sh audit
 ```
 
-The audit fails if any service listens beyond loopback (apart from SSH and a
-VPN agent), if the lockdown firewall is not loaded, if SSH accepts passwords or
-root logins, if a container publishes a port publicly, or if secrets are
-readable by anyone but root. It warns when the VM has a public address: then
+The audit fails if an unexpected service listens or publishes a container
+port beyond loopback. On existing installs, a custom TCP listener on a
+private address now fails rather than warns unless a live `--allow-port`
+rule covers it. `--allow-port` does not cover UDP: unexpected private UDP
+listeners also fail. The audit recognises SSH, VPN agents and the managed
+TLS endpoints with their recorded firewall rules. It also fails if lockdown is
+not loaded, SSH accepts passwords or root logins, or secrets are readable
+by anyone but root. It warns when the VM has a public address: then
 check from outside that nothing answers, for example `nc -vz <public-ip> 22`
 should time out unless you chose public SSH.
 
@@ -1300,8 +1395,14 @@ keeps everyone else away. For a team, switch the API and desktop to
 WorkOS or Entra (see the [API guide](subspace-api/README.md#external-sign-in))
 before sharing access.
 
-The fleet's agents reach the API on its **agent listener** instead: port 3001
-on the VM's loopback, which the tunnel does not forward. There, a request
+The fleet's officers reach the API through Stargate's signing proxy by
+default on new installs. Setup registers the fleet and issues a short-lived
+enrolment token for the gateway. Each officer's harness uses its own Unix
+socket, and Stargate signs its requests. This uses the shared OpenCode gateway, so fleets
+using only native Claude Agent SDK officers need the legacy option.
+
+The **legacy agent listener** is available with `--agent-listener` on port
+3001 on the VM's loopback, which the tunnel does not forward. There, a request
 names a registered agent in an `X-Subspace-Agent` header and needs no token.
 The API resolves only an active agent record of the fleet's organisation and
 acts as that agent, which is never an administrator; the listener serves no
@@ -1314,11 +1415,11 @@ other service users or containers. Any of those can act as any registered
 agent of that organisation, so one agent can act as another.
 `./install.sh audit` checks that port 3001 is limited that way and serves no
 sign-in route, and that the main port stays closed to the agents. To turn
-the listener off, set `AGENT_PORT=` in `/root/fleet/api.env` and run setup
-again; later runs keep it off, and the agents then have no Subspace MCP
-server. Switching the API to WorkOS or
-Entra (development sign-in off) turns the agent listener off too, and the
-fleet's agents then have no way into the API yet.
+the listener off and use the signing proxy, run setup with
+`--no-agent-listener`. An existing installation keeps its configured
+listener and preserves a previous opt-out on unattended runs. Switching
+the API to WorkOS or Entra (development sign-in off) turns the agent listener
+off too, and the fleet's agents then have no way into the API yet.
 
 ## Day to day
 
@@ -1378,6 +1479,15 @@ firewall and SSH hardening entirely, for example when a confirmed `--ssh-from`
 no longer matches your address; run the installer again afterwards to restore
 them. Agent isolation stays, because it never blocks your login.
 
+Lockdown rollback, or applying lockdown without the private ingress rules,
+stops the private TLS proxy. Rollback also disables the proxy at boot if
+the restored rules do not include private ingress. Use SSH to administer
+the VM. Rerun guided setup to restore the saved private ingress and confirm
+the lockdown from a fresh SSH connection, or run
+`sudo subspace-setup --private-network off` and confirm it to return to
+tunnel-only access. If the proxy stopped after a periodic check, fix the
+reported firewall or sign-in problem before rerunning setup.
+
 Setup limits officers and their crew to public network destinations and local
 fleet services. Private IPv4 and IPv6 destinations are blocked, with access to
 the VM's configured DNS resolvers. If officers need a private TCP service,
@@ -1416,6 +1526,12 @@ destinations. The list is saved, and `--agent-egress ''` clears it.
 
 ## Uninstall
 
+If direct workstation access is enabled, rerun `sudo subspace-setup
+--private-network off` first and confirm the lockdown to remove its firewall
+rules and dedicated account. Fleet uninstall also stops and removes the
+managed proxy and its periodic check if you have not already done so, but
+keeps the account reserved because its UID can still be exempt in lockdown
+([recovering the account](docs/private-access.md#recovering-the-proxy-account)).
 On the VM, `sudo /opt/subspace/bootstrap/subspace-installer/install.sh uninstall`
 stops the fleet and keeps its data. `sudo docker compose --project-name subspace-api down`
 stops the API. For a local VM, `./install.sh destroy`

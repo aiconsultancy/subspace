@@ -183,3 +183,23 @@ fn list_fence_crashes_do_not_reach_the_parser_through_the_real_irc_path() {
         "the IRC rewrite hands the parser no list and fence it rejects"
     );
 }
+
+#[test]
+fn decision_references_round_trip_in_plain_and_formatted_messages() {
+    let supported = Mentions::default().with_decisions(true);
+    let message = "Read [d-00042-exa], D-100000-NAV and D-00001-X.";
+    let expected = [
+        Ref::Decision("d-00042-exa".into()),
+        Ref::Decision("D-100000-NAV".into()),
+    ];
+    assert!(refs(message, &Mentions::default()).is_empty());
+    assert_eq!(super::references(message, &supported, None), expected);
+
+    let rendered = rich("*Read* D-00042-EXA, but ignore `D-100000-NAV`.", &supported).unwrap();
+    assert_eq!(
+        super::references("", &supported, Some(&rendered)),
+        [Ref::Decision("D-00042-EXA".into())]
+    );
+    let decision = Ref::Decision("D-00042-EXA".into());
+    assert_eq!(parse_ref_url(&ref_url(&decision)), Some(decision));
+}

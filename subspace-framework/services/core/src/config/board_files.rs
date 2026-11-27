@@ -11,13 +11,12 @@ use serde_json::{Map, Value};
 
 use super::{Notice, open_to_others, warning};
 
-/// The settings file of board `id` beside the config file `config_file`.
+/// The settings file of board `id` beside the config file `config_file`:
+/// `<config directory>/<id>/config.json`, or, while the board has none, the
+/// first that exists under one of its former ids (see [`crate::former_ids`]).
 pub fn board_file(config_file: &Path, id: &str) -> PathBuf {
-    config_file
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(id)
-        .join("config.json")
+    let dir = config_file.parent().unwrap_or_else(|| Path::new(""));
+    crate::former_ids::board_file(dir, id, &crate::former_ids::installed())
 }
 
 /// The settings of each board in `ids` that has a file, with a notice for

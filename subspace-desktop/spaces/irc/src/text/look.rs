@@ -77,11 +77,11 @@ pub(super) fn of(look: &RefLook, found: &Opens, cx: &App) -> Option<Look> {
 
 /// A pull request chip's leading glyph, in its status's tone once known.
 pub(super) fn glyph(found: &Opens, look: Option<Look>, tokens: &Tokens) -> Option<AnyElement> {
-    let tint = tint(look).map(|tone| tokens.tone(tone));
+    let tint = tint(look).map_or(tokens.muted, |tone| tokens.tone(tone));
     matches!(found, Opens::Ref(Ref::PullRequest(_))).then(|| {
         div()
             .flex()
-            .when_some(tint, |glyph, tint| glyph.text_color(tint))
+            .text_color(tint)
             .child(Icon::from(IconName::GitPullRequest).xsmall())
             .into_any_element()
     })

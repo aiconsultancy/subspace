@@ -55,8 +55,8 @@ same room.
   the whole interface is drawn on the GPU. Its Channels Space is a custom IRC
   client that shows live tiles for the issues and pull requests people
   mention, so you can follow their status, and what the agents are talking
-  about, at a glance. Other Spaces cover Issues, Decisions, pull requests and
-  the Fleet Console.
+  about, at a glance. Other Spaces cover Issues, Projects, Decisions, pull
+  requests, the Fleet Console and the optional AgentsView session browser.
 - **An API** in TypeScript. It holds the issue tracker, with images and
   documents on issues, plus initiatives, the decision log and the fleets, and
   gives agents an MCP endpoint. The API is headless: it has no web interface
@@ -188,11 +188,12 @@ out:
   that no captain could take it and clears the flag; flag it again to retry.
   Accepting assigns the issue, which clears the flag, so two captains never
   take the same issue.
-- **Assigned to a captain.** Assign an issue to a captain and the rear
-  admiral asks that captain in chat to pick it up, assign it to a crew
-  member and get it done.
-- **In the open.** Offers, answers and requests go to the fleet's command
-  channel, so people watch them in the Channels Space and can step in.
+- **Assigned to a captain.** With compatible Stargate, the rear admiral asks
+  a captain to take an assigned Backlog or Todo issue when crew are available.
+  The captain replies in the request's ship-channel thread. If the issue is
+  still waiting, reminders default to every four hours when crew are available.
+- **In the open.** Ready for agents offers and answers go to fleet command.
+  In Channels, open a captain's ship to see its assignment requests.
 - **Own fleet only.** The API refuses a fleet agent's assignment or *Ready
   for agents* change on an issue whose project belongs to another fleet,
   even when the project moved after the dispatcher last read it. It also
@@ -241,12 +242,12 @@ them: IRC, Slack or Teams. Which of them is connected to what is configurable
 per fleet.
 
 - **Desktop app** ([`subspace-desktop/`](subspace-desktop/README.md)). A Rust and
-  GPUI app with Spaces for Channels (IRC), Issues, Decisions, GitHub pull
-  requests, Actions, Copilot agents, a terminal and web Spaces. Every Space
-  shares one layout: a navigator on the left, tabs and a toolbar above the
-  content, and an inspector on the right. Decisions lists every decision
-  people and agents record against issues: what was decided, who made it,
-  when, and whether a later decision superseded it. It is built from the
+  GPUI app with Spaces for Channels (IRC), Issues, Projects, Decisions, GitHub
+  pull requests, Actions, AgentsView, Copilot agents, a terminal and web
+  Spaces. Every Space shares a layout with a navigator on the left, tabs and
+  a toolbar above the content, and an inspector on the right. Decisions shows
+  what people and agents decided on issues, who made each decision and when,
+  and whether a later decision superseded it. The app is built from the
   reusable [Subspace Framework](subspace-framework/README.md), which is
   published on crates.io as `subspace-framework`. Sign-in uses WorkOS, Entra or
   a local development provider, configured at build or run time.
@@ -265,10 +266,10 @@ per fleet.
   a single fleet.
 - **Fleet installer** ([`subspace-installer/`](subspace-installer/README.md)).
   Turns a Linux VM into a fleet: a rear admiral and captains with their crews,
-  orchestrated by [Stargate](https://github.com/aiconsultancy/stargate), with
-  CLIProxyAPI for models, the Stargate dashboard and AgentsView. Fleets default
-  to OpenCode as the agent harness. The installer can register its fleet with
-  the API.
+  orchestrated by [Stargate](https://github.com/aiconsultancy/stargate), which
+  includes a fleet dashboard.
+  Fleets default to OpenCode as the agent harness. The installer can
+  register its fleet with the API.
 - **A GitHub App per captain and rear admiral.** Every captain and the rear
   admiral has its own GitHub App, so each one commits, comments and opens pull
   requests under its own identity. Crew run under their captain's Linux user
@@ -280,6 +281,20 @@ per fleet.
 Our reference deployment ran on Azure, with credentials such as the agents'
 GitHub App keys in Azure Key Vault. The public version uses per-agent
 credential files that the installer provisions instead.
+
+### Optional fleet integrations
+
+- **Server-side charts and diagrams.** Agents render Mermaid diagrams and
+  Flint data charts on the fleet VM. Officers can use Flint through its
+  local MCP server and share PNGs in IRC when the fleet is connected to
+  the Subspace API. [Mermaid](https://github.com/mermaid-js/mermaid) ·
+  [Flint Chart](https://github.com/microsoft/flint-chart) ·
+  [Installer configuration](subspace-installer/README.md#screenshots)
+- **Session browsing.** AgentsView lets you browse and search agent sessions.
+  [AgentsView](https://github.com/kenn-io/agentsview)
+- **Model access.** The standard fleet installer configures CLIProxyAPI to
+  connect agents to their model providers.
+  [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
 
 ## Screenshots
 
@@ -300,6 +315,15 @@ Select an image to see it full size.
 <tr>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-issue-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-issue-page-twilight-two.png" width="440" alt="A tracker issue open in a tab, with an image, an attachment, its sub-issues and linked pull requests, and its properties in the inspector"></a><br><b>An issue.</b> A tracker with an image, an attached document, sub-issues and its pull requests.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-decisions-twilight-two.png"><img src="docs/assets/screenshots/desktop-decisions-twilight-two.png" width="440" alt="The Decisions Space listing decisions by status, with filters for people and agents and the selected decision's maker, linked issues and evidence in the inspector"></a><br><b>Decisions.</b> What was decided, by a person or an agent, and what superseded it.</td>
+</tr>
+</table>
+
+### Projects and agent sessions
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-projects-twilight-two.png"><img src="docs/assets/screenshots/desktop-projects-twilight-two.png" width="440" alt="The Projects Space showing a demo project's status, health, lead, dates, timeline, next milestone and latest update"></a><br><b>Projects.</b> Follow a project's status, timeline and latest update.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-agentsview-twilight-two.png"><img src="docs/assets/screenshots/desktop-agentsview-twilight-two.png" width="440" alt="The AgentsView Space showing fictional Claude and Codex sessions, project totals and activity charts in Twilight Two"></a><br><b>AgentsView.</b> Browse agent sessions and review activity across projects.</td>
 </tr>
 </table>
 

@@ -55,6 +55,7 @@ pub struct BoardRegistration {
     /// disables the board: see `Dashboard::RETAIN_WHEN_DISABLED`.
     pub retain_when_disabled: bool,
     pub configuration: Option<BoardConfiguration>,
+    pub(crate) default_order: usize,
     pub(crate) artwork: subspace_dashboard::BoardArtwork,
     pub(crate) connection: subspace_dashboard::settings::ConnectionSettings,
     /// The board's contract declarations, read without creating the board.
@@ -80,6 +81,7 @@ impl BoardRegistration {
             stop_background: D::stop_background,
             retain_when_disabled: D::RETAIN_WHEN_DISABLED,
             configuration: None,
+            default_order: usize::MAX,
             artwork: D::ARTWORK,
             connection: D::connection_settings(),
             contracts: D::contracts(),
@@ -88,6 +90,13 @@ impl BoardRegistration {
 
     pub fn description(mut self, description: &'static str) -> Self {
         self.description = description.into();
+        self
+    }
+
+    /// The position used when no personal Space order has been saved.
+    // qual:api - Products rank their built-in Spaces, including configured ones.
+    pub fn with_default_order(mut self, order: usize) -> Self {
+        self.default_order = order;
         self
     }
 
@@ -166,6 +175,7 @@ pub(crate) fn registration_sets_with(
         })
         .collect::<Result<Vec<_>, _>>()?;
     included.extend(configured);
+    included.sort_by_key(|board| board.default_order);
     let order = normalize_order(&included, &config.board_order);
     included.sort_by_key(|board| {
         order
@@ -490,6 +500,7 @@ mod tests {
             stop_background: |_| {},
             retain_when_disabled: false,
             configuration: None,
+            default_order: usize::MAX,
             artwork: subspace_dashboard::BoardArtwork::default(),
             connection: Default::default(),
             contracts: Default::default(),
@@ -543,6 +554,7 @@ mod tests {
             .map(|(id, default_enabled)| BoardDescriptor {
                 id: (*id).into(),
                 aliases: Vec::new(),
+                former_ids: Vec::new(),
                 default_enabled: *default_enabled,
             })
             .collect();
@@ -703,6 +715,20 @@ mod tests {
     }
 
     #[test]
+    fn defaults_order_native_and_configured_boards_together() {
+        let product = product(&[("irc", true), ("github", true)]);
+        let available = [
+            board("irc").with_default_order(0),
+            board("github").with_default_order(2),
+        ];
+        let configured = vec![configured("console").with_default_order(1)];
+        let sets =
+            super::registration_sets_with(&product, &available, configured, &Config::default())
+                .unwrap();
+        assert_eq!(ids(&sets.active), ["irc", "console", "github"]);
+    }
+
+    #[test]
     fn a_configured_board_cannot_take_a_built_in_id() {
         let (accepted, notices) = super::configured::accept_configured(
             &future_product(),
@@ -711,6 +737,23 @@ mod tests {
         assert_eq!(ids(&accepted), ["wiki"]);
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("future-board"));
+    }
+
+    #[test]
+    fn a_configured_board_cannot_take_a_built_in_former_id() {
+        let mut descriptor = subspace_product::fixture::descriptor();
+        descriptor.boards[0].former_ids = vec!["example-old".into()];
+        let product = validate_product(&descriptor).unwrap();
+        let (accepted, notices) = super::configured::accept_configured(
+            &product,
+            vec![configured("example-old"), configured("wiki")],
+        );
+        assert_eq!(ids(&accepted), ["wiki"]);
+        assert_eq!(notices.len(), 1);
+        assert!(
+            notices[0].contains("example-old") && notices[0].contains("used this id before"),
+            "{notices:?}"
+        );
     }
 
     #[test]

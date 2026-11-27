@@ -93,6 +93,22 @@ fn answered_identifiers_are_asked_again_only_after_changed() {
 }
 
 #[test]
+fn pending_refreshes_preserve_the_latest_issue_and_keep_missing_issues_hidden() {
+    let mut issues = scoped();
+    let key = "TST-1";
+    for state in [
+        ResolutionState::Available(summary(key)),
+        ResolutionState::Unavailable,
+    ] {
+        assert!(issues.record(vec![Resolution::new(key, state.clone())]));
+        issues.start_round();
+        assert!(!issues.record(vec![Resolution::new(key, ResolutionState::Pending)]));
+        assert!(issues.state(key) == Some(&state));
+        assert!(!issues.want([key.to_owned()]));
+    }
+}
+
+#[test]
 fn another_profile_forgets_every_answer() {
     let mut issues = scoped();
     issues.record(vec![Resolution::new("TST-1", ResolutionState::Unavailable)]);

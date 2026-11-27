@@ -5,6 +5,8 @@
 //! [`builtin::install`]. On macOS a product may also compose a web Space
 //! signed in with the app's own account, with `create_with_session`.
 
+#[cfg(all(feature = "agentsview", any(target_os = "macos", windows)))]
+pub mod agentsview;
 mod app;
 mod bridge;
 #[cfg(target_os = "macos")]

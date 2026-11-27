@@ -16,6 +16,7 @@ fn about_context() -> ProductContext {
     descriptor.boards = vec![BoardDescriptor {
         id: "about".into(),
         aliases: vec![],
+        former_ids: vec![],
         default_enabled: true,
     }];
     ProductContext::new(validate_product(&descriptor).unwrap(), context().env)

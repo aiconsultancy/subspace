@@ -8,9 +8,13 @@ cd "$root"
 source "$root/scripts/product.sh"
 # The default build, as released. Space Lab is not in it, so its optional
 # checks (SUBSPACE_FIXTURE_SPACE_LAB=1, macOS ARM64) build with its feature.
+# SUBSPACE_FIXTURE_COPILOT=1 exercises the optional Copilot Agents commands.
 build_args=(build --locked -p subspace)
 if [[ "${SUBSPACE_FIXTURE_SPACE_LAB:-0}" == 1 ]]; then
     build_args+=(--features space-lab)
+fi
+if [[ "${SUBSPACE_FIXTURE_COPILOT:-0}" == 1 ]]; then
+    build_args+=(--features copilot)
 fi
 if [[ "${SUBSPACE_FIXTURE_SKIP_BUILD:-0}" != 1 ]]; then
     cargo "${build_args[@]}"
@@ -88,7 +92,10 @@ test "$(jq -r .binary_name "$fixture/output")" = subspace
 boards="$(jq -c .boards "$fixture/output")"
 # Neither unreleased Space (Space Lab, the Component gallery) is in the
 # default build.
-expected_boards='["github","github-copilot-agents","irc","issues","decisions","actions"]'
+expected_boards='["irc","issues","github","projects","decisions","actions"]'
+if [[ "${SUBSPACE_FIXTURE_COPILOT:-0}" == 1 ]]; then
+    expected_boards="$(jq -c '.[:3] + ["github-copilot-agents"] + .[3:]' <<<"$expected_boards")"
+fi
 if [[ "${SUBSPACE_FIXTURE_SPACE_LAB:-0}" == 1 ]]; then
     # Space Lab is built only for macOS ARM64. Name a wrong target here, not
     # as a missing board in the list below.
@@ -98,7 +105,7 @@ if [[ "${SUBSPACE_FIXTURE_SPACE_LAB:-0}" == 1 ]]; then
         echo "SUBSPACE_FIXTURE_SPACE_LAB=1 needs a macOS ARM64 build (aarch64-apple-darwin), not ${built_for:-an unknown target}" >&2
         exit 2
     fi
-    expected_boards='["github","github-copilot-agents","irc","issues","decisions","space-lab","actions"]'
+    expected_boards="$(jq -c '.[:-1] + ["space-lab", .[-1]]' <<<"$expected_boards")"
 fi
 test "$boards" = "$expected_boards"
 invoke --version
@@ -135,12 +142,14 @@ reject_code 2 unknown-root
 reject_code 2 unknown-root '--literal=two words'
 reject __serve
 
-for board in github github-copilot-agents; do
-    invoke "$board" --help
-done
-for command in scope tasks task refresh github-agent-task; do
-    grep -wq -- "$command" "$fixture/output"
-done
+if [[ "${SUBSPACE_FIXTURE_COPILOT:-0}" == 1 ]]; then
+    invoke github-copilot-agents --help
+    for command in scope tasks task refresh github-agent-task; do
+        grep -wq -- "$command" "$fixture/output"
+    done
+else
+    reject_code 2 github-copilot-agents --help
+fi
 invoke github --help
 cp "$fixture/output" "$fixture/command-help"
 for command in assignees comment diff item refresh review scope search update-pr; do

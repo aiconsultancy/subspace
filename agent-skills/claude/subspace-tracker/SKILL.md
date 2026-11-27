@@ -109,9 +109,15 @@ rules in brief.
 ## Issues, trackers and sub-issues
 
 An issue has a `type`: `issue` or `tracker`. A tracker groups work: its
-**state follows its direct children** and is set by the server, so it cannot
-take a `stateId`, an assignee or an estimate, and it cannot be marked Ready
-for agents.
+**state follows its direct children** and is set by the server. Trackers can
+have an assignee. They cannot take an estimate or be marked Ready for agents.
+
+- `assigneeId` changes the tracker itself. With a non-null assignee, ask
+  whether to also assign its unassigned, non-archived direct children.
+  Include `assignUnassignedChildren: true` only after confirmation.
+- To move open direct issue children to Backlog or Todo, confirm the move
+  and send the destination `stateId` with `moveOpenChildren: true`. The
+  server recalculates the tracker state from its children.
 
 1. **Look for an existing tracker first**, open, closed and archived:
    `subspace_list_issues` with
@@ -215,8 +221,9 @@ the tracker when the choice applies to the whole work stream.
   search with `project` and a short `q` phrase. Filters combine and also
   support `status`, `tag` and `madeByType`. Use `subspace_get_decision` to
   verify the closest records and `subspace_count_decisions` to count filtered
-  results. If one covers the choice, cite its actual ID on the issue. To
-  link an issue to an editable proposal, send the complete updated
+  results. If one covers the choice, cite the returned identifier on the
+  issue, or its UUID when the API has no identifier. To link an issue to
+  an editable proposal, send the complete updated
   `issueIds` list. Registered agents can change only decisions they recorded.
 - **Log** with `subspace_log_decision` using `project`, `title`, `decidedOn`
   (YYYY-MM-DD) and `decision`. Add `context`, `why`, `implications`,
@@ -241,12 +248,75 @@ the tracker when the choice applies to the whole work stream.
   as evidence.
 - **Edit or replace.** Use `subspace_update_decision` for a proposed
   decision with its current version in `changes`. Use
-  `subspace_set_decision_status` with its current version and the maker's
-  authorisation to accept or reject it. To replace an accepted decision,
+  `subspace_set_decision_status` with the version and authority needed to
+  accept or reject it. For decisions reserved for people, follow the human
+  approval procedure below. To replace an accepted decision,
   log a proposed decision in the same project with `supersedesId` set to the
   predecessor's UUID. After authorised acceptance, read both records and
   verify the predecessor is superseded. Read the immutable history with
   `subspace_list_decision_revisions`.
+
+<!-- human-decisions:start -->
+### Ask a human to decide
+
+When a choice needs human approval, use `subspace_list_decisions` to search
+for an existing decision first. A registered officer uses
+`subspace_log_decision` to record its recommendation under its own identity
+as a `proposed` decision. Link the affected issues or their tracker so the
+reply can be recorded there. Put these three short paragraphs at the top of
+the Decision field, before the details:
+
+- **Summary** Explain what needs deciding and why it matters now. Use plain
+  language a bright 13-year-old could follow.
+- **Recommendation** Say what you think we should do and give the main reason.
+- **If you approve** Say what action the fleet can take after approval.
+
+When you ask in IRC or another chat, give the summary and recommendation for
+each question. Include each decision's returned `identifier` as plain text,
+for example D-00042-NAV, and its API `version`. In versions of Subspace
+Desktop that support decision references in chat, the reference opens the
+record. If the API returns no `identifier`, include the returned UUID and
+say that the short reference is unavailable. Use the UUID for input fields
+that specifically require it, such as `supersedesId`.
+
+Approval means accepting the exact recommendation shown. Any authenticated
+human operator or admiral of the fleet can approve it in chat when the
+channel verifies that sender's approval authority. Use the original message
+and the channel's trusted identity, such as an authenticated IRC account.
+A display name, a copy of someone else's reply, chat context without approval
+authority or a message from an agent, including a rear admiral, cannot grant
+approval.
+
+Ask for an explicit accept or reject. A reply to a single decision can say
+“Accept” when trusted reply metadata links it to the original question sent
+for that version. On the linked issue or tracker, record the question's IRC
+channel, message ID and the decision version shown. Without trusted reply
+metadata, ask for the exact decision reference and version in the reply,
+for example “Accept D-00042-NAV version 3”. When one message asks
+several questions, require an outcome and exact reference for each decision
+the human is answering. Ask for clarification if any outcome or version
+could be ambiguous. Acknowledgements and clarification answers do not grant
+approval.
+
+Before applying a verified outcome, the recording officer leaves a comment
+on the linked issue or tracker with the decision reference, version, outcome,
+authenticated approver, original reply ID and time, and a short excerpt.
+Then call `subspace_set_decision_status` with the version the human saw. If it
+is stale, reread the record and ask again. The status update records the
+officer as the caller. The linked evidence records which human made the
+choice. A human can also use **Accept** or **Reject** in the Decisions Space.
+Use the existing GitHub and deployment gates for any work the decision
+approves.
+
+When an outcome DM arrives from your rear admiral, open the decision by its
+reference and confirm the recorded outcome. If you are picking up work, say
+so with the reference in the original IRC thread. Use a tagged reply to the
+original question when your IRC tools can send there and you have its
+message ID. If you cannot reply in the thread, acknowledge in the
+originating IRC channel. If you cannot post there, use your ship channel.
+When you can only reply to the outcome DM, include the decision reference
+there. Also acknowledge receipt when the outcome needs no follow-up work.
+<!-- human-decisions:end -->
 
 ## Documents, reviews and media
 

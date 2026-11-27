@@ -4,6 +4,66 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.8.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.7.0...subspace-framework-v0.8.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **framework:** BoardDescriptor and ValidatedBoard have a new public field former_ids, so code that builds a BoardDescriptor must set it (Vec::new() for none), and ProductError has the new variants FormerIdInUse, DuplicateFormerId, ReservedFormerId and ReservedRenameTarget, so an exhaustive match on it must handle them.
+
+### Features
+
+* **desktop:** show contextual decision actions and refresh controls ([#188](https://github.com/aiconsultancy/subspace/issues/188)) ([090ad8f](https://github.com/aiconsultancy/subspace/commit/090ad8f1b9a2637a40d48d561b75d61092a002f3))
+* **framework:** read saved data under a Space's former ids ([1990dcf](https://github.com/aiconsultancy/subspace/commit/1990dcfcf59feb423710bc758811420def555097))
+
+## [0.7.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.6.0...subspace-framework-v0.7.0) (2026-11-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **framework:** ProductBuild has a new public field, pre_startup, and ProductDescriptor and ValidatedProduct have a new public field, command_mount, of the new public type subspace_product::CommandMount. Code that builds any of them as a struct literal must set it; `pre_startup: None` and `command_mount: CommandMount::Prefixed` keep today's behaviour. ProductBuild::new builds one with every optional field unset. The exhaustive public enum ProductError has a new variant, RootMountConflict, so exhaustive matches on it need an arm for it. mcp::served_catalog returns GroupedCatalog instead of Catalog; read the tools with `.served_catalog().tools()`. Products may declare less than before. When the command tree is generated, in Prefixed mode too:
+    - a generated root leaf command or alias may not be a word start-up
+      claims (about, --about, --version, __product_metadata, mcp, and upgrade
+      when the product has an update source) or __complete-word;
+    - a generated group may not be mcp, upgrade with an update source, or
+      __complete-word;
+    - no generated command name or alias, at any depth, may start with `-`;
+    - a root-level alias may not equal a group name;
+    - no generated flag may share a name or any spelling (long, short, hidden
+      alias or `negate` token, clause flags included) with a flag the
+      product's tree declares at the root.
+
+    Any of these fails command generation with exit code 1. Product root
+    flags no longer reach generated tool input. The default CLI reports an
+    unknown root command as `Unknown command: <words>` instead of usage-lib's
+    `unexpected word: <word>`.
+* **framework:** `Channel::current()` is no longer `const`; the first read fixes the channel for the process. `product_data_name()` takes no argument. Every config, state, cache and log path the Framework manages now uses one directory name, the data name, in the platform config or state directory. The default agents directory, `~/.config/subspace/copilot/agents`, is unchanged. The Keychain service `<data name>.github` uses the data name too, as does any service an app derives from `state::directory_name()`, such as Subspace's `<data name>.fleet-api`. The account session store keeps the namespace the app passes. The data name is the name an app passes to `subspace_framework::product::configure_data_name`. Otherwise it is the binary name, which `prepare_context`, `record_new_install_theme` or `launch` sets, whichever runs first. A pre-release channel adds `-<type>`. For an app whose binary is not `subspace`, such as `harbor`, these are now looked for under `harbor[-<type>]` instead of `subspace[-<type>]`:
+    - the shared state directory's caches, the signed-in GitHub account list,
+      and the agent sessions and chat workspaces;
+    - `config.json` and `copilot.json` as the core reads them;
+    - the Keychain service `subspace[-<type>].github`, and
+      `subspace[-<type>].fleet-api` for an app that uses the fleet client.
+
+    The Settings state and config files, the saved PATH and the app log were
+    already under `harbor[-<type>]` and stay there. No files or Keychain items
+    are moved.
+
+    To keep the old shared location, call `configure_data_name("subspace")`
+    before `prepare_context`, `record_new_install_theme` and `launch`. It also
+    works after an early read. The Settings files, the saved PATH and the log
+    then also use `subspace`: one directory name is now the only layout.
+
+    If a data path is read before the data directory is named, the process
+    falls back to `subspace`. While that fallback is still implicit and differs
+    from the binary name, `prepare_context`, `record_new_install_theme` and
+    `launch` stop with an error before reading or writing anything.
+
+### Features
+
+* **desktop:** link decisions and refine workspace views ([#170](https://github.com/aiconsultancy/subspace/issues/170)) ([b44d7b4](https://github.com/aiconsultancy/subspace/commit/b44d7b4686b5dbd47b5f483c9b16f5447b7827ae))
+* **framework:** add root command mounts and command composition ([#145](https://github.com/aiconsultancy/subspace/issues/145)) ([3344cbf](https://github.com/aiconsultancy/subspace/commit/3344cbf48b2418368c3e845aa374c64827976a3c))
+* **framework:** let an app name its data directory and release channel ([#142](https://github.com/aiconsultancy/subspace/issues/142)) ([ae2d70e](https://github.com/aiconsultancy/subspace/commit/ae2d70e3a21aec259a50e99609c1749549d20096))
+
 ## [0.6.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.5.0...subspace-framework-v0.6.0) (2026-11-26)
 
 

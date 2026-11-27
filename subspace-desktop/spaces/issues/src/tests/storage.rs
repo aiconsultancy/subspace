@@ -13,6 +13,12 @@ const SEARCH: &str = "fixture secret words";
 const GROUP: &str = "state-started";
 
 #[gpui_kit::test]
+fn a_new_install_starts_with_all_issues(cx: &mut TestAppContext) {
+    let (board, cx) = super::mount_with_tab(cx, super::WIDTH, None);
+    board.read_with(cx, |board, _| assert_eq!(board.tab, Tab::All));
+}
+
+#[gpui_kit::test]
 fn board_state_keeps_choices_but_no_issue_content(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
     let file = folder.path().join("state.json");

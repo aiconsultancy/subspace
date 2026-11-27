@@ -5,6 +5,7 @@
 # Usage: audit.sh
 set -uo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+here=$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")
 
 failures=0
 pass() { printf 'PASS  %s\n' "$*"; }
@@ -26,13 +27,62 @@ private_address() {
 }
 
 loopback_address() {
-    case ${1#[} in
-        127.*|::1*|'::ffff:127.'*) return 0 ;;
+    local address=${1#[}
+    case ${address%]} in
+        127.*|::1|'::ffff:127.'*) return 0 ;;
     esac
     return 1
 }
 
-# 1. Listening sockets. Only SSH, DHCP and VPN agents may listen beyond loopback.
+# Previously supported private listeners (for example shared Ergo or site nginx) must have an
+# explicit --allow-port rule in the live prerouting chain, not merely a private-looking address.
+allowed_ports=$(nft -n list chain inet subspace_lockdown prerouting 2>/dev/null | awk '
+    $1 == "tcp" && $2 == "dport" && / ip saddr != .* drop$/ {
+        sub(/^.*dport /, ""); sub(/ ip saddr.*/, ""); gsub(/[{},]/, " ");
+        for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) print $i
+    }')
+operator_port() {
+    case $1 in
+        3000|3001|5432|8070|8080|8317|8484) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+permitted_site_listener() {
+    operator_port "$3" && return 1
+    [[ $1 == tcp ]] && private_address "$2" || return 1
+    if [[ -n ${private_bind:-} ]]; then
+        # A site rule cannot excuse a publication or a second listener on either managed port.
+        case $3 in "$private_https_port"|"$private_irc_port") return 1 ;; esac
+    fi
+    grep -Fxq "$3" <<<"$allowed_ports"
+}
+
+# 1. Listening sockets. SSH and network clients are exempt; service listeners need a recorded rule.
+private_choice=
+if [[ -f /root/fleet/answers.json ]]; then
+    private_choice=$(jq -r '.privateNetwork // ""' /root/fleet/answers.json) || fail 'Could not read the private network choice.'
+fi
+private_bind='' private_https_port='' private_irc_port='' private_api=false private_irc=false
+if [[ -n $private_choice && $private_choice != off ]]; then
+    if expectations=$(python3 -B "$here/private_network.py" listeners "$private_choice") &&
+            read -r private_bind private_https_port private_irc_port <<<"$expectations" &&
+            python3 -B "$here/private_network.py" verify "$private_choice"; then
+        pass 'Private ingress is restricted to the recorded network and the running API uses production sign-in.'
+    else
+        fail 'Private ingress does not match the recorded firewall policy or the API sign-in is unsafe.'
+    fi
+    if ! systemctl is-active --quiet subspace-private-network.service; then
+        fail 'The managed private ingress service is not active.'
+    fi
+    if ! systemctl is-active --quiet subspace-private-network-check.timer; then
+        fail 'The periodic private ingress check is not active.'
+    fi
+    certificate=/etc/subspace-private-network/tls.pem
+    if [[ -f $certificate ]] && ! openssl x509 -in "$certificate" -noout -checkend 2592000 >/dev/null 2>&1; then
+        warn 'The private ingress TLS certificate expires within 30 days or could not be read. Check or renew it.'
+    fi
+fi
 sshd_config=$(sshd -T 2>/dev/null) || sshd_config=
 # SSH may listen where sshd is configured to, and where ssh.socket listens when socket-activated.
 ssh_ports=$(awk '$1 == "port" { print $2 } $1 == "listenaddress" { n = split($2, part, ":"); print part[n] }' <<<"$sshd_config")
@@ -40,10 +90,15 @@ if systemctl is-active --quiet ssh.socket 2>/dev/null; then
     ssh_ports+=$'\n'$(systemctl show -p Listen --value ssh.socket 2>/dev/null | grep -oE '[0-9]+ \(Stream\)' | cut -d' ' -f1)
 fi
 listeners_ok=true
+if ! listeners=$(ss -H -tulpn 2>/dev/null); then
+    fail 'Could not inspect listening sockets.'
+    listeners_ok=false
+fi
 while read -r proto _state _recv _send local _peer process; do
+    [[ -n $proto ]] || continue
     address=${local%:*}
     port=${local##*:}
-    address=${address%\%*}
+    address=${address%\%*}; address=${address#[}; address=${address%]}
     loopback_address "$address" && continue
     name=$(sed -n 's/.*(("\([^"]*\)".*/\1/p' <<<"$process")
     case "$proto:$port:$name" in
@@ -52,17 +107,27 @@ while read -r proto _state _recv _send local _peer process; do
         udp:68:*|udp:546:*) continue ;;                  # DHCP clients
         *:*:tailscaled|*:*:cloudflared) continue ;;      # ZTNA agents
     esac
-    if [[ $address == '*' || $address == 0.0.0.0 || $address == '[::]' || $address == '::' ]]; then
+    if [[ -n $private_bind && $address == "$private_bind" && $proto == tcp && $name == haproxy ]]; then
+        case $port in
+            "$private_https_port") private_api=true; continue ;;
+            "$private_irc_port") private_irc=true; continue ;;
+        esac
+    fi
+    if [[ $address == '*' || $address == 0.0.0.0 || $address == '::' ]]; then
         fail "$name listens on every interface ($proto $local). Bind it to 127.0.0.1."
         listeners_ok=false
-    elif private_address "$address"; then
-        warn "$name listens on private address $proto $local. Make sure only your private network reaches it."
+    elif permitted_site_listener "$proto" "$address" "$port"; then
+        warn "$name listens on explicitly permitted private address $proto $local. Check your site's network policy."
     else
-        fail "$name listens on public address $proto $local."
+        fail "$name has an unexpected non-loopback listener ($proto $local)."
         listeners_ok=false
     fi
-done < <(ss -H -tulpn 2>/dev/null)
-"$listeners_ok" && pass 'Services listen on loopback only (apart from SSH and private-network agents).'
+done <<<"$listeners"
+if [[ -n $private_bind ]] && { ! "$private_api" || ! "$private_irc"; }; then
+    fail 'Expected both the HTTPS and TLS IRC proxy listeners on the recorded private address.'
+    listeners_ok=false
+fi
+"$listeners_ok" && pass 'Services listen only on loopback or their expected restricted addresses.'
 
 # 2. Lockdown firewall.
 if ruleset=$(nft list table inet subspace_lockdown 2>/dev/null); then
@@ -106,7 +171,7 @@ else
 fi
 if [[ -f /etc/subspace-fleet/fleet.json ]]; then
     if nft list table inet subspace_fleet >/dev/null 2>&1; then
-        pass "Fleet service firewall (operator-only dashboard, AgentsView and model proxy) is loaded."
+        pass "Fleet service firewall for the configured loopback services is loaded."
     else
         fail 'Fleet service firewall (inet subspace_fleet) is not loaded. Re-run the installer.'
     fi
@@ -156,13 +221,33 @@ else
     warn 'Could not read the effective sshd configuration.'
 fi
 
-# 4. Docker must publish on loopback only.
+# 4. Docker port publications can exist without a userspace listening socket (kernel DNAT).
 if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-    exposed=$(docker ps --format '{{.Names}} {{.Ports}}' | grep -E '(0\.0\.0\.0|\[::\]|:::)[0-9]*:' || true)
-    if [[ -n $exposed ]]; then
-        while read -r line; do fail "Container publishes beyond loopback: $line"; done <<<"$exposed"
+    if ids=$(docker ps --quiet); then
+        containers=()
+        if [[ -n $ids ]]; then mapfile -t containers <<<"$ids"; fi
+        if (( ${#containers[@]} )); then
+            if published=$(docker inspect --format '{{json .NetworkSettings.Ports}}' "${containers[@]}" |
+                jq -r '(. // {}) | to_entries[] | .key as $backend | .value[]? |
+                    [(.HostIp | if . == null or . == "" then "*" else . end), .HostPort, $backend] | @tsv'); then
+                while IFS=$'\t' read -r address port backend; do
+                    [[ -n $address ]] || continue
+                    if [[ -z $port || -z $backend ]]; then
+                        fail 'Docker returned an incomplete port publication.'
+                        continue
+                    fi
+                    loopback_address "$address" && continue
+                    if ! operator_port "${backend%/*}" && permitted_site_listener "${backend##*/}" "$address" "$port"; then
+                        continue
+                    fi
+                    fail "Container has an unexpected port publication: [$address]:$port -> $backend"
+                done <<<"$published"
+            else
+                fail 'Could not inspect published container ports.'
+            fi
+        fi
     else
-        pass 'Containers publish ports on loopback (or a private address) only.'
+        fail 'Could not inspect published container ports.'
     fi
 fi
 
@@ -180,6 +265,7 @@ check_private() {
 }
 check_private /root/fleet
 for path in /root/fleet/*.json /root/fleet/*.env /root/fleet/*.yaml /root/irc /root/irc/*.json \
+    /root/fleet/private-network/*.pem /etc/subspace-private-network/tls.pem \
     /etc/subspace-fleet/secrets.json /etc/subspace-fleet/extra-secrets.json; do
     check_private "$path"
 done

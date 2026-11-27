@@ -1,0 +1,538 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "17d659de-7dc6-4e30-be3d-6750d121a89f",
+  "prevIds": [
+    "dd7824f0-1ead-4b8f-a942-0c4403d7bc90"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "pairing_invites"
+      ],
+      "writes": [
+        "s|tbl|public.pairing_invites",
+        "n|tbl|public.pairing_invites",
+        "e|tbl|public.pairing_invites",
+        "n|rel|public.pairing_invites",
+        "n|type|public.pairing_invites",
+        "n|rel|public.pairing_invites_pkey",
+        "n|rel|public.pairing_invites_scope_id"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "agent_credentials",
+        "pairing_invite_id"
+      ],
+      "writes": [
+        "s|col|public.agent_credentials.pairing_invite_id",
+        "n|col|public.agent_credentials.pairing_invite_id",
+        "e|col|public.agent_credentials.pairing_invite_id"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "agent_credentials",
+        "agent_credentials_pairing_invite"
+      ],
+      "writes": [
+        "s|idx|public.agent_credentials_pairing_invite",
+        "n|idx|public.agent_credentials_pairing_invite",
+        "e|idx|public.agent_credentials_pairing_invite",
+        "n|rel|public.agent_credentials_pairing_invite"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|col|public.agent_credentials.pairing_invite_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "pairing_invites",
+        "pairing_invites_member"
+      ],
+      "writes": [
+        "s|idx|public.pairing_invites_member",
+        "n|idx|public.pairing_invites_member",
+        "e|idx|public.pairing_invites_member",
+        "n|rel|public.pairing_invites_member"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public",
+        "n|col|public.pairing_invites.organisation_id",
+        "n|col|public.pairing_invites.user_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "agent_credentials"
+      ],
+      "writes": [
+        "s|fk|public.agent_credentials.agent_credentials_ldLnTx6w2SPH_fkey",
+        "n|fk|public.agent_credentials.agent_credentials_ldLnTx6w2SPH_fkey",
+        "e|fk|public.agent_credentials.agent_credentials_ldLnTx6w2SPH_fkey",
+        "n|con|public.agent_credentials.agent_credentials_ldLnTx6w2SPH_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|tbl|public.pairing_invites",
+        "n|sch|public",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.agent_credentials.pairing_invite_id",
+        "n|col|public.pairing_invites.organisation_id",
+        "n|col|public.pairing_invites.id",
+        "e|uniqueness|public.pairing_invites.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "pairing_invites"
+      ],
+      "writes": [
+        "s|fk|public.pairing_invites.pairing_invites_organisation_id_organisations_id_fkey",
+        "n|fk|public.pairing_invites.pairing_invites_organisation_id_organisations_id_fkey",
+        "e|fk|public.pairing_invites.pairing_invites_organisation_id_organisations_id_fkey",
+        "n|con|public.pairing_invites.pairing_invites_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.pairing_invites.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "pairing_invites"
+      ],
+      "writes": [
+        "s|fk|public.pairing_invites.pairing_invites_pC9fSHAAllgW_fkey",
+        "n|fk|public.pairing_invites.pairing_invites_pC9fSHAAllgW_fkey",
+        "e|fk|public.pairing_invites.pairing_invites_pC9fSHAAllgW_fkey",
+        "n|con|public.pairing_invites.pairing_invites_pC9fSHAAllgW_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.pairing_invites.organisation_id",
+        "n|col|public.pairing_invites.user_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "pairing_invites"
+      ],
+      "writes": [
+        "s|fk|public.pairing_invites.pairing_invites_xfK6HULueFPT_fkey",
+        "n|fk|public.pairing_invites.pairing_invites_xfK6HULueFPT_fkey",
+        "e|fk|public.pairing_invites.pairing_invites_xfK6HULueFPT_fkey",
+        "n|con|public.pairing_invites.pairing_invites_xfK6HULueFPT_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.pairing_invites.organisation_id",
+        "n|col|public.pairing_invites.created_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "pairing_invites",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "pairing_invite_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "token_hash",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "expires_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "created_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "redeemed_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "revoked_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_pairing_invite",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "pairing_invite_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_member",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "user_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_ldLnTx6w2SPH_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "pairing_invite_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "pairing_invites",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_pC9fSHAAllgW_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "user_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_xfK6HULueFPT_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "created_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_scope_id",
+        "nameExplicit": true,
+        "columns": [
+          "organisation_id",
+          "id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_hash",
+        "value": "\"token_hash\" ~ '^[0-9a-f]{64}$'",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

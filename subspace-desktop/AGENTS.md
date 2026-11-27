@@ -211,6 +211,12 @@ forwards the app's targets here.
   no trace of it. A build with `api_backend: "none"` is the check:
   `products/subspace/src/surfaces.rs` decides what it leaves out, and
   `subspace_api_client::has_backend()` tells a Space at run time.
+- **API-backed views.** Keep the visible result during refreshes for the
+  same account, organisation, record and filters. Track the request
+  separately and apply the latest matching result in place. In record list
+  and detail toolbars, place Refresh immediately before the final trailing
+  action, or at the trailing edge when there are no trailing actions.
+  See the [API-backed view pattern](../subspace-framework/docs/board-integration.md#api-backed-views).
 - **A Framework change and a Space change together.** Both projects live in
   this repository, and the desktop builds the Framework from
   `../subspace-framework` by path, so an edit there is in the next desktop

@@ -15,6 +15,11 @@ import { type Config, type Provider } from "./config";
 export const externalClockTolerance = 5;
 /** The issuer of agent tokens, which agents sign with their own keys (see `agent-keys.ts`). */
 export const agentTokenIssuer = "subspace-agent";
+/** The issuer of device tokens, which people's paired devices sign with their own keys. */
+export const deviceTokenIssuer = "subspace-device";
+/** Tokens signed with a member's registered key: never a provider's, whatever they claim. */
+export const isKeyTokenIssuer = (issuer: string | undefined) =>
+  issuer === agentTokenIssuer || issuer === deviceTokenIssuer;
 const devIssuer = "subspace-dev";
 const devAudience = "subspace-api";
 export const devTokenLifetime = 28_800;
@@ -259,9 +264,9 @@ export function jwtVerifiers(
     try {
       // The unverified issuer only selects a configured verifier. Signature,
       // expiration and provider claims are checked before identity is returned.
-      // Agent tokens are never a provider's: their verifier needs the agent's key.
+      // Agent and device tokens are never a provider's: their verifier needs the member's key.
       const issuer = decodeJwt(token).iss;
-      const verify = issuer && issuer !== agentTokenIssuer ? verifiers.get(issuer) : undefined;
+      const verify = issuer && !isKeyTokenIssuer(issuer) ? verifiers.get(issuer) : undefined;
       return verify ? await verify(token) : null;
     } catch {
       return null;

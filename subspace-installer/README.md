@@ -228,9 +228,33 @@ An installed repository is not checked again.
 The rear admiral can call `refresh_origin` on the `repo_refresh` MCP server
 with an installed repository ID. The tool fetches from the configured upstream
 into `refs/remotes/origin/*` in the rear admiral's reference checkout. Use
-`read_origin_file` with a branch and path to read the fetched version. The checkout
+`read_origin_file` with a branch and path to read the fetched version and its exact commit SHA. The checkout
 branch and working files remain read-only. Private fetches use the rear
-admiral's existing repository-scoped GitHub App credentials.
+admiral's existing repository-scoped GitHub App credentials. These tools use the
+Bun helper in the selected Stargate source. Use a Stargate release with
+`scripts/repo-refresh.ts` for repository refresh and `scripts/officer-files.ts`
+for Subspace chat uploads. Setup selects the latest tagged release by default.
+
+For a fleet with an agent API, the installer registers `subspace_publish`
+alongside the existing chat upload tool for OpenCode and Claude officers.
+`prepare_file` uses the officer's own access to prepare an issue attachment,
+existing upload, private outbox file, or new text. Set `preview: "teams"` for
+a labelled Markdown or plain-text PNG when the fleet has its sandboxed
+browser tools installed. Use `page` for subsequent pages. Stage local files in
+`/var/lib/subspace-fleet/agents/<officer>/outbox`. Systemd ages active and
+retired officers' generated exports after 30 days.
+File preparation under the service sandbox needs Stargate v0.49.0 or a
+compatible release declaring `sandboxFiles: 1`.
+
+Officers with a configured GitHub App and GitHub repository use
+`subspace-github-officer check --repo PROJECT` to confirm repository access.
+The installer selects the shared Stargate tool and its local App adapter.
+Claude SDK captains use the `operate` tool on `github_officer`. Their built-in
+Bash access remains governed by the harness settings.
+Use `--help` for signed commits, PR status and edits, and other authorised
+operations. If the fleet enables direct squash merging for the captain
+checkout, pass the full reviewed SHA with `merge --expected-head`.
+
 
 A repository also takes an optional one-line `description` and `tracker`,
 free text that names where its work is tracked, for example
@@ -551,7 +575,7 @@ captain read a crew worktree without also letting its allowed commands,
 crew who work in those worktrees share its Linux user anyway (see below).
 
 **Delegate captains** (`captainTools: "delegate"`) plan, review and open pull
-requests with `subspace-github gh pr create` and their GitHub App; their crew
+requests with the officer tool’s `pr-create` operation and their GitHub App. Their crew
 edit, test, commit and push. A delegate captain has no edit, write or patch
 tool, may work in any directory, and has an open shell with writes refused:
 any command runs, chained, piped or in a subshell, except
@@ -635,6 +659,13 @@ sign-in and the agent listener), the saved initiative and stand-ins for the
 tokens, so the comparison includes the API's tools. The installer applies a changed policy to a pinned root session too
 ([Captain sessions](#captain-sessions)).
 
+Officers ask clarifying questions in a plain-text reply to the original
+conversation. If a choice requires human approval and the tracker is
+available, the officer presents a proposed decision and its reference and
+version. The OpenCode starter policy denies the native `question` tool.
+An upgrade applies the new policy to pinned roots and new sessions. Older
+unpinned sessions may retain the permissions they were created with.
+
 To extend the starter policy, list rules in `harness.extraPermissions`: for
 the whole fleet, in `harness.captain` or `harness.rearAdmiral` for one role,
 or in an officer's own `harness`. The installer appends them in that order
@@ -686,6 +717,66 @@ virtual environments, and the [screenshot tools](#screenshots). Mise installs
 Node 24 by default; the [toolchains](#toolchains) the repositories need come
 on top.
 
+### Live mockup previews
+
+Ask a captain in its ship conversation to make a mockup and show it. The
+captain or its crew builds a static site in the captain's staging directory.
+The captain uses its `fleet-mockup` skill and the `stargate_serve` MCP server
+to publish a copy and reply with the browser link. The same name updates
+the same URL. Each publication lasts seven days and can be withdrawn early.
+
+The installer runs Caddy on `127.0.0.1:8090` by default. It adds the port to
+`./install.sh tunnel --target example-fleet --background`. Open loopback links
+on the workstation running that tunnel. Restart an existing tunnel after an
+upgrade to pick up the new forward. On a fleet installed directly on the VM,
+forward its preview port over your authorised SSH connection.
+
+For links that work across an authorised team, ask the operator which private
+hostname and viewer access policy to use. Set up a dedicated web origin on the
+team's private access gateway and proxy it to the loopback Caddy listener.
+Pass `--preview-url https://previews.example.com` for HTTPS, or
+`--preview-url http://previews.example.com:8088` when the private network
+protects the HTTP connection and controls who can reach it. Use
+`--preview-url tunnel` to switch back to the SSH default. When the proxy runs
+on the fleet VM, pass
+`--preview-proxy-user www-data` (or the actual service account) to permit access
+to Caddy's port.
+
+On an existing Headscale network, point the chosen hostname at the fleet VM's
+tailnet address using [Headscale DNS](https://headscale.net/stable/ref/dns/)
+or the team's private DNS resolver. Bind a reverse proxy to that tailnet
+address using a port that the fleet services do not use, and forward `/p/`
+to Caddy. Check the effective
+[Headscale policy](https://headscale.net/stable/ref/policy/) for the proxy
+port, including existing rules. Allow all users on the tailnet for
+fleet-wide sharing or only the chosen group. If the installer manages the VM
+firewall, add the proxy port to the `--allow-port` list in your setup
+command, keeping any existing entries. This opens the port to private source
+ranges, so keep the proxy bound to the tailnet address.
+Use the dedicated origin in `--preview-url` and confirm that a second
+authorised tailnet device can resolve the hostname and open a published link.
+For a restricted group, also check that a tailnet device outside the group
+cannot open it. The operator or installing agent sets up DNS, the proxy and
+the network policy as part of the agreed plan.
+
+Both features are on by default. `--no-mockup-previews` skips Caddy and withdraws
+the service, tool and fleet skill on reruns. It keeps staged and published
+files on disk. `--no-impeccable` removes the installer-managed Impeccable skill
+from captains while allowing mockup previews. Re-enable with
+`--mockup-previews` or `--impeccable`. The installer pins the Caddy binary and the
+upstream Impeccable skill and engine. Fleet-managed Impeccable uses the design
+skill without automatic hooks. OpenCode keeps an existing operator-provided skill.
+
+For hand-written `fleet.json`, use `"mockupPreviews": {"enabled": false}` and
+`"impeccable": false`. `mockupPreviews.port` overrides the default loopback
+port, `mockupPreviews.url` sets a private HTTP or HTTPS origin, and
+`mockupPreviews.proxyUser` grants a local proxy account access. The preview
+service requires a Stargate revision with the mockup publishing contract.
+An explicit HTTP origin requires the additional `mockupPreviewsHttp` capability.
+If the default release lacks it, pass `--stargate-ref` with a compatible
+revision, such as `dd89f0b67211482cc9243fbac4691453fc532671`.
+Use `--no-mockup-previews` when keeping an older, incompatible Stargate pin.
+
 ### Screenshots
 
 Agents always need to take screenshots, of web pages and of desktop apps, so
@@ -712,9 +803,17 @@ every fleet VM gets the means in its base install, whatever its toolchains:
   file without Markdown fences. The command uses the installed browser
   offline so private diagrams stay on the VM. The rear admiral can also pass
   `-` as the input to author a diagram on standard input.
+- **Flint charts**: the local `flint` [MCP server](https://microsoft.github.io/flint-chart/#/mcp)
+  and bundled authoring skills are available to officers. The server
+  validates, compiles and renders chart specifications with inline
+  `data.values`. OpenCode also installs the five Flint skills in its skill
+  directory. From a shell, `flint-render chart.png < chart.json` writes a PNG
+  and `flint-render chart.svg < chart.json` writes an SVG. Captains on a fleet
+  with the Subspace API can upload the PNG using `subspace_files.upload_file`
+  and include the returned attachment reference in an IRC reply.
 
 Every version is pinned in one place,
-[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright and Mermaid
+[`lib/screenshots/package.json`](lib/screenshots/package.json): Playwright, Mermaid and Flint
 (with its `package-lock.json`, so `npm ci` checks each package's integrity
 hash and runs no package scripts), the Chromium revision that Playwright
 names, the Node that runs it, and the distribution packages for Ubuntu
@@ -726,7 +825,7 @@ apt does not offer, or a browser download that fails, is reported and does
 not stop the install; the next run tries again.
 
 After every install, the installer takes a screenshot of a local page under
-`xvfb-run` and renders a Mermaid PNG. It runs both with the tool environment
+`xvfb-run` and renders Mermaid and Flint PNGs. It runs all three with the tool environment
 of a captain with crew when one is available. It prints `Screenshot check ...
 PASS` or a warning identifying the failing command, and continues the install.
 
@@ -737,10 +836,12 @@ browsers with `PLAYWRIGHT_BROWSERS_PATH=/opt/subspace-fleet/browsers`.
 
 To do without them, set `"screenshots": false` in `fleet.json` (on a VM set
 up with `subspace-setup`, `/root/fleet/fleet.json`, which setup keeps) and run
-the installer or `sudo subspace-setup` again. Nothing is removed; to remove
+the installer or `sudo subspace-setup` again. This also turns off the Flint MCP
+registration and managed skills. To remove the installed binaries and packages, use
 what an earlier run installed, `sudo rm -rf /opt/subspace-fleet/playwright
 /opt/subspace-fleet/browsers /opt/subspace-fleet/bin/playwright
-/opt/subspace-fleet/bin/mermaid-render` (the
+/opt/subspace-fleet/bin/mermaid-render /opt/subspace-fleet/bin/flint-chart-mcp
+/opt/subspace-fleet/bin/flint-render` (the
 distribution packages stay).
 
 ### Toolchains
@@ -1000,17 +1101,16 @@ The rear admiral joins every standard channel. Each captain joins its own
 ship channel, fleet command and the other ship channels. Allowlisted humans
 wake the rear admiral in Starbase and the owning captain in its ship channel.
 Elsewhere, fleet command included, tag an agent by its current IRC nick to
-wake it; the rear admiral tags a captain the same way. Direct messages are
-for people only: the installer sets Stargate's `dmPolicy` to `redirect`, so a
-direct message to the rear admiral or a captain starts no turn, and the agent
-answers a signed-in sender with a notice pointing at its own channel
-(Starbase for the rear admiral, the ship channel for a captain). Stargate verifies the
+wake it; the rear admiral tags a captain the same way. The installer sets
+Stargate's `dmPolicy` to `redirect`. A plain DM gets a notice pointing a
+signed-in sender to the officer's own channel. A verified decision outcome
+DM from the rear admiral can wake the receiving captain. Stargate verifies the
 sender's SASL account and keeps human authority separate from agent
 requests. Crew are not on IRC: ask the captain, who relays to its crew
 through Stargate's crew tools. Stargate uses IRC message IDs for strict wake
-rules. [Agent dispatch](#agent-dispatch) posts its offers and assignment
-notices to fleet command, each addressed to one captain's nick, so it wakes
-only that captain.
+rules. [Agent dispatch](#agent-dispatch) addresses one captain at a time.
+Ready for agents offers and legacy assignment notices use fleet command.
+Capacity-aware assignment requests go to the captain's ship channel.
 
 ### Local IRC and TLS
 
@@ -1045,6 +1145,27 @@ rather than one fleet's Ergo:
 [Run the shared IRC server in a container](../INSTALL.md#run-the-shared-irc-server-in-a-container).
 
 ### IRC sign-in
+
+When guided setup runs both Ergo and a development-sign-in API on one VM,
+they share an authentication hook over the private API Compose network.
+The API's signing secret is mounted only into the API. Ergo receives the
+separate hook token. The advertised IRC addresses are the loopback listener
+ports. An existing operator-configured IRC issuer is retained.
+
+If a managed shared Ergo server uses the API selected by `--api-target` or
+`--api-url`, first configure that API to issue credentials for the shared
+IRC server. Set its `IRC_AUTH_SERVERS`, `IRC_AUTH_ORGANISATION`,
+`IRC_CREDENTIAL_SECRET_FILE` and `IRC_AUTH_HOOK_TOKEN_FILE`. On the shared
+IRC VM, install the matching hook token in a root-only file and run:
+
+```sh
+sudo subspace-setup irc-server --auth-api-url https://subspace.example.com \
+  --auth-api-token-file /root/irc/hook-token
+```
+
+The API address must be reachable from that VM over HTTPS. Use
+`--auth-api-ca-file` to trust a private CA for the API. The server retains
+those settings across reruns. Clear the hook with `--auth-api-url ''`.
 
 `irc.auth` sets how the rear admiral and the captains sign in to IRC:
 `certificate` (SASL EXTERNAL) or `password` (SASL PLAIN). Guided setup uses
@@ -1423,18 +1544,25 @@ A project that lists none of the fleet's repositories is not checked.
 
 ## The API's agent listener
 
-The fleet's rear admiral and captains use the Subspace API as their own agent
-records, through its MCP server, without WorkOS, Entra or a token.
+With development sign-in and a shared OpenCode gateway, a new fleet uses
+Stargate's signed bridge by default for both the local PostgreSQL and
+`--database-url-file` modes. Setup registers the fleet with the local API
+and issues a short-lived enrollment token scoped to that fleet. The gateway
+holds the officers' keys, while their harnesses each reach its own Unix
+socket. No administrator token is written to the fleet's installer inputs.
 
-- **`subspace-setup`** offers the API's agent listener once:
+The legacy loopback listener remains available for existing fleets and for
+fleets containing only native Claude Agent SDK officers.
+
+- **`subspace-setup --agent-listener`** enables the legacy listener:
   `AGENT_PORT=3001` and `AGENT_ORGANISATION=dev:<organisation>` in
   `/root/fleet/api.env`, the development sign-in organisation the agents are
-  registered in, with a comment line recording the offer. It publishes
+  registered in. Existing listener settings and previous opt-outs are retained. Setup publishes
   `127.0.0.1:3001` only while the listener is on, and keeps
   `AGENT_ORGANISATION` in step with the organisation while it has the
   installer's `dev:<organisation>` form. An operator turns the listener off
-  for good by setting `AGENT_PORT=` (or deleting it), and back on with
-  `AGENT_PORT=3001`. Setup also turns it off when `NODE_ENV` is `production`,
+  with `--no-agent-listener` and back on with `--agent-listener`. Setup
+  also turns it off when `NODE_ENV` is `production`,
   where the API refuses it, and when development sign-in is off (WorkOS or
   Entra); the agents then have no way into the API yet. While it is on, setup adds
   `api.agentUrl: "http://127.0.0.1:3001"` to the fleet configuration.
@@ -1714,7 +1842,7 @@ the run ends.
 
 - **Options.** `--api-url` is the API's HTTPS origin, kept on later runs. It
   excludes `--database-url-file`, `--database-ca-file`, `--migrate`, `--demo`
-  and `--agent-dispatch`, and, on the host, `--api-target`. There is no way
+  and, on the host, `--api-target`. There is no way
   back to an API on the VM. A fleet whose tracker is in an API on its VM, with
   its own PostgreSQL or an existing one, switches only with
   `--switch-to-hosted-api`, which leaves that tracker behind. The token file
@@ -1724,7 +1852,8 @@ the run ends.
 - **Stargate compatibility.** The default release has both the
   `subspaceAgents` section and the usage guard. If you supply a custom pin,
   setup checks that it has the API bridge and, when enabled, the usage guard
-  before saving the configuration.
+  before saving the configuration. Hosted `--agent-dispatch` also requires a
+  pin that supports signed assignment requests.
 - **Checks.** Before setup saves anything, every run, the dry run included,
   checks that the API answers `GET /health` and, when the run is given a
   token, checks it by posting an empty enrolment: the API refuses that for
@@ -1845,8 +1974,8 @@ See [Stargate's usage guide](https://github.com/aiconsultancy/stargate/blob/v0.4
 
 Stargate's dispatcher runs in the rear admiral's gateway and hands out
 Subspace issues: it offers each unassigned issue flagged *Ready for agents*
-to the captains in fleet command, one at a time, and tells a captain in
-fleet command about an issue assigned to it. See the
+to the captains in fleet command, one at a time, and asks captains to take
+assigned work. See the
 [repository README](../README.md#agent-dispatch) for what people see and
 [Stargate's guide](https://github.com/aiconsultancy/stargate/blob/v0.46.0/docs/agent-dispatch.md)
 for the details. It needs Stargate v0.43.0 or newer and is off by default.
@@ -1864,6 +1993,23 @@ switch it on (`--agent-dispatch`); in `fleet.json` it is:
 }
 ```
 
+New guided fleets using the bundled Subspace API enable `decisionOutcomeDms`
+when they use the bundled IRC server, signed officer access and a compatible
+Stargate release and an OpenCode rear admiral. The
+rear admiral's gateway signs its requests with its enrolled identity and
+sends the recording captain an IRC DM with the reference and outcome. Other
+DMs still redirect to the captain's channel. Use `--no-decision-outcome-dms`
+to opt out. Existing fleets can opt in with `--decision-outcome-dms` using
+the compatible local API. For a remote IRC server, opt in after confirming
+it verifies accounts in WHOIS, supports `echo-message` and `message-tags`,
+and includes a server `msgid` in the echoed DM. Verify one test delivery.
+Run setup with `--decision-outcome-dms` again after changing the remote
+IRC connection. With the standalone fleet installer, set
+`agentDispatch.decisionOutcomeDms: true` and `api.enrolment: true` in its
+inputs and use a compatible API and gateway. Both decisions and
+issue dispatch use a single signing socket when decision DMs are on. Remove
+`rearAdmiralApiToken` from hand-written inputs when switching to that socket.
+
 The timings are Stargate's defaults and may be left out: the poll interval
 (30 to 3,600 seconds), the time each captain has to answer an offer (60 to
 3,600 seconds) and the waits between rounds (at most ten, each 60 to
@@ -1876,7 +2022,23 @@ channel and the timings. Captains are found in the API's fleet roster by
 agent name; an agent named after the captain's member ID or name is mapped to
 its IRC account, and any other name must be the IRC account itself.
 
-**Credential.** The dispatcher calls the API as the rear admiral, so
+With a Stargate version that supports assignment requests, agent dispatch
+asks captains in their ship channels to take Backlog or Todo issues assigned
+to them when they have eligible idle crew. Requests repeat after four hours
+if the work is still waiting and crew are available. Use
+`subspace-setup --no-assignment-requests` or set
+`agentDispatch.assignmentRequests` to `false` in `fleet.json` to turn those
+requests off while keeping Ready for agents offers enabled.
+`assignmentReminderSeconds` sets the reminder interval, from 3,600 to
+604,800 seconds. Older Stargate versions keep their existing one-time
+command-channel notices.
+
+Use `--no-ready-for-agents-offers` to run assigned work requests alone.
+Enrolled fleets use the rear admiral's existing local signing socket on a
+compatible Stargate version. The gateway can make requests as that officer
+without a separate token in the installer secrets.
+
+**Bearer credential for direct API connections.** The dispatcher calls the API as the rear admiral, so
 assignments, comments and flag changes are recorded as the rear admiral's.
 Give it a bearer token for the rear admiral's own API agent identity, not the
 administrator's `apiToken`. The installer registers the rear admiral's agent
@@ -1926,7 +2088,8 @@ The installer refuses to switch dispatch on without an `api` registration,
 without captains, without a captain with crew, on a `claude-sdk` rear
 admiral (its gateway would run as the rear admiral's own user, so its model
 could read the token, and it cannot be pinned), without
-`rearAdmiralApiToken` or with the administrator's token in its place, and
+a signing socket or the rear admiral's own bearer credential (an
+administrator's token is refused), and
 when a captain's `harness.permissions` has rules that Stargate's fleet tools
 reject: an `ask`, or a pattern other than an exact name, `*` or a prefix
 followed by `*`, for a rule that could match a fleet tool.
@@ -1938,8 +2101,14 @@ captain that uses GitHub. Crew have no App of their own: they commit and
 push from their worktrees as their captain, with the captain's Git identity,
 App and token helper. Grant each App access to the configured repositories
 and the GitHub permissions its member and, for a captain, its crew need.
-Git pushes need Contents write. Issue and pull request operations use Issues
-and Pull requests permissions as appropriate. See
+Git pushes need Contents write. For captain Apps, grant **Pull requests:
+Read and write** so they can open, comment on and review PRs from any author
+in the repositories covered by the installation. Grant Issues write for
+GitHub issue updates. For existing Apps, check both the registration's
+repository permissions and the installation's permissions. An organisation
+owner may need to accept a permission update for the installation. See
+[Changing GitHub App permissions](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration#changing-the-permissions-of-a-github-app)
+and
 [GitHub's installation authentication guide](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
 
 Add `githubApp` to that member's fleet entry. The identifiers below are
@@ -1978,6 +2147,14 @@ repository endpoints. The wrapper rejects administrative commands and flags.
 To use it from an operator shell, run
 `sudo -H -u ss-orion /opt/subspace-fleet/bin/subspace-github gh ...`.
 
+OpenCode captains can post as their App using these commands. Use the
+repository's review rules when choosing a review outcome.
+
+```sh
+subspace-github gh pr comment 42 --repo example/project --body-file comment.md
+subspace-github gh pr review 42 --repo example/project --comment --body-file review.md
+```
+
 Git credentials request repository-scoped Contents access. The rear admiral
 uses read access. Captain Apps default to write access for pushing feature
 branches, which their crew share. Set an App's `contents` to `"read"` for a
@@ -2012,8 +2189,12 @@ From the root of their own checkout of an enabled repository, a captain with
 a Contents write GitHub App can run:
 
 ```sh
-subspace-github gh pr merge NUMBER --squash --match-head-commit FULL_SHA
+subspace-github-officer merge --repo REPOSITORY_KEY --pr NUMBER --expected-head FULL_SHA --directory "$PWD"
 ```
+
+Claude captains use the same operation through `github_officer.operate`.
+Existing OpenCode sessions can also use the original `subspace-github gh pr merge`
+wrapper. It enforces the checkout, squash method and full reviewed head SHA.
 
 Use the full SHA the captain reviewed and check the repository's approval
 and CI requirements first. The helper scopes the installation token to that
@@ -2097,6 +2278,9 @@ Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
   `/api/messages` callback to `/var/lib/subspace-fleet/teams/bot.sock`.
   Set `socketGroup` to an existing Linux group for the trusted reverse
   proxy. Follow [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/teams.md).
+  To receive personal-chat documents, add the tenant's exact SharePoint
+  hostname to `attachmentFileHosts` and enable file support on the Teams app
+  package. See the [Teams setup guide](../docs/teams.md#5-configure-the-fleet).
 
 ## Slack for officers
 
@@ -2507,11 +2691,12 @@ whether at its cap or with the whole VM out of memory.
 | `usageGuard` | On by default. Configure `enabled` and the `claude` and `codex` warning and cutoff percentages. See [Usage guard](#usage-guard). |
 | `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released. Keep v0.46.0 or newer when the usage guard is enabled. `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
-| `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
+| `proxy` | Loopback only. `port` defaults to 8317 and `requestRetries` to 2. |
+| `agentsview` | Loopback only. `enabled` defaults to `true` and `port` to 8080. With `enabled: false`, the installer skips the download and removes the service from an existing install. Existing session history is kept. Use `subspace-setup --agentsview` or `--no-agentsview` to set the same option in guided setup. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
 | `toolchains` | mise tool specifications (`node`, `dotnet`, `cargo:cargo-nextest`, `github:example/tool`, ...), each with a version, a list of versions, `false`, or `{"version", "install", "options"}`. `install` is `shared` (root, into `/opt/subspace-fleet/toolchains`; the default) or `user` (each officer's own mise data directory; the default for `rust`, `dotnet` and `yarn` and for the `cargo:`, `npm:`, `gem:`, `pipx:`, `asdf:`, `vfox:` and `conda:` backends, which run third-party code while installing). Node 24 unless `node` is `false`. See [Toolchains](#toolchains). |
 | `systemPackages` | Debian package names that apt installs system-wide, such as `["zsh", "libssl-dev"]`. Default none; one taken off the list stays installed. |
-| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots), including Xvfb with keyboard maps and fonts, Playwright with its Chromium, and offline Mermaid rendering. `false` installs nothing for them and leaves in place what an earlier run installed. |
+| `screenshots` | `true` (the default) installs the [screenshot tools](#screenshots), including Xvfb with keyboard maps and fonts, Playwright with its Chromium, Mermaid and Flint. `false` disables the managed Flint MCP registration and skills and skips visual tool installation. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `memory` | Optional. The engines' [memory and task limits](#memory-limits-and-swap): `max`, `high`, `swapMax` and `tasksMax` for every officer, and in `captain` and `rearAdmiral` blocks for a role; sizes such as `24G`, `none` or `0` for no limit (`swapMax: 0` is no swap), or `auto` for the installer's own value. Without them the installer sizes each engine from the VM's memory and the fleet. `swap` is `auto` (the default: a swap file when the VM has none), a size, or `none` to leave swap alone. `localApi: true` says the Subspace API and its PostgreSQL run on this VM, so the sizing leaves them their room; `subspace-setup` sets it whenever it runs the API here. |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
@@ -2608,6 +2793,9 @@ sudo subspace-fleetctl attach orion
 sudo journalctl --namespace=subspace-fleet -u subspace-fleet-gateway.service -f
 ssh -N -L 8070:127.0.0.1:8070 -L 8080:127.0.0.1:8080 operator@fleet.example.com
 ```
+
+Omit the `8080` forwarding option if you disabled AgentsView. The host
+installer's `tunnel` command forwards only the configured services.
 
 `sudo subspace-fleetctl api-token` prints the Stargate Fleet API token for a
 desktop or other operator client when `stargate.api` is set.
@@ -2939,6 +3127,7 @@ retention and explicit pruning, the Node toolchain, read-only reference
 checkouts and fresh worktree bases. It exercises nftables when permitted by
 the container and checks rule generation otherwise. For the offline checks,
 run `python3 -B subspace-installer/tests/policy_test.py`,
+`python3 -B subspace-installer/tests/private_network_test.py`,
 `python3 -B subspace-installer/tests/sessions_test.py`,
 `python3 -B subspace-installer/tests/setup_test.py`,
 `python3 -B subspace-installer/tests/memory_test.py`,

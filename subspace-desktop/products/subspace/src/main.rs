@@ -183,26 +183,32 @@ fn board_registrations() -> Vec<BoardRegistration> {
 /// Cargo feature, which also lists it in the descriptor.
 fn all_board_registrations() -> Vec<BoardRegistration> {
     vec![
-        BoardRegistration::new::<subspace_github_board::Github>()
-            .description("GitHub pull requests"),
-        BoardRegistration::new::<subspace_github_copilot_agents_board::CopilotAgents>()
-            .description("GitHub Copilot agent tasks"),
         BoardRegistration::new::<subspace_irc_board::Irc>()
             .description("IRC networks, channels and private messages"),
         BoardRegistration::new::<subspace_issues_board::Issues>()
             .description("Subspace API issues and comments"),
+        BoardRegistration::new::<subspace_github_board::Github>()
+            .description("GitHub pull requests"),
+        #[cfg(feature = "copilot")]
+        BoardRegistration::new::<subspace_github_copilot_agents_board::CopilotAgents>()
+            .description("GitHub Copilot agent tasks"),
         BoardRegistration::new::<subspace_projects_board::Projects>(),
         BoardRegistration::new::<subspace_decisions_board::Decisions>()
             .description("Search, propose and review Subspace API decisions"),
         #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
         BoardRegistration::new::<subspace_space_lab_board::SpaceLab>()
             .description("Native dashboards and managed runtimes (alpha)"),
+        #[cfg(all(feature = "agentsview", any(target_os = "macos", windows)))]
+        BoardRegistration::new::<subspace_web_board::agentsview::AgentsView>(),
         BoardRegistration::new::<subspace_actions_board::Actions>()
             .description("GitHub Actions runs, deployments and releases (experimental)"),
         #[cfg(feature = "component-gallery")]
         BoardRegistration::new::<subspace_framework::component_gallery::ComponentGallery>()
             .description("Shared UI components in their states (developer)"),
     ]
+    .into_iter()
+    .map(surfaces::order)
+    .collect()
 }
 
 /// One board per `webBoards` entry in the config file: a web page or a
@@ -220,7 +226,7 @@ fn web_boards(config: &subspace_framework::core::config::Config) -> Vec<BoardReg
                 move |window, cx| subspace_web_board::create(&page, window, cx),
             );
             let settings = board.clone();
-            registration
+            surfaces::order(registration)
                 .with_configuration(subspace_web_board::configuration(board))
                 .with_field_source(move || subspace_web_board::settings_fields(&settings))
         })
@@ -326,6 +332,7 @@ mod tests {
             ("product.svg", 0x779de1f19cfb06a0),
             ("product-light.svg", 0x779de1f19cfb06a0),
             ("product-dark.svg", 0x8ef38950ba8ecba6),
+            #[cfg(feature = "copilot")]
             ("logos/copilot-agents.svg", 0xdfe0f3122ef1418e),
             ("logos/irc.svg", 0xfeb1f97f6bd091e8),
             ("icons/issues.svg", 0x31ddc61a9106ee65),
@@ -421,6 +428,9 @@ mod tests {
             target_arch = "aarch64"
         )) {
             absent.extend(SPACE_LAB_TOOLS);
+        }
+        if !cfg!(feature = "copilot") {
+            absent.extend(["github_copilot_agents_read", "github_copilot_agents_write"]);
         }
         subspace_framework::agent_tools::test_support::check_documented_catalog(
             &registrations
@@ -562,7 +572,7 @@ mod tests {
             .filter(|id| !["issues", "projects", "decisions"].contains(id))
             .collect();
         assert_eq!(none, expected);
-        for kept in ["github", "github-copilot-agents", "irc", "actions"] {
+        for kept in ["github", "irc", "actions"] {
             assert!(none.contains(&kept), "{kept}");
         }
         assert_eq!(pages(ApiBackend::None), ["web-boards"]);

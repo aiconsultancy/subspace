@@ -39,6 +39,17 @@ import sessions  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
 
 
+def setUpModule():
+    # Setup without private ingress removes the proxy and retires the account its receipt records: never the
+    # host's. remove() runs systemctl and unlinks the proxy's files itself, so it is a stub here, and nothing may
+    # reach the private network module's own command runner.
+    for attribute, value in (("ACCOUNT_RECEIPT", {"new": Path("/nonexistent/receipt")}), ("remove", {}),
+                             ("command", {"side_effect": AssertionError("a setup test ran a host command")})):
+        patcher = patch.object(fleet_setup.private_network, attribute, **value)
+        patcher.start()
+        unittest.addModuleCleanup(patcher.stop)
+
+
 # Tests never reach the network: setup's outbound check is replaced here, and OutboundTests checks the real one.
 check_outbound = fleet_setup.check_outbound
 fleet_setup.check_outbound = lambda answers: None
@@ -52,6 +63,19 @@ fleet_setup.latest_stargate = lambda: ("v0.0.0", "d" * 40)
 # Guided setup preflights the explicit source before saving answers. Use the real check in its dedicated test.
 check_usage_guard_source = fleet_setup.check_usage_guard_source
 fleet_setup.check_usage_guard_source = lambda *_args: None
+check_officer_tool_source = fleet_setup.check_officer_tool_source
+fleet_setup.check_officer_tool_source = lambda *_args: None
+require_decision_dm_source = runtime.require_decision_dm_source
+
+
+def fixture_decision_dm_source(*_args, **_kwargs):
+    raise runtime.Invalid("The fixture Stargate lacks signed decision outcome DMs.")
+
+
+def setUpModule():
+    patcher = patch.object(runtime, "require_decision_dm_source", side_effect=fixture_decision_dm_source)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 def fleet_installer(root, output=None):
@@ -68,6 +92,7 @@ def fleet_installer(root, output=None):
                 patch.object(runtime, "SESSIONS", root / "sessions"), patch.object(runtime, "IRC_CERTS", root / "certs"), \
                 patch.object(runtime, "readable_without_credentials", return_value=True), \
                 patch.object(runtime, "require_usage_guard_source"), \
+                patch.object(runtime, "require_officer_tool_sources"), \
                 patch.object(runtime, "stargate_crew_names_free", return_value=True), contextlib.redirect_stdout(text):
             try:
                 runtime.main(["plan", str(config_path), str(Path(config_path).with_name("fleet.secrets.json")),
@@ -97,6 +122,33 @@ CREW = ["--crew-names", "Orion=Rigel,Deneb,Mira,Sirius"]
 
 
 class UsageGuardAnswersTests(unittest.TestCase):
+    def test_mockup_choices_persist_and_tunnel_restores_the_default_origin(self):
+        selected = fleet_setup.parse_args([
+            "--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+            "--rear-admiral", "Atlas", "--captains", "Orion", *CREW, "--preview-url",
+            "http://previews.example.com:8080/", "--no-impeccable",
+        ])
+        rerun = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        loopback = fleet_setup.parse_args([
+            "--non-interactive", "--operator", "operator", "--preview-url", "tunnel",
+            "--no-mockup-previews", "--impeccable",
+        ])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            saved = fleet_setup.gather(selected, {})
+            self.assertEqual(saved["mockupPreviews"]["url"], "http://previews.example.com:8080")
+            self.assertFalse(saved["impeccable"])
+            self.assertEqual(fleet_setup.gather(rerun, saved)["mockupPreviews"], saved["mockupPreviews"])
+            changed = fleet_setup.gather(loopback, saved)
+        self.assertEqual(changed["mockupPreviews"], {"url": None, "enabled": False})
+        self.assertTrue(changed["impeccable"])
+
+    def test_preview_origin_refuses_credentials_query_fragment_and_paths(self):
+        for origin in ("https://user:pass@previews.example.com", "http://previews.example.com?viewer=1",
+                       "http://previews.example.com#visit", "http://previews.example.com/p/site",
+                       "ftp://previews.example.com", "http://previews.example.com:65536"):
+            with self.subTest(origin=origin), self.assertRaisesRegex(ValueError, r"[Pp]review URL"):
+                fleet_setup.mockups.origin(origin)
+
     def test_an_incompatible_pin_without_a_local_api_is_refused_before_saving(self):
         with tempfile.TemporaryDirectory() as root:
             args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
@@ -112,6 +164,50 @@ class UsageGuardAnswersTests(unittest.TestCase):
             self.assertEqual(check.call_args.args[0]["stargate"]["ref"], "a" * 40)
             run.assert_not_called()
             self.assertEqual(list(Path(root).iterdir()), [])
+
+    def test_stale_officer_pin_is_refused_before_local_registration(self):
+        with tempfile.TemporaryDirectory() as root:
+            args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
+                                           "--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                                           *CREW, "--stargate-ref", "a" * 40])
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "check_officer_tool_source", check_officer_tool_source), \
+                    patch.object(runtime.subprocess, "run", return_value=subprocess.CompletedProcess(
+                        [], 0, stdout="", stderr="")) as git, \
+                    patch.object(fleet_setup, "api_up") as api, patch.object(fleet_setup, "register_own") as register, \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "lacks scripts/officer-files.ts"):
+                fleet_setup.setup(args)
+            fetch = next(call.args[0] for call in git.call_args_list if "fetch" in call.args[0])
+            self.assertEqual(fetch[-2:], [fleet_setup.STARGATE_REPO, "a" * 40])
+            api.assert_not_called()
+            register.assert_not_called()
+            self.assertEqual(list(Path(root).iterdir()), [])
+
+    def test_stale_teams_file_pin_is_refused_before_guided_install(self):
+        with tempfile.TemporaryDirectory() as root:
+            config = Path(root) / "fleet.json"
+            config.write_text(json.dumps({"stakeholders": {"teams": {
+                "botClientId": "11111111-2222-4333-8444-555555555555",
+                "tenantId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+                "users": ["99999999-8888-4777-8666-555555555555"],
+                "attachmentFileHosts": ["contoso-my.sharepoint.com"],
+            }}}))
+            args = fleet_setup.parse_args(["--non-interactive", "--inputs", root, "--operator", "operator",
+                                           "--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                                           *CREW, "--no-api", "--no-mockup-previews", "--stargate-ref", "a" * 40])
+            before = config.read_bytes()
+            listing = f"100644 blob {'b' * 40}\tscripts/officer-tools-contract.json"
+            replies = [subprocess.CompletedProcess([], 0, stdout=output)
+                       for output in ("", "", listing, json.dumps({"files": 1, "sandboxFiles": 1}))]
+            with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "check_officer_tool_source", check_officer_tool_source), \
+                    patch.object(runtime.subprocess, "run", side_effect=replies), \
+                    patch.object(fleet_setup, "installer") as install, \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "incompatible officer tool interfaces"):
+                fleet_setup.setup(args)
+            install.assert_not_called()
+            self.assertEqual(config.read_bytes(), before)
+            self.assertEqual(list(Path(root).iterdir()), [config])
 
     def test_default_custom_and_off_options(self):
         with tempfile.TemporaryDirectory() as root, patch.object(fleet_setup, "INPUTS", Path(root)):
@@ -168,6 +264,53 @@ class SetupInputsTests(unittest.TestCase):
         secrets = fleet_setup.fleet_secrets(store, members, answers["admin"], token, local,
                                             certificates=answers.get("ircAuth") == "certificate")
         return answers, members, config, secrets, store
+
+    def test_local_api_irc_hook_has_separate_persistent_files_and_keeps_operator_settings(self):
+        args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion"]
+        answers, _, _ = answers_for(args)
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        environment, _ = fleet_setup.api_environment(answers, {})
+        volumes = fleet_setup.api_irc_hook(answers, environment, store)
+        self.assertEqual(environment["IRC_AUTH_SERVERS"], "127.0.0.1:6667,127.0.0.1:6697")
+        self.assertEqual(environment["IRC_AUTH_ORGANISATION"], f"dev:{answers['organisation']}")
+        self.assertEqual(len(volumes), 2)
+        directory = fleet_setup.INPUTS / "api-irc-auth"
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        token = (directory / "hook-token").read_text()
+        self.assertNotEqual(token, (directory / "credential-secret").read_text())
+        api_env = fleet_setup.INPUTS / "api.env"
+        api_env.write_text("".join(f"{k}={v}\n" for k, v in environment.items()))
+        _, _, config, _, _ = self.generate(args)
+        self.assertEqual(config["irc"]["compose"]["localApiIrcHook"], str(directory / "hook-token"))
+        self.assertEqual(fleet_setup.api_irc_hook(answers, environment, store), volumes)
+        self.assertEqual((directory / "hook-token").read_text(), token)
+        api_env.write_text(api_env.read_text().replace(
+            "IRC_AUTH_SERVERS=127.0.0.1:6667,127.0.0.1:6697",
+            "IRC_AUTH_SERVERS=irc.example.com:6697"))
+        configured, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(fleet_setup.api_irc_hook(answers, configured, store), volumes)
+        self.assertEqual(configured["IRC_AUTH_SERVERS"], "irc.example.com:6697")
+        remote = {**answers, "irc": "remote"}
+        self.assertEqual(fleet_setup.api_irc_hook(remote, configured, store), volumes)
+        self.assertEqual(configured["IRC_AUTH_SERVERS"], "irc.example.com:6697")
+        unchanged = environment.copy()
+        self.assertEqual(fleet_setup.api_irc_hook(remote, unchanged, store), [])
+        self.assertNotIn("IRC_AUTH_SERVERS", unchanged)
+        inline = configured.copy()
+        inline.pop("IRC_CREDENTIAL_SECRET_FILE")
+        inline["IRC_CREDENTIAL_SECRET"] = "a" * 48
+        self.assertEqual(fleet_setup.api_irc_hook(answers, inline, store), volumes[1:])
+        self.assertNotIn("IRC_CREDENTIAL_SECRET_FILE", inline)
+        api_env.write_text(api_env.read_text().replace(
+            f"IRC_AUTH_HOOK_TOKEN_FILE={fleet_setup.API_IRC_MOUNT}/hook-token",
+            "IRC_AUTH_HOOK_TOKEN_FILE=/example/operator-hook"))
+        partial_override, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(fleet_setup.api_irc_hook(answers, partial_override, store), volumes[:1])
+        self.assertEqual(partial_override["IRC_AUTH_HOOK_TOKEN_FILE"], "/example/operator-hook")
+        api_env.write_text("IRC_AUTH_HOOK_TOKEN_FILE=/example/operator-hook\n")
+        operator_env, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(fleet_setup.api_irc_hook(answers, operator_env, store), [])
+        self.assertEqual(operator_env["IRC_AUTH_HOOK_TOKEN_FILE"], "/example/operator-hook")
 
     def test_local_fleet_validates_with_api_and_demo_channels(self):
         api = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"]}
@@ -357,6 +500,31 @@ class SetupInputsTests(unittest.TestCase):
         args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", *argv])
         with patch.object(fleet_setup.pwd, "getpwnam"):
             return fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+
+    def test_agentsview_defaults_on_and_keeps_an_explicit_opt_out(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", *CREW]
+        answers, members, config, secrets, _ = self.generate(argv)
+        self.assertIs(answers["agentsview"], True)
+        self.assertEqual(validate(config, secrets, check_files=False)["agentsview"], {"enabled": True, "port": 8080})
+        self.assertIn("8080", fleet_setup.summary(answers, members, False)["SUBSPACE_PORTS"].split())
+
+        config["agentsview"] = {"port": 8081}
+        off = self.rerun(answers, config, "--no-agentsview")
+        disabled = fleet_setup.fleet_config(off, members, "a" * 40)
+        self.assertEqual(disabled["agentsview"], {"port": 8081, "enabled": False})
+        # The installed choice also wins if an operator edits fleet.json directly between setup runs.
+        self.assertIs(self.rerun(answers, disabled)["agentsview"], False)
+        summary = fleet_setup.summary(off, members, False)
+        self.assertEqual(summary["SUBSPACE_AGENTSVIEW"], "0")
+        self.assertNotIn("8081", summary["SUBSPACE_PORTS"].split())
+
+        on = self.rerun(off, disabled, "--agentsview")
+        enabled = fleet_setup.fleet_config(on, members, "a" * 40)
+        self.assertEqual(enabled["agentsview"], {"port": 8081, "enabled": True})
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", enabled)
+        summary = fleet_setup.summary(on, members, False)
+        self.assertEqual(summary["SUBSPACE_AGENTSVIEW"], "1")
+        self.assertIn("8081", summary["SUBSPACE_PORTS"].split())
 
     def test_a_new_fleet_runs_its_officers_on_the_default_models(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
@@ -771,11 +939,15 @@ class SetupInputsTests(unittest.TestCase):
         def published():
             return '"127.0.0.1:3001:3001"' in (fleet_setup.INPUTS / "api.override.yaml").read_text()
 
-        # The first run offers the listener and publishes it on loopback.
+        # Fresh installs leave it off. Explicit opt-in publishes it on loopback.
         self.assertTrue(up())
+        self.assertEqual(env()["AGENT_PORT"], "")
+        self.assertFalse(fleet_setup.agent_listener_enabled() or published())
+        answers["agentListener"] = True
+        self.assertTrue(up())
+        answers["agentListener"] = None
         self.assertEqual(env()["AGENT_PORT"], "3001")
         self.assertEqual(env()["AGENT_ORGANISATION"], f"dev:{answers['organisation']}")
-        self.assertIn(fleet_setup.AGENT_OFFERED, api_env.read_text())
         self.assertTrue(fleet_setup.agent_listener_enabled() and published())
         override = (fleet_setup.INPUTS / "api.override.yaml").read_text()
         self.assertIn('"127.0.0.1:3000:3000"', override)
@@ -835,10 +1007,10 @@ class SetupInputsTests(unittest.TestCase):
         def mcp(cfg):
             return [runtime.SUBSPACE_MCP_GRANT in runtime.harness_permissions(cfg, person) for person in cfg["members"]]
 
-        # A new fleet: the real run starts the API with development sign-in and the agent listener.
+        # A new fleet: the officer MCP uses Stargate's signed bridge.
         config, cfg = dry_run()
         self.assertEqual(config["api"], {"url": "http://127.0.0.1:3000", "initiatives": [],
-                                         "agentUrl": "http://127.0.0.1:3001"})
+                                         "enrolment": True})
         self.assertEqual(mcp(cfg), [True, True])
         # An installed fleet, unchanged: its saved initiative and the api.env the real run keeps.
         answers, _, _ = answers_for(argv[3:])
@@ -850,16 +1022,34 @@ class SetupInputsTests(unittest.TestCase):
             fleet_setup.api_up(answers, fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None))
         config, cfg = dry_run()
         self.assertEqual(config["api"]["initiatives"], [answers["initiativeId"]])
-        real = runtime.validate(*self.generate(argv[3:], fleet_setup.local_api_block(
-            answers, [answers["initiativeId"]], fleet_setup.agent_listener_enabled()))[2:4], check_files=False)
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        _, rear, captains = answers_for(argv[3:])
+        members = fleet_setup.roster(answers, rear, captains)
+        actual = fleet_setup.planned_api_block(answers)
+        real = runtime.validate(*fleet_setup.run_inputs(answers, members, store, "c" * 40, "a" * 40,
+                                                         actual, token="header.payload.signature"),
+                                check_files=False)
         for planned, person in zip(cfg["members"], real["members"]):
             self.assertEqual(runtime.harness_permissions(cfg, planned), runtime.harness_permissions(real, person))
         self.assertEqual(mcp(cfg), [True, True])
-        # The operator turned the listener off: the officers lose the API's tools in both runs.
-        api_env.write_text(api_env.read_text().replace("AGENT_PORT=3001\n", "AGENT_PORT=\n"))
+        # An earlier fleet keeps its legacy listener until the operator turns it off.
+        api_env.write_text(api_env.read_text().replace("AGENT_PORT=\n", "AGENT_PORT=3001\n"))
+        config, cfg = dry_run()
+        self.assertIn("agentUrl", config["api"])
+        self.assertNotIn("enrolment", config["api"])
+        # An operator's previous opt-out stays off, even with development sign-in.
+        previous_api_env = "AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\n"
+        for legacy_off in ("AGENT_PORT=\n", ""):
+            api_env.write_text(previous_api_env + legacy_off)
+            config, cfg = dry_run()
+            self.assertNotIn("agentUrl", config["api"])
+            self.assertNotIn("enrolment", config["api"])
+            self.assertEqual(mcp(cfg), [False, False])
+        argv.append("--no-agent-listener")
         config, cfg = dry_run()
         self.assertNotIn("agentUrl", config["api"])
-        self.assertEqual(mcp(cfg), [False, False])
+        self.assertTrue(config["api"]["enrolment"])
+        self.assertEqual(mcp(cfg), [True, True])
         # Without development sign-in the real run writes no API settings, nor does the dry run.
         api_env.write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\n")
         config, cfg = dry_run()
@@ -1087,6 +1277,9 @@ class SetupInputsTests(unittest.TestCase):
         api.initiatives[workspace] = {"id": workspace, "name": "Local workspace", "fleetId": local, "channels": ""}
 
         def call(_token, method, path, body=None):
+            if method == "POST" and path == "/fleets/example-fleet/enrolment-tokens":
+                self.assertEqual(body, {"expiresInSeconds": 3600, "maxUses": 2})
+                return {"token": "senr1." + "B" * 64}
             try:
                 return api.call(method, path, body)
             except fixture.Refusal as refusal:
@@ -1096,6 +1289,7 @@ class SetupInputsTests(unittest.TestCase):
             """A real run, with the API, the installer and the VM's commands stubbed, up to its summary."""
             said = []
             with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(runtime, "directory"), patch.object(runtime, "account"), \
                     patch.object(fleet_setup, "installer"), patch.object(fleet_setup, "run"), \
                     patch.object(fleet_setup, "api_up", return_value=True), \
                     patch.object(fleet_setup, "history_database", return_value=None), \
@@ -1336,7 +1530,7 @@ class TrackerOwnershipTests(unittest.TestCase):
                     patch.object(fleet_setup, "installed_stargate_source", return_value=source):
                 fleet_setup.ownership_check(hosted, members, config)
                 self.assertEqual(said, ["not checking which fleet owns this fleet's tracker projects: the officers "
-                                        "have not enrolled with the hosted API yet"])
+                                        "have not enrolled with the Subspace API yet"])
                 (sockets / "atlas").mkdir(parents=True)
                 listener = socket.socket(socket.AF_UNIX)
                 self.addCleanup(listener.close)
@@ -1413,9 +1607,193 @@ class AgentDispatchSetupTests(unittest.TestCase):
         _, config, _ = self.config([*self.argv, "--no-agent-dispatch"], self.api)
         self.assertEqual(config["agentDispatch"], {"enabled": False, "answerTimeoutSeconds": 600})
 
+    def test_assignment_requests_can_be_disabled_without_disabling_dispatch(self):
+        answers, config, _ = self.config([*self.argv, "--agent-dispatch", "--no-assignment-requests"], self.api)
+        self.assertIs(answers["assignmentRequests"], False)
+        self.assertEqual(config["agentDispatch"], {"enabled": True, "assignmentRequests": False})
+
     def test_dispatch_needs_the_api(self):
         with self.assertRaisesRegex(fleet_setup.SetupError, "needs the API on this VM"):
             answers_for([*self.argv, "--agent-dispatch", "--no-api"])
+
+    def test_local_signed_access_uses_the_same_audience_as_the_gateway(self):
+        answers, _, _ = answers_for(self.argv)
+        env, listener = fleet_setup.api_environment(answers, {})
+        self.assertFalse(listener)
+        self.assertEqual(env["AGENT_TOKEN_AUDIENCE"], fleet_setup.local_api_origin())
+        self.assertEqual(fleet_setup.planned_api_block(answers)["url"], env["AGENT_TOKEN_AUDIENCE"])
+        legacy, listener = fleet_setup.api_environment({**answers, "agentListener": True}, {})
+        self.assertTrue(listener)
+        self.assertNotIn("AGENT_TOKEN_AUDIENCE", legacy)
+        fleet_setup.write_private(fleet_setup.INPUTS / "api.env",
+                                  f'{fleet_setup.SIGNED_LOCAL_API}\n'
+                                  f'AGENT_TOKEN_AUDIENCE="{fleet_setup.local_api_origin()}" # local signing\n')
+        quoted, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(quoted["AGENT_TOKEN_AUDIENCE"], fleet_setup.local_api_origin())
+        with patch.dict(os.environ, {"AGENT_TOKEN_AUDIENCE": "https://wrong.example.test"}), \
+                patch.object(fleet_setup, "run") as run:
+            fleet_setup.compose("up", "--detach")
+        self.assertEqual(run.call_args.kwargs["env"]["AGENT_TOKEN_AUDIENCE"], fleet_setup.local_api_origin())
+
+    def test_decision_dms_default_for_new_compatible_signed_fleets(self):
+        bundle = fleet_setup.INPUTS / "payload"
+        signed = {**self.api, "enrolment": True}
+        fresh, _, _ = answers_for(self.argv)
+        self.assertEqual(fresh["decisionOutcomeMode"], "auto")
+        with patch.object(fleet_setup, "PAYLOAD", bundle), patch.object(
+                fleet_setup, "planned_api_block", return_value=signed), patch.object(
+                fleet_setup.runtime, "require_decision_dm_source") as supported:
+            fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "a" * 40)
+            self.assertNotIn("decisionOutcomeDms", fresh)
+            feed = bundle / "subspace-api/src/decision-outcomes.ts"
+            feed.parent.mkdir(parents=True)
+            feed.touch()
+            fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "a" * 40)
+            self.assertIs(fresh["decisionOutcomeDms"], True)
+            fleet_setup.save_answers(fresh)
+            saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+            self.assertEqual(saved["decisionOutcomeMode"], "auto")
+            self.assertNotIn("decisionOutcomeDms", saved)
+            supported.side_effect = fleet_setup.runtime.Invalid("unsupported")
+            fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "b" * 40)
+            self.assertNotIn("decisionOutcomeDms", fresh)
+            self.assertEqual(fresh["decisionOutcomeMode"], "auto")
+            supported.side_effect = runtime.StargateSourceUnavailable("GitHub unavailable")
+            with self.assertRaisesRegex(fleet_setup.SetupError, "GitHub unavailable"):
+                fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "a" * 40)
+            supported.side_effect = None
+            fleet_setup.configure_decision_outcome_dms(fresh, "atlas", "a" * 40)
+            self.assertTrue(fresh["decisionOutcomeDms"])
+            remote = {**fresh, "irc": "remote"}
+            fleet_setup.configure_decision_outcome_dms(remote, "atlas", "a" * 40)
+            self.assertNotIn("decisionOutcomeDms", remote)
+
+    def test_decision_dms_keep_explicit_preferences_and_validate_before_writes(self):
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"agentDispatch": {"decisionOutcomeDms": False}})
+        answers, _, _ = answers_for(self.argv)
+        self.assertEqual(answers["decisionOutcomeMode"], "off")
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", *self.argv])
+        self.assertEqual(fleet_setup.gather(args, {**answers, "decisionOutcomeMode": "auto"})["decisionOutcomeMode"],
+                         "off")
+        explicit, _, _ = answers_for([*self.argv, "--decision-outcome-dms", "--no-api"])
+        self.assertEqual(explicit["decisionOutcomeMode"], "on")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "need the bundled Subspace API and signed officer access"):
+            fleet_setup.configure_decision_outcome_dms(explicit, "atlas", "a" * 40)
+        self.assertFalse((fleet_setup.INPUTS / "answers.json").exists())
+
+    def test_remote_irc_change_requires_a_fresh_opt_in(self):
+        answers, _, _ = answers_for([*self.argv, "--decision-outcome-dms"])
+        args = ["--non-interactive", "--operator", "operator", "--irc", "remote",
+                "--irc-host", "irc.example.test"]
+        remote = fleet_setup.gather(fleet_setup.parse_args(args), answers)
+        self.assertEqual(remote["decisionOutcomeMode"], "off")
+        chosen = fleet_setup.gather(fleet_setup.parse_args([*args, "--decision-outcome-dms"]), answers)
+        self.assertEqual(chosen["decisionOutcomeMode"], "on")
+        self.assertEqual(fleet_setup.gather(fleet_setup.parse_args(args), chosen)["decisionOutcomeMode"], "on")
+        previous = {"irc": {"mode": "remote", "host": "irc.example.test", "port": fleet_setup.IRC_TLS},
+                    "agentDispatch": {"decisionOutcomeDms": True}}
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", previous)
+        guided_argv = ["--non-interactive", "--operator", "operator", *self.argv,
+                       "--irc", "remote", "--irc-host", "irc.example.test"]
+        guided = fleet_setup.parse_args(guided_argv)
+        self.assertEqual(fleet_setup.gather(guided, {})["decisionOutcomeMode"], "on")
+        password = fleet_setup.parse_args([*guided_argv, "--irc-auth", "password"])
+        self.assertEqual(fleet_setup.gather(password, {})["decisionOutcomeMode"], "off")
+
+    @unittest.skipUnless(shutil.which("git"), "git is required")
+    def test_capability_check_uses_the_pinned_git_object(self):
+        root = fleet_setup.INPUTS
+
+        def git(*args):
+            return subprocess.check_output(["git", "-C", checkout, *args], text=True).strip()
+
+        checkout = str(root / "repo")
+        subprocess.run(["git", "init", "--quiet", checkout], check=True)
+        git("config", "user.email", "test@example.test")
+        git("config", "user.name", "Installer test")
+        git("config", "commit.gpgsign", "false")
+        git("commit", "--quiet", "--allow-empty", "-m", "Older gateway")
+        old = git("rev-parse", "HEAD")
+        files = {
+            "src/config/composition.ts": "decisionOutcomeDms: Schema.optional\nassignmentRequests: Schema.optional",
+            "src/config/settings-schema.ts": "settingsStruct({ socketPath: absolutePath })",
+            "src/transports/irc/config.ts": "decisionOutcomeSender: Schema.optional",
+        }
+        for name, content in files.items():
+            path = Path(checkout) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content + "\n")
+        git("add", ".")
+        git("commit", "--quiet", "-m", "Signed decision DMs")
+        new = git("rev-parse", "HEAD")
+        with patch.object(runtime, "APP", root):
+            # Even if a cached worktree contains the new files, the selected old commit must be refused.
+            cache = root / "src" / f"stargate-{old}"
+            cache.parent.mkdir()
+            cache.symlink_to(checkout, target_is_directory=True)
+            with self.assertRaisesRegex(runtime.Invalid, "with signed dispatch"):
+                require_decision_dm_source(checkout, old)
+            require_decision_dm_source(checkout, new)
+
+    def test_decision_dms_and_issue_dispatch_share_enrolled_identity(self):
+        answers, rear, captains = answers_for([*self.argv, "--agent-dispatch", "--no-assignment-requests"])
+        answers["decisionOutcomeDms"] = True
+        members = fleet_setup.roster(answers, rear, captains)
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        with patch.object(fleet_setup, "planned_api_block", return_value={**self.api, "enrolment": True}):
+            config, secrets = fleet_setup.planned_run_inputs(answers, members, store, "b" * 40)
+        self.assertNotIn("rearAdmiralApiToken", secrets)
+        cfg = validate(config, secrets, check_files=False)
+        with patch.object(runtime, "stargate_has_assignment_requests", return_value=True):
+            settings, environment = runtime.agent_dispatch_settings(cfg)
+        self.assertTrue(settings["enabled"])
+        self.assertTrue(settings["decisionOutcomeDms"])
+        self.assertIsNone(settings["assignmentRequests"])
+        self.assertEqual(environment, {})
+        self.assertEqual(settings["api"], {"socketPath": str(runtime.agent_socket(rear))})
+
+    def test_rename_preflight_checks_explicit_decision_dms_before_writing_inputs(self):
+        answers, _, _ = answers_for([*self.argv, "--decision-outcome-dms"])
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(
+                fleet_setup, "stargate_release", return_value=("fixture", "a" * 40)), patch.object(
+                fleet_setup, "planned_api_block", return_value={**self.api, "enrolment": True}), patch.object(
+                fleet_setup.runtime, "require_decision_dm_source",
+                side_effect=fleet_setup.runtime.Invalid("unsupported Stargate")), patch.object(
+                fleet_setup, "planned_run_inputs") as plan:
+            with self.assertRaisesRegex(fleet_setup.SetupError, "unsupported Stargate"):
+                fleet_setup.check_switch(answers)
+            plan.assert_not_called()
+
+    def test_decision_dms_render_without_issue_dispatch_or_a_bearer(self):
+        answers, rear, captains = answers_for([*self.argv, "--decision-outcome-dms"])
+        answers["decisionOutcomeDms"] = True
+        members = fleet_setup.roster(answers, rear, captains)
+        signed = {**self.api, "enrolment": True}
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, signed, False, "b" * 40)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None),
+                                            members, answers["admin"], "", True, certificates=True)
+        self.assertEqual(config["agentDispatch"], {"enabled": False, "decisionOutcomeDms": True})
+        cfg = validate(config, secrets, check_files=False)
+        with patch.object(fleet_setup.runtime, "stargate_has_assignment_requests", return_value=True):
+            settings, environment = fleet_setup.runtime.agent_dispatch_settings(cfg)
+        self.assertFalse(settings["enabled"])
+        self.assertTrue(settings["decisionOutcomeDms"])
+        self.assertNotIn("assignmentRequests", settings)
+        self.assertNotIn("readyOffers", settings)
+        rear, captain = cfg["members"][:2]
+        self.assertEqual(settings["api"], {"socketPath": str(fleet_setup.runtime.agent_socket(rear["id"]))})
+        self.assertEqual(environment, {})
+        self.assertNotIn("rearAdmiralApiToken", secrets)
+        agents = fleet_setup.runtime.subspace_agents_settings(cfg, fleet_setup.INPUTS)
+        self.assertEqual(agents["officers"][0]["socketPath"], settings["api"]["socketPath"])
+        registration = {"backend": {"directory": "/workspace"}}
+        irc = fleet_setup.runtime.irc_officer(cfg, captain, registration)
+        self.assertEqual(irc["dmPolicy"], "redirect")
+        self.assertEqual(irc["decisionOutcomeSender"], rear["account"])
+        answers.pop("decisionOutcomeDms")
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        downgrade = fleet_setup.fleet_config(answers, members, "b" * 40, signed, False, "b" * 40)
+        self.assertNotIn("decisionOutcomeDms", downgrade["agentDispatch"])
 
     def test_the_rear_admiral_signs_in_as_its_own_agent_record(self):
         answers, config, secrets = self.config([*self.argv, "--agent-dispatch"], self.api)
@@ -1464,13 +1842,16 @@ class AgentDispatchSetupTests(unittest.TestCase):
         answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
             self.assertIn("3000:ss-fleet-gateway", fleet_setup.isolation_args(answers))
-            self.assertNotIn("--port-user", fleet_setup.isolation_args({**answers, "agentDispatch": False}))
+            self.assertIn("3000:ss-fleet-gateway", fleet_setup.isolation_args({**answers, "agentDispatch": False}))
+            self.assertNotIn("--port-user", fleet_setup.isolation_args(
+                {**answers, "agentDispatch": False, "agentListener": True, "organisation": "local"}))
         with patch.object(fleet_setup.pwd, "getpwnam", side_effect=KeyError), \
                 patch.object(fleet_setup, "metadata_users", return_value=[]):
             self.assertNotIn("--port-user", fleet_setup.isolation_args(answers))
 
     def test_only_the_officers_may_reach_the_agent_listener(self):
-        answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
+        answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": [],
+                   "agentListener": True, "organisation": "local"}
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
             "rearAdmiral": {"id": "atlas"}, "captains": [{"id": "orion"}, {"id": "vega"}]})
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
@@ -1623,8 +2004,9 @@ class ExternalDatabaseTests(unittest.TestCase):
         self.assertIn('  postgres:\n    profiles: ["subspace-local-database"]\n', override)
         self.assertIn("    depends_on: !reset {}\n", override)
         self.assertIn('    command: ["bun", "src/main.ts"]\n', override)
-        # The API and its agent listener are published on loopback exactly as with the API's own PostgreSQL.
-        self.assertIn('      - "127.0.0.1:3000:3000"\n      - "127.0.0.1:3001:3001"\n', override)
+        # Only the main API port is published by default.
+        self.assertIn('      - "127.0.0.1:3000:3000"\n', override)
+        self.assertNotIn("3001", override)
         self.assertNotIn("5432", override)
         self.assertNotIn(self.PASSWORD, override)
         self.assertEqual(calls, [
@@ -1691,7 +2073,8 @@ class ExternalDatabaseTests(unittest.TestCase):
             args = fleet_setup.isolation_args(answers)
         protected = [args[i + 1] for i, arg in enumerate(args) if arg == "--operator-only-port"]
         self.assertEqual(protected, [str(fleet_setup.API_PORT), str(fleet_setup.AGENT_API_PORT)])
-        self.assertIn(f"{fleet_setup.AGENT_API_PORT}:ss-atlas", args)
+        self.assertIn(f"{fleet_setup.API_PORT}:ss-fleet-gateway", args)
+        self.assertNotIn(f"{fleet_setup.AGENT_API_PORT}:ss-atlas", args)
 
     def test_the_plan_says_what_happens_without_the_url(self):
         answers, _ = self.answers("--database-url-file", self.url_file)
@@ -1715,7 +2098,8 @@ class ExternalDatabaseTests(unittest.TestCase):
                 "--database-url-file", self.url_file, "--dry-run"]
         output, written, vm_inputs = [], [], fleet_setup.INPUTS
 
-        def dry_installer(config_path, dry_run=False):
+        def dry_installer(config_path, dry_run=False, secrets_dir=None):
+            self.assertTrue((secrets_dir / runtime.ENROLMENT_TOKEN).exists())
             # The installer validates inputs written to a private copy, never to the VM's inputs.
             self.assertTrue(dry_run)
             self.assertFalse(Path(config_path).is_relative_to(vm_inputs))
@@ -1803,7 +2187,8 @@ class ExternalDatabaseTests(unittest.TestCase):
         checks = []
 
         def refuse(config_path, dry_run=False, secrets_dir=None, quiet=False):
-            checks.append((dry_run, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
+            checks.append((dry_run, (secrets_dir / runtime.ENROLMENT_TOKEN).exists(),
+                           json.loads(Path(config_path).read_text())["slug"]))
             raise fleet_setup.SetupError("Supply slack-app-token in captain orion's secrets directory.")
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
                 patch.object(fleet_setup, "installer", side_effect=refuse), \
@@ -1812,7 +2197,7 @@ class ExternalDatabaseTests(unittest.TestCase):
                 patch.object(fleet_setup, "say"), \
                 self.assertRaisesRegex(fleet_setup.SetupError, "slack-app-token"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
-        self.assertEqual(checks, [(True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
+        self.assertEqual(checks, [(True, True, "example-fleet")])
         run.assert_not_called()
         api_up.assert_not_called()
         compose.assert_not_called()
@@ -1820,6 +2205,7 @@ class ExternalDatabaseTests(unittest.TestCase):
         # Accepted, the check comes before the lockdown and the API, which then migrates as asked.
         order = []
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                patch.object(runtime, "directory"), patch.object(runtime, "account"), \
                 patch.object(fleet_setup, "installer", side_effect=lambda *a, dry_run=False, **k: order.append(
                     "check" if dry_run else "install")), \
                 patch.object(fleet_setup, "run", side_effect=lambda *a, **k: order.append(Path(str(a[0])).name)), \
@@ -2634,6 +3020,40 @@ class HostedApiSetupTests(unittest.TestCase):
             fleet_setup.check_answers(answers)
         return answers, args
 
+    def test_hosted_fleets_can_enable_dispatch_for_assigned_work_only(self):
+        answers, _ = self.answers("--api-url", "https://subspace.example.com",
+                                  "--agent-dispatch", "--no-ready-for-agents-offers")
+        self.assertFalse(answers["api"])
+        self.assertTrue(answers["agentDispatch"])
+        self.assertFalse(answers["readyOffers"])
+
+    def test_unsupported_hosted_dispatch_leaves_saved_configuration_untouched(self):
+        saved, _ = self.answers("--api-url", "https://subspace.example.com")
+        fleet_setup.save_answers(saved)
+        before = (fleet_setup.INPUTS / "answers.json").read_bytes()
+        _, args = self.answers("--api-url", "https://subspace.example.com", "--agent-dispatch", saved=saved)
+        unsupported = runtime.Invalid("Agent dispatch needs a Stargate revision with assignment requests.")
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "check_outbound"), \
+                patch.object(fleet_setup, "stargate_release", return_value=("pinned", "a" * 40)), \
+                patch.object(fleet_setup, "check_usage_guard_source"), \
+                patch.object(fleet_setup, "check_officer_tool_source", check_officer_tool_source), \
+                patch.object(runtime, "require_assignment_requests_source", side_effect=unsupported):
+            with self.assertRaisesRegex(fleet_setup.SetupError, "assignment requests"):
+                fleet_setup.configure(args)
+        self.assertEqual((fleet_setup.INPUTS / "answers.json").read_bytes(), before)
+        self.assertFalse((fleet_setup.INPUTS / "fleet.json").exists())
+
+    def test_dispatch_switches_in_installed_config_survive_guided_upgrades(self):
+        installed = fleet_setup.INPUTS / "fleet.json"
+        installed.write_text(json.dumps({"agentDispatch": {"assignmentRequests": False, "readyOffers": False}}))
+        saved = {"assignmentRequests": True, "readyOffers": True}
+        upgraded, _ = self.answers(saved=saved)
+        self.assertFalse(upgraded["assignmentRequests"])
+        self.assertFalse(upgraded["readyOffers"])
+        changed, _ = self.answers("--assignment-requests", "--ready-for-agents-offers", saved=saved)
+        self.assertTrue(changed["assignmentRequests"])
+        self.assertTrue(changed["readyOffers"])
+
     def test_the_hosted_api_replaces_one_on_this_vm_and_is_kept(self):
         answers, _ = self.answers("--api-url", "https://Subspace.Example.com/")
         self.assertEqual((answers["apiUrl"], answers["api"], answers["demo"], answers["agentDispatch"]),
@@ -2647,7 +3067,6 @@ class HostedApiSetupTests(unittest.TestCase):
                 (["--api-url", "https://subspace.example.com", "--database-url-file", "/root/fleet/database-url"],
                  "leave out --database-url-file"),
                 (["--api-url", "https://subspace.example.com", "--demo"], "drop --demo"),
-                (["--api-url", "https://subspace.example.com", "--agent-dispatch"], "leave out --agent-dispatch"),
                 (["--api-enrolment-token-file", str(self.token_file)], "pass --api-url too")):
             with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
                 self.answers(*extra)
@@ -3450,6 +3869,41 @@ class HostInstallerTests(unittest.TestCase):
 
 
 class IrcServerTests(unittest.TestCase):
+    def test_auth_hook_requires_https_and_a_private_token_file(self):
+        import irc_server
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "hook-token"
+            path.write_text("a" * 48 + "\n")
+            path.chmod(0o600)
+            answers = {"authApiUrl": "https://subspace.example.com/", "authApiTokenFile": str(path)}
+            with patch.object(fleet_setup, "SECRET_OWNER", os.getuid()):
+                self.assertEqual(irc_server.auth_api(answers), ("https://subspace.example.com", "a" * 48, None))
+                for origin in ("http://subspace.example.com", "https://subspace.example.com/api",
+                               "https://user@subspace.example.com", "https://[2001:db8::1]:443"):
+                    with self.subTest(origin), self.assertRaisesRegex(fleet_setup.SetupError, "HTTPS origin"):
+                        irc_server.auth_api({**answers, "authApiUrl": origin})
+                path.chmod(0o644)
+                with self.assertRaisesRegex(fleet_setup.SetupError, "chmod 600"):
+                    irc_server.auth_api(answers)
+
+    def test_changing_the_auth_api_origin_requires_a_token_file(self):
+        import irc_server
+
+        saved = {"serverName": "irc.example.com", "bind": "10.0.0.4", "humans": ["admiral"],
+                 "authApiUrl": "https://subspace.example.com", "authApiTokenFile": "/example/old-token"}
+        args = argparse.Namespace(non_interactive=True, server_name=None, bind=None, port=None, history=None,
+                                  admin=None, tls_cert=None, tls_key=None, auth_api_ca_file=None,
+                                  operator="operator", access=None, ssh_from=None, lockdown=None,
+                                  auth_api_url="https://new.example.com", auth_api_token_file=None)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "requires --auth-api-token-file"):
+            irc_server.gather(args, saved)
+        args.auth_api_token_file = "/example/new-token"
+        self.assertEqual(irc_server.gather(args, saved)["authApiTokenFile"], "/example/new-token")
+        args.auth_api_url = "https://subspace.example.com:443/"
+        args.auth_api_token_file = None
+        self.assertEqual(irc_server.gather(args, saved)["authApiTokenFile"], "/example/old-token")
+
     def test_private_addresses_only(self):
         import irc_server
         for address in ("10.0.0.4", "192.168.64.2", "100.101.102.103", "fd7a:115c:a1e0::1"):
@@ -3484,6 +3938,146 @@ class IrcServerTests(unittest.TestCase):
                 with self.assertRaisesRegex(fleet_setup.SetupError, f"#two-{COMMAND_SUFFIX}"):
                     irc_server.add("-")
                 render.assert_not_called()
+
+
+@unittest.skipUnless(sys.platform in {"darwin", "linux"}, "install.sh runs on macOS and Linux")
+class DesktopAgentsViewTests(unittest.TestCase):
+    def configure(self, directory, *args):
+        script = Path(__file__).resolve().parents[2] / "install.sh"
+        return subprocess.run(
+            ["bash", str(script), "desktop", *args],
+            env={**os.environ, "SUBSPACE_HOME": str(directory / "state"), "SUBSPACE_DESKTOP_DIR": str(directory)},
+            check=False, capture_output=True, text=True,
+        )
+
+    def test_provisions_and_replaces_an_owner_only_connection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            key = folder / "agentsview.key"
+            key.touch(mode=0o600)
+            key.write_text("fixture-view-key\n")
+            path = folder / "agentsview" / "config.json"
+            url = "https://fleet.example.com/agentsview"
+            result = self.configure(folder, "--agentsview-url", url, "--agentsview-key-file", str(key))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("fixture-view-key", result.stdout + result.stderr)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(path.read_text()), {"address": url, "apiKey": "fixture-view-key"})
+
+            result = self.configure(folder, "--agentsview-url", url + "/")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(path.read_text())["apiKey"], "fixture-view-key")
+
+            key.chmod(0o644)
+            result = self.configure(folder, "--agentsview-url", url, "--agentsview-key-file", str(key))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("accessible only to its owner", result.stderr)
+            self.assertEqual(json.loads(path.read_text())["apiKey"], "fixture-view-key")
+
+            for address in ("http://fleet.example.com", "https://fleet.example.com/view{team}/", "https://fleet%zz.example.com/"):
+                result = self.configure(folder, "--agentsview-url", address)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(path.read_text())["address"], url)
+
+            result = self.configure(folder, "--agentsview-url", "http://127.0.0.1:8080")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(path.read_text())["apiKey"], "fixture-view-key")
+
+            result = self.configure(folder, "--agentsview-url", "http://127.0.0.1:8080", "--agentsview-clear-key")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(path.read_text()), {"address": "http://127.0.0.1:8080", "apiKey": ""})
+
+    def test_applies_the_fleet_choice_to_the_desktop_config(self):
+        installer = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "targets" / "example"
+            state.mkdir(parents=True)
+            (state / "target.env").write_text("KIND=remote\nHOST=ops@vm.example.com\nPORT=22\nIDENTITY=\nPROXY=\n")
+            summary = state / "summary.env"
+            config = root / "desktop" / "config.json"
+            config.parent.mkdir()
+            environment = {**os.environ, "SUBSPACE_HOME": str(root), "SUBSPACE_DESKTOP_DIR": str(config.parent)}
+            commands = [["bash", str(installer / "install.sh")]]
+            if shutil.which("pwsh"):
+                ssh = root / "ssh.exe"
+                ssh.write_text("#!/bin/sh\nexit 1\n")
+                ssh.chmod(0o755)
+                environment["PATH"] = f"{root}:{environment['PATH']}"
+                # Only Windows can run the real ACL helper. Run the rest of install.ps1 unchanged.
+                script = re.sub(r"(?ms)^function Protect-File\b.*?^}\n", "function Protect-File([string]$Path) { }\n",
+                                (installer / "install.ps1").read_text(), count=1)
+                (root / "install.ps1").write_text(script)
+                commands.append(["pwsh", "-NoProfile", "-File", str(root / "install.ps1")])
+
+            def provision(choice, *options):
+                summary.write_text(
+                    "SUBSPACE_FLEET_SLUG=example\nSUBSPACE_IRC_MODE=remote\nSUBSPACE_IRC_HOST=irc.example.com\n"
+                    "SUBSPACE_IRC_PORT=6697\nSUBSPACE_ADMIN_ACCOUNT=operator\nSUBSPACE_STARGATE_API=0\n" + choice)
+                result = subprocess.run([*command, "desktop", "--target", "example", *options], env=environment,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            for command in commands:
+                with self.subTest(shell=command[0]):
+                    config.unlink(missing_ok=True)
+                    provision("SUBSPACE_AGENTSVIEW=1\n")
+                    self.assertFalse(config.exists())
+                    original = {"boards": {"irc": False}, "autoRefresh": False}
+                    config.write_text(json.dumps(original))
+                    provision("SUBSPACE_AGENTSVIEW=0\n")
+                    self.assertEqual(json.loads(config.read_text()),
+                                     {**original, "boards": {"irc": False, "agentsview": False},
+                                      "agentsViewDisabledByInstaller": True})
+                    before = config.read_bytes()
+                    provision("")  # Older installers exported neither the choice nor a port.
+                    self.assertEqual(config.read_bytes(), before)
+                    provision("SUBSPACE_AGENTSVIEW=1\n")
+                    self.assertEqual(json.loads(config.read_text()),
+                                     {**original, "boards": {"irc": False, "agentsview": True}})
+                    config.write_text(json.dumps({**original, "boards": {"irc": False, "agentsview": False}}))
+                    manual = config.read_bytes()
+                    provision("SUBSPACE_AGENTSVIEW=0\n")
+                    provision("SUBSPACE_AGENTSVIEW=1\n")
+                    self.assertEqual(config.read_bytes(), manual)
+
+                    view = config.parent / "agentsview" / "config.json"
+                    view.parent.mkdir(exist_ok=True)
+                    address = "https://fleet.example.com/agentsview"
+                    saved = {"address": address, "apiKey": "fixture-view-key"}
+                    view.write_text(json.dumps(saved))
+                    config.unlink()
+                    provision("SUBSPACE_AGENTSVIEW=0\n", "--agentsview-url", address + "/")
+                    self.assertEqual(json.loads(view.read_text()), saved)
+                    self.assertIs(json.loads(config.read_text())["boards"]["agentsview"], False)
+                    provision("SUBSPACE_AGENTSVIEW=1\n", "--agentsview-url", address, "--agentsview-clear-key")
+                    self.assertEqual(json.loads(view.read_text()), {"address": address, "apiKey": ""})
+                    self.assertIs(json.loads(config.read_text())["boards"]["agentsview"], True)
+
+                    default_state = root / "targets" / "subspace-fleet"
+                    default_state.mkdir(exist_ok=True)
+                    shutil.copyfile(state / "target.env", default_state / "target.env")
+                    (default_state / "summary.env").write_text(
+                        summary.read_text().replace("SUBSPACE_AGENTSVIEW=1", "SUBSPACE_AGENTSVIEW=0"))
+                    before = config.read_bytes()
+                    standalone = [*command, "desktop", "--agentsview-url", address]
+                    result = subprocess.run(standalone, env=environment, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(config.read_bytes(), before)
+
+                    view.write_text(json.dumps([saved]))
+                    result = subprocess.run(standalone, env=environment, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+
+
+            command = commands[0]
+            python = root / "python3"
+            python.write_text("#!/bin/sh\nexit 1\n")
+            python.chmod(0o755)
+            environment["PATH"] = f"{root}:{environment['PATH']}"
+            config.write_bytes(manual)
+            provision("SUBSPACE_AGENTSVIEW=1\n")
+            self.assertEqual(config.read_bytes(), manual)
 
 
 if __name__ == "__main__":

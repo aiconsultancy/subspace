@@ -12,6 +12,7 @@ take screenshots, of web pages and of desktop apps.
   browsers. Officers and crew have no outbound network to download a browser, so it never does.
 - The mermaid-render command on the same PATH, using a pinned Mermaid and the same Chromium to export local
   diagram definitions as SVG or PNG.
+- Flint's local MCP server, authoring skills and flint-render command for data charts.
 
 Every version is pinned in lib/screenshots/package.json (with package-lock.json beside it), and nowhere else.
 "screenshots": false in fleet.json turns it off.
@@ -35,18 +36,27 @@ PLAYWRIGHT = APP / "playwright"
 BROWSERS = APP / "browsers"
 WRAPPER = APP / "bin/playwright"
 MERMAID_WRAPPER = APP / "bin/mermaid-render"
+FLINT_MCP = APP / "bin/flint-chart-mcp"
+FLINT_RENDER = APP / "bin/flint-render"
+FLINT_PACKAGE = "flint-chart-mcp"
+FLINT_SKILLS = tuple(f"flint-{kind}-author" for kind in ("app", "board", "chart", "interaction", "theme"))
 PNG = b"\x89PNG\r\n\x1a\n"
 # A local page, so the check needs no network.
 PAGE = ("data:text/html,<title>Subspace</title><body style='font-family:sans-serif'><h1>Subspace screenshot check"
         "</h1><p>Fonts: Liberation, DejaVu, emoji &#x1F6F0;</p></body>")
 DIAGRAM = "flowchart LR\n  A[Draft] --> B[Review]\n"
+CHART = json.dumps({
+    "data": {"values": [{"Stage": "Draft", "Count": 2}, {"Stage": "Review", "Count": 4}]},
+    "semantic_types": {"Stage": "Category", "Count": "Quantity"},
+    "chart_spec": {"chartType": "Bar Chart", "encodings": {"x": {"field": "Stage"}, "y": {"field": "Count"}}},
+})
 
 
 def pins(directory=PINS):
     """The pinned versions and packages, from lib/screenshots/package.json."""
     data = json.loads((Path(directory) / "package.json").read_text())
     own = data["subspace"]
-    return {**data["dependencies"], "node": own["node"],
+    return {**data["dependencies"], **data["optionalDependencies"], "node": own["node"],
             "chromiumRevision": own["chromiumRevision"], "chromiumVersion": own["chromiumVersion"],
             "packages": own["packages"]}
 
@@ -87,10 +97,46 @@ def installed_version(package):
         return None
 
 
+def flint_skill(name):
+    return PLAYWRIGHT / "node_modules" / FLINT_PACKAGE / "assets" / f"{name}.SKILL.md"
+
+
+def flint_cli():
+    return PLAYWRIGHT / "node_modules" / FLINT_PACKAGE / "dist/cli.js"
+
+
+def flint_package_ready(pinned):
+    if (installed_version(FLINT_PACKAGE) != pinned[FLINT_PACKAGE] or not flint_cli().is_file()
+            or not all(flint_skill(name).is_file() for name in FLINT_SKILLS)):
+        return False
+    # Check resolution without executing package code as root. npm can skip optional native binaries.
+    resolve = """
+        const { createRequire } = require('node:module');
+        const suffix = process.platform === 'linux' ? `linux-${process.arch}-gnu` :
+            `${process.platform}-${process.arch}`;
+        for (const name of ['@napi-rs/canvas', '@resvg/resvg-js']) {
+            createRequire(require.resolve(name)).resolve(`${name}-${suffix}`);
+        }
+    """
+    try:
+        return subprocess.run(
+            [str(node(pinned)), "--eval", resolve],
+            cwd=PLAYWRIGHT / "node_modules" / FLINT_PACKAGE,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False,
+        ).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def flint_ready(pinned):
+    return FLINT_MCP.is_file() and FLINT_RENDER.is_file() and flint_package_ready(pinned)
+
+
 def state(pinned):
     """What is installed already."""
     return {"node": node(pinned).is_file(), "playwright": installed_version("playwright") == pinned["playwright"],
             "mermaid": installed_version("mermaid") == pinned["mermaid"] and MERMAID_WRAPPER.is_file(),
+            "flint": flint_ready(pinned),
             "chromium": all(path.is_dir() for path in browser_directories(pinned))}
 
 
@@ -118,11 +164,13 @@ def plan_lines(enabled, pinned, distribution, present=None, done=None):
     lines = [f"Screenshots (base install; \"screenshots\": false in fleet.json turns them off): Xvfb with keyboard "
              f"maps and fonts, and Playwright {pinned['playwright']} with its Chromium {pinned['chromiumVersion']} "
              f"(revision {pinned['chromiumRevision']}) in {BROWSERS}, run by Node {pinned['node']}, as {WRAPPER} for "
-             f"officers and crew. Mermaid {pinned['mermaid']} uses the same Chromium via {MERMAID_WRAPPER}."]
+             f"officers and crew. Mermaid {pinned['mermaid']} uses the same Chromium via {MERMAID_WRAPPER}. "
+             f"Flint {pinned[FLINT_PACKAGE]} provides local chart MCP, authoring skills and {FLINT_RENDER}."]
     missing = [name for name in wanted if name not in present]
     parts = ([f"{len(missing)} of {len(wanted)} packages ({', '.join(missing)})"] if missing else []) + [
         label for key, label in (("node", f"Node {pinned['node']}"), ("playwright", f"Playwright {pinned['playwright']}"),
                                  ("mermaid", f"Mermaid {pinned['mermaid']}"),
+                                 ("flint", f"Flint {pinned[FLINT_PACKAGE]}"),
                                  ("chromium", "Chromium")) if not done[key]]
     lines.append("  This run installs: " + "; ".join(parts) + "." if parts else "  Installed already.")
     if distribution not in pinned["packages"]:
@@ -172,9 +220,10 @@ def install_packages(pinned, manifest, lock):
 
 def install(pinned, root_environment, say=print):
     """As root, install what the pins name that is missing: Node into the shared toolchain store (mise, explicit
-    node@VERSION), Playwright and Mermaid with npm ci from the lockfile (scripts off), and Playwright's Chromium
+    node@VERSION), Playwright, Mermaid and Flint with npm ci from the lockfile (scripts off), and Playwright's Chromium
     into BROWSERS; then the wrappers. A failure is reported and never stops the install."""
     previous = os.umask(0o022)
+    issues = []
     try:
         BROWSERS.mkdir(mode=0o755, exist_ok=True)
         PLAYWRIGHT.mkdir(mode=0o755, exist_ok=True)
@@ -182,27 +231,37 @@ def install(pinned, root_environment, say=print):
             subprocess.run([str(toolchains.MISE), "install", f"node@{pinned['node']}"], cwd=APP,
                            env=root_environment, check=True)
         lock = (PINS / "package-lock.json").read_text()
+        flint = flint_package_ready(pinned)
         if any(installed_version(package) != pinned[package] for package in ("playwright", "mermaid")) or \
+                not flint or \
                 not (PLAYWRIGHT / "package-lock.json").is_file() or \
                 (PLAYWRIGHT / "package-lock.json").read_text() != lock:
             install_packages(pinned, (PINS / "package.json").read_text(), lock)
+            flint = flint_package_ready(pinned)
+        if flint:
+            renderer = PLAYWRIGHT / "flint-render.mjs"
+            write_file(renderer, (PINS / renderer.name).read_text(), 0o644)
+            write_file(FLINT_RENDER, wrapper_text(pinned, renderer), 0o755)
+            write_file(FLINT_MCP, wrapper_text(pinned, f"{flint_cli()} --disable-file-reference"), 0o755)
+        else:
+            issues.append(f"Flint {pinned[FLINT_PACKAGE]} or its native renderer did not install")
         # Playwright skips a browser it has installed already, and removes the browsers of an earlier pin.
         subprocess.run([str(node(pinned)), str(cli()), "install", "chromium"], cwd=PLAYWRIGHT, check=True, env={
             "PATH": f"{node(pinned).parent}:{toolchains.BASE_PATH}", "HOME": "/root",
             "PLAYWRIGHT_BROWSERS_PATH": str(BROWSERS)})
         if missing := [str(path) for path in browser_directories(pinned) if not path.is_dir()]:
-            return [f"Playwright {pinned['playwright']} installed no Chromium revision {pinned['chromiumRevision']} "
-                    f"({', '.join(missing)} missing): set chromiumRevision in lib/screenshots/package.json to the "
-                    "revision that Playwright names"]
+            return [*issues, f"Playwright {pinned['playwright']} installed no Chromium revision "
+                    f"{pinned['chromiumRevision']} ({', '.join(missing)} missing): set chromiumRevision in "
+                    "lib/screenshots/package.json to the revision that Playwright names"]
         renderer = PLAYWRIGHT / "mermaid-render.cjs"
         write_file(renderer, (PINS / renderer.name).read_text(), 0o644)
         write_file(WRAPPER, wrapper_text(pinned, cli()), 0o755)
         write_file(MERMAID_WRAPPER, wrapper_text(pinned, renderer), 0o755)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
-        return [f"{type(error).__name__}: {error}"]
+        return [*issues, f"{type(error).__name__}: {error}"]
     finally:
         os.umask(previous)
-    return []
+    return issues
 
 
 def png_size(path):
@@ -221,7 +280,7 @@ def png_size(path):
 
 
 def check(user, home, environment, timeout=180):
-    """Take a page screenshot under Xvfb and render a Mermaid PNG as an officer with its tool environment.
+    """Take a page screenshot, render Mermaid and Flint PNGs as an officer with its tool environment.
     Returns (passed, report)."""
     scratch = subprocess.run(["runuser", "-u", user, "--", "mktemp", "-d", f"/tmp/{user}-screenshot.XXXXXX"],
                              capture_output=True, text=True, check=False)
@@ -238,6 +297,7 @@ def check(user, home, environment, timeout=180):
                         str(WRAPPER), "screenshot", "--browser", "chromium", "--viewport-size", "800,600",
                         PAGE, shot], None),
         ("Mermaid", "Mermaid PNG", [str(MERMAID_WRAPPER), "-", diagram], DIAGRAM),
+        ("Flint", "Flint PNG", [str(FLINT_RENDER), f"{temporary}/chart.png"], CHART),
     ]
     try:
         results = []
@@ -263,5 +323,5 @@ def check(user, home, environment, timeout=180):
 
 
 def remove_hint():
-    return (f"To remove what an earlier run installed: sudo rm -rf {PLAYWRIGHT} {BROWSERS} {WRAPPER} {MERMAID_WRAPPER} (the "
-            "distribution packages stay).")
+    return (f"To remove what an earlier run installed: sudo rm -rf {PLAYWRIGHT} {BROWSERS} {WRAPPER} {MERMAID_WRAPPER} "
+            f"{FLINT_MCP} {FLINT_RENDER} (the distribution packages stay).")

@@ -292,6 +292,7 @@ mod tests {
             descriptor.boards = vec![subspace_product::BoardDescriptor {
                 id: Fixture::ID.into(),
                 aliases: Vec::new(),
+                former_ids: Vec::new(),
                 default_enabled: true,
             }];
             let mut context = (*cx.global::<CurrentProduct>().0).clone();

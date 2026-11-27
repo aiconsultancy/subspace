@@ -117,6 +117,7 @@ fn decode(
         return saved(detail, reference);
     }
     Err(match status.as_u16() {
+        400 if reference.is_some() => rejected_update(client, response),
         400 | 422 => IssueSaveError::Invalid,
         403 => IssueSaveError::Forbidden,
         404 => IssueSaveError::Unavailable,
@@ -125,6 +126,17 @@ fn decode(
         429 => IssueSaveError::RateLimited,
         _ => IssueSaveError::Unconfirmed,
     })
+}
+
+fn rejected_update(client: &Client, response: ureq::http::Response<ureq::Body>) -> IssueSaveError {
+    if client
+        .read::<Value>(response)
+        .is_ok_and(|body| body["errors"]["trackerChildren"].is_array())
+    {
+        IssueSaveError::TrackerChildrenBlocked
+    } else {
+        IssueSaveError::Invalid
+    }
 }
 
 fn saved(detail: IssueDetail, reference: Option<&str>) -> Result<IssueSave, IssueSaveError> {

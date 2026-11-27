@@ -31,7 +31,8 @@ export const organisations = pgTable(
   "organisations",
   {
     id: id(),
-    provider: text({ enum: ["workos", "entra", "dev"] }).notNull(),
+    /** How its people sign in: `pairing` for paired device keys alone, or an identity provider. */
+    provider: text({ enum: ["workos", "entra", "dev", "pairing"] }).notNull(),
     externalId: text("external_id").notNull(),
   },
   (table) => [unique().on(table.provider, table.externalId)],
@@ -239,11 +240,48 @@ export const enrolmentTokens = pgTable(
 );
 
 /**
- * An agent's key credentials: X.509 certificates whose keys sign the agent's tokens for the API
- * (scope `api`) and sign it in to IRC (scope `irc`), where Ergo reports the fingerprint as certfp.
- * Only the key and the fingerprint identify the agent; no other field of the certificate is read.
- * A fingerprint names at most one active credential in the whole database, because an agent
- * token names no organisation. A revoked credential keeps its row.
+ * Single-use invites with which a person's workstation registers its own key as one of that
+ * member's device credentials. An invite is shown once; only the SHA-256 of its text is stored. It
+ * expires, is spent by its one redemption, and can be revoked; the row is kept.
+ */
+export const pairingInvites = pgTable(
+  "pairing_invites",
+  {
+    id: id(),
+    organisationId: organisationId(),
+    /** The person whose device the invite pairs. */
+    userId: uuid("user_id").notNull(),
+    /** The SHA-256 of the invite's text in lower-case hex. */
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** The administrator who issued it, or null for the owner bootstrap command on the API host. */
+    createdById: uuid("created_by_id"),
+    createdAt: createdAt(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    unique("pairing_invites_scope_id").on(table.organisationId, table.id),
+    foreignKey({
+      columns: [table.organisationId, table.userId],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.createdById],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    index("pairing_invites_member").on(table.organisationId, table.userId),
+    check("pairing_invites_hash", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+  ],
+);
+
+/**
+ * Key credentials: X.509 certificates whose keys sign tokens for the API (scope `api`) and sign
+ * in to IRC (scope `irc`), where Ergo reports the fingerprint as certfp. An agent's are issued by
+ * an administrator or enrolment; a person's, their device credentials, by redeeming a pairing
+ * invite, which registers at most one. Only the key and the fingerprint identify the member; no
+ * other field of the certificate is read. A fingerprint names at most one active credential in
+ * the whole database, because a token names no organisation. A revoked credential keeps its row.
  */
 export const agentCredentials = pgTable(
   "agent_credentials",
@@ -265,6 +303,8 @@ export const agentCredentials = pgTable(
     createdById: uuid("created_by_id"),
     /** The enrolment token a fleet's gateway registered it with, if it was not an administrator. */
     enrolmentTokenId: uuid("enrolment_token_id"),
+    /** The pairing invite a person's device registered it with. */
+    pairingInviteId: uuid("pairing_invite_id"),
     createdAt: createdAt(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -287,6 +327,12 @@ export const agentCredentials = pgTable(
       columns: [table.organisationId, table.enrolmentTokenId],
       foreignColumns: [enrolmentTokens.organisationId, enrolmentTokens.id],
     }),
+    foreignKey({
+      columns: [table.organisationId, table.pairingInviteId],
+      foreignColumns: [pairingInvites.organisationId, pairingInvites.id],
+    }),
+    // An invite is single-use: it registers one credential, whatever the requests' timing.
+    uniqueIndex("agent_credentials_pairing_invite").on(table.pairingInviteId),
     uniqueIndex("agent_credentials_active_fingerprint")
       .on(table.fingerprint)
       .where(sql`${table.revokedAt} is null`),
@@ -448,6 +494,7 @@ export const projects = pgTable(
     archivedByUserId: uuid("archived_by_user_id"),
     version: integer().default(1).notNull(),
     nextIssueNumber: integer("next_issue_number").default(1).notNull(),
+    nextDecisionNumber: integer("next_decision_number").default(1).notNull(),
     lastCycleNumber: integer("last_cycle_number").default(0).notNull(),
     cycleSettings: jsonb("cycle_settings")
       .$type<CycleSchedule>()
@@ -857,6 +904,7 @@ export const decisions = pgTable(
   {
     id: id(),
     organisationId: organisationId(),
+    identifier: text().notNull(),
     projectId: uuid("project_id").notNull(),
     recordedById: uuid("recorded_by_id").notNull(),
     title: text().notNull(),
@@ -888,6 +936,7 @@ export const decisions = pgTable(
   },
   (table) => [
     unique().on(table.organisationId, table.id),
+    unique().on(table.organisationId, table.identifier),
     index().on(table.organisationId, table.projectId, table.decidedOn),
     foreignKey({
       columns: [table.organisationId, table.supersedesId],
@@ -909,6 +958,43 @@ export const decisions = pgTable(
       columns: [table.organisationId, table.recordedById],
       foreignColumns: [users.organisationId, users.id],
     }),
+  ],
+);
+
+export const decisionOutcomes = pgTable(
+  "decision_outcomes",
+  {
+    organisationId: organisationId(),
+    decisionId: uuid("decision_id").notNull(),
+    fleetId: uuid("fleet_id").notNull(),
+    recordedById: uuid("recorded_by_id").notNull(),
+    recordedByRank: text("recorded_by_rank", { enum: ["captain", "rearAdmiral"] }).notNull(),
+    status: text({ enum: ["accepted", "rejected"] }).notNull(),
+    createdAt: createdAt(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organisationId, table.decisionId] }),
+    foreignKey({
+      columns: [table.organisationId, table.decisionId],
+      foreignColumns: [decisions.organisationId, decisions.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.fleetId],
+      foreignColumns: [fleets.organisationId, fleets.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.recordedById],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    check("decision_outcomes_status", sql`${table.status} IN ('accepted', 'rejected')`),
+    check(
+      "decision_outcomes_recorder_rank",
+      sql`${table.recordedByRank} IN ('captain', 'rearAdmiral')`,
+    ),
+    index("decision_outcomes_pending")
+      .on(table.organisationId, table.fleetId, table.createdAt, table.decisionId)
+      .where(sql`${table.deliveredAt} IS NULL`),
   ],
 );
 

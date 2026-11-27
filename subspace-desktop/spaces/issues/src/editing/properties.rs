@@ -69,6 +69,7 @@ impl Field {
             .find(|p| Some(p.id.as_str()) == values.id(Self::Project))
             .map(|p| p.key.clone());
         match self {
+            Self::State if values.tracker() => key.map(ChoiceSource::TrackerStates),
             Self::State => key.map(ChoiceSource::States),
             Self::Assignee => Some(ChoiceSource::Assignees),
             Self::Labels => Some(ChoiceSource::Labels),
@@ -214,10 +215,9 @@ impl Properties {
         }
     }
     pub(super) fn selected(&self, field: Field) -> &[IssueChoice] {
-        self.edits
-            .get(&field)
-            .or_else(|| self.basis.get(&field))
-            .map_or(&[], Vec::as_slice)
+        self.staged(field)
+            .or_else(|| self.basis.get(&field).map(Vec::as_slice))
+            .unwrap_or_default()
     }
     pub(super) fn id(&self, field: Field) -> Option<&str> {
         self.selected(field).first().map(IssueChoice::id)
@@ -231,16 +231,25 @@ impl Properties {
         } else {
             choice.into_iter().collect()
         };
+        if field == Field::Type && !same_ids(&selection, self.selected(field)) {
+            self.edits.remove(&Field::State);
+        }
         if field == Field::Project && !same_ids(&selection, self.selected(field)) {
             self.edits.remove(&Field::State);
             self.edits.remove(&Field::Estimate);
             self.edits.remove(&Field::Milestone);
             self.edits.remove(&Field::Cycle);
         }
-        if same_ids(
-            &selection,
-            self.basis.get(&field).map_or(&[], Vec::as_slice),
-        ) {
+        // Reselecting a tracker value can still change its children.
+        let can_apply_to_children = self.can_move_tracker_children()
+            && matches!(field, Field::Assignee | Field::State)
+            && !selection.is_empty();
+        if !can_apply_to_children
+            && same_ids(
+                &selection,
+                self.basis.get(&field).map_or(&[], Vec::as_slice),
+            )
+        {
             self.edits.remove(&field);
         } else {
             self.edits.insert(field, selection);
@@ -248,13 +257,26 @@ impl Properties {
     }
     pub(super) fn install(&self, changes: &mut IssueChanges) {
         for (&field, values) in &self.edits {
-            if self.tracker() && matches!(field, Field::State | Field::Estimate | Field::Cycle) {
+            if self.tracker()
+                && (matches!(field, Field::Estimate | Field::Cycle)
+                    || field == Field::State && !self.can_move_tracker_children())
+            {
                 continue;
             }
             if let Some(property) = property(field, values) {
                 changes.set(property);
             }
         }
+    }
+    pub(super) fn can_move_tracker_children(&self) -> bool {
+        let previous = self.basis.get(&Field::Type).and_then(|kinds| kinds.first());
+        !crate::pickers::teams()
+            && self.tracker()
+            && previous.map(IssueChoice::id) == Some("tracker")
+    }
+
+    pub(super) fn staged(&self, field: Field) -> Option<&[IssueChoice]> {
+        self.edits.get(&field).map(Vec::as_slice)
     }
     pub(super) fn has_edits(&self) -> bool {
         !self.edits.is_empty()

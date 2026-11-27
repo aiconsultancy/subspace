@@ -4,6 +4,7 @@
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{TestAppContext, VisualTestContext};
 use subspace_client_irc::{ConnectionStatus, Event, Typing};
+use subspace_framework::dashboard::Dashboard as _;
 
 use super::{channel_events, inject, mount, settings};
 use crate::fixtures::{channel, member, network_id};
@@ -153,5 +154,19 @@ fn a_dropped_connection_takes_the_statuses_with_it(cx: &mut TestAppContext) {
             window.find("irc-member:alice").label(),
             Some("Open private messages with alice")
         );
+    });
+}
+
+#[gpui_kit::test]
+fn status_and_badge_summarise_networks_and_attention(cx: &mut TestAppContext) {
+    let (board, hub, cx) = mount(cx, settings());
+    inject(&hub, channel_events(), cx);
+    cx.update(|_, cx| {
+        assert_eq!(
+            board.read(cx).status(cx).as_deref(),
+            Some("IRC · 1 network · 1 connected"),
+            "the status bar carries what the heading said"
+        );
+        assert_eq!(board.read(cx).badge(cx).as_deref(), Some("1"));
     });
 }

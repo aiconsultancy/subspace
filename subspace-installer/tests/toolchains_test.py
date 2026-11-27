@@ -27,6 +27,17 @@ import toolchains  # noqa: E402
 from toolchains import Invalid  # noqa: E402
 
 
+def setUpModule():
+    # Setup without private ingress removes the proxy and retires the account its receipt records: never the
+    # host's. remove() runs systemctl and unlinks the proxy's files itself, so it is a stub here, and nothing may
+    # reach the private network module's own command runner.
+    for attribute, value in (("ACCOUNT_RECEIPT", {"new": Path("/nonexistent/receipt")}), ("remove", {}),
+                             ("command", {"side_effect": AssertionError("a setup test ran a host command")})):
+        patcher = patch.object(fleet_setup.private_network, attribute, **value)
+        patcher.start()
+        unittest.addModuleCleanup(patcher.stop)
+
+
 # Five invented repositories of the kinds the first real fleet had (fleet-install-lessons.md, section 2). Names and
 # versions are made up.
 REPOSITORIES = {
@@ -969,7 +980,9 @@ class ScreenshotTests(unittest.TestCase):
         self.pins = screenshots.pins()
         for name, value in (("APP", self.root / "app"), ("PLAYWRIGHT", self.root / "app/playwright"),
                             ("BROWSERS", self.root / "app/browsers"), ("WRAPPER", self.root / "app/bin/playwright"),
-                            ("MERMAID_WRAPPER", self.root / "app/bin/mermaid-render")):
+                            ("MERMAID_WRAPPER", self.root / "app/bin/mermaid-render"),
+                            ("FLINT_MCP", self.root / "app/bin/flint-chart-mcp"),
+                            ("FLINT_RENDER", self.root / "app/bin/flint-render")):
             patcher = patch.object(screenshots, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -984,7 +997,8 @@ class ScreenshotTests(unittest.TestCase):
         lock = json.loads((source / "package-lock.json").read_text())
         # The lockfile matches the manifest and pins the integrity of every package.
         self.assertEqual(lock["packages"][""]["dependencies"], manifest["dependencies"])
-        for package in ("playwright", "mermaid"):
+        self.assertEqual(lock["packages"][""]["optionalDependencies"], manifest["optionalDependencies"])
+        for package in ("playwright", "mermaid", screenshots.FLINT_PACKAGE):
             self.assertEqual(lock["packages"][f"node_modules/{package}"]["version"], self.pins[package])
         self.assertTrue(all(entry["integrity"].startswith("sha512-") for name, entry in lock["packages"].items() if name))
         self.assertRegex(self.pins["node"], r"^\d+\.\d+\.\d+$")
@@ -998,6 +1012,7 @@ class ScreenshotTests(unittest.TestCase):
 
     def test_it_is_on_unless_fleet_json_turns_it_off(self):
         config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        config["mockupPreviews"] = {"enabled": False}
         secrets = {"proxyKey": "fixture-model-proxy-key"}
         self.assertIs(runtime.validate(config, secrets, check_files=False)["screenshots"], True)
         self.assertIs(runtime.validate({**config, "screenshots": False}, secrets, check_files=False)["screenshots"],
@@ -1023,12 +1038,13 @@ class ScreenshotTests(unittest.TestCase):
     def test_the_dry_run_says_what_an_existing_fleet_gains(self):
         names = screenshots.packages(self.pins, "ubuntu:24.04")
         lines = screenshots.plan_lines(True, self.pins, "ubuntu:24.04", present={"xvfb", *names[3:]},
-                                       done={"node": True, "playwright": True, "mermaid": False, "chromium": True})
+                                       done={"node": True, "playwright": True, "mermaid": False, "flint": False,
+                                             "chromium": True})
         self.assertIn(f"Playwright {self.pins['playwright']} with its Chromium {self.pins['chromiumVersion']}", lines[0])
         self.assertEqual(lines[1], f"  This run installs: 2 of {len(names)} packages (xauth, x11-xkb-utils); "
-                                   f"Mermaid {self.pins['mermaid']}.")
+                                   f"Mermaid {self.pins['mermaid']}; Flint {self.pins[screenshots.FLINT_PACKAGE]}.")
         self.assertEqual(screenshots.plan_lines(True, self.pins, "ubuntu:24.04", present=set(names),
-                                                done=dict.fromkeys(("node", "playwright", "mermaid", "chromium"),
+                                                done=dict.fromkeys(("node", "playwright", "mermaid", "flint", "chromium"),
                                                                    True))[1],
                          "  Installed already.")
         off = screenshots.plan_lines(False, self.pins, "ubuntu:24.04")
@@ -1037,17 +1053,26 @@ class ScreenshotTests(unittest.TestCase):
 
     def test_root_installs_the_pinned_browser_and_the_wrapper(self):
         calls = []
+        missing_native = False
 
         def run(command, **kwargs):
             calls.append((command, kwargs))
+            if command[1:2] == ["--eval"] and missing_native:
+                return subprocess_result(1, "")
             if command[-2:] == ["install", "chromium"]:
                 for path in screenshots.browser_directories(self.pins):
                     path.mkdir(parents=True, exist_ok=True)
             if command[1:2] == ["ci"]:
-                for name in ("playwright", "mermaid"):
+                for name in ("playwright", "mermaid", screenshots.FLINT_PACKAGE):
                     package = kwargs["cwd"] / "node_modules" / name
                     package.mkdir(parents=True)
                     (package / "package.json").write_text(json.dumps({"version": self.pins[name]}))
+                flint = kwargs["cwd"] / "node_modules" / screenshots.FLINT_PACKAGE
+                (flint / "dist").mkdir()
+                (flint / "dist/cli.js").touch()
+                (flint / "assets").mkdir()
+                for name in screenshots.FLINT_SKILLS:
+                    (flint / "assets" / f"{name}.SKILL.md").touch()
             if command[1:2] == ["install"] and command[2].startswith("node@"):
                 screenshots.node(self.pins).parent.mkdir(parents=True)
                 screenshots.node(self.pins).write_text("")
@@ -1056,13 +1081,13 @@ class ScreenshotTests(unittest.TestCase):
         with patch.object(screenshots.subprocess, "run", side_effect=run):
             self.assertEqual(screenshots.install(self.pins, environment), [])
         node = str(screenshots.node(self.pins))
-        self.assertEqual([command for command, _ in calls], [
+        self.assertEqual([command for command, _ in calls if command[1:2] != ["--eval"]], [
             [str(toolchains.MISE), "install", f"node@{self.pins['node']}"],
             [str(Path(node).parent / "npm"), "ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
             [node, str(screenshots.PLAYWRIGHT / "node_modules/playwright/cli.js"), "install", "chromium"]])
         self.assertEqual(calls[0][1]["env"], environment)
         self.assertEqual(calls[1][1]["cwd"].parent, screenshots.PLAYWRIGHT)
-        self.assertEqual(calls[2][1]["env"]["PLAYWRIGHT_BROWSERS_PATH"], str(screenshots.BROWSERS))
+        self.assertEqual(calls[-1][1]["env"]["PLAYWRIGHT_BROWSERS_PATH"], str(screenshots.BROWSERS))
         # npm ci installs from the pinned lockfile, copied beside the pinned manifest.
         self.assertEqual((screenshots.PLAYWRIGHT / "package-lock.json").read_text(),
                          (screenshots.PINS / "package-lock.json").read_text())
@@ -1074,11 +1099,26 @@ class ScreenshotTests(unittest.TestCase):
         self.assertEqual(renderer.read_text(), (screenshots.PINS / renderer.name).read_text())
         self.assertEqual(screenshots.MERMAID_WRAPPER.stat().st_mode & 0o777, 0o755)
         self.assertTrue(screenshots.MERMAID_WRAPPER.read_text().endswith(f"exec {node} {renderer} \"$@\"\n"))
+        with patch.object(screenshots.subprocess, "run", side_effect=run):
+            self.assertTrue(screenshots.flint_ready(self.pins))
+        self.assertTrue(screenshots.FLINT_MCP.read_text().endswith(
+            f"exec {node} {screenshots.flint_cli()} --disable-file-reference \"$@\"\n"))
+        self.assertTrue(screenshots.FLINT_RENDER.read_text().endswith(
+            f"exec {node} {screenshots.PLAYWRIGHT}/flint-render.mjs \"$@\"\n"))
         # A second run installs nothing again but asks Playwright, which skips what it has.
         calls.clear()
         with patch.object(screenshots.subprocess, "run", side_effect=run):
             self.assertEqual(screenshots.install(self.pins, environment), [])
-        self.assertEqual([command[-1] for command, _ in calls], ["chromium"])
+        self.assertEqual([command[-1] for command, _ in calls if command[1:2] != ["--eval"]], ["chromium"])
+        # npm can skip Flint's optional native package. Retry it while keeping the existing visual tools.
+        calls.clear()
+        missing_native = True
+        with patch.object(screenshots.subprocess, "run", side_effect=run):
+            self.assertEqual(screenshots.install(self.pins, environment),
+                             [f"Flint {self.pins[screenshots.FLINT_PACKAGE]} or its native renderer did not install"])
+            self.assertFalse(screenshots.flint_ready(self.pins))
+        self.assertTrue(any(command[1:2] == ["ci"] for command, _ in calls))
+        self.assertTrue(screenshots.MERMAID_WRAPPER.is_file())
         # A failure is reported, never raised: the install carries on.
         with patch.object(screenshots.subprocess, "run",
                           side_effect=subprocess.CalledProcessError(1, ["playwright", "install"])):
@@ -1128,7 +1168,7 @@ class ScreenshotTests(unittest.TestCase):
                 screenshots.install_packages(self.pins, "{}", "{}")
         self.assertEqual(screenshots.installed_version("playwright"), "old")
 
-    def test_a_crew_user_takes_page_and_mermaid_screenshots(self):
+    def test_a_crew_user_takes_page_mermaid_and_flint_screenshots(self):
         calls = []
         shot = self.root / "shot"
 
@@ -1137,7 +1177,8 @@ class ScreenshotTests(unittest.TestCase):
             if command[-3:-1] == ["mktemp", "-d"]:
                 shot.mkdir()
                 return subprocess_result(0, f"{shot}\n")
-            if "xvfb-run" in command or str(screenshots.MERMAID_WRAPPER) in command:
+            if any(tool in command for tool in ("xvfb-run", str(screenshots.MERMAID_WRAPPER),
+                                                 str(screenshots.FLINT_RENDER))):
                 Path(command[-1]).write_bytes(screenshots.PNG + b"\x00\x00\x00\rIHDR" + (800).to_bytes(4, "big")
                                               + (600).to_bytes(4, "big") + b"\x08\x02")
             return subprocess_result(0, "")
@@ -1145,7 +1186,8 @@ class ScreenshotTests(unittest.TestCase):
         environment = {"PATH": "/p", "TMPDIR": "/tmp/ss-orion"}
         with patch.object(screenshots.subprocess, "run", side_effect=run):
             passed, report = screenshots.check("ss-orion", home, environment)
-        self.assertEqual((passed, report), (True, "a 800x600 PNG of a local page under Xvfb and a 800x600 Mermaid PNG"))
+        self.assertEqual((passed, report),
+                         (True, "a 800x600 PNG of a local page under Xvfb and a 800x600 Mermaid PNG and a 800x600 Flint PNG"))
         command, options = calls[1]
         self.assertEqual(command[:6], ["runuser", "-u", "ss-orion", "--", "/usr/bin/env", "-i"])
         self.assertIn(f"TMPDIR={shot}", command)
@@ -1155,6 +1197,8 @@ class ScreenshotTests(unittest.TestCase):
         self.assertTrue(tail[-2].startswith("data:text/html,"))
         self.assertEqual(calls[2][0][-3:], [str(screenshots.MERMAID_WRAPPER), "-", str(shot / "diagram.png")])
         self.assertEqual(calls[2][1]["input"], screenshots.DIAGRAM)
+        self.assertEqual(calls[3][0][-2:], [str(screenshots.FLINT_RENDER), str(shot / "chart.png")])
+        self.assertEqual(calls[3][1]["input"], screenshots.CHART)
         self.assertEqual(calls[-1][0][-4:], ["rm", "-rf", "--", str(shot)])
         # A failure, or no picture, is reported.
         failing = {"xvfb-run": subprocess_result(1, "", "xvfb-run: error: Xvfb failed to start\n")}
@@ -1172,7 +1216,7 @@ class ScreenshotTests(unittest.TestCase):
         failing["xvfb-run"] = subprocess_result(0, "")
         with patch.object(screenshots.subprocess, "run", side_effect=run_failing):
             self.assertEqual(screenshots.check("ss-orion", home, environment),
-                             (False, "Playwright wrote no valid PNG and a 800x600 Mermaid PNG"))
+                             (False, "Playwright wrote no valid PNG and a 800x600 Mermaid PNG and a 800x600 Flint PNG"))
 
 
 def setup_args(*argv):
@@ -1422,7 +1466,8 @@ class SetupRecordTests(unittest.TestCase):
         with patch.object(fleet_setup.os, "geteuid", return_value=1000), self.assertRaises(fleet_setup.SetupError):
             fleet_setup.toolchains_command(["detect"])
 
-    def test_setups_dry_run_shows_the_proposal_and_records_nothing(self):
+    @patch.object(fleet_setup, "check_officer_tool_source")
+    def test_setups_dry_run_shows_the_proposal_and_records_nothing(self, _source_check):
         self.clone("harbour-api")
         (self.inputs / "fleet.json").unlink()
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
@@ -1451,12 +1496,13 @@ class SetupRecordTests(unittest.TestCase):
         # Nothing the dry run did is kept.
         self.assertEqual(sorted(path.name for path in self.inputs.iterdir()), [])
 
-    def test_a_detection_failure_never_stops_setup_before_its_lockdown(self):
+    @patch.object(fleet_setup, "check_officer_tool_source")
+    def test_a_detection_failure_never_stops_setup_before_its_lockdown(self, _source_check):
         self.clone("harbour-api")
         (self.inputs / "fleet.json").unlink()
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
                 "--captains", "Orion", "--crew-claude", "0", "--crew-codex", "0", "--inputs", str(self.inputs),
-                "--stargate-ref", runtime.STARGATE_REF, "--no-demo", "--no-api", "--repositories",
+                "--stargate-ref", runtime.STARGATE_REF, "--no-demo", "--no-api", "--irc-auth", "password", "--repositories",
                 "harbour-api=https://github.com/example/harbour-api.git", "--toolchains", "derive"]
         order, said = [], []
 

@@ -380,6 +380,10 @@ impl ListDashboard for Issues {
         !self.activity.visible
     }
 
+    fn group_heading_matches_row(&self) -> bool {
+        !self.activity.visible
+    }
+
     fn comfortable_rows(&self) -> bool {
         !self.activity.visible
     }

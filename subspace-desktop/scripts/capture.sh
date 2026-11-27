@@ -48,6 +48,7 @@
 #                              fingerprints each request's token
 #   CAPTURE_MOVE_UNCONFIRMED=1  a committed move lists its sub-issues as not confirmed, as a NETT move can
 #   CAPTURE_UPLOAD_SCENARIO=<unknown|absent>  the first issue opened shows an upload NETT left unresolved
+#   CAPTURE_AGENTSVIEW_CONFIG=path  copy synthetic AgentsView settings into the capture home
 #   CAPTURE_KEEP_LOG=1         copy the app's logs into <out-dir>
 #   CAPTURE_FEATURES=<list>    comma-separated Cargo features added to the build, such as
 #                              space-lab,component-gallery; built in, they start off until
@@ -196,6 +197,11 @@ case "$user" in
 esac
 EOF
 chmod 755 "$fixture/bin/gh"
+
+if [ -n "${CAPTURE_AGENTSVIEW_CONFIG:-}" ]; then
+    mkdir -m 700 "$config_dir/agentsview"
+    install -m 600 "$CAPTURE_AGENTSVIEW_CONFIG" "$config_dir/agentsview/config.json"
+fi
 
 # A first run has neither file: the app records a new install's theme.
 if [ -z "${CAPTURE_FIRST_RUN:-}" ]; then

@@ -85,18 +85,63 @@ stale.
   window title. `DESCRIPTION` is the navigation tooltip; a product can
   override it with `BoardRegistration::description`.
 - **Use it when**: always. Choose the ID once: renaming it is a breaking change
-  for stored state, config files, tool names and search records.
+  for tool names and search records, and for stored state and config files
+  unless the product lists the old ID in the Space's `former_ids` (see
+  [former IDs and saved state](#registration-and-the-product-descriptor)).
 - **Example**: `spaces/irc/src/lib.rs` (`ID = "irc"`, `TITLE = "IRC"`).
 - **Tests**: `host/app/src/registry.rs` rejects duplicate IDs and
   feature keys outside `board.<id>.`.
 
 ### Registration and the product descriptor
 
-- **What**: a product lists its boards twice: a `BoardDescriptor` (ID, aliases,
-  whether it is enabled by default) in
+- **What**: a product lists its boards twice: a `BoardDescriptor` (ID,
+  command aliases, former IDs, whether it is enabled by default) in
   `services/product/src/known.rs`, and a `BoardRegistration` in its
   entrypoint, `products/subspace/src/main.rs`. Descriptor order is switcher
   order and gives the function key (F1 to F12).
+- **Former IDs and saved state**: an alias is an extra command word and
+  nothing else. When a product renames a Space, it lists the old ID in the
+  Space's `former_ids`, and what was saved under it is read as the Space's
+  own, in memory, each time it is read: by the config parser
+  (`boards.<old>`, matched trimmed as the parser reads it, `boardOrder`
+  entries, never listing a Space twice, `features` keys `board.<old>.*`,
+  `mcp.groups.<old>` and `commands.aliases.<old>`), by the Settings editor,
+  by the state loader (the keys `<old>.*`, `board.<old>.*` and
+  `notifications.<old>.*`, string and other JSON values alike, and
+  `app.dashboard` when it names the old ID), and for the Space's own
+  settings file, which is `<config dir>/<old>/config.json` while
+  `<config dir>/<id>/config.json` is known not to exist (one that cannot
+  be looked up stays the Space's, and its error is reported). Where the Space's own key
+  exists it wins and the old one is dropped. Nothing is written for this:
+  a file changes only when the app next saves it through its normal writer,
+  and from then on holds only the Space's ID; a file never saved keeps its
+  old keys and is mapped at every read. The loaders learn the former IDs
+  when the desktop app, a command or `mcp` starts, before its first config
+  or state load; the `commands.aliases` reader, which runs earlier, maps
+  them itself, so the Space's own shortcut list wins there too. Framework
+  keys inside a Space's namespace, such as `github.activeAccount` in the
+  state file and the Application's `mcp.groups.application`, never move,
+  and nothing moves onto them. Settings refuses, as changed elsewhere, to
+  save a Space's settings to a former ID's file once the Space's own file
+  has appeared. Validation refuses a former ID that is a Space's ID, one
+  listed twice, and the names the Framework saves its own data under
+  (`subspace_product::SAVED_NAMES`: `alerts`, `app`, `application`,
+  `appearance`, `board`, `chat`, `notifications`, `palette`, `terminal`,
+  `themes`), comparing without regard to ASCII case because the IDs name
+  folders. A Space whose own ID is one of those names cannot have former
+  IDs at all. A product must not declare as a former ID a name it saves its
+  own data under outside a Space, which the Framework cannot know. Declare
+  a former ID in the same release that renames the Space and never add an
+  old one later: a configured Space installed in between under that ID
+  would be ignored and its saved choices read as the native Space's. A
+  configured Space (`webBoards`) whose ID is a Space's ID or former ID is
+  ignored with a notice; an app that adds configured Spaces checks
+  `ValidatedProduct::board_id_use` before it saves one.
+  Not carried over: the Search view's records and per-Space store choice
+  (in the search database beside the state file), recent palette commands
+  and tool names. A renamed Space must build its own keys from its new ID:
+  a key it still writes under the old ID is read, and later saved, as the
+  new one.
 - **How**: add the crate to the product's `Cargo.toml`, then
   `BoardRegistration::new::<subspace_name_board::Name>().description("…")`.
   Configured boards, such as web boards, use `BoardRegistration::configured`
@@ -178,7 +223,9 @@ the tab strip and toolbar, so the panel's header lines up with the tab strip.
 - Show selection through the row's own fill, never a leading bar.
 - A toolbar has at most one primary action, the Space's main one, at its
   trailing end, built with `action::main_action`; its other actions are
-  neutral or quiet. Use `fields::toolbar_search` for the toolbar's search.
+  neutral or quiet. The [Decisions exception](design-guide.md#contextual-action-in-decisions)
+  describes when a contextual Accept can take the primary slot. Use
+  `fields::toolbar_search` for the toolbar's search.
 
 Check the Space at the normal window size and in a narrow window, with both
 docks shown. The toolbar's leading items wrap onto another line and its
@@ -402,6 +449,21 @@ one, and existing ones are candidates to move to the store.
   logs). Both predate the [board store](#board-storage).
 - **Tests**: a round trip of the cache format and a corrupt or missing file
   reading as empty.
+
+### API-backed views
+
+- Keep the last usable result and the request status in separate fields.
+  Use a loading placeholder for a first read or a new scope. During a
+  same-scope refresh, keep the result visible and use a small status
+  indicator if feedback is needed.
+- Run the request in the background and capture its account, organisation,
+  record, filters and request generation. Apply the latest matching result
+  in place, keeping selection and scroll position where they still apply.
+- Keep the current result on transient errors and allow a retry. Clear
+  data when the account or organisation changes or access is lost.
+  Remove a record when the API confirms it is unavailable.
+- Test a delayed refresh with data already visible and a response that
+  arrives after the user switches scope.
 
 ### Automatic refresh and background updates
 
@@ -669,6 +731,10 @@ origin, profile and organisation against the current issue scope.
 - **Tell or ask another board**: use a contract, below.
 
 ### Board-to-board contracts
+
+The `decisions@1/open` capability routes a decision reference to an answering
+Space. The requesting Space can give the shell a return location, and the
+answering Space reads the decision in its own account.
 
 **Contracts.** A contract is an interface that no board owns. Contracts live
 in `services/contracts` (`subspace-contracts`), which has no GPUI,

@@ -453,6 +453,30 @@ mod tests {
         assert!(grouped.groups()[1].tools.iter().all(|tool| !tool.served));
     }
 
+    /// The only test in this binary that installs former ids.
+    #[test]
+    fn a_former_id_never_takes_the_application_group_s_choice() {
+        subspace_core::former_ids::install(subspace_core::former_ids::Renames::from([(
+            "application".to_owned(),
+            "github".to_owned(),
+        )]));
+        let (config, _) = subspace_core::config::parse(
+            r#"{"mcp":{"groups":{"application":false}}}"#,
+            std::path::Path::new("config.json"),
+        );
+        let boards = [Board {
+            help: "# Help",
+            ..board("github", github)
+        }];
+        let environment = subspace_agent_tools::test_support::environment(Default::default());
+        let grouped =
+            super::GroupedCatalog::build(&boards, &[], &environment, &config.mcp).unwrap();
+        let served = grouped.served_catalog();
+        assert!(served.tools().get("github_read").is_some());
+        assert!(served.tools().get("board_help").is_none());
+        assert!(served.tools().get("web_read").is_none());
+    }
+
     #[test]
     fn the_help_tool_serves_the_documents_of_the_served_boards_only() {
         let boards = [

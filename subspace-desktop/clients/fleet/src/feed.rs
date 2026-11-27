@@ -47,6 +47,7 @@ pub struct FleetSnapshot {
     pub activity: VecDeque<ActivityEvent>,
 }
 
+#[derive(Default)]
 struct Shared {
     state: Mutex<FleetSnapshot>,
     revision: AtomicU64,
@@ -68,14 +69,7 @@ impl Feed {
     }
 
     pub(crate) fn start_with(client: FleetClient, pace: Pace) -> Self {
-        let shared = Arc::new(Shared {
-            state: Mutex::new(FleetSnapshot::default()),
-            revision: AtomicU64::new(0),
-            stopped: AtomicBool::new(false),
-            wake: tokio::sync::Notify::new(),
-            agents: Mutex::new(Agents::default()),
-            retarget: tokio::sync::Notify::new(),
-        });
+        let shared = Arc::new(Shared::default());
         let thread = Arc::clone(&shared);
         let started = std::thread::Builder::new()
             .name("fleet-feed".into())
@@ -114,6 +108,20 @@ impl Feed {
     /// events, while the feed watches `agent`.
     pub(crate) fn activity_news(&self, agent: &str, after: u64) -> Option<ActivityNews> {
         lock(&self.0.agents).news(agent, after)
+    }
+}
+
+#[cfg(test)]
+impl Feed {
+    /// A feed with no thread behind it: its link changes only when a test
+    /// changes it ([`Self::set_link_for_test`]).
+    pub(crate) fn detached() -> Self {
+        Self(Arc::new(Shared::default()))
+    }
+
+    /// Changes the link as the feed's thread would, off the app's executor.
+    pub(crate) fn set_link_for_test(&self, link: Link) {
+        set_link(&self.0, link);
     }
 }
 
