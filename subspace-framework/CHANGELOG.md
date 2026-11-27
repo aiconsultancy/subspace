@@ -4,6 +4,18 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.8.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.7.0...subspace-framework-v0.8.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **framework:** BoardDescriptor and ValidatedBoard have a new public field former_ids, so code that builds a BoardDescriptor must set it (Vec::new() for none), and ProductError has the new variants FormerIdInUse, DuplicateFormerId, ReservedFormerId and ReservedRenameTarget, so an exhaustive match on it must handle them.
+
+### Features
+
+* **desktop:** show contextual decision actions and refresh controls ([#188](https://github.com/aiconsultancy/subspace/issues/188)) ([090ad8f](https://github.com/aiconsultancy/subspace/commit/090ad8f1b9a2637a40d48d561b75d61092a002f3))
+* **framework:** read saved data under a Space's former ids ([1990dcf](https://github.com/aiconsultancy/subspace/commit/1990dcfcf59feb423710bc758811420def555097))
+
 ## [0.7.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.6.0...subspace-framework-v0.7.0) (2026-11-26)
 
 
