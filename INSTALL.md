@@ -122,20 +122,20 @@ service, so they cannot use the VM's cloud identity.
 ## Captain mockup previews
 
 The fleet installs browser previews and the Impeccable design skill by
-default. When you install a fleet for someone, use the fleet's existing SSH
-tunnel for previews. Start or restart the tunnel on the operator's workstation
-so captain links work there.
+default. For workstation-only previews, start or restart the fleet's SSH
+tunnel on the operator's workstation so captain links work there.
+To make an existing shared fleet workstation-only, pass `--preview-url tunnel`
+and include removal of the previous preview listener, DNS entry and access
+rules in the plan. This also withdraws old shared links.
 
-If the team needs shared links, ask the operator for its private preview
-hostname and who can view it. Set up and test a dedicated web origin on the
-operator's private gateway, then pass it to `--preview-url`. Use HTTPS for
-TLS or HTTP when the private network already protects the connection. The
-usual SSH path is available while the shared route is being set up. Offer the
-independent `--no-mockup-previews` and `--no-impeccable` switches if the operator
-wants to disable either feature.
+For shared previews, include the private DNS entry, gateway listener and any
+access rules in the plan you confirm with the operator. Pass the resulting
+origin to `--preview-url`. Ask a captain to publish a mockup and open the
+returned link from a second authorised device on the private network. All
+captains on that fleet publish beneath the same origin.
 
 See [live mockup previews](subspace-installer/README.md#live-mockup-previews)
-for ports and reruns.
+for an existing Headscale network, port settings and reruns.
 
 ## Decide with the user
 
@@ -511,6 +511,14 @@ answer it now.
     for no. Unattended setup defaults to on and remembers the choice on later
     runs. When off, there is no AgentsView listener or tunnel port and the
     desktop installer hides the AgentsView Space on the app's next launch.
+24. **Who should be able to open captain previews?** (**This workstation.**)
+    If the user wants to share links, ask which private hostname to use for
+    this fleet, who on the private network should have access, and whether
+    to use HTTPS or private HTTP. With Headscale, offer all users of their
+    tailnet or a group they choose. If the hostname or private route is
+    undecided, keep workstation access and set up sharing on a later run.
+    Offer `--no-mockup-previews` and `--no-impeccable` if they want to turn
+    either feature off. See [Captain mockup previews](#captain-mockup-previews).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.

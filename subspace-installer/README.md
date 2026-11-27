@@ -735,12 +735,29 @@ For links that work across an authorised team, ask the operator which private
 hostname and viewer access policy to use. Set up a dedicated web origin on the
 team's private access gateway and proxy it to the loopback Caddy listener.
 Pass `--preview-url https://previews.example.com` for HTTPS, or
-`--preview-url http://previews.example.com:8080` when the private network
+`--preview-url http://previews.example.com:8088` when the private network
 protects the HTTP connection and controls who can reach it. Use
 `--preview-url tunnel` to switch back to the SSH default. When the proxy runs
 on the fleet VM, pass
 `--preview-proxy-user www-data` (or the actual service account) to permit access
 to Caddy's port.
+
+On an existing Headscale network, point the chosen hostname at the fleet VM's
+tailnet address using [Headscale DNS](https://headscale.net/stable/ref/dns/)
+or the team's private DNS resolver. Bind a reverse proxy to that tailnet
+address using a port that the fleet services do not use, and forward `/p/`
+to Caddy. Check the effective
+[Headscale policy](https://headscale.net/stable/ref/policy/) for the proxy
+port, including existing rules. Allow all users on the tailnet for
+fleet-wide sharing or only the chosen group. If the installer manages the VM
+firewall, add the proxy port to the `--allow-port` list in your setup
+command, keeping any existing entries. This opens the port to private source
+ranges, so keep the proxy bound to the tailnet address.
+Use the dedicated origin in `--preview-url` and confirm that a second
+authorised tailnet device can resolve the hostname and open a published link.
+For a restricted group, also check that a tailnet device outside the group
+cannot open it. The operator or installing agent sets up DNS, the proxy and
+the network policy as part of the agreed plan.
 
 Both features are on by default. `--no-mockup-previews` skips Caddy and withdraws
 the service, tool and fleet skill on reruns. It keeps staged and published
@@ -756,6 +773,8 @@ port, `mockupPreviews.url` sets a private HTTP or HTTPS origin, and
 `mockupPreviews.proxyUser` grants a local proxy account access. The preview
 service requires a Stargate revision with the mockup publishing contract.
 An explicit HTTP origin requires the additional `mockupPreviewsHttp` capability.
+If the default release lacks it, pass `--stargate-ref` with a compatible
+revision, such as `dd89f0b67211482cc9243fbac4691453fc532671`.
 Use `--no-mockup-previews` when keeping an older, incompatible Stargate pin.
 
 ### Screenshots
