@@ -72,6 +72,13 @@ export function createBudget(limit) {
     return order;
   }
 
+  /**
+   * Whether `bytes` under `key` may be held: they fit beside what is never
+   * freed for it, or `key` is part of that floor (`pinned`, or the latest
+   * request). The one rule both `reserve` and `wouldFree` use.
+   */
+  const admits = (key, bytes, pinned) => pinned || key === requested || fixedBeside(key) + bytes <= limit;
+
   /** Free least recently used entries, never a kept one or `keep`, until `bytes` more fit; returns their eviction calls. */
   const makeRoom = (bytes, keep) => freeOrder(keep, bytes).map(take);
 
@@ -112,13 +119,16 @@ export function createBudget(limit) {
     /**
      * The keys that holding `bytes` under `key` would free, least recently
      * used first, freeing nothing: so an owner can let go of an entry in its
-     * own way before `reserve` would evict it.
+     * own way before `reserve` would evict it. None when `reserve` would
+     * refuse it, as it then frees nothing (SUB decision cf21d510); `pinned`
+     * as `reserve` takes it.
      *
      * @param {string} key
      * @param {number} bytes
+     * @param {{pinned?: boolean}} [options]
      * @returns {string[]}
      */
-    wouldFree: (key, bytes) => freeOrder(key, bytes),
+    wouldFree: (key, bytes, { pinned = false } = {}) => (admits(key, bytes, pinned) ? freeOrder(key, bytes) : []),
     /**
      * Hold `bytes` under `key`, replacing what it held, after freeing the
      * least recently used other entries until it fits. Each freed entry's
@@ -137,7 +147,7 @@ export function createBudget(limit) {
      * @param {{pinned?: boolean, makeRoom?: boolean}} [options]
      */
     reserve(key, bytes, evict, { pinned = false, makeRoom: free = true } = {}) {
-      if (!pinned && key !== requested && fixedBeside(key) + bytes > limit) return false;
+      if (!admits(key, bytes, pinned)) return false;
       release(key);
       const freed = free ? makeRoom(bytes, key) : [];
       clock += 1;

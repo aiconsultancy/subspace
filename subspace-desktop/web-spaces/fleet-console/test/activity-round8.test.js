@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PART_MAX_BYTES } from "../src/activity.js";
+import { createBudget } from "../src/budget.js";
 import { servedPart, servedUnit } from "../src/document.js";
 import { itemDocument, measureSource } from "../src/activity-view.js";
 import { activityEvent, textItem, toolItem } from "./activity-fixtures.js";
@@ -188,5 +189,37 @@ test("r8 4: closing a turn during a handover still shows the fresh version's fir
     assert.equal(windowsIn(panel.root).length, 1, "the part shows when the turn opens again");
   } finally {
     watcher.stop();
+  }
+});
+
+// ---------- P3-5: wouldFree admits what reserve admits ----------
+
+test("r8 5 (probe): wouldFree names nothing for a reservation that reserve refuses", () => {
+  const budget = createBudget(100);
+  budget.reserve("floor", 80, null, { pinned: true });
+  budget.reserve("other", 10, null);
+  const predicted = budget.wouldFree("plain", 30);
+  assert.equal(budget.reserve("plain", 30, null), false);
+  assert.equal(budget.has("other"), true);
+  assert.deepEqual(predicted, []);
+});
+
+test("r8 5: wouldFree agrees with what reserve frees, for ordinary, pinned and latest-request reservations", () => {
+  const cases = [
+    ["plain", 10, {}],
+    ["plain", 30, {}],
+    ["plain", 50, {}],
+    ["plain", 30, { pinned: true }],
+    ["asked", 30, {}],
+  ];
+  for (const [key, bytes, options] of cases) {
+    const budget = createBudget(100);
+    const freed = [];
+    budget.reserve("floor", 60, null, { pinned: true });
+    for (const other of ["x", "y"]) budget.reserve(other, 15, () => freed.push(other));
+    budget.request("asked");
+    const predicted = budget.wouldFree(key, bytes, options);
+    budget.reserve(key, bytes, null, options);
+    assert.deepEqual(predicted, freed, `${key} ${bytes} ${JSON.stringify(options)}`);
   }
 });

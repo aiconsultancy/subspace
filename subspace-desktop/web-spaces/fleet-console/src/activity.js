@@ -365,7 +365,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   function refitShown(bytes) {
     for (;;) {
       // Each switch changes what is held, so what growth would free is asked again.
-      const key = budget.wouldFree(INLINE_KEY, bytes).find(displayed);
+      const key = budget.wouldFree(INLINE_KEY, bytes, { pinned: true }).find(displayed);
       if (key === undefined) return;
       wholeToParts(key);
     }
