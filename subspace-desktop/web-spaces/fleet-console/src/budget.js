@@ -39,8 +39,10 @@ export function createBudget(limit) {
   const floorFor = (key, pinned) => (pinned || key === requested ? null : fixedBeside(key));
   /**
    * Whether `bytes` under `key` may be held: they fit beside what is never
-   * freed for it, or `key` is part of that floor. The rule `reserve` and
-   * every plan (`wouldFree`) use.
+   * freed for it, or `key` is part of that floor. `reserve` asks it; a
+   * plan, and `wouldFree` through it, applies the same rule through
+   * `floorFor` and its own `fixed` count, which follows the entries it
+   * resizes.
    */
   function admits(key, bytes, pinned) {
     const floor = floorFor(key, pinned);
