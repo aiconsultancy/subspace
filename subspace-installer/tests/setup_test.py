@@ -293,6 +293,11 @@ class GuidedQuestionsTests(unittest.TestCase):
         self.assertEqual((answers["api"], answers["adminEmail"], answers["organisation"]),
                          (True, "developer@example.com", "local"))
 
+    def test_single_without_an_api_describes_bundled_services_as_defaults(self):
+        answers, asked = self.gather(["--no-api"])
+        self.assertEqual((answers["topology"], answers["irc"], answers["api"]), ("single", "local", False))
+        self.assertIn("one fleet, no shared IRC or API; bundled Ergo, API and PostgreSQL by default", asked[0])
+
     def test_existing_dev_api_can_gather_identity_before_an_organisation_is_saved(self):
         api_env = fleet_setup.INPUTS / "api.env"
         settings = "AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\nAGENT_ORGANISATION=dev:example\n"

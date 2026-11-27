@@ -424,7 +424,8 @@ def gather_topology(explicit, saved, interactive, *, remote_irc, shared_api):
     saved_topology = saved.get("topology")
     choice = explicit or saved_topology
     if choice is None and interactive and not saved:
-        choice = prompt("Topology: single (recommended: this VM runs the fleet, API, Ergo and PostgreSQL), "
+        choice = prompt("Topology: single (recommended: one fleet, no shared IRC or API; bundled Ergo, API and "
+                        "PostgreSQL by default), "
                         "several (first of several fleets), or join (use existing services)", suggested)
     require(choice is None or choice in ("single", "several", "join"), "Choose single, several or join for topology.")
     if choice == "join" and suggested != "join":
@@ -466,7 +467,7 @@ def gather_workstation_network(args, answers, saved, interactive):
 
 def ask_identity(answers, saved):
     """Explain or confirm the configured sign-in, then report whether to ask for dev inputs."""
-    # Until SUB-76 supplies owner bootstrap, keep the configured sign-in or the existing development path.
+    # Setup cannot pair an owner yet; keep the configured sign-in or the development path.
     if answers["api"]:
         environment = merged_api_settings({})
         if dev_sign_in(environment):
