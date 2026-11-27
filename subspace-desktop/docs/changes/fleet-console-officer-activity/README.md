@@ -493,6 +493,21 @@ proves: the planned refit dropped first is the one whose dropping loses
 the fewest windows. In `test/pager.test.js`, a budget plan answers as
 `wouldFree` does as entries are resized, set again and left out, also when
 the latest request in a reservation's floor is resized, and changes
-nothing. `growBy`, which grows the inline charge by an exact number of
+nothing; as `wouldFree` is built on the plan, that checks only that a plan
+changed step by step answers as one made afresh. `growBy`, which grows the inline charge by an exact number of
 bytes, moved next to `grow` in `test/activity-helpers.js`, so it measures
 the framing of the very item `grow` sends (Charon's round 11 P3-1).
+
+The round 13 tests (SUB decision `75a74873`) check the plan's order
+without `wouldFree` (Charon's round 12 P3-1), in `test/pager.test.js`.
+Fixed orders: a pinned growth that walks past everything that can be
+freed, with another pinned entry and the latest request both resized,
+smaller and larger, never names either, also with each change left out;
+an ordinary reservation is refused beside its floor until the latest
+request holds nothing, and refused again with it weighed as it holds now.
+And a short reference copy of round 11's `freeOrder` and `admits`
+(`58d0eb77`), kept beside 400 seeded random budgets, checks `plan.freed`,
+`plan.freed(without)` and each `reserve`'s evictions and total against it.
+Freeing a resized pinned entry or the latest request fails both; each of
+the eight other mutations of the plan in Charon's round 12 review fails
+at least one of them.
