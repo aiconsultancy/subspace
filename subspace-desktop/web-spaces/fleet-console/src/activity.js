@@ -286,7 +286,9 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
   let state = initial();
   /**
    * Paged items read: key -> an entry. `mode: "whole"` is {turnId, itemId,
-   * seq, state: queued|loading|ready|failed, error, item, bytes};
+   * seq, state: queued|loading|ready|failed, error, item, bytes, fresh},
+   * `fresh` while a read of the newest version (Load the latest, Try
+   * again) has not yet succeeded, kept through its failure;
    * `mode: "parts"`, for an item over the budget, is {turnId, itemId, pager}.
    */
   const full = new Map();
@@ -694,15 +696,16 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * in it, that hold the start of the window on show (`place`), found in the
    * item as served (SUB decision a5275d81). That window stays on show, and
    * charged, until the part arrives. Resolves once the part's read settles.
-   * One whose newest version is being read (Load the latest, Try again)
-   * keeps that intent: the fresh version, from its first page, unpinned
-   * (SUB decision cf21d510), never the shown version's part. `fitted`: a
+   * One whose newest version is being read (Load the latest, Try again),
+   * or whose read of it failed (`fresh`), keeps that intent: the fresh
+   * version, from its first page, unpinned (SUB decisions cf21d510,
+   * 8346cf82), never the shown version's part. `fitted`: a
    * planned refit (`planRefits`), whose charge frees nothing; the next
    * queued read then waits for the plan to finish.
    */
   function wholeToParts(key, { fitted = false } = {}) {
     const entry = full.get(key);
-    const reload = Boolean(entry.item) && (reading?.key === key || queue.includes(key));
+    const reload = Boolean(entry.item) && (entry.fresh || reading?.key === key || queue.includes(key));
     if (reading?.key === key) {
       reading.controller.abort();
       reading = null;
@@ -821,7 +824,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (abandoned(key, own, at, generation)) return;
     const now = full.get(key);
     if (result) {
-      full.set(key, { ...now, seq: result.seq, state: "ready", item: result.item, bytes: result.bytes, pages: result.pages, error: null });
+      full.set(key, { ...now, seq: result.seq, state: "ready", item: result.item, bytes: result.bytes, pages: result.pages, error: null, fresh: false });
       holdWhole(key, result.bytes * FORMAT_FACTOR);
     } else if (failure instanceof TooLargeError) {
       // Larger than the budget: never read whole. Read its first part instead.
@@ -830,7 +833,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       changed();
       return;
     } else {
-      // A failed read of a newer version keeps the version already read on show.
+      // A failed read of a newer version keeps the version already read on show, and the intent to read the newest (`fresh`).
       full.set(key, { ...now, state: "failed", error: failure instanceof ChangingError ? failure.message : readFailure(failure) });
       if (now.item) holdWhole(key, now.bytes * FORMAT_FACTOR);
       else budget.release(key);
@@ -874,7 +877,7 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (previous?.state === "ready" && previous.item && previous.seq >= item.seq) return Promise.resolve();
     const done = settled(key);
     if (previous?.state !== "loading" && previous?.state !== "queued") {
-      full.set(key, { turnId, itemId, mode: "whole", generation: state.cursor?.generation ?? null, seq: previous?.seq ?? item.seq, state: "queued", item: previous?.item ?? null, bytes: previous?.bytes ?? 0, pages: previous?.pages ?? 0, error: null });
+      full.set(key, { turnId, itemId, mode: "whole", generation: state.cursor?.generation ?? null, seq: previous?.seq ?? item.seq, state: "queued", item: previous?.item ?? null, bytes: previous?.bytes ?? 0, pages: previous?.pages ?? 0, error: null, fresh: Boolean(previous?.item) });
       queue.push(key);
       pump();
       changed();

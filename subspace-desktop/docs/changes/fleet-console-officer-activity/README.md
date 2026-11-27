@@ -97,7 +97,10 @@ the desktop side are separate work.
   the watcher maps it to the item as served (`servedUnit`), pages that the
   way the gateway does (`servedPart`, 64 KiB pages between code points,
   four to a part) and opens the part at the window holding it. A reload
-  reads the newest version's first part instead. A window the view
+  reads the newest version's first part instead, also once it has failed:
+  the whole entry keeps that intent (`fresh`) until a read of the newest
+  version succeeds, so **Try again** after the handover reads page 0 of
+  the newest version, unpinned. A window the view
   unmounts (its turn closed, the items window moved off it) owns no bytes:
   a later refit carries none for it, though the place it showed is kept.
 - **Floor** (SUB decisions `0c13b784` §4, `8357ec55`, `1c19f413` §1). The
@@ -405,10 +408,14 @@ whose turn closed still shows its part. They:
 - name nothing in `wouldFree` that `reserve` would refuse.
 
 The round 9 tests are in `test/activity-round9.test.js` (SUB decision
-`8346cf82`); each fails at `e407707c`, except the regression check that
-two refits are planned when one is not enough. They:
+`8346cf82`); each fails at `e407707c`, except the regression checks that
+two refits are planned when one is not enough and that **Try again**
+after growth during a reload reads the newest version. They:
 
 - plan every refit before opening any pager, refitting the whole that
   gives back the most first, so smaller wholes stay whole and every window
   stays on show when the handovers fit (both reviewers' probes);
 - ask `wouldFree` as if some entries held other sizes, changing nothing.
+- read the newest version from page 0, unpinned, on a pressure handover
+  after a failed whole reload and on **Try again** after it, and on
+  **Try again** after growth during the reload (the regression check).

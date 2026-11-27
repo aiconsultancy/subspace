@@ -244,8 +244,8 @@ closes it, as does moving to another tier; focus returns to the button.
   too large) is read in parts from the part holding what it shows, and its
   section stays on show until that part arrives. **Load the latest** reads
   the newest version from its first part instead, also when the snapshot
-  grows while it reads; closing the turn meanwhile lets go of the section
-  but not of the read. Past the budget, the least recently opened item
+  grows while it reads or after it failed, and so does **Try again**;
+  closing the turn meanwhile lets go of the section but not of the read. Past the budget, the least recently opened item
   read is freed and offers **Load in full** again; this frees only the
   view's copy, never the item on the gateway.
   A body with no room left shows "Not drawn, to stay within the view's

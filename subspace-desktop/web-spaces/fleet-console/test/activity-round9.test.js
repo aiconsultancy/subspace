@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { PART_MAX_BYTES } from "../src/activity.js";
 import { createBudget } from "../src/budget.js";
 import { activityEvent, textItem } from "./activity-fixtures.js";
-import { officer, pagedWith, prepare, settle, windowsIn } from "./activity-helpers.js";
+import { buttons, clickOn, officer, pagedWith, pagesOf, prepare, settle, windowsIn } from "./activity-helpers.js";
 
 const TURN = "turn-b";
 const K = 1024;
@@ -133,4 +133,104 @@ test("r9 1: wouldFree can ask as if some entries held other sizes, reserved just
   assert.deepEqual(budget.wouldFree("floor", 95, { pinned: true, as: new Map([["b", 5], ["a", 5], ["c", 5]]) }), ["b", "a"]);
   assert.deepEqual(budget.wouldFree("floor", 85, { pinned: true, as: new Map([["b", 5], ["a", 5], ["c", 5]]) }), []);
   assert.deepEqual({ used: budget.used, a: budget.bytes("a"), b: budget.bytes("b") }, { used: 100, a: 20, b: 20 }, "asking changes nothing");
+});
+
+// ---------- P2 (Phobos): keep the fresh-read intent through a failed whole reload ----------
+
+/**
+ * A 600 KiB whole drawn at its last window, then a newer 480 KiB version
+ * (eight pages, two parts) announced: Phobos's setup. Page reads after
+ * that go through `serve`, which is logged in `calls`.
+ */
+async function reloadSetup() {
+  const { item, pages, snapshot } = pagedWith("a".repeat(600 * K), "ia");
+  const newer = { ...item, seq: 10, content: [{ type: "text", text: "b".repeat(480 * K) }] };
+  const fresh = pagesOf(newer);
+  const prepared = await prepare(snapshot, 2 * (pages[0].bytes + fresh[0].bytes) + 30 * K);
+  const { watcher, client, panel } = prepared;
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem(TURN, "ia");
+  panel.update(watcher.view, officer);
+  clickOn(panel, panel.root.findAll((node) => node.attributes["data-activity-item"] === "ia" && node.attributes["data-activity-window"] === "last")[0]);
+  const placeholder = watcher.view.turns.find((each) => each.id === TURN).items[0];
+  watcher.event(activityEvent(10, { type: "item", item: { ...placeholder, seq: 10, paged: { bytes: fresh[0].bytes, pages: fresh.length } } }));
+  const calls = [];
+  const control = { serve: (page) => fresh[page] };
+  client.activityItemPage = async (agent, turn, id, page, signal) => {
+    calls.push(page);
+    // The newer version has no page past its last: as the gateway, 404.
+    if (!fresh[page]) throw Object.assign(new Error("out of range"), { status: 404 });
+    return control.serve(page, signal);
+  };
+  return { ...prepared, fresh, calls, control };
+}
+
+test("r9 2 (Phobos's probe): growth after a failed whole reload reads the newest version from page 0, and so does Try again", async () => {
+  const { watcher, panel, fresh, calls, control } = await reloadSetup();
+  try {
+    let failures = 2;
+    control.serve = (page) => {
+      if (failures > 0) {
+        failures -= 1;
+        throw new Error("gateway error");
+      }
+      return fresh[page];
+    };
+    await watcher.loadItem(TURN, "ia");
+    panel.update(watcher.view, officer);
+    assert.deepEqual([watcher.view.full(TURN, "ia").mode, watcher.view.full(TURN, "ia").state], ["whole", "failed"]);
+    assert.equal(buttons(panel.root, "Try again").length, 1);
+    watcher.event(growth(1100 * K, 11));
+    await settle();
+    await settle();
+    panel.update(watcher.view, officer);
+    assert.deepEqual(calls, [0, 0], "the handover reads the newest version's page 0, not the old version's part");
+    const handed = watcher.view.full(TURN, "ia");
+    assert.deepEqual([handed.mode, handed.state], ["parts", "failed"]);
+    assert.equal(buttons(panel.root, "Try again").length, 1);
+    await watcher.loadItem(TURN, "ia");
+    await settle();
+    assert.deepEqual(calls, [0, 0, 0, 1, 2, 3], "Try again reads the newest version's first part");
+    const shown = watcher.view.full(TURN, "ia");
+    assert.deepEqual([shown.mode, shown.state, shown.seq, shown.part], ["parts", "ready", 10, 0]);
+  } finally {
+    watcher.stop();
+  }
+});
+
+test("r9 2: growth during a whole reload, then a failed part read: Try again reads the newest version from page 0", async () => {
+  const { watcher, panel, fresh, calls, control } = await reloadSetup();
+  try {
+    let first = true;
+    let failNext = false;
+    control.serve = (page, signal) => {
+      if (first) {
+        first = false;
+        failNext = true;
+        // The whole reload is still reading when the snapshot grows.
+        return new Promise((resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+      }
+      if (failNext) {
+        failNext = false;
+        throw new Error("gateway error");
+      }
+      return fresh[page];
+    };
+    watcher.loadItem(TURN, "ia");
+    await settle();
+    assert.equal(watcher.view.full(TURN, "ia").state, "loading");
+    watcher.event(growth(1100 * K, 11));
+    await settle();
+    await settle();
+    panel.update(watcher.view, officer);
+    assert.deepEqual(calls, [0, 0]);
+    assert.deepEqual([watcher.view.full(TURN, "ia").mode, watcher.view.full(TURN, "ia").state], ["parts", "failed"]);
+    await watcher.loadItem(TURN, "ia");
+    await settle();
+    assert.deepEqual(calls, [0, 0, 0, 1, 2, 3]);
+    const shown = watcher.view.full(TURN, "ia");
+    assert.deepEqual([shown.state, shown.seq, shown.part], ["ready", 10, 0]);
+  } finally {
+    watcher.stop();
+  }
 });
