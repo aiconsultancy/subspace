@@ -103,3 +103,22 @@ test("r10 1 (Charon's probe A): growth that freeing the small least recently use
   probeA((small) => small - 10_000, 4));
 
 test("r10 1 (Charon's probe A2): the same with growth just past the spare", () => probeA(() => 40_000, 3));
+
+test("r10 1: a refit that keeps no window is dropped: when the growth frees the small whole anyway, the whole whose refit gives back too little stays whole", async () => {
+  const ids = ["is", "ic", "ir"];
+  const { watcher, panel, requested } = await wholesOnShow(ids, [100, 200, 100], 20_000);
+  try {
+    const { budget } = watcher.view;
+    // More than C's refit gives back with the spare, less than freeing S gives.
+    const size = givenBack(watcher, "ic") + 40_000;
+    assert.ok(givenBack(watcher, "ic") > 0 && givenBack(watcher, "ic") + 20_000 < size);
+    assert.ok(size < budget.bytes(keyOf("is")) + 20_000);
+    requested.length = 0;
+    await grow(watcher, panel, size);
+    assert.deepEqual(modesOf(watcher, ids), { is: "Load in full", ic: "whole", ir: "whole" }, "S is freed with or without C's refit, so C is not refitted");
+    assert.deepEqual(requested, [], "nothing reads");
+    assert.ok(budget.used <= budget.limit);
+  } finally {
+    watcher.stop();
+  }
+});

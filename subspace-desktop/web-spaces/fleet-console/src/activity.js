@@ -361,8 +361,8 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * large refit can keep the smaller wholes on show, also a small one that
    * would be freed first, and no handover is charged before the room it
    * needs is counted. A refit that gives back nothing is not planned; if
-   * the floor still needs that whole's room, it is freed. Returns the keys
-   * to read in parts, in order.
+   * the floor still needs that whole's room, it is freed. A refit that
+   * keeps no window is dropped. Returns the keys to read in parts, in order.
    */
   function planRefits(bytes) {
     const sizes = new Map();
@@ -371,10 +371,17 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (key !== null && full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key) + growth)) sizes.set(key, handover(key));
     /** How many windows on show the growth would free with the refits in `as`. */
     const freedOnShow = (as) => budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as }).filter((each) => displayed(each) && !as.has(each)).length;
+    const planned = [];
     while (freedOnShow(sizes) > 0) {
       const best = mostGivenBack([...full.keys()].filter((each) => displayed(each) && budget.has(each) && !sizes.has(each)));
       if (best === null) break;
       sizes.set(best, handover(best));
+      planned.push(best);
+    }
+    // When the floor still frees a window anyway, a refit planned for it may keep none: the latest planned first, each is dropped while that frees no more.
+    for (const each of planned.reverse()) {
+      const without = new Map([...sizes].filter(([other]) => other !== each));
+      if (freedOnShow(without) <= freedOnShow(sizes)) sizes.delete(each);
     }
     return [...sizes.keys()];
   }
