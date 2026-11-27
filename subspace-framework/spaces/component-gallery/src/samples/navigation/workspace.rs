@@ -46,7 +46,7 @@ const PANE_TEXT: &str = "Content starts on the same text edge as the tab strip a
 pub(super) const NAVIGATOR: Item = Item {
     name: "workspace::Navigator",
     source: NAVIGATOR_SOURCE,
-    used_in: "Every Space's leading dock: the Space's name in the header, then workspace::nav_section labels and workspace::NavRow rows for its views, projects, networks or repositories. Settings › Layout can hide the name: the navigator then starts with its first section, or keeps a strip-height header for a badge or header actions.",
+    used_in: "Every Space's leading dock: the Space's name in the header, then workspace::nav_section labels and workspace::NavRow rows for its views, projects, networks or repositories. Settings › Layout can hide the name: the navigator body then starts at the top, or a strip-height header stays for a badge or header actions.",
     samples: navigators,
     kit: None,
 };
@@ -117,7 +117,7 @@ pub(in crate::samples) fn navigators(
             ),
         ),
         sample(
-            "Title hidden in Settings › Layout: the first section starts the navigator",
+            "Title hidden in Settings › Layout: the body starts at the top",
             scoped(
                 "gallery-sample:navigator-title-hidden",
                 HIDDEN_TITLE_BOX,

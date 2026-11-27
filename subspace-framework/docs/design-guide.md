@@ -75,8 +75,8 @@ nothing to this control.
    strip; a pane with no tab strip beside a dock heads it with
    `Toolbar::strip`, never with a plain toolbar, which is taller. When
    Settings › Layout hides the navigator title, a navigator with no badge
-   and no header actions has no header: it starts with its first section,
-   and the navigator draws no line under the strip height, so no hairline
+   and no header actions has no header: its body starts at the top, and
+   the navigator draws no line under the strip height, so no hairline
    sits half way across. With a badge or actions, the header stays at the
    strip height without the title. Controls
    in a strip fit inside it: the strip height allows for toolbar and action
@@ -115,9 +115,8 @@ nothing to this control.
    no line of context above the content; the Space's name is the
    navigator's title. **Show the Space title in the navigator**
    (Settings › Layout, saved as `layout.navigator-title`) can hide it,
-   keeping any badge or header actions. The window title still names the
-   Space, and so does its Space tab, or only the tab's tooltip in the
-   icon-only vertical rail. An app sets the
+   keeping any badge or header actions visible. The window title still
+   names the Space. An app sets the
    default with `ProductBuild::navigator_title` (`true` in
    `ProductBuild::new`); a saved choice wins. Always pass the title to
    `Navigator::new`: it is the navigator tree's accessible name.
@@ -507,7 +506,7 @@ A reviewer ticks:
       leading bar or accent edge.
 - [ ] The Space's name in the navigator takes the accent, and section
       labels show in capitals. With the title hidden in Settings › Layout,
-      the navigator starts with its first section, or keeps a strip-height
+      the navigator's body starts at its top, or it keeps a strip-height
       header for a badge or actions, and every edge still has one hairline.
 - [ ] The open tab joins the content by its surface and text, with no accent
       line on any edge, in every tab bar.

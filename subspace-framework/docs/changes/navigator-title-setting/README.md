@@ -3,9 +3,8 @@
 ## Intent
 
 The navigator starts with the Space's name in the accent colour. The window
-title and the Space tab, or the tab's tooltip in the icon-only rail, already
-name the Space, so some people and some
-apps want the navigator to start with its first section instead. A product
+title already names the Space, so some people and some apps want the
+navigator to start with its own contents instead. A product
 built on the Framework asked for a way to hide the title by default, and
 for people to choose for themselves.
 
@@ -21,8 +20,8 @@ for people to choose for themselves.
   saved choice always wins over the app default.
 - **Navigator.** `workspace::navigator_title` holds the default and the
   saved choice and answers `shown(cx)`. With the title hidden:
-  - a navigator with no badge and no header actions has no header and
-    starts with its first section, and it draws no line at the strip
+  - a navigator with no badge and no header actions has no header, so its
+    body starts at the top, and it draws no line at the strip
     height;
   - a navigator with a badge or header actions keeps its header at the
     strip height without the title, so its hairline still lines up with

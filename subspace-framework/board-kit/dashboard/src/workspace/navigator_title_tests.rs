@@ -1,5 +1,5 @@
 //! The navigator title follows the app default and the saved choice, and a
-//! navigator without it starts with its first section.
+//! navigator without it starts with its body.
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -78,11 +78,7 @@ fn the_title_shows_by_default_and_a_hidden_default_drops_the_header(cx: &mut Tes
         assert!(window.try_find("workspace-navigator-header").is_none());
         let navigator = window.find("workspace-navigator").bounds();
         let body = window.find("workspace-navigator-body").bounds();
-        assert_eq!(
-            body.top(),
-            navigator.top(),
-            "the first section starts the navigator"
-        );
+        assert_eq!(body.top(), navigator.top(), "the body starts the navigator");
     });
 }
 
