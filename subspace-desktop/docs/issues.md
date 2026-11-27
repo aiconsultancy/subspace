@@ -291,6 +291,20 @@ The existing Edit issue command remains the entry point for title changes.
 Writes use the API's existing activity and audit transaction, then reload the
 issue and timeline. The desktop does not manufacture audit rows.
 
+On the Subspace API, choose **Parent** in the New issue or Edit issue form,
+or use the pencil beside **Parent** on the issue page. Search tracker keys,
+titles, summaries and descriptions. Each result names the tracker and its
+current state. **Load more trackers** continues the same search, and
+**No parent** clears the draft's link. Servers with `parentFor` exclude the
+issue itself, its descendants and trackers with archived or cyclic ancestry.
+The desktop always excludes the issue itself, though older servers can show
+other ineligible trackers. If the server identifies a refused parent, the
+desktop asks you to choose another parent and keeps your draft. This is
+separate from the conflict workflow for version changes. NETT keeps
+the parent identifier field because it has no tracker type. See the
+[change specification](changes/tracker-nesting-attachments/spec.md) for the
+search and sub-issue behaviour.
+
 Milestones load on demand from `/v1/projects/{key}/milestones` and cycles from
 `/v1/issue-cycles?project={key}`, in pages of 50. Milestone reads send `includeContent=false`. Only current and upcoming
 cycles can be newly selected. An existing historic cycle remains visible and
@@ -402,10 +416,19 @@ an error toast naming the issue and reloads it. The board has no duplicate-of
 picker, so Duplicate is a plain state change.
 
 Relations use `detail.relations` then `/v1/issues/{ref}/relations`.
-Sub-issues use `detail.children` then the UUID-scoped parent query. Tracker
-header progress uses `fields.progress`, clamps done to 0–total, uses marks
-through 16 and Kit Progress above 16, and separates exclusions. Blocked and
-archived notices use server flags; a partial blocker page says “and others”.
+Sub-issues use `detail.children` then the UUID-scoped parent query. On the
+Subspace API, **New sub-issue** is available on a writable parent with support
+for sub-issues, including an empty tracker. It opens the normal New issue form
+with the project and parent already chosen. If you keep that parent, saving
+returns you to its page and shows the new child even if older children fill
+the first page. A refresh checks each still-missing new child by ID without
+paging through the tracker. It updates the row or drops it if the child no
+longer belongs there or is no longer accessible. If the read fails temporarily,
+the row keeps its last known fields until the next refresh. Tracker header
+progress uses `fields.progress`, clamps done
+to 0–total, uses marks through 16 and Kit Progress above 16, and separates
+exclusions. Blocked and archived notices use server flags; a partial blocker
+page says “and others”.
 
 Properties use issue fields and the project directory, including former
 members, service-coloured labels and parent navigation. Only populated
@@ -578,9 +601,33 @@ is found or the list ends. **Show in the description** and **Show in the comment
 
 ### Attachment panel
 
+On the issue page, choose **Add file** under **Attachments**, then choose a
+local file. The upload row shows progress and offers **Retry** or **Dismiss**
+when appropriate. On Subspace, files added here can be PDF, DOCX, XLSX, PPTX,
+UTF-8 TXT or MD, or validated PNG, JPEG, GIF or WebP, all up to 10 MB. Images
+inserted into a comment still use the editor and its separate image limits.
+The attachment list refreshes after an
+upload or removal. If an upload may have completed, check the list before
+retrying so you don't attach the same file twice.
+
+**Save** downloads the file to a location you choose. On Subspace, **Remove**
+is only available for files that aren't linked from this issue's description,
+a live comment or any revision of an issue document. Linked files can still be
+saved; their rows explain why they can't be removed. The API checks for links
+again before deleting, so a file linked since the list was read stays in place.
+This client also protects files held by its unposted comments on the issue,
+including uploads still awaiting confirmation. The row says **Used by your
+unposted comment.** Posting lets the server mark the file as linked; discarding
+the draft runs its normal attachment cleanup. Drafts open in another client
+are not protected until they post.
+Older Subspace servers that don't report whether a file can be removed still
+offer **Save**, but not **Remove**. Where NETT serves standalone attachments,
+its separate file grants, upload checks and versioned removal are unchanged.
+
 A `text/plain` or `text/markdown` file, in **Attachments** or as an inline file
 reference, is a native card button that opens a panel to the right of the issue
-page, inside the pane under its toolbar. Other files keep their read-only chips. The panel uses
+page, inside the pane under its toolbar. Other files use chips and don't open a
+preview. The panel uses
 the shared detail panel's stored width (clamped to 320 px and 75% of the window),
 surface and left edge, and has no resize handle. Its title bar shows the file
 name and size with a quiet **Close attachment** button, which takes focus on

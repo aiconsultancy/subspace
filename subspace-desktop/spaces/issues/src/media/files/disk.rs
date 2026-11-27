@@ -1,15 +1,25 @@
 //! The local file system: a chosen file read within the upload limit, and
 //! where, and under which name, a saved attachment is offered.
 
+use subspace_api_client::uploads::{AttachmentProtocol, UploadError, file_mime};
+
 /// A chosen file's name, type and bytes. Only as much as the largest upload
 /// of its type allows, and one byte more, is read, so a larger file is
 /// refused before it is held in memory.
-pub(super) fn read_chosen(path: &std::path::Path) -> Option<(String, String, Vec<u8>)> {
-    let mime = subspace_api_client::uploads::file_mime(path)?;
-    let name = path.file_name()?.to_string_lossy().into_owned();
-    let file = std::fs::File::open(path).ok()?;
-    let bytes = read_at_most(file, subspace_api_client::uploads::max_bytes(mime))?;
-    Some((name, mime.to_owned(), bytes))
+pub(super) fn read_chosen(
+    path: &std::path::Path,
+    protocol: AttachmentProtocol,
+) -> Result<(String, String, Vec<u8>), UploadError> {
+    let invalid = || protocol.invalid_file();
+    let mime = file_mime(path).ok_or_else(invalid)?;
+    let name = path
+        .file_name()
+        .ok_or_else(invalid)?
+        .to_string_lossy()
+        .into_owned();
+    let file = std::fs::File::open(path).map_err(|_| invalid())?;
+    let bytes = read_at_most(file, protocol.max_bytes(mime)).ok_or_else(invalid)?;
+    Ok((name, mime.to_owned(), bytes))
 }
 
 /// At most `limit` bytes from `reader`, or `None` when it holds more.
@@ -105,7 +115,7 @@ fn outside_device_names(name: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_at_most, read_chosen, suggested_name};
+    use super::{AttachmentProtocol, UploadError, read_at_most, read_chosen, suggested_name};
 
     /// Counts the bytes read through it.
     struct Counted<R> {
@@ -145,10 +155,18 @@ mod tests {
         let file = std::fs::File::create(&path).unwrap();
         // Sparse where the file system allows: larger than any upload.
         file.set_len(64 * 1024 * 1024).unwrap();
-        assert!(read_chosen(&path).is_none());
+        let protocol = AttachmentProtocol::SubspaceFiles;
+        assert_eq!(
+            read_chosen(&path, protocol),
+            Err(UploadError::UnsupportedFile)
+        );
+        assert_eq!(
+            read_chosen(&path, AttachmentProtocol::NettStandalone),
+            Err(UploadError::InvalidImage)
+        );
         let path = folder.path().join("small.txt");
         std::fs::write(&path, b"Small enough.\n").unwrap();
-        let (name, mime, bytes) = read_chosen(&path).unwrap();
+        let (name, mime, bytes) = read_chosen(&path, protocol).unwrap();
         assert_eq!((name.as_str(), mime.as_str()), ("small.txt", "text/plain"));
         assert_eq!(bytes, b"Small enough.\n");
     }

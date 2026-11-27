@@ -48,6 +48,11 @@ fn route(r: &Request, uploaded: &AtomicBool, mode: &str) -> (u16, String) {
                     second["mediaId"] = serde_json::json!("uploaded-2");
                     (200, page(vec![super::saved(), second], None))
                 }
+                "held" => {
+                    let mut saved = super::saved();
+                    saved["removal"] = serde_json::json!("available");
+                    (200, page(vec![saved], None))
+                }
                 _ => (200, page(vec![], None)),
             };
         }
@@ -60,6 +65,36 @@ fn route(r: &Request, uploaded: &AtomicBool, mode: &str) -> (u16, String) {
         );
     }
     common(r)
+}
+
+#[test]
+fn attachment_removal_does_not_delete_an_uncertain_comment_upload() {
+    let uploaded = AtomicBool::new(false);
+    let mock = Mock::new(move |r| route(r, &uploaded, "held"));
+    let hub = connected(&mock);
+    attach(&hub);
+    hub.load_attachments().unwrap();
+    let snapshot = wait(&hub, |state| {
+        state.issue().is_some_and(|issue| {
+            issue
+                .files()
+                .items()
+                .iter()
+                .any(|m| m.can_remove_attachment())
+        })
+    });
+    let media = &snapshot.issue().unwrap().files().items()[0];
+    assert!(hub.comment_holds_attachment(media));
+    hub.remove_attachment(&media.media_id);
+    assert!(
+        !hub.snapshot()
+            .issue()
+            .unwrap()
+            .files()
+            .removing(&media.media_id)
+    );
+    assert!(!mock.requests().iter().any(|r| r.method == "DELETE"));
+    hub.stop();
 }
 
 #[test]

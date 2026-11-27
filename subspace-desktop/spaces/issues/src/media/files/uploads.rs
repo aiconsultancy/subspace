@@ -114,6 +114,10 @@ fn status(upload: &AttachmentUpload) -> (String, bool) {
                 true,
             )
         }
+        AttachmentState::Failed(_) if upload.may_have_uploaded() => (
+            "The upload may have completed. Check the list before trying again: it may then be attached twice.".into(),
+            true,
+        ),
         AttachmentState::Failed(error) => (error.message(), true),
         AttachmentState::NotFound => ("The upload was not stored. Choose Retry.".into(), true),
         AttachmentState::Checking => ("Checking…".into(), false),

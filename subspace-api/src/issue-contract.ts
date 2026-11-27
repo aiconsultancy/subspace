@@ -212,7 +212,11 @@ export const IssueFilter = {
   order: Schema.optional(Schema.Literals(["created", "priority", "manual", "activity"])),
   due: Schema.optional(Schema.Literals(["overdue", "thisWeek", "none"])),
 };
-export const IssueQuery = Schema.Struct({ ...IssueFilter, ...PageQuery });
+export const IssueQuery = Schema.Struct({
+  ...IssueFilter,
+  parentFor: Schema.optional(Ref),
+  ...PageQuery,
+});
 export const GroupQuery = Schema.Struct({
   ...IssueFilter,
   groupBy: Schema.Literals(["state", "stateType"]),

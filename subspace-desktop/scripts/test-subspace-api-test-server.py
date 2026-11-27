@@ -246,10 +246,13 @@ class FixtureTests(unittest.TestCase):
         attachments = self.get('/issues/SUB-1/attachments')['items']
         self.assertEqual(len(attachments), 5)
         plan = next(m for m in attachments if m['fileName'] == 'Fixture plan.md')
+        notes = next(m for m in attachments if m['fileName'] == 'Fixture notes.txt')
+        self.assertEqual((plan['removal'], notes['removal']), ('available', 'linked'))
         status, data, headers = self.media_request('/issues/attachments/' + plan['mediaId'])
         self.assertEqual((status, data, headers['Content-Type']), (200, FIXTURE.FIXTURE_PLAN, 'text/markdown'))
         self.assertEqual(len(data), plan['sizeBytes'])
         self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')
+        self.assertEqual(headers['Content-Disposition'], 'attachment')
         self.assertTrue(all(set('mediaId kind fileName contentType sizeBytes url sha256'.split()) <= set(m) for m in attachments))
         self.assertNotIn('media', self.get('/issues/SUB-1'))
         comment = self.get('/issues/SUB-1/comments')['items'][0]
@@ -274,9 +277,25 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual((status, json.loads(removed)), (200, True))
         self.assertEqual(self.media_request('/issues/media/' + image['id'])[0], 404)
         status, removed, _ = self.media_request('/issues/attachments/' + file['mediaId'], b'{}', 'DELETE')
+        self.assertEqual((status, json.loads(removed)['detail']),
+                         (409, 'The file is referenced by an issue, comment or document.'))
+        self.assertEqual(self.media_request(file['url'].removeprefix('/api/v1'))[0], 200)
+        next(c for c in self.server.fixture.comments if c['id'] == posted['id'])['deletedAt'] = FIXTURE.instant()
+        status, removed, _ = self.media_request('/issues/attachments/' + file['mediaId'], b'{}', 'DELETE')
         self.assertEqual((status, json.loads(removed)), (200, True))
         status, removed, _ = self.media_request('/issues/attachments/' + file['mediaId'], b'{}', 'DELETE')
         self.assertEqual((status, json.loads(removed)), (200, False))
+
+    def test_attachment_removal_matches_direct_links_and_archived_precedence(self):
+        status, file = self.upload('/issues/SUB-1/attachments', 'Fixture.png', 'image/png', FIXTURE.fixture_png())
+        self.assertEqual((status, file['kind']), (201, 'file'))
+        row = self.server.fixture.find_issue('SUB-1')
+        self.server.fixture.descriptions[row['id']] = f'[File]({file["url"]})'
+        self.assertIn('linked', {m['removal'] for m in self.get('/issues/SUB-1/attachments')['items']
+                                 if m['mediaId'] == file['mediaId']})
+        row['archivedAt'] = FIXTURE.instant()
+        self.assertTrue(all(m['removal'] == 'archived' for m in self.get('/issues/SUB-1/attachments')['items']))
+        self.assertEqual(self.media_request(file['url'].removeprefix('/api/v1'), b'{}', 'DELETE')[0], 409)
 
     def test_media_preflight_rejections_and_archive_boundary(self):
         self.assertEqual(self.upload('/issues/SUB-1/images', 'Fixture.svg', 'image/svg+xml', b'<svg/>')[0], 400)
@@ -336,12 +355,32 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(set(events['items'][0]), set('actor changeId comment data dataVersion displayAt id issueId kind occurredAt'.split()))
         self.assertEqual(events['items'][0]['kind'], 'comment.created')
 
+    def test_parent_candidates_exclude_self_descendants_and_archived_ancestry(self):
+        fixture = self.server.fixture
+        for ref in ('SUB-2', 'SUB-3', 'OPS-1'):
+            fixture.find_issue(ref)['type'] = 'tracker'
+        fixture.find_issue('SUB-3')['parentId'] = fixture.find_issue('SUB-2')['id']
+        route = '/issues?type=tracker&includeArchived=true&parentFor='
+        keys = lambda parent: {r['identifier'] for r in self.get(route + parent)['items']}
+        self.assertEqual(keys('SUB-1'), {'OPS-1'})
+        self.assertEqual(keys('new'), {'SUB-1', 'SUB-2', 'SUB-3', 'OPS-1'})
+        fixture.descriptions[fixture.find_issue('OPS-1')['id']] = 'A description-only search match.'
+        self.assertEqual(keys('SUB-1&q=description-only'), {'OPS-1'})
+        fixture.find_issue('SUB-1')['parentId'] = fixture.find_issue('SUB-3')['id']
+        self.assertEqual(keys('new'), {'OPS-1'})
+        fixture.find_issue('SUB-1')['parentId'] = None
+        fixture.find_issue('SUB-1')['archivedAt'] = '2026-10-01T12:00:00Z'
+        self.assertEqual(keys('new'), {'OPS-1'})
+
     def test_filters_and_orders(self):
         sub = self.get('/issues?project=SUB&parent=none')['items']
         self.assertEqual({r['identifier'] for r in sub}, {'SUB-1', 'SUB-4'})
         children = self.get('/issues?parent=SUB-1&order=manual')['items']
         self.assertEqual([r['identifier'] for r in children], ['SUB-2', 'SUB-3'])
         self.assertEqual(self.get('/issues?type=tracker&stateType=started')['items'][0]['identifier'], 'SUB-1')
+        trackers = self.get('/issues?q=fixture&limit=20&type=tracker')['items']
+        self.assertEqual([(r['identifier'], r['projectKey'], r['parentId']) for r in trackers],
+                         [('SUB-1', 'SUB', None)])
         self.assertEqual(self.get('/issues?assignee=none')['items'][0]['identifier'], 'OPS-1')
         self.assertTrue(all(r['assignee']['displayName'] == 'Ada Fixture' for r in self.get('/issues?assignee=me')['items']))
         self.assertEqual(len(self.get('/issues?stateType=backlog&stateType=unstarted')['items']), 2)

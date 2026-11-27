@@ -1,3 +1,5 @@
+mod attachments;
+
 use super::{client, connected, person};
 use crate::{Error, PageRequest, model::IssueMedia};
 use serde_json::{Value, json};

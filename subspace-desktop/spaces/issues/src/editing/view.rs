@@ -3,9 +3,11 @@ mod actions_view;
 mod description;
 mod inline;
 mod notices;
+mod parent;
 mod picker;
 mod summary;
 pub(crate) use inline::row as inline_row;
+pub(super) use parent::{ParentSearch, open as open_parent, searches_trackers};
 pub(crate) use picker::open as open_property;
 
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
@@ -235,10 +237,15 @@ fn properties(
                     )
                 })),
         )
-        .child(additional_properties(editor, locked))
+        .child(additional_properties(board, editor, locked, cx))
 }
 
-fn additional_properties(editor: &IssueEditor, locked: bool) -> Div {
+fn additional_properties(
+    board: &Issues,
+    editor: &IssueEditor,
+    locked: bool,
+    cx: &mut Context<Issues>,
+) -> Div {
     h_flex()
         .items_start()
         .flex_wrap()
@@ -259,20 +266,18 @@ fn additional_properties(editor: &IssueEditor, locked: bool) -> Div {
                 ),
             )),
         )
-        .child(
-            div().min_w_48().flex_1().child(reveal_focus::scope(
-                "parent",
-                &editor.scroll,
-                fields::form_field(
-                    "Parent",
-                    fields::input(
-                        &editor.parent,
-                        InputRole::Configuration,
-                        "Parent issue identifier",
-                    )
-                    .id("issue-edit-parent")
-                    .disabled(locked),
+        .child(div().min_w_48().flex_1().child(reveal_focus::scope(
+            "parent",
+            &editor.scroll,
+            fields::form_field(
+                "Parent",
+                parent::control(
+                    board,
+                    editor,
+                    (InputRole::Configuration, "issue-edit-parent"),
+                    locked,
+                    cx,
                 ),
-            )),
-        )
+            ),
+        )))
 }

@@ -5,12 +5,12 @@ import { Database } from "./db";
 import { chatTypes, fileTypes, imageTypes, validContent } from "./file-validation";
 import { type Member } from "./identity";
 import { readIssue } from "./issues";
-import { mediaDescriptor, mediaUrl } from "./issue-media";
+import { mediaDescriptor, mediaRemoval, mediaUrl } from "./issue-media";
 import { type ChatUploadInput } from "./media-contract";
 import { byKey, page } from "./paging";
 import { problem } from "./problems";
 import { person, readProject } from "./projects";
-import { comments, documentRevisions, issueDocuments, uploads, users } from "./schema";
+import { uploads, users } from "./schema";
 import { Storage, storageOperation } from "./storage";
 import { dateTime, isUuid } from "./validation";
 
@@ -19,6 +19,7 @@ type Db = (typeof Database)["Service"];
 type Kind = "image" | "file";
 const maxChatBytes = 25_000_000;
 const maxIssueBytes = 10_000_000;
+const issueFileTypes: readonly string[] = [...fileTypes, ...imageTypes];
 const chatExpiration = 30 * 86_400_000;
 const chatUploadChunkBytes = 32_768;
 
@@ -299,13 +300,14 @@ export const issueMedia = (
         ),
       );
     const key = ({ upload }: (typeof rows)[number]) => `${dateTime(upload.createdAt)}:${upload.id}`;
-    return yield* page(
+    const result = yield* page(
       rows.sort(byKey(key)),
       { org: member.organisationId, media: issue.id, kind },
       key,
       query.limit,
       query.cursor,
     );
+    return { ...result, issue };
   });
 
 export const listImages = (
@@ -323,10 +325,22 @@ export const listFiles = (
   ref: string,
   query: { limit?: number; cursor?: string },
 ) =>
-  Effect.map(issueMedia(member, ref, "file", query), ({ items, nextCursor }) => ({
-    items: items.map(({ upload }) => mediaDescriptor(upload)),
-    nextCursor,
-  }));
+  Effect.gen(function* () {
+    const db = yield* Database;
+    const { items, nextCursor, issue } = yield* issueMedia(member, ref, "file", query);
+    const removal = yield* mediaRemoval(
+      db,
+      issue,
+      items.map(({ upload }) => upload.id),
+    );
+    return {
+      items: items.map(({ upload }) => ({
+        ...mediaDescriptor(upload),
+        removal: removal(upload.id),
+      })),
+      nextCursor,
+    };
+  });
 
 export const listAttachments = (
   member: Member,
@@ -349,7 +363,7 @@ export const addIssueMedia = (
     const store = yield* Storage;
     const local = Bun.file(file.path);
     const image = kind === "image";
-    const allowed: readonly string[] = image ? imageTypes : fileTypes;
+    const allowed: readonly string[] = image ? imageTypes : issueFileTypes;
     if (
       local.size > (image ? 10 * 1024 * 1024 : maxIssueBytes) ||
       !allowed.includes(file.contentType)
@@ -498,48 +512,10 @@ export const deleteMedia = (member: Member, id: string, kind: Kind) =>
           return yield* Effect.fail(problem(404, "Issue file not found."));
         if (row.state === "deleted") return false;
         const issue = yield* readIssue(tx, member, row.issueId!);
-        if (issue.archivedAt)
+        const removal = (yield* mediaRemoval(tx, issue, [row.id]))(row.id);
+        if (removal === "archived")
           return yield* Effect.fail(problem(409, "Unarchive the issue before deleting its files."));
-        const schemes = [url(row), `nett-media:${row.id}`];
-        const [inUse] = yield* tx
-          .select({ id: comments.id })
-          .from(comments)
-          .where(
-            and(
-              eq(comments.organisationId, member.organisationId),
-              eq(comments.issueId, issue.id),
-              isNull(comments.deletedAt),
-              or(...schemes.map((ref) => sql`position(${ref} in lower(${comments.body})) > 0`)),
-            ),
-          )
-          .limit(1);
-        const [usedInDocument] = yield* tx
-          .select({ id: issueDocuments.id })
-          .from(issueDocuments)
-          .innerJoin(
-            documentRevisions,
-            and(
-              eq(documentRevisions.organisationId, member.organisationId),
-              eq(documentRevisions.documentId, issueDocuments.id),
-            ),
-          )
-          .where(
-            and(
-              eq(issueDocuments.organisationId, member.organisationId),
-              eq(issueDocuments.issueId, issue.id),
-              or(
-                ...schemes.map(
-                  (ref) => sql`position(${ref} in lower(${documentRevisions.content})) > 0`,
-                ),
-              ),
-            ),
-          )
-          .limit(1);
-        if (
-          inUse ||
-          usedInDocument ||
-          schemes.some((ref) => issue.description?.toLowerCase().includes(ref))
-        )
+        if (removal === "linked")
           return yield* Effect.fail(
             problem(409, "The file is referenced by an issue, comment or document."),
           );

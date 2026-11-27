@@ -12,6 +12,11 @@ fn open_tracker_editor(
 ) {
     let fixture = offline_with(|r| {
         match (r.method.as_str(), r.path.split('?').next().unwrap()) {
+        ("GET", "/api/v1/issues") if r.path.contains("parentFor=1") => {
+            let mut parent = super::row("3", "Roadmap");
+            parent["type"] = json!("tracker");
+            Some((200, json!({"items":[parent],"nextCursor":null}).to_string()))
+        }
         ("PATCH" | "GET", "/api/v1/issues/1") => {
             let mut detail = super::row("1", "Tracker");
             detail["todos"] = json!([]);
@@ -112,5 +117,65 @@ fn reselecting_the_trackers_derived_state_can_move_its_children(cx: &mut TestApp
     assert_eq!(
         patch_bodies(&fixture),
         [json!({"version":1,"stateId":"state-backlog","moveOpenChildren":true})]
+    );
+}
+
+#[gpui_kit::test]
+fn tracker_parent_and_child_changes_wait_for_both_confirmations(cx: &mut TestAppContext) {
+    let (fixture, board, cx) = open_tracker_editor(cx);
+    cx.update(|w, cx| w.press("e", cx));
+    render(cx);
+    for (field, option) in [
+        ("issue-edit-state", "Todo"),
+        ("issue-edit-assignee", "Orbit"),
+    ] {
+        super::properties::tab_to_visible_field(cx, field);
+        cx.update(|w, cx| w.press("space", cx));
+        super::properties::wait_for_option(cx, 1);
+        cx.update(|w, cx| {
+            w.input(option, cx);
+            w.press("enter", cx);
+        });
+        render(cx);
+    }
+    super::properties::tab_to_visible_field(cx, "issue-parent-picker");
+    cx.update(|w, cx| w.press("space", cx));
+    super::properties::wait_for_option(cx, 1);
+    cx.update(|w, cx| {
+        w.press("down", cx);
+        w.press("enter", cx);
+    });
+    render(cx);
+    assert!(crate::tests::labelled(cx, "Parent: SUB-3"));
+
+    let answer = |cx: &mut VisualTestContext, id: &'static str| {
+        cx.update(|w, cx| w.click(id, cx));
+        render(cx);
+    };
+    answer(cx, "issue-editor-save");
+    assert!(crate::tests::labelled(
+        cx,
+        "Assign the unassigned child issues as well?"
+    ));
+    assert!(cx.update(|w, _| w.find("issue-editor-notice").visible()));
+    answer(cx, "issue-tracker-children-yes");
+    assert!(crate::tests::labelled(
+        cx,
+        "Move the open child issues to this state?"
+    ));
+    answer(cx, "issue-tracker-children-no");
+    assert!(patch_bodies(&fixture).is_empty());
+
+    answer(cx, "issue-editor-save");
+    answer(cx, "issue-tracker-children-yes");
+    assert!(patch_bodies(&fixture).is_empty());
+    answer(cx, "issue-tracker-children-yes");
+    settle_board(&board, cx, |b| b.editor.is_none());
+    assert_eq!(
+        patch_bodies(&fixture),
+        [json!({
+            "version":1, "parentId":"SUB-3", "assigneeId":"agent-fixture",
+            "assignUnassignedChildren":true, "stateId":"state-todo", "moveOpenChildren":true
+        })]
     );
 }

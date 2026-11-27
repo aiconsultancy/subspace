@@ -121,8 +121,7 @@ fn decode(
         400 | 422 => IssueSaveError::Invalid,
         403 => IssueSaveError::Forbidden,
         404 => IssueSaveError::Unavailable,
-        409 if reference.is_none() => IssueSaveError::ProjectArchived,
-        409 => IssueSaveError::Conflict,
+        409 => rejected_conflict(client, response, reference.is_none()),
         429 => IssueSaveError::RateLimited,
         _ => IssueSaveError::Unconfirmed,
     })
@@ -136,6 +135,23 @@ fn rejected_update(client: &Client, response: ureq::http::Response<ureq::Body>) 
         IssueSaveError::TrackerChildrenBlocked
     } else {
         IssueSaveError::Invalid
+    }
+}
+
+fn rejected_conflict(
+    client: &Client,
+    response: ureq::http::Response<ureq::Body>,
+    create: bool,
+) -> IssueSaveError {
+    if client
+        .read::<Value>(response)
+        .is_ok_and(|body| body["errors"]["parentId"].is_array())
+    {
+        IssueSaveError::ParentRefused
+    } else if create {
+        IssueSaveError::ProjectArchived
+    } else {
+        IssueSaveError::Conflict
     }
 }
 

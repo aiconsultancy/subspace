@@ -41,7 +41,7 @@ impl EditTarget {
             "Labels" => Self::Property(Field::Labels),
             "Due date" => Self::DueDate,
             "Milestone" => Self::Property(Field::Milestone),
-            "Parent" if !tracker => Self::Parent,
+            "Parent" if !tracker || super::view::searches_trackers() => Self::Parent,
             "Type" => Self::Property(Field::Type),
             "Estimate" if !tracker => Self::Property(Field::Estimate),
             "Cycle" if !tracker => Self::Property(Field::Cycle),
@@ -66,13 +66,18 @@ impl Issues {
             return;
         }
         self.open_issue_editor(true, window, cx);
-        if let Some(editor) = &mut self.editor
-            && !matches!(target, EditTarget::Description)
-        {
-            editor.inline = Some(target);
-        }
-        let Some(editor) = &self.editor else { return };
-        match target {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        editor.inline = (!matches!(target, EditTarget::Description)).then_some(target);
+        target.focus(self, window, cx);
+    }
+}
+
+impl EditTarget {
+    fn focus(self, board: &mut Issues, window: &mut Window, cx: &mut Context<Issues>) {
+        let Some(editor) = &board.editor else { return };
+        match self {
             EditTarget::ProjectMove => {}
             EditTarget::Summary => editor
                 .summary
@@ -81,12 +86,15 @@ impl Issues {
                 .description
                 .update(cx, |input, cx| input.focus(window, cx)),
             EditTarget::DueDate => editor.due.update(cx, |input, cx| input.focus(window, cx)),
+            EditTarget::Parent if super::view::searches_trackers() => {
+                super::view::open_parent(board, window, cx);
+            }
             EditTarget::Parent => editor
                 .parent
                 .update(cx, |input, cx| input.focus(window, cx)),
             // The shared anchor defers popup layout until this frame's trigger
             // bounds are ready, so focus can transfer in the click itself.
-            EditTarget::Property(field) => super::view::open_property(self, field, window, cx),
+            EditTarget::Property(field) => super::view::open_property(board, field, window, cx),
         }
     }
 }

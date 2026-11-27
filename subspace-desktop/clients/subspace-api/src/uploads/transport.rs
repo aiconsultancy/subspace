@@ -1,4 +1,4 @@
-use super::{ImageDeclaration, UploadError};
+use super::{AttachmentAttempt, AttachmentProtocol, ImageDeclaration, UploadError};
 use crate::{Client, media::ImageMetadata, model::IssueMedia, transport};
 use std::time::Duration;
 use ureq::http::StatusCode;
@@ -23,13 +23,23 @@ impl Client {
                 .nett_upload_attachment(issue, &key, declaration, bytes)
                 .result;
         }
+        self.upload_subspace_media(issue, declaration, bytes, declaration.is_image())
+    }
+
+    fn upload_subspace_media(
+        &self,
+        issue: &str,
+        declaration: &ImageDeclaration,
+        bytes: &[u8],
+        inline_image: bool,
+    ) -> Result<IssueMedia, UploadError> {
         if !self.backend_supports_uploads() {
             return Err(UploadError::Refused {
                 status: StatusCode::NOT_IMPLEMENTED.as_u16(),
                 retry_after: 0,
             });
         }
-        let route = if declaration.is_image() {
+        let route = if inline_image {
             "images"
         } else {
             "attachments"
@@ -44,7 +54,7 @@ impl Client {
             &format!("multipart/form-data; boundary={boundary}"),
             &body,
         )?;
-        if declaration.is_image() {
+        if inline_image {
             let metadata: ImageMetadata =
                 transport::read_json(response).map_err(|_| UploadError::Checking)?;
             let media = metadata.descriptor();
@@ -74,19 +84,23 @@ impl Client {
         request_key: &str,
         declaration: &ImageDeclaration,
         bytes: &[u8],
-    ) -> super::AttachmentAttempt {
-        if !declaration.unchanged(bytes) {
-            return super::AttachmentAttempt {
-                result: Err(UploadError::InvalidImage),
-                ..super::AttachmentAttempt::default()
+    ) -> AttachmentAttempt {
+        let protocol = self.attachment_protocol();
+        if bytes.len() > protocol.max_bytes(&declaration.content_type)
+            || !declaration.unchanged(bytes)
+        {
+            return AttachmentAttempt {
+                result: Err(protocol.invalid_file()),
+                ..AttachmentAttempt::default()
             };
         }
-        if self.backend == crate::Backend::Nett {
-            return self.nett_upload_attachment(issue, request_key, declaration, bytes);
-        }
-        super::AttachmentAttempt {
-            result: self.upload_attachment(issue, declaration, bytes),
-            ..super::AttachmentAttempt::default()
+        match protocol {
+            AttachmentProtocol::NettStandalone => {
+                self.nett_upload_attachment(issue, request_key, declaration, bytes)
+            }
+            AttachmentProtocol::SubspaceFiles => AttachmentAttempt::direct(
+                self.upload_subspace_media(issue, declaration, bytes, false),
+            ),
         }
     }
 
@@ -98,7 +112,7 @@ impl Client {
         transfer: &str,
         declaration: &ImageDeclaration,
     ) -> Result<Option<IssueMedia>, UploadError> {
-        if self.backend != crate::Backend::Nett {
+        if !self.attachment_protocol().checkable_uploads() {
             return Err(UploadError::Checking);
         }
         self.nett_complete_attachment(issue, transfer, declaration)
@@ -106,7 +120,7 @@ impl Client {
 
     /// Cancels a standalone reservation that was not completed; best effort.
     pub fn cancel_issue_attachment(&self, issue: &str, transfer: &str) {
-        if self.backend == crate::Backend::Nett {
+        if self.attachment_protocol().checkable_uploads() {
             self.nett_cancel_attachment(issue, transfer);
         }
     }
@@ -132,7 +146,7 @@ impl Client {
     }
 
     pub fn delete_media(&self, media: &IssueMedia) -> Result<(), UploadError> {
-        if self.backend == crate::Backend::Nett {
+        if let AttachmentProtocol::NettStandalone = self.attachment_protocol() {
             return self.nett_delete_media(media);
         }
         if !self.backend_supports_uploads() {
@@ -186,6 +200,21 @@ impl Client {
             .build();
         let response = request.send(body).map_err(|_| UploadError::Checking)?;
         classify(response)
+    }
+}
+
+impl AttachmentAttempt {
+    /// A direct POST has no reservation. Only an indeterminate response
+    /// leaves a failed attempt whose file might already be on the issue.
+    fn direct(result: Result<IssueMedia, UploadError>) -> Self {
+        Self {
+            bytes_sent: matches!(
+                result,
+                Err(UploadError::Checking | UploadError::Unclear { .. })
+            ),
+            result,
+            transfer: None,
+        }
     }
 }
 

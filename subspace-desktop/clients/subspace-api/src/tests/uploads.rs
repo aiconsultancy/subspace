@@ -65,6 +65,29 @@ fn image_and_file_removals_use_their_distinct_contract_routes() {
 }
 
 #[test]
+fn adding_a_raster_as_a_file_posts_to_attachments_not_inline_images() {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::RgbImage::new(2, 1)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    let bytes = bytes.into_inner();
+    let declaration = ImageDeclaration::new("Fixture.png", "image/png", &bytes).unwrap();
+    let mut file = descriptor("photo");
+    file["kind"] = json!("file");
+    file["sizeBytes"] = json!(bytes.len());
+    file["sha256"] = json!(declaration.sha256);
+    let mock = Mock::new(move |_| (201, file.to_string()));
+    let attempt = client(&mock).upload_issue_attachment("SUB-1", "any-key", &declaration, &bytes);
+    assert!(attempt.result.unwrap().can_save_attachment());
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        (&*requests[0].method, &*requests[0].path),
+        ("POST", "/api/v1/issues/SUB-1/attachments")
+    );
+}
+
+#[test]
 fn preflight_checks_raster_dimensions_mime_names_and_document_limits() {
     let mut bytes = std::io::Cursor::new(Vec::new());
     image::RgbImage::new(2, 1)

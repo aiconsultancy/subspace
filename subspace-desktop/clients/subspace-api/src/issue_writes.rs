@@ -60,6 +60,10 @@ pub enum IssueSaveError {
         "A sub-issue is in an archived project or has no matching workflow state. Your draft is still here."
     )]
     TrackerChildrenBlocked,
+    #[error(
+        "The parent is archived or would create a cycle. Choose another parent. Your draft is still here."
+    )]
+    ParentRefused,
     #[error("This issue or something it links to changed. Read the latest issue before saving.")]
     Conflict,
     #[error(

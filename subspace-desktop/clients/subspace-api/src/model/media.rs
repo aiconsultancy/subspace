@@ -20,6 +20,8 @@ pub struct IssueMedia {
     pub url: String,
     #[serde(default)]
     pub sha256: String,
+    #[serde(default)]
+    pub(crate) removal: Removal,
     /// How the file is read and removed. Set by the client, never read
     /// from a reply.
     #[serde(skip)]
@@ -32,6 +34,47 @@ impl IssueMedia {
     pub fn is_standalone(&self) -> bool {
         matches!(self.binding, MediaBinding::Standalone { .. })
     }
+
+    /// Which files the Attachments panel can save. NETT managed media is
+    /// not a standalone attachment; Subspace stores its files together.
+    pub fn can_save_attachment(&self) -> bool {
+        self.is_standalone() || self.is_subspace_file()
+    }
+
+    /// Only an explicit server decision enables removal of a Subspace file.
+    pub fn can_remove_attachment(&self) -> bool {
+        self.is_standalone() || (self.is_subspace_file() && self.removal == Removal::Available)
+    }
+
+    /// Why a listed Subspace file can be saved but not removed.
+    pub fn attachment_removal_notice(&self) -> Option<&'static str> {
+        if !self.is_subspace_file() {
+            return None;
+        }
+        match self.removal {
+            Removal::Linked => Some("Linked from the description, a comment or a document."),
+            Removal::Archived => Some("Unarchive the issue before removing its files."),
+            Removal::Available => None,
+            Removal::Unspecified => {
+                Some("This server doesn’t say whether the file can be removed.")
+            }
+        }
+    }
+
+    pub(crate) fn is_subspace_file(&self) -> bool {
+        self.binding == MediaBinding::Subspace && self.kind == "file"
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum Removal {
+    Available,
+    Linked,
+    Archived,
+    #[default]
+    #[serde(other)]
+    Unspecified,
 }
 
 /// Where a media file lives, which decides how its bytes are read and how

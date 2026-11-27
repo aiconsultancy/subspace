@@ -880,7 +880,10 @@ children, send `moveOpenChildren: true` with a Backlog or Todo `stateId`.
 The API skips terminal and archived children. It validates permissions and
 workflow mappings before committing the changes, then calculates the
 tracker's state from the resulting children. Both operations use the
-tracker's current `version`.
+tracker's current `version`. You can also set or clear `parentId` in the
+same PATCH. An invalid parent or a blocked child update refuses the entire
+write. The API recalculates derived states in both the old and new parent
+chains before returning the updated issue.
 
 ## Workstation pairing
 
@@ -1225,6 +1228,16 @@ is enforced, or waits until the write has committed.
 A dispatcher that read an issue before its project moved to another fleet
 receives 403 even though the issue version is unchanged.
 
+## Issue parent candidates
+
+`GET /api/v1/issues?type=tracker&parentFor=<issue-ref>` lists tracker
+candidates for the named issue (UUID or issue key). Use `parentFor=new`
+when creating an issue. The filter applies the write-time parent rule:
+it excludes the issue itself, its descendants, and candidates with archived
+or cyclic ancestry. It combines with normal issue filters, including `q`,
+which searches keys, titles, summaries and descriptions. Pass the same
+filters when following a cursor. The API validates the parent again on save.
+
 ## Planning and stakeholders
 
 Initiative responses include `stakeholders`, a list of names, roles and Slack
@@ -1320,8 +1333,14 @@ agent key tests generate their own Ed25519 and P-256 certificates and mint agent
 tokens as a gateway would, and the pairing tests pair devices and sign device tokens
 as a workstation would.
 The fleet ownership race test holds a row lock in the API's own database while
-an agent writes, so when both variables are set, `TEST_DATABASE_URL` must name
-the database that `TEST_API_URL` serves, as in the example above. For signed pull request and deployment tests, sign in first as
+an agent writes. The parent-cycle HTTP test changes that database directly: it
+temporarily sets `parent_id` on a synthetic issue, then clears it. Both tests
+need `TEST_API_URL` and a loopback `TEST_DATABASE_URL` without connection
+options, pointing to the same disposable test database, as in the example
+above. The parent-cycle test needs permission to update the `issues` table
+and is skipped without `TEST_DATABASE_URL`.
+
+For signed pull request and deployment tests, sign in first as
 `admin@example.com` to a dedicated dev organisation. Start the API with that
 organisation's internal UUID in `GITHUB_ORGANISATION_ID` and a local
 `GITHUB_WEBHOOK_SECRET`. Set `TEST_GITHUB_ORGANISATION` to its dev sign-in slug

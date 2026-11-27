@@ -46,9 +46,13 @@ pub fn max_bytes(mime: &str) -> usize {
     }
 }
 
-pub(super) fn validate(name: &str, mime: &str, bytes: &[u8]) -> Result<(), UploadError> {
+pub(super) fn validate(
+    name: &str,
+    mime: &str,
+    bytes: &[u8],
+    limit: usize,
+) -> Result<(), UploadError> {
     let image = crate::media::supported_image(mime);
-    let limit = max_bytes(mime);
     if name.is_empty()
         || name.encode_utf16().count() > MAX_NAME_UNITS
         || name.chars().any(char::is_control)

@@ -115,6 +115,7 @@ pub struct IssueQuery {
     pub page: PageRequest,
     pub search: Option<String>,
     pub include_archived: bool,
+    parent_for: Option<String>,
 }
 
 impl IssueQuery {
@@ -126,7 +127,13 @@ impl IssueQuery {
             page: PageRequest::default(),
             search: None,
             include_archived: false,
+            parent_for: None,
         }
+    }
+
+    pub(crate) fn tracker_parents(mut self, issue: &str) -> Self {
+        self.parent_for = Some(issue.to_owned());
+        self
     }
     pub(crate) fn parameters(&self) -> Result<Vec<(String, String)>, Error> {
         let mut query = self.page.parameters(MAX_LIST_PAGE_SIZE)?;
@@ -161,6 +168,10 @@ impl IssueQuery {
                 .map(|order| ("order".into(), order.clone())),
         );
         query.extend(self.search()?.map(|search| ("q".into(), search.into())));
+        if let Some(issue) = &self.parent_for {
+            query.push(("type".into(), "tracker".into()));
+            query.push(("parentFor".into(), issue.clone()));
+        }
         Ok(query)
     }
 

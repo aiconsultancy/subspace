@@ -165,7 +165,11 @@ export const issueGroup = HttpApiGroup.make("issues")
       query: IssueQuery,
       success: pageOf(IssueFields),
       error: endpointErrors,
-    }),
+    }).annotate(
+      OpenApi.Description,
+      "Set `parentFor` to an issue key or UUID, or `new` for creation, to list only eligible " +
+        "parents. This excludes the issue itself, its descendants, and archived or cyclic ancestry.",
+    ),
     HttpApiEndpoint.get("groups", "/issues/groups", {
       query: GroupQuery,
       success: IssueGroups,

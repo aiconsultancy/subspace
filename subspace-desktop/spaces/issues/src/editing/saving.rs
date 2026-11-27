@@ -2,10 +2,9 @@ use gpui_kit::{App, AppContext as _, Context, Window};
 use subspace_api_client::{
     hub::{Hub, IssueWriteScope},
     issue_writes::{CreateKey, IssueChanges, IssueSave, IssueSaveError},
-    model::{IssueDetail, Project},
 };
 
-use super::{Field, IssueEditor, Phase, TextValues, confirmation::ChildChanges};
+use super::{Field, IssueEditor, Phase, confirmation::ChildChanges};
 use crate::Issues;
 
 enum Target {
@@ -140,6 +139,7 @@ impl Issues {
         };
         if let Some(confirmation) = children.confirmation(editor) {
             editor.phase = Phase::ConfirmingChildren(confirmation);
+            editor.reveal_save_notice();
             cx.notify();
             return;
         }
@@ -169,9 +169,23 @@ impl Issues {
         match result {
             Ok(IssueSave::Saved(issue)) => {
                 let edit = editor.editing_existing();
+                let saved_parent =
+                    issue.fields.parent_id.as_ref().filter(|id| {
+                        editor.subissue_of.as_ref().map(|parent| &parent.id) == Some(*id)
+                    });
+                let keep_parent = saved_parent.is_some_and(|id| {
+                    self.issue_view
+                        .snapshot
+                        .as_ref()
+                        .and_then(|open| open.detail())
+                        .is_some_and(|open| &open.fields.id == id)
+                });
                 self.close_issue_editor(window, cx);
                 self.reload_list(cx);
-                if edit {
+                if keep_parent {
+                    self.issue_view.project_subissue(issue.fields);
+                    self.reload_detail(cx);
+                } else if edit {
                     self.reload_detail(cx);
                 } else {
                     self.open_detail(issue.fields.identifier.clone(), cx);
@@ -181,6 +195,12 @@ impl Issues {
                 editor.phase = Phase::Conflict(None)
             }
             Err(IssueSaveError::Unconfirmed) => editor.phase = Phase::Unconfirmed,
+            Err(
+                error @ (IssueSaveError::TrackerChildrenBlocked | IssueSaveError::ParentRefused),
+            ) => {
+                editor.phase = Phase::Failed(error);
+                editor.reveal_save_notice();
+            }
             Err(error) => editor.phase = Phase::Failed(error),
         }
         cx.notify();
@@ -254,49 +274,11 @@ impl Issues {
 }
 
 impl IssueEditor {
-    fn keep_edits(
-        &mut self,
-        projects: &[Project],
-        issue: Box<IssueDetail>,
-        window: &mut Window,
-        cx: &mut Context<Issues>,
-    ) {
-        let original = TextValues::from_detail(self.basis.as_deref());
-        let current = TextValues::read(self, cx);
-        let latest = TextValues::from_detail(Some(&issue));
-        self.replace_unchanged(window, cx, (original, current, latest));
-        self.properties
-            .install_baseline(projects, &issue.fields.project_id, Some(&issue));
-        self.basis = Some(issue);
-        self.elsewhere = None;
-    }
-
-    fn replace_unchanged(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Issues>,
-        (original, current, latest): (TextValues, TextValues, TextValues),
-    ) {
-        for (input, (before, current, latest)) in [
-            (&self.title, (original.title, current.title, latest.title)),
-            (&self.due, (original.due, current.due, latest.due)),
-            (
-                &self.parent,
-                (original.parent, current.parent, latest.parent),
-            ),
-        ] {
-            if before == current {
-                input.update(cx, |input, cx| input.set_value(latest, window, cx));
-            }
-        }
-        if original.summary == current.summary {
-            self.summary
-                .update(cx, |input, cx| input.set_value(latest.summary, window, cx));
-        }
-        if original.description == current.description {
-            self.description.update(cx, |input, cx| {
-                input.set_value(latest.description, window, cx)
-            });
+    fn reveal_save_notice(&self) {
+        // The full editor's notice is above the scrollable properties. A
+        // combined edit can leave the viewport down at the Parent picker.
+        if self.inline.is_none() {
+            self.scroll.set_offset(Default::default());
         }
     }
 }

@@ -1,18 +1,74 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQLWrapper } from "drizzle-orm";
 import { Effect } from "effect";
 import { marked } from "marked";
 import { type Database } from "./db";
 import { type Member } from "./identity";
 import { problem } from "./problems";
-import { uploads } from "./schema";
+import { comments, documentRevisions, issueDocuments, uploads } from "./schema";
 import { isUuid } from "./validation";
 
 type Db = (typeof Database)["Service"];
 type Row = typeof uploads.$inferSelect;
 const path = "/api/v1/issues/";
+const routes = { image: "media/", file: "attachments/" };
+
+type IssueText = { id: string; organisationId: string; description: string | null };
+
+function references(body: SQLWrapper) {
+  // Find both API and Markdown-editor references, including in link labels
+  // or quoted text. A false positive is safer than deleting linked bytes.
+  const route = sql`case when ${uploads.kind} = 'image' then ${routes.image} else ${routes.file} end`;
+  return sql`(
+    position(${path} || (${route}) || ${uploads.id}::text in lower(${body})) > 0
+    or position('nett-media:' || ${uploads.id}::text in lower(${body})) > 0
+  )`;
+}
+
+/** One bounded lookup for an attachment page or the file locked for deletion. */
+function linkedMedia(db: Db, issue: IssueText, ids: readonly string[]) {
+  return Effect.gen(function* () {
+    if (!ids.length) return new Set<string>();
+    const rows = yield* db
+      .select({ id: uploads.id })
+      .from(uploads)
+      .where(
+        and(
+          eq(uploads.organisationId, issue.organisationId),
+          eq(uploads.issueId, issue.id),
+          inArray(uploads.id, ids),
+          sql`(
+          ${references(sql`${issue.description}::text`)}
+          or exists (select 1 from ${comments}
+            where ${comments.organisationId} = ${uploads.organisationId}
+              and ${comments.issueId} = ${uploads.issueId}
+              and ${comments.deletedAt} is null and ${references(comments.body)})
+          or exists (select 1 from ${issueDocuments}
+            join ${documentRevisions} on ${documentRevisions.documentId} = ${issueDocuments.id}
+              and ${documentRevisions.organisationId} = ${issueDocuments.organisationId}
+            where ${issueDocuments.organisationId} = ${uploads.organisationId}
+              and ${issueDocuments.issueId} = ${uploads.issueId}
+              and ${references(documentRevisions.content)})
+        )`,
+        ),
+      );
+    return new Set(rows.map(({ id }) => id));
+  });
+}
+
+export function mediaRemoval(
+  db: Db,
+  issue: IssueText & { archivedAt: Date | null },
+  ids: readonly string[],
+) {
+  return Effect.gen(function* () {
+    if (issue.archivedAt) return (_id: string): "archived" => "archived";
+    const linked = yield* linkedMedia(db, issue, ids);
+    return (id: string): "linked" | "available" => (linked.has(id) ? "linked" : "available");
+  });
+}
 
 export const mediaUrl = (row: Row) =>
-  `${path}${row.kind === "image" ? "media" : "attachments"}/${row.id}`;
+  `${path}${routes[row.kind === "image" ? "image" : "file"]}${row.id}`;
 
 export function mediaDescriptor(row: Row) {
   return {

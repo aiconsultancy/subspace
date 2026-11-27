@@ -2,6 +2,7 @@
 //! The list owns its selection and scroll independently of this page.
 
 mod markdown;
+mod subissues;
 pub(crate) mod timeline;
 
 use std::{collections::HashMap, time::Instant};
@@ -27,6 +28,7 @@ fn issue_link(url: &str, snapshot: &IrcSnapshot) -> Option<String> {
 #[derive(Default)]
 pub(crate) struct IssueView {
     pub(crate) snapshot: Option<IssueSnapshot>,
+    created_subissues: subissues::CreatedSubissues,
     pub(crate) description: Option<SharedString>,
     pub(crate) scroll: ScrollHandle,
     pub(crate) timeline: timeline::TimelineView,
@@ -196,6 +198,7 @@ impl Issues {
             return;
         };
         self.issue_view.follow(issue, cx);
+        self.check_created_subissues(cx);
         crate::decision::follow(&mut self.decision, issue);
         self.settle_state_change();
         self.start_timeline(issue, cx);
@@ -215,6 +218,7 @@ impl IssueView {
         }
         if previous.is_some_and(|old| old.identifier() != issue.identifier()) {
             self.timeline = Default::default();
+            self.created_subissues.clear();
         }
         self.timeline_focus
             .get_or_insert_with(|| timeline::TimelineFocus::new(&self.scroll, cx));

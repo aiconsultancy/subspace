@@ -456,11 +456,12 @@ function issueKey(order: IssueFilter["order"] = "created") {
   };
 }
 
-function scopeCursor(member: Member, filters: IssueFilter) {
+function scopeCursor(member: Member, filters: IssueFilter, parentFor?: string) {
   return {
     org: member.organisationId,
     actor: member.id,
     ...filters,
+    ...(parentFor ? { parentFor } : {}),
     order: filters.order ?? "created",
     includeArchived: Boolean(filters.includeArchived),
   };
@@ -527,16 +528,25 @@ const resolveParent = (db: Db, member: Member, parent?: string) =>
 export const listIssues = (member: Member, query: typeof IssueQuery.Type) =>
   Effect.gen(function* () {
     const db = yield* Database;
-    const { cursor, limit, ...filters } = query;
+    const { cursor, limit, parentFor, ...filters } = query;
     return yield* db.transaction(
       (tx) =>
         Effect.gen(function* () {
           const parent = yield* resolveParent(tx, member, filters.parent);
           const { where } = yield* issueConditions(tx, member, filters, parent);
+          const movingId =
+            parentFor && parentFor !== "new"
+              ? (yield* readIssue(tx, member, parentFor)).id
+              : undefined;
           const result = yield* issuePage(
             joinedIssues(tx, member.organisationId),
-            where,
-            scopeCursor(member, filters),
+            and(
+              where,
+              parentFor
+                ? sql`not ${invalidParent(member.organisationId, issues.id, movingId)}`
+                : undefined,
+            ),
+            scopeCursor(member, filters, parentFor),
             filters.order,
             limit,
             cursor,
@@ -772,6 +782,22 @@ function validateState(db: Db, member: Member, projectId: string, stateId: strin
   });
 }
 
+/** Shared parent-link rule for candidate listing and writes. */
+function invalidParent(org: string, candidate: string | typeof issues.id, movingId?: string) {
+  return sql`exists (
+    with recursive ancestry(id, parent_id, archived_at) as (
+      select node.id, node.parent_id, node.archived_at from ${issues} node
+      where node.organisation_id = ${org} and node.id = ${candidate}
+      union all
+      select node.id, node.parent_id, node.archived_at from ${issues} node
+      join ancestry on node.id = ancestry.parent_id
+      where node.organisation_id = ${org}
+    ) cycle id set cyclic using traversal
+    select 1 from ancestry
+    where cyclic or archived_at is not null or id = ${movingId ?? null}::uuid
+  )`;
+}
+
 function linkParent(
   db: Db,
   member: Member,
@@ -781,12 +807,15 @@ function linkParent(
   return Effect.gen(function* () {
     if (!reference) return reference;
     const parent = yield* readIssue(db, member, reference);
-    let current: IssueRow | undefined = parent;
-    while (current) {
-      if (current.id === movingId || current.archivedAt) {
-        return yield* Effect.fail(problem(409, "The parent is archived or would create a cycle."));
-      }
-      current = current.parentId ? yield* readIssue(db, member, current.parentId) : undefined;
+    const [blocked] = yield* db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(
+        and(eq(issues.id, parent.id), invalidParent(member.organisationId, parent.id, movingId)),
+      );
+    if (blocked) {
+      const detail = "The parent is archived or would create a cycle.";
+      return yield* Effect.fail({ ...problem(409, detail), errors: { parentId: [detail] } });
     }
     return parent.id;
   });

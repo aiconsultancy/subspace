@@ -350,9 +350,10 @@ pub struct Capabilities {
     pub issue_summaries: bool,
     /// An issue owner separate from the assignee, which NETT does not have.
     pub issue_owners: bool,
-    /// Adding, saving and removing standalone attachments on an issue,
-    /// which NETT serves per organisation. Comment images and files need no
-    /// capability on either backend.
+    /// Searching for tracker parents instead of entering a reference.
+    pub issue_parent_search: bool,
+    /// Adding, saving and removing files on an issue. NETT serves this per
+    /// organisation; Subspace shares its list with files linked from text.
     pub standalone_attachments: bool,
     /// Changes made elsewhere arrive over the issue update stream.
     pub live_updates: bool,
@@ -367,6 +368,7 @@ impl Capabilities {
         issue_moves: false,
         issue_summaries: false,
         issue_owners: false,
+        issue_parent_search: false,
         standalone_attachments: false,
         live_updates: false,
     };
@@ -391,7 +393,8 @@ impl Capabilities {
             issue_moves: serves(Feature::IssueMoves),
             issue_summaries: subspace,
             issue_owners: subspace,
-            standalone_attachments: !subspace && serves(Feature::Attachments),
+            issue_parent_search: subspace,
+            standalone_attachments: serves(Feature::Attachments),
             live_updates: serves(Feature::Updates),
         }
     }
@@ -500,7 +503,7 @@ mod tests {
         let a = Capabilities::with(Backend::Nett, scope("org-a"));
         assert!(a.chat_uploads && a.initiative_channels && !a.captain_notices);
         assert!(!a.issue_moves && !a.issue_summaries && !a.issue_owners && !a.live_updates);
-        assert!(!a.standalone_attachments && !subspace.standalone_attachments);
+        assert!(!a.standalone_attachments && subspace.standalone_attachments);
         record_served(
             origin,
             "org-c",

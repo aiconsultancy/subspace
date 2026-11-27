@@ -1077,16 +1077,19 @@ class Fixture(IssueWrites):
         target = self.issues[4] if row['projectKey'] == 'SUB' else self.issues[1]
         return [dict(target, kind='relatedTo')]
 
-    def detail(self, row):
-        children = [r for r in self.issues if r['parentId'] == row['id']]
-        parent = next((r for r in self.issues if r['id'] == row['parentId']), None)
-        image = next((m for m in self.media.values() if m['issueId'] == row['id'] and m['kind'] == 'image' and not m['deleted']), None)
+    def description(self, row):
         body = self.descriptions.get(row['id'])
         if body is None:
+            image = next((m for m in self.media.values() if m['issueId'] == row['id'] and m['kind'] == 'image' and not m['deleted']), None)
             body = '## Fixture workspace\n\nRead issues and post text comments.\n'
             if image:
                 body += f'\n![Workspace sketch](nett-media:{image["id"]})\n'
-        return dict(row, description=body,
+        return body
+
+    def detail(self, row):
+        children = [r for r in self.issues if r['parentId'] == row['id']]
+        parent = next((r for r in self.issues if r['id'] == row['parentId']), None)
+        return dict(row, description=self.description(row),
                     createdBy=self.creators.get(row['id']), startedAt=row['createdAt'] if row['state']['type'] == 'started' else None,
                     completedAt=row['createdAt'] if row['state']['type'] == 'completed' else None,
                     canceledAt=None, archivedBy=ADA if row['archivedAt'] else None, todos=self.todos.get(row['id'], []), mentions=[],
@@ -1125,6 +1128,15 @@ class Fixture(IssueWrites):
                       bytes=data, kind=kind, deleted=False)
         self.media[media_id] = record
         return image_metadata(record) if image else descriptor(record)
+
+    def attachment_removal(self, row, record):
+        if row['archivedAt']:
+            return 'archived'
+        bodies = [self.detail(row)['description']]
+        bodies.extend(c['body'] for c in self.comments
+                      if c['issueId'] == row['id'] and not c['deletedAt'])
+        references = (f'nett-media:{record["id"]}', record['url'])
+        return 'linked' if any(ref in body for ref in references for body in bodies) else 'available'
 
 
 def reference(row):
@@ -1192,7 +1204,7 @@ def due_matches(row, value):
     return today.isoformat() <= due <= (today + timedelta(days=6 - today.weekday())).isoformat()
 
 
-def matches(row, query, parent_id):
+def matches(fixture, row, query, parent_id):
     assignee = row['assignee']['userId'] if row['assignee'] else 'none'
     wanted = [ADA['userId'] if v == 'me' else v for v in query.get('assignee', [])]
     checks = [('project', (row['projectKey'], row['projectId'])), ('stateId', (row['state']['id'],)),
@@ -1206,8 +1218,20 @@ def matches(row, query, parent_id):
         return False
     if parent_id is not False and row['parentId'] != parent_id:
         return False
-    text = query.get('q', [''])[0].casefold()
-    return text in (row['identifier'] + ' ' + row['title'] + ' Fixture workspace Read issues and post text comments.').casefold()
+    text = query.get('q', [''])[0].strip().casefold()
+    return not text or any(text in (value or '').casefold() for value in
+                          (row['identifier'], row['title'], row['summary'], fixture.description(row)))
+
+
+def eligible_parent(row, by_id, moving_id):
+    seen = set()
+    while row:
+        row_id = row['id']
+        if row_id == moving_id or row_id in seen or row['archivedAt']:
+            return False
+        seen.add(row_id)
+        row = by_id.get(row['parentId'])
+    return True
 
 
 def filtered(fixture, query):
@@ -1217,7 +1241,15 @@ def filtered(fixture, query):
     parent_id = False if parent is None else (parent_row['id'] if parent_row else None)
     if parent and parent != 'none' and not parent_row:
         return []
-    rows = [r for r in fixture.issues if matches(r, query, parent_id)]
+    rows = [r for r in fixture.issues if matches(fixture, r, query, parent_id)]
+    parent_for = query.get('parentFor', [None])[0]
+    if parent_for:
+        moving = fixture.find_issue(parent_for) if parent_for != 'new' else None
+        if parent_for != 'new' and moving is None:
+            raise Problem(404, 'Issue not found.')
+        moving_id = moving['id'] if moving else None
+        by_id = {r['id']: r for r in fixture.issues}
+        rows = [r for r in rows if eligible_parent(r, by_id, moving_id)]
     if 'milestone' in query:
         rows = [r for r in rows if (r['milestoneId'] or 'none') in query['milestone']]
     if query.get('includeArchived', ['false'])[0] != 'true':
@@ -1722,7 +1754,9 @@ class Handler(BaseHTTPRequestHandler):
             if method == 'GET':
                 rows = [m for m in fixture.media.values() if m['issueId'] == row['id'] and not m['deleted']
                         and (not image or m['kind'] == 'image')]
-                return 200, page([image_metadata(m) if image else descriptor(m) for m in rows], query, row['id'] + suffix, maximum=100)
+                items = [image_metadata(m) if image else
+                         dict(descriptor(m), removal=fixture.attachment_removal(row, m)) for m in rows]
+                return 200, page(items, query, row['id'] + suffix, maximum=100)
         if method == 'GET' and suffix == '/relations':
             rows = fixture.relations(row)
             if 'kind' in query:
@@ -1784,12 +1818,16 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def media_route(self, method, match):
-        record = self.server.fixture.media.get(match[2])
+        fixture = self.server.fixture
+        record = fixture.media.get(match[2])
         if record is None:
             raise Problem(404, 'Media not found.')
         if (method == 'POST' and match[1] == 'media' and match[3] == '/delete') or (method == 'DELETE' and match[1] == 'attachments'):
-            if self.server.fixture.find_issue(record['issueId'])['archivedAt']:
+            row = fixture.find_issue(record['issueId'])
+            if row['archivedAt']:
                 raise Problem(409, 'The issue is archived.')
+            if method == 'DELETE' and not record['deleted'] and fixture.attachment_removal(row, record) == 'linked':
+                raise Problem(409, 'The file is referenced by an issue, comment or document.')
             changed = not record['deleted']
             record['deleted'] = True
             return 200, changed

@@ -22,7 +22,7 @@ import { cycles, issueLabels, issues, issueSubscriptions, projects, states, user
 import { today } from "./validation";
 
 type Db = (typeof Database)["Service"];
-export type IssueFilter = Omit<typeof IssueQuery.Type, "limit" | "cursor">;
+export type IssueFilter = Omit<typeof IssueQuery.Type, "limit" | "cursor" | "parentFor">;
 
 function personFilter(
   column: typeof issues.assigneeId | typeof issues.ownerId | typeof issues.createdById,

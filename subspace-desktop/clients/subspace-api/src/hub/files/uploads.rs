@@ -12,7 +12,7 @@ pub(in crate::hub) use store::{Cancel, UploadIssue, UploadStore};
 
 use crate::{
     hub::{AttachmentState, Hub, Shared, State, lock},
-    uploads::{ImageDeclaration, UploadError},
+    uploads::{AttachmentProtocol, ImageDeclaration, UploadError},
 };
 use std::sync::Arc;
 use std::time::Instant;
@@ -76,6 +76,13 @@ impl AttachmentUpload {
     pub fn checks(&self) -> bool {
         self.bytes_sent && self.transfer.is_some()
     }
+
+    /// A non-idempotent Subspace POST may have stored its bytes, but does
+    /// not have a transfer to check. Only a person can decide to send again.
+    pub fn may_have_uploaded(&self) -> bool {
+        self.bytes_sent && self.transfer.is_none()
+    }
+
     /// Whether Retry or Check can still change the outcome. A file NETT
     /// rejected (400) or forbade (403) stays refused, so only Dismiss is
     /// offered, as it is for one that would be sent again after its bytes
@@ -214,7 +221,7 @@ impl Hub {
         mime: &str,
         bytes: Vec<u8>,
     ) -> Result<(), UploadError> {
-        let declaration = ImageDeclaration::new(name, mime, &bytes)?;
+        let declaration = self.attachment_protocol().declare(name, mime, &bytes)?;
         let mut state = lock(&self.0.state);
         state.running().map_err(|_| UploadError::Removed)?;
         if !state.current(target.generation) {
@@ -249,7 +256,7 @@ impl Hub {
         let mut state = lock(&self.0.state);
         self.0.follow_uploads(&mut state);
         let generation = state.snapshot.generation;
-        let Some(retry) = retry_row(&mut state, id) else {
+        let Some(retry) = retry_row(&mut state, id, self.attachment_protocol()) else {
             return;
         };
         state.changed();
@@ -307,7 +314,7 @@ enum Retry {
 
 /// Marks the open issue's upload `id` for another attempt, or the issue's
 /// panel with why it must wait. `None` when there is nothing to retry.
-fn retry_row(state: &mut State, id: &str) -> Option<Retry> {
+fn retry_row(state: &mut State, id: &str, protocol: AttachmentProtocol) -> Option<Retry> {
     let open = state.open_for_uploads();
     let (upload, issue) = state.uploads.shown_row(open.as_ref(), id)?;
     if !upload.retryable() {
@@ -315,7 +322,7 @@ fn retry_row(state: &mut State, id: &str) -> Option<Retry> {
     }
     if upload.retry_delay().is_some() {
         if let Some(open) = state.snapshot.issue.as_mut() {
-            open.files.notice = Some("NETT asked to wait before this upload is checked again.");
+            open.files.notice = Some(protocol.wait_notice());
         }
         return Some(Retry::Wait);
     }

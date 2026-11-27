@@ -162,22 +162,27 @@ fn record(
     (result, transfer, bytes_sent): Outcome,
 ) -> Vec<Cancel> {
     let stored = matches!(result, Ok(Some(_)));
-    let mut cancels: Vec<Cancel> = match state.uploads.row(&upload.id) {
-        Some(row) => {
-            settle(row, upload.checks(), result, (transfer, bytes_sent));
-            Vec::new()
+    let direct_post = !shared.client.attachment_protocol().checkable_uploads();
+    let mut cancels = Vec::new();
+    let may_have_uploaded = if let Some(row) = state.uploads.row(&upload.id) {
+        settle(row, upload.checks(), result, (transfer, bytes_sent));
+        row.may_have_uploaded()
+    } else if let Some(transfer) = transfer {
+        if !stored {
+            cancels.push((attempt.issue.id.clone(), transfer));
         }
-        None => transfer
-            .filter(|_| !stored)
-            .map(|transfer| (attempt.issue.id.clone(), transfer))
-            .into_iter()
-            .collect(),
+        false
+    } else {
+        // A direct POST can leave a file even if the person dismissed its row.
+        bytes_sent
     };
     if stored {
         state.uploads.remove(&upload.id);
-        if state.open_names(&attempt.issue) {
-            crate::hub::files::reload_files(shared, state);
-        }
+    }
+    if (stored || (direct_post && bytes_sent && may_have_uploaded))
+        && state.open_names(&attempt.issue)
+    {
+        crate::hub::files::reload_files(shared, state);
     }
     cancels.extend(state.follow_uploads(std::time::Instant::now()));
     cancels

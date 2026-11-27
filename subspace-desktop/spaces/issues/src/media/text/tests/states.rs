@@ -2,7 +2,7 @@
 use super::{file, opened, requested, shows};
 use crate::media::text::Content;
 use crate::tests::{has, label, press, render};
-use gpui_kit::{TestAppContext, test::TestWindowExt as _};
+use gpui_kit::{TestAppContext, px, size, test::TestWindowExt as _};
 use std::sync::Arc;
 use subspace_api_client::media::MAX_TEXT_BYTES;
 use subspace_api_client::model::IssueMedia;
@@ -28,6 +28,9 @@ fn an_empty_file_says_so_without_a_read_or_retry(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn bytes_that_are_not_utf8_show_a_notice_without_retry(cx: &mut TestAppContext) {
     let (fixture, board, cx) = opened(Arc::default(), cx);
+    // The last card must be in the viewport before the simulated click.
+    cx.simulate_resize(size(px(1440.), px(1200.)));
+    render(cx);
     cx.update(|window, cx| window.click("attachment-open:latin", cx));
     shows(&board, cx, |content| matches!(content, Content::Unreadable));
     assert!(has(cx, "attachment-viewer"));

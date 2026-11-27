@@ -1,6 +1,11 @@
 use crate::{Issues, model::ProjectScope};
 use subspace_api_client::{hub::IssueStatus, model::IssueDetail};
 
+pub(super) struct NewSubissue {
+    pub(super) id: String,
+    pub(super) identifier: String,
+}
+
 pub(super) fn editable_detail(issues: &Issues) -> Option<&IssueDetail> {
     let open = issues.issue_view.snapshot.as_ref()?;
     let detail = open.detail()?;

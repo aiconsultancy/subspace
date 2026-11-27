@@ -3,6 +3,7 @@ use crate::{
     Client, Error, PageRequest,
     model::{IssueMedia, Page},
     transport,
+    uploads::AttachmentProtocol,
 };
 use serde::Deserialize;
 
@@ -45,6 +46,7 @@ impl ImageMetadata {
             sha256: self.sha256,
             public_file_id: String::new(),
             expires_at: None,
+            removal: Default::default(),
             binding: crate::model::MediaBinding::Subspace,
         }
     }
@@ -87,7 +89,7 @@ impl Client {
     }
 
     pub fn attachments(&self, issue: &str, page: &PageRequest) -> Result<Page<IssueMedia>, Error> {
-        if self.backend == crate::Backend::Nett {
+        if let AttachmentProtocol::NettStandalone = self.attachment_protocol() {
             return self.nett_attachments(issue, page);
         }
         self.get(
@@ -118,13 +120,20 @@ impl Client {
         self.fetch_media("attachments", media, limit.min(MAX_TEXT_BYTES))
     }
 
-    /// A standalone attachment's bytes of any type, for saving: NETT's file
-    /// grant, read with the exact type, length and `nosniff`.
+    /// A listed attachment's bytes, for saving, with exact type, length
+    /// and `nosniff`. NETT standalone files use a private file grant.
     pub fn fetch_file(&self, media: &IssueMedia, limit: usize) -> Result<Vec<u8>, Error> {
-        if !media.is_standalone() {
-            return Err(Error::InvalidRequest);
+        let protocol = self.attachment_protocol();
+        match protocol {
+            AttachmentProtocol::NettStandalone if media.is_standalone() => {
+                self.nett_media_bytes(media, limit.min(crate::chat_uploads::MAX_BYTES))
+            }
+            AttachmentProtocol::SubspaceFiles if media.is_subspace_file() => {
+                let max = protocol.max_bytes(&media.content_type);
+                self.fetch_media("attachments", media, limit.min(max))
+            }
+            _ => Err(Error::InvalidRequest),
         }
-        self.nett_media_bytes(media, limit.min(crate::chat_uploads::MAX_BYTES))
     }
 
     /// Exact stored type, `nosniff`, a bounded body and the declared length.

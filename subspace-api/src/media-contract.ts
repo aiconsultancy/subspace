@@ -41,6 +41,7 @@ export const Attachment = Schema.Struct({
   ...fields,
   expiresAt: Schema.Null,
   publicFileId: Schema.String,
+  removal: Schema.optionalKey(Schema.Literals(["available", "linked", "archived"])),
 }).annotate({ identifier: "Attachment" });
 export const ResolveInput = Schema.Struct({
   references: Schema.Array(Schema.String.check(Schema.isMaxLength(100))).check(

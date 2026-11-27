@@ -30,10 +30,14 @@ fn the_hub_adds_saves_and_removes_standalone_attachments() {
         .unwrap();
     assert!(added.is_standalone());
     assert_attachment_conflict_refreshes_the_list(&mock, &hub, &added);
+    let lists = mock.count("GET", "/issues/OPS-1/attachments");
     hub.remove_attachment(&added.media_id);
-    wait_for("the removal", &|| {
+    wait_for("the removal and a fresh read of the list", &|| {
         let files = upload_files(&hub);
-        !files.removing(&added.media_id) && files.items().iter().all(|m| m.file_name != "added.txt")
+        mock.count("GET", "/issues/OPS-1/attachments") > lists
+            && !files.is_loading()
+            && !files.removing(&added.media_id)
+            && files.items().iter().all(|m| m.file_name != "added.txt")
     });
     hub.stop();
 }

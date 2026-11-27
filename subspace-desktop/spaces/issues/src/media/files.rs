@@ -1,7 +1,6 @@
 //! File metadata remains readable without opening an external download URL.
 //! A text or Markdown file opens in the attachment panel beside the page.
-//! Where NETT serves standalone attachments for the organisation, the panel
-//! also adds, saves and removes them.
+//! The panel adds and saves files, and removes files the service lets go.
 mod disk;
 mod uploads;
 
@@ -11,8 +10,11 @@ use gpui_kit::{
     AnyElement, AppContext as _, Context, Div, InteractiveElement as _, IntoElement,
     ParentElement as _, Styled as _, TestSupportExt as _, div, prelude::FluentBuilder as _,
 };
-use subspace_api_client::hub::{FilesSnapshot, IssueSnapshot};
 use subspace_api_client::model::IssueMedia;
+use subspace_api_client::{
+    hub::{FilesSnapshot, IssueSnapshot},
+    uploads::UploadError,
+};
 use subspace_framework::dashboard::{
     Tokens,
     action::{ActionState, Intent, action_button, card_button},
@@ -55,8 +57,13 @@ pub(crate) fn panel(
 ) -> Option<AnyElement> {
     let files = open.files();
     let standalone = standalone_attachments();
+    let actions = standalone
+        && issues
+            .hub
+            .as_ref()
+            .is_some_and(|hub| files.accepts_files(hub.attachment_protocol()));
     let rows = listed(files, standalone);
-    if rows.is_empty() && !files.is_failed() && !standalone {
+    if rows.is_empty() && !files.is_failed() && !actions && files.uploads().is_empty() {
         return None;
     }
     let tokens = Tokens::current(cx);
@@ -66,10 +73,15 @@ pub(crate) fn panel(
         &tokens,
     ));
     for media in rows {
+        let held = issues
+            .hub
+            .as_ref()
+            .is_some_and(|hub| hub.comment_holds_attachment(media));
         panel = panel.child(row(
             media,
-            standalone && files.removing(&media.media_id),
-            standalone,
+            files.removing(&media.media_id),
+            actions,
+            held,
             cx,
         ));
     }
@@ -88,7 +100,7 @@ pub(crate) fn panel(
                 .notice()
                 .map(|notice| message("attachment-notice", notice, &tokens)),
         )
-        .when(standalone, |panel| panel.child(add_button(cx)))
+        .when(actions, |panel| panel.child(add_button(cx)))
         .when(files.is_failed(), |panel| {
             panel
                 .child("Couldn’t load attachments")
@@ -110,7 +122,11 @@ fn listed(files: &FilesSnapshot, standalone: bool) -> Vec<&IssueMedia> {
 
 /// A line of muted text under the rows: why a file was not added, or what
 /// happened to the last change.
-fn message(id: &'static str, text: impl IntoElement, tokens: &Tokens) -> impl IntoElement {
+fn message(
+    id: impl Into<gpui_kit::ElementId>,
+    text: impl IntoElement,
+    tokens: &Tokens,
+) -> impl IntoElement {
     div()
         .id(id)
         .test_support()
@@ -154,7 +170,8 @@ fn label(media: &IssueMedia) -> String {
 fn row(
     media: &IssueMedia,
     removing: bool,
-    standalone: bool,
+    actions: bool,
+    held: bool,
     cx: &mut Context<Issues>,
 ) -> AnyElement {
     let tokens = Tokens::current(cx);
@@ -164,45 +181,66 @@ fn row(
     } else {
         subspace_framework::dashboard::media::file_chip(label, &tokens).into_any_element()
     };
-    if !(standalone && media.is_standalone()) {
+    if !(actions && media.can_save_attachment()) {
         return shown;
     }
-    let id = media.media_id.clone();
-    let save = {
-        let media = media.clone();
-        action_button(
-            format!("attachment-save:{id}"),
-            Intent::Quiet,
-            Some(IconName::Download),
-            "Save",
-        )
-        .small()
-        .on_click(cx.listener(move |this, _, _, cx| this.save_attachment(media.clone(), cx)))
-    };
+    let layout = h_flex()
+        .min_w_0()
+        .gap_2()
+        .child(div().flex_1().min_w_0().child(shown))
+        .child(save_button(media, cx))
+        .when(!held && media.can_remove_attachment(), |row| {
+            row.child(remove_button(media.clone(), removing, cx))
+        });
+    let reason = held
+        .then_some("Used by your unposted comment.")
+        .or_else(|| media.attachment_removal_notice());
+    if let Some(reason) = reason {
+        return v_flex()
+            .gap_1()
+            .child(layout)
+            .child(message(
+                format!("attachment-removal-notice:{}", media.media_id),
+                reason,
+                &tokens,
+            ))
+            .into_any_element();
+    }
+    layout.into_any_element()
+}
+
+fn save_button(media: &IssueMedia, cx: &Context<Issues>) -> impl IntoElement {
+    let media = media.clone();
+    action_button(
+        format!("attachment-save:{}", media.media_id),
+        Intent::Quiet,
+        Some(IconName::Download),
+        "Save",
+    )
+    .small()
+    .on_click(cx.listener(move |this, _, _, cx| this.save_attachment(media.clone(), cx)))
+}
+
+fn remove_button(media: IssueMedia, removing: bool, cx: &Context<Issues>) -> impl IntoElement {
     let remove = action_button(
-        format!("attachment-remove:{id}"),
+        format!("attachment-remove:{}", media.media_id),
         Intent::Quiet,
         Some(IconName::Trash),
         "Remove",
     )
     .small()
     .on_click(cx.listener(move |this, _, _, _| {
-        if let Some(hub) = &this.hub {
-            hub.remove_attachment(&id);
+        if let Some(hub) = &this.hub
+            && !hub.comment_holds_attachment(&media)
+        {
+            hub.remove_attachment(&media.media_id);
         }
     }));
-    let remove = if removing {
+    if removing {
         ActionState::Busy.apply(remove)
     } else {
         remove
-    };
-    h_flex()
-        .min_w_0()
-        .gap_2()
-        .child(div().flex_1().min_w_0().child(shown))
-        .child(save)
-        .child(remove)
-        .into_any_element()
+    }
 }
 
 // qual:allow(coupling, oi) reason: "The panel's commands coordinate the board's hub, the open issue's scope and its attachment error line."
@@ -230,8 +268,9 @@ impl Issues {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
+            let protocol = hub.attachment_protocol();
             let read = cx
-                .background_spawn(async move { disk::read_chosen(&path) })
+                .background_spawn(async move { disk::read_chosen(&path, protocol) })
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.attach_picked(&hub, &target, read);
@@ -248,11 +287,14 @@ impl Issues {
         &mut self,
         hub: &subspace_api_client::hub::Hub,
         target: &subspace_api_client::hub::AttachmentTarget,
-        read: Option<(String, String, Vec<u8>)>,
+        read: Result<(String, String, Vec<u8>), UploadError>,
     ) {
-        let Some((name, mime, bytes)) = read else {
-            self.attachment_error = Some("Choose a supported file of up to 10 MB.".into());
-            return;
+        let (name, mime, bytes) = match read {
+            Ok(file) => file,
+            Err(error) => {
+                self.attachment_error = Some(error.message());
+                return;
+            }
         };
         let current = self.hub.as_ref().is_some_and(|open| open.same(hub));
         // Only a changed issue, opening, scope or hub says so; a file the
@@ -261,8 +303,8 @@ impl Issues {
             hub.add_attachment_to(target, &name, &mime, bytes)
                 .err()
                 .map(|error| match error {
-                    subspace_api_client::uploads::UploadError::Removed => CHANGED.to_owned(),
-                    subspace_api_client::uploads::UploadError::Budget => UPLOADS_FULL.to_owned(),
+                    UploadError::Removed => CHANGED.to_owned(),
+                    UploadError::Budget => UPLOADS_FULL.to_owned(),
                     error => error.message(),
                 })
         } else {
@@ -282,8 +324,7 @@ impl Issues {
             .map(|error| error.message());
     }
 
-    /// Saves a standalone attachment's bytes, read through its file grant,
-    /// where the person chooses.
+    /// Saves a listed attachment's bytes where the person chooses.
     pub(crate) fn save_attachment(&mut self, media: IssueMedia, cx: &mut Context<Self>) {
         let (Some(scope), Some(revision), Some(hub)) =
             (self.media.scope, self.media.revision, self.hub.clone())

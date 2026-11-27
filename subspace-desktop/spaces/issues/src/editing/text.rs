@@ -41,7 +41,7 @@ pub(super) fn input_changed(
     }
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct TextValues {
     pub(super) title: String,
     pub(super) summary: String,
@@ -76,6 +76,12 @@ impl TextValues {
         })
     }
 
+    pub(super) fn initial(detail: Option<&IssueDetail>, parent: Option<&str>) -> Self {
+        let mut values = Self::from_detail(detail);
+        values.parent = parent.map_or(values.parent, str::to_owned);
+        values
+    }
+
     pub(super) fn collect(self, basis: &Self, changes: &mut IssueChanges, create: bool) {
         if create || self.title != basis.title {
             changes.set(IssueProperty::Title(self.title));
@@ -90,7 +96,8 @@ impl TextValues {
         if self.due != basis.due {
             changes.set(IssueProperty::DueDate(nonempty(self.due)));
         }
-        if self.parent != basis.parent {
+        let previous_parent = if create { "" } else { &basis.parent };
+        if self.parent != previous_parent {
             changes.set(IssueProperty::Parent(nonempty(self.parent)));
         }
     }

@@ -6,6 +6,7 @@ import { migrate } from "drizzle-orm/effect-postgres/migrator";
 import { Effect } from "effect";
 import pg from "pg";
 import { Database, databaseLayer } from "../src/db";
+import { localDatabase } from "./local-database";
 
 const testDatabase = process.env.TEST_DATABASE_URL;
 const folder = new URL("../drizzle", import.meta.url).pathname;
@@ -22,16 +23,13 @@ function applyMigrations(url: string, migrationsFolder: string) {
 test.skipIf(!testDatabase)(
   "fleet backfill links existing fleets and preserves unmatched agents on rerun",
   async () => {
-    const connection = new URL(testDatabase!);
-    if (!["localhost", "127.0.0.1", "[::1]"].includes(connection.hostname))
-      throw new Error("TEST_DATABASE_URL must point to a local test database.");
+    const local = localDatabase(testDatabase!);
     const databaseName = `fleet_migration_${crypto.randomUUID().replaceAll("-", "")}`;
-    const admin = new pg.Client(testDatabase);
+    const admin = new pg.Client(local.settings());
     await admin.connect();
     try {
       await admin.query(`CREATE DATABASE "${databaseName}"`);
-      connection.pathname = databaseName;
-      const url = connection.toString();
+      const url = local.urlFor(databaseName);
       const previous = await mkdtemp(join(tmpdir(), "subspace-drizzle-"));
       const directories = (await readdir(folder)).sort();
       const fleetMigration = directories.find((name) => name.endsWith("_agent_fleet_ship_links"))!;
@@ -43,7 +41,7 @@ test.skipIf(!testDatabase)(
         await rm(previous, { recursive: true });
       }
 
-      const client = new pg.Client(url);
+      const client = new pg.Client(local.settings(databaseName));
       await client.connect();
       try {
         const org = "00000000-0000-4000-8000-000000000001";

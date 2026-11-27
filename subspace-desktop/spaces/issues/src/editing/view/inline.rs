@@ -1,4 +1,4 @@
-use super::{CancelIssueEditor, EDITOR_CONTEXT, SubmitIssueEditor, notices, picker};
+use super::{CancelIssueEditor, EDITOR_CONTEXT, SubmitIssueEditor, notices, parent, picker};
 use crate::{
     Issues,
     editing::{EditTarget, Phase},
@@ -93,14 +93,13 @@ fn control(board: &Issues, target: EditTarget, cx: &mut Context<Issues>) -> Opti
         .id("issue-inline-due")
         .disabled(editor.frozen())
         .into_any_element(),
-        EditTarget::Parent => fields::input(
-            &editor.parent,
-            InputRole::Compact,
-            "Parent issue identifier",
-        )
-        .id("issue-inline-parent")
-        .disabled(editor.frozen())
-        .into_any_element(),
+        EditTarget::Parent => parent::control(
+            board,
+            editor,
+            (InputRole::Compact, "issue-inline-parent"),
+            editor.frozen(),
+            cx,
+        ),
         _ => return None,
     })
 }

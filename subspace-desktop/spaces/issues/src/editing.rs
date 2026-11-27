@@ -24,7 +24,7 @@ use subspace_api_client::{
 use crate::Issues;
 use confirmation::{ChildChanges, TrackerConfirmation};
 use properties::Properties;
-use target::editable_detail;
+use target::{NewSubissue, editable_detail};
 use text::{TextValues, input, input_changed};
 
 const DESCRIPTION_MARKDOWN: &str = "markdown";
@@ -35,6 +35,7 @@ pub(crate) struct IssueEditor {
     scope: IssueWriteScope,
     key: CreateKey,
     basis: Option<Box<IssueDetail>>,
+    initial_text: TextValues,
     properties: Properties,
     catalogues: HashMap<ChoiceSource, Vec<IssueChoice>>,
     title: Entity<InputState>,
@@ -44,6 +45,8 @@ pub(crate) struct IssueEditor {
     scroll: ScrollHandle,
     due: Entity<InputState>,
     parent: Entity<InputState>,
+    subissue_of: Option<NewSubissue>,
+    parent_search: Option<view::ParentSearch>,
     phase: Phase,
     /// A newer version of the edited issue, read after a change elsewhere.
     elsewhere: Option<Box<IssueDetail>>,
@@ -100,13 +103,49 @@ impl Issues {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.editor.is_none()
-            && self.project_move.is_none()
-            && let Some(opening) = IssueEditor::opening(self, edit)
-        {
-            self.editor = Some(IssueEditor::new(self, opening, window, cx));
-            cx.notify();
+        if !self.editor_slot_available() {
+            return;
         }
+        let Some(opening) = IssueEditor::opening(self, edit) else {
+            return;
+        };
+        self.install_editor(opening, window, cx);
+    }
+
+    pub(crate) fn can_create_subissue(&self, detail: &IssueDetail) -> bool {
+        view::searches_trackers()
+            && detail.children.is_some()
+            && self.can_create_issue()
+            && editable_detail(self).is_some_and(|open| open.fields.id == detail.fields.id)
+    }
+
+    pub(crate) fn new_subissue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(opening) = self.subissue_opening() else {
+            return;
+        };
+        self.install_editor(opening, window, cx);
+    }
+
+    fn editor_slot_available(&self) -> bool {
+        self.editor.is_none() && self.project_move.is_none()
+    }
+
+    fn subissue_opening(&self) -> Option<draft::Opening> {
+        if !self.editor_slot_available() {
+            return None;
+        }
+        let detail = editable_detail(self).filter(|issue| self.can_create_subissue(issue))?;
+        IssueEditor::opening_subissue(self, detail)
+    }
+
+    fn install_editor(
+        &mut self,
+        opening: draft::Opening,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor = Some(IssueEditor::new(self, opening, window, cx));
+        cx.notify();
     }
 
     pub(crate) fn follow_editor(&mut self, snapshot: &HubSnapshot, cx: &mut Context<Self>) {
@@ -176,6 +215,8 @@ impl Issues {
     }
     fn close_issue_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.take() {
+            self.menu_anchors.dismiss(window, cx);
+            self.menu = None;
             if let Some(hub) = &self.hub {
                 hub.forget_issue_create(&editor.key);
             }

@@ -7,6 +7,7 @@ mod draft;
 mod reading;
 mod sending;
 use super::{Hub, HubError, HubStatus, State, lock};
+use crate::model::IssueMedia;
 pub(super) use checking::check;
 pub use draft::{CommentDraft, CommentState};
 use std::collections::HashMap;
@@ -27,6 +28,22 @@ impl DraftKey {
 }
 
 impl State {
+    pub(super) fn comment_holds_attachment(&self, media: &IssueMedia) -> bool {
+        let Some(detail) = self
+            .snapshot
+            .issue
+            .as_ref()
+            .and_then(|issue| issue.detail.as_ref())
+        else {
+            return false;
+        };
+        media.is_subspace_file()
+            && self.drafts.iter().any(|(key, draft)| {
+                (key.issue == detail.fields.id || key.issue == detail.fields.identifier)
+                    && draft.attachments().iter().any(|row| row.holds_media(media))
+            })
+    }
+
     fn writing_reason(&self, issue_id: &str, parent: Option<&str>) -> Option<&'static str> {
         if self.snapshot.status != HubStatus::Ready {
             return Some("Sign in under Settings › Account, then reload Issues.");
@@ -72,6 +89,11 @@ impl State {
 }
 
 impl Hub {
+    /// Whether an open comment draft on the current issue holds this listed file.
+    pub fn comment_holds_attachment(&self, media: &IssueMedia) -> bool {
+        lock(&self.0.state).comment_holds_attachment(media)
+    }
+
     pub fn has_comment_drafts(&self) -> bool {
         lock(&self.0.state)
             .drafts

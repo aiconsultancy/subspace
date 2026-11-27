@@ -68,7 +68,7 @@ pub(super) fn wait_for_option(cx: &mut VisualTestContext, ix: usize) {
 }
 
 #[gpui_kit::test]
-fn description_due_and_parent_edits_send_sparse_fields_and_keep_mentions(cx: &mut TestAppContext) {
+fn description_and_due_edits_send_sparse_fields_and_keep_mentions(cx: &mut TestAppContext) {
     let fixture = offline_with(|r| match (r.method.as_str(), r.path.as_str()) {
         ("PATCH", "/api/v1/issues/2") => Some((200, issue("Original", 2))),
         ("GET", "/api/v1/issues/SUB-2" | "/api/v1/issues/2") => Some((200, issue("Original", 1))),
@@ -106,28 +106,20 @@ fn description_due_and_parent_edits_send_sparse_fields_and_keep_mentions(cx: &mu
             Some(true)
         )
     });
-    for (id, text) in [
-        ("issue-edit-due", "2026-12-01"),
-        ("issue-edit-parent", "SUB-1"),
-    ] {
-        tab_to_visible_field(cx, id);
-        cx.update(|w, cx| {
-            w.press(subspace_framework::dashboard::secondary!("a"), cx);
-            w.input(text, cx);
-        });
-        render(cx);
-    }
+    tab_to_visible_field(cx, "issue-edit-due");
+    cx.update(|w, cx| {
+        w.press(subspace_framework::dashboard::secondary!("a"), cx);
+        w.input("2026-12-01", cx);
+    });
     cx.update(|w, cx| w.press(subspace_framework::dashboard::secondary!("enter"), cx));
     settle_board(&board, cx, |b| b.editor.is_none());
     assert_eq!(
         patch_bodies(&fixture),
-        [
-            json!({"version":1,"description":format!("{description}["),"dueDate":"2026-12-01","parentId":"SUB-1"})
-        ]
+        [json!({"version":1,"description":format!("{description}["),"dueDate":"2026-12-01"})]
     );
 }
 
-fn tab_to_visible_field(cx: &mut VisualTestContext, id: &'static str) {
+pub(super) fn tab_to_visible_field(cx: &mut VisualTestContext, id: &'static str) {
     for _ in 0..16 {
         if cx.update(|window, _| window.find(id).focused() == Some(true)) {
             render(cx);

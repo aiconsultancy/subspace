@@ -14,17 +14,38 @@ use super::{
     Hub, HubError, ReadPriority, Shared, lock,
     worker::{Job, Task},
 };
-use crate::{PageRequest, model::IssueMedia};
+use crate::{
+    PageRequest,
+    model::{IssueMedia, Page},
+    uploads::AttachmentProtocol,
+};
 pub(super) const QUEUE_CAPACITY: usize = 100;
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Endpoint {
+    #[default]
+    Unknown,
+    Listed,
+    Missing,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Read {
+    #[default]
+    Idle,
+    Loading,
+    Loaded,
+    Failed,
+}
 
 #[derive(Clone, Default)]
 // qual:allow(srp, god_struct) reason: "One immutable snapshot exposes independently readable media metadata and load status."
 pub struct FilesSnapshot {
     items: Vec<IssueMedia>,
     cursor: Option<String>,
-    loading: bool,
-    loaded: bool,
-    failed: bool,
+    read: Read,
+    endpoint: Endpoint,
+    scan: u64,
     cursors: std::collections::HashSet<String>,
     rescan: super::rescan::Rescan,
     /// Standalone attachments being added from the Attachments panel, in a
@@ -45,6 +66,11 @@ impl FilesSnapshot {
             items: std::mem::take(&mut self.items),
             removing: std::mem::take(&mut self.removing),
             notice: self.notice.take(),
+            endpoint: match self.endpoint {
+                Endpoint::Listed => Endpoint::Listed,
+                Endpoint::Unknown | Endpoint::Missing => Endpoint::Unknown,
+            },
+            scan: self.scan.wrapping_add(1),
             ..Self::default()
         };
         self.rescan.begin();
@@ -78,22 +104,43 @@ impl FilesSnapshot {
         &self.items
     }
     pub fn is_idle(&self) -> bool {
-        !self.loaded && !self.loading && !self.failed
+        self.read == Read::Idle
     }
-    // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary."
+    /// Whether the panel can offer standalone file actions.
+    pub fn accepts_files(&self, protocol: AttachmentProtocol) -> bool {
+        protocol.accepts_files(self.endpoint == Endpoint::Listed)
+    }
     pub fn is_failed(&self) -> bool {
-        self.failed
+        self.read == Read::Failed
     }
-    // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary."
     pub fn is_loading(&self) -> bool {
-        self.loading
+        self.read == Read::Loading
     }
     pub fn has_more(&self) -> bool {
         self.cursor.is_some()
     }
+
+    fn absorb(&mut self, page: Page<IssueMedia>) {
+        self.endpoint = Endpoint::Listed;
+        self.rescan.absorb(
+            &mut self.items,
+            page.items,
+            page.next_cursor.is_none(),
+            |item| &item.media_id,
+        );
+        self.read = match page.next_cursor.as_ref() {
+            Some(next) if !self.cursors.insert(next.clone()) => Read::Failed,
+            _ => Read::Loaded,
+        };
+        self.cursor = page.next_cursor;
+    }
 }
 
 impl Hub {
+    pub fn attachment_protocol(&self) -> AttachmentProtocol {
+        self.0.client.attachment_protocol()
+    }
+
     // qual:allow(dry, fragment) reason: "The UI boundary only locks state and queues a navigation-fenced read."
     pub fn load_attachments(&self) -> Result<(), HubError> {
         let mut state = lock(&self.0.state);
@@ -102,11 +149,10 @@ impl Hub {
             return Ok(());
         };
         let files = &mut issue.files;
-        if files.loading || (files.loaded && !files.has_more() && !files.failed) {
+        if matches!(files.read, Read::Loading | Read::Loaded) {
             return Ok(());
         }
-        files.loading = true;
-        files.failed = false;
+        files.read = Read::Loading;
         let task = Task::Files(issue.identifier.clone(), files.cursor.clone());
         state.changed();
         self.0.enqueue(&mut state, task, ReadPriority::Visible);
@@ -115,6 +161,9 @@ impl Hub {
 }
 
 pub(super) fn load(shared: &Shared, job: &Job, issue: &str, cursor: Option<&str>) {
+    let Some(scan) = current_scan(shared, cursor) else {
+        return;
+    };
     let sent = std::time::Instant::now();
     let result = shared.client.attachments(
         issue,
@@ -130,22 +179,19 @@ pub(super) fn load(shared: &Shared, job: &Job, issue: &str, cursor: Option<&str>
         return;
     };
     let files = &mut issue.files;
-    files.loading = false;
+    if !files.is_loading() || files.scan != scan || files.cursor.as_deref() != cursor {
+        return;
+    }
     match result {
-        Ok(page) => {
-            let last = page.next_cursor.is_none();
-            files
-                .rescan
-                .absorb(&mut files.items, page.items, last, |item| &item.media_id);
-            files.failed = page
-                .next_cursor
-                .as_ref()
-                .is_some_and(|next| !files.cursors.insert(next.clone()));
-            files.cursor = page.next_cursor;
-            files.loaded = true;
+        Ok(page) => files.absorb(page),
+        Err(error) if shared.client.attachment_protocol().hidden_endpoint(error) => {
+            files.endpoint = Endpoint::Missing;
+            files.read = Read::Loaded;
+            files.cursor = None;
+            files.rescan.abandon();
         }
         Err(error) => {
-            files.failed = true;
+            files.read = Read::Failed;
             files.rescan.abandon();
             if refused {
                 state.snapshot.status = super::HubStatus::Error(error.into());
@@ -154,12 +200,18 @@ pub(super) fn load(shared: &Shared, job: &Job, issue: &str, cursor: Option<&str>
             }
         }
     }
-    if files.has_more() && !files.failed {
-        files.loading = true;
+    if files.has_more() && !files.is_failed() {
+        files.read = Read::Loading;
         let task = Task::Files(issue.identifier.clone(), files.cursor.clone());
         shared.enqueue(&mut state, task, ReadPriority::LaterPage);
     }
     state.changed();
+}
+
+fn current_scan(shared: &Shared, cursor: Option<&str>) -> Option<u64> {
+    let state = lock(&shared.state);
+    let files = &state.snapshot.issue.as_ref()?.files;
+    (files.is_loading() && files.cursor.as_deref() == cursor).then_some(files.scan)
 }
 
 /// Reads the open issue's attachment list again from its first page.
@@ -168,7 +220,7 @@ fn reload_files(shared: &Shared, state: &mut super::State) {
         return;
     };
     issue.files.reload();
-    issue.files.loading = true;
+    issue.files.read = Read::Loading;
     let task = Task::Files(issue.identifier.clone(), None);
     shared.enqueue(state, task, ReadPriority::Visible);
 }

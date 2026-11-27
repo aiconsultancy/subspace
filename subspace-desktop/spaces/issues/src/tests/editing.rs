@@ -1,5 +1,6 @@
 mod details;
 mod elsewhere;
+mod parent;
 mod properties;
 mod review;
 mod summary;

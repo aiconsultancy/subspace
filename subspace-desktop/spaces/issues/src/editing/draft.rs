@@ -1,5 +1,5 @@
 //! Retained issue draft construction and projections.
-use super::target::{chosen_project, editable_detail};
+use super::target::{NewSubissue, chosen_project, editable_detail};
 use super::{
     DESCRIPTION_MARKDOWN, IssueDetail, IssueEditor, IssueWriteScope, Issues, Phase, Properties,
     TextValues, input, input_changed,
@@ -10,13 +10,18 @@ use std::collections::HashMap;
 use subspace_api_client::{
     hub::HubSnapshot,
     issue_writes::{CreateKey, IssueChanges},
+    model::Project,
 };
 
+pub(super) struct Opening {
+    scope: IssueWriteScope,
+    basis: Option<Box<IssueDetail>>,
+    project: String,
+    subissue_of: Option<NewSubissue>,
+}
+
 impl IssueEditor {
-    pub(super) fn opening(
-        issues: &Issues,
-        edit: bool,
-    ) -> Option<(IssueWriteScope, Option<Box<IssueDetail>>, String)> {
+    pub(super) fn opening(issues: &Issues, edit: bool) -> Option<Opening> {
         let scope = issues.hub.as_ref()?.issue_write_scope()?;
         let detail = if edit {
             Some(Box::new(editable_detail(issues)?.clone()))
@@ -27,25 +32,44 @@ impl IssueEditor {
             .as_ref()
             .map(|detail| detail.fields.project_id.clone())
             .or_else(|| chosen_project(issues))?;
-        Some((scope, detail, project))
+        Some(Opening {
+            scope,
+            basis: detail,
+            project,
+            subissue_of: None,
+        })
+    }
+
+    pub(super) fn opening_subissue(issues: &Issues, detail: &IssueDetail) -> Option<Opening> {
+        Some(Opening {
+            scope: issues.hub.as_ref()?.issue_write_scope()?,
+            basis: None,
+            project: detail.fields.project_id.clone(),
+            subissue_of: Some(NewSubissue {
+                id: detail.fields.id.clone(),
+                identifier: detail.fields.identifier.clone(),
+            }),
+        })
     }
 
     pub(super) fn new(
         issues: &Issues,
-        (scope, basis, project): (IssueWriteScope, Option<Box<IssueDetail>>, String),
+        Opening {
+            scope,
+            basis,
+            project,
+            subissue_of,
+        }: Opening,
         window: &mut Window,
         cx: &mut Context<Issues>,
     ) -> Self {
-        let initial = TextValues::from_detail(basis.as_deref());
-        let mut properties = Properties::new(&issues.projects, &project, basis.as_deref());
-        if let Some(name) = issues
-            .issue_view
-            .snapshot
-            .as_ref()
-            .and_then(|open| open.milestone_name())
-        {
-            properties.name_milestone(name);
-        }
+        let initial = TextValues::initial(
+            basis.as_deref(),
+            subissue_of
+                .as_ref()
+                .map(|parent| parent.identifier.as_str()),
+        );
+        let properties = opening_properties(issues, &project, basis.as_deref());
         let title = input(&initial.title, "Issue title", window, cx);
         let summary = input(
             &initial.summary,
@@ -55,7 +79,7 @@ impl IssueEditor {
         );
         let due = input(&initial.due, "YYYY-MM-DD", window, cx);
         let parent = input(&initial.parent, "Issue identifier, e.g. SUB-42", window, cx);
-        let description = description_input(initial.description, window, cx);
+        let description = description_input(initial.description.clone(), window, cx);
         let mut subscriptions: Vec<_> = [&title, &summary, &due, &parent]
             .into_iter()
             .map(|state| cx.subscribe_in(state, window, input_changed))
@@ -72,6 +96,7 @@ impl IssueEditor {
             scope,
             key: CreateKey::new(),
             basis,
+            initial_text: initial,
             properties,
             catalogues: HashMap::new(),
             title,
@@ -81,6 +106,8 @@ impl IssueEditor {
             scroll: ScrollHandle::new(),
             due,
             parent,
+            subissue_of,
+            parent_search: None,
             phase: Phase::default(),
             elsewhere: None,
             discard: false,
@@ -153,7 +180,7 @@ impl IssueEditor {
     pub(super) fn changes(&self, cx: &App) -> IssueChanges {
         let mut changes = IssueChanges::default();
         TextValues::read(self, cx).collect(
-            &TextValues::from_detail(self.basis.as_deref()),
+            &self.initial_text,
             &mut changes,
             !self.editing_existing(),
         );
@@ -162,10 +189,65 @@ impl IssueEditor {
     }
 
     pub(super) fn dirty(&self, cx: &App) -> bool {
-        let text = TextValues::read(self, cx);
-        let before = TextValues::from_detail(self.basis.as_deref());
-        text != before || self.properties.has_edits()
+        TextValues::read(self, cx) != self.initial_text || self.properties.has_edits()
     }
+
+    pub(super) fn keep_edits(
+        &mut self,
+        projects: &[Project],
+        issue: Box<IssueDetail>,
+        window: &mut Window,
+        cx: &mut Context<Issues>,
+    ) {
+        let original = self.initial_text.clone();
+        let current = TextValues::read(self, cx);
+        let latest = TextValues::from_detail(Some(&issue));
+        self.replace_unchanged(window, cx, (original, current, latest.clone()));
+        self.properties
+            .install_baseline(projects, &issue.fields.project_id, Some(&issue));
+        self.basis = Some(issue);
+        self.initial_text = latest;
+        self.elsewhere = None;
+    }
+
+    fn replace_unchanged(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Issues>,
+        (original, current, latest): (TextValues, TextValues, TextValues),
+    ) {
+        for (input, (before, current, latest)) in [
+            (&self.title, (original.title, current.title, latest.title)),
+            (&self.due, (original.due, current.due, latest.due)),
+            (
+                &self.parent,
+                (original.parent, current.parent, latest.parent),
+            ),
+        ] {
+            if before == current {
+                input.update(cx, |input, cx| input.set_value(latest, window, cx));
+            }
+        }
+        if original.summary == current.summary {
+            self.summary
+                .update(cx, |input, cx| input.set_value(latest.summary, window, cx));
+        }
+        if original.description == current.description {
+            self.description.update(cx, |input, cx| {
+                input.set_value(latest.description, window, cx)
+            });
+        }
+    }
+}
+
+fn opening_properties(issues: &Issues, project: &str, basis: Option<&IssueDetail>) -> Properties {
+    let mut properties = Properties::new(&issues.projects, project, basis);
+    let Some(name) = basis.and_then(|_| issues.issue_view.snapshot.as_ref()?.milestone_name())
+    else {
+        return properties;
+    };
+    properties.name_milestone(name);
+    properties
 }
 
 fn description_input(

@@ -7,37 +7,10 @@ import { migrate } from "drizzle-orm/effect-postgres/migrator";
 import { Effect } from "effect";
 import pg from "pg";
 import { Database, databaseLayer } from "../src/db";
+import { localDatabase as localServer } from "./local-database";
 
 const testDatabase = process.env.TEST_DATABASE_URL;
 const folder = fileURLToPath(new URL("../drizzle", import.meta.url));
-
-/**
- * Parses the test database URL once into explicit settings. `pg` would also honour host
- * overrides in the query string or the environment, so the URL may carry no options, its host
- * must be loopback, and every client below connects with these settings alone.
- */
-function localServer(raw: string) {
-  const url = new URL(raw);
-  if (!["postgres:", "postgresql:"].includes(url.protocol))
-    throw new Error("TEST_DATABASE_URL must be a postgresql:// URL.");
-  if (url.search || url.hash)
-    throw new Error("TEST_DATABASE_URL must not carry connection options.");
-  if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
-    throw new Error("TEST_DATABASE_URL must point to a local test database.");
-  const host = url.hostname === "[::1]" ? "::1" : url.hostname;
-  const port = Number(url.port || "5432");
-  const user = decodeURIComponent(url.username);
-  const password = decodeURIComponent(url.password);
-  const settings = (database: string) => ({ host, port, user, password, database });
-  const urlFor = (database: string) => {
-    const clean = new URL(`${url.protocol}//${url.host}`);
-    clean.username = url.username;
-    clean.password = url.password;
-    clean.pathname = `/${encodeURIComponent(database)}`;
-    return clean.toString();
-  };
-  return { settings, urlFor, database: decodeURIComponent(url.pathname.slice(1)) || user };
-}
 
 function applyMigrations(url: string, migrationsFolder: string) {
   return Effect.runPromise(

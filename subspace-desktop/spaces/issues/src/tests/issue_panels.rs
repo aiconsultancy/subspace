@@ -3,6 +3,7 @@ mod long_values;
 mod navigation;
 mod paging;
 mod progress;
+mod subissues;
 mod workflow_end;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
@@ -78,7 +79,12 @@ fn issue_properties_record_workflow_and_copy_keys_use_the_loaded_issue(cx: &mut 
     );
     cx.update(|_, cx| assert!(board.read(cx).menu.is_none()));
     // More ends the toolbar; the dock switches are the status bar's.
-    for field in ["issue-summary-edit", "issue-description-edit"] {
+    for field in [
+        "issue-summary-edit",
+        "issue-description-edit",
+        "attachment-add",
+        "issue-new-subissue",
+    ] {
         press(cx, "tab");
         cx.update(|window, _| assert_eq!(window.find(field).focused(), Some(true)));
     }

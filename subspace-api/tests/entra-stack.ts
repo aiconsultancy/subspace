@@ -13,36 +13,10 @@ import { type RemoteFetch } from "../src/auth";
 import { config } from "../src/config";
 import { Database, databaseLayer } from "../src/db";
 import { type Storage } from "../src/storage";
+import { localDatabase } from "./local-database";
 
 export const testDatabase = process.env.TEST_DATABASE_URL;
 const folder = fileURLToPath(new URL("../drizzle", import.meta.url));
-
-/**
- * Parses the test database URL into explicit settings. It may carry no options, and its host must
- * be loopback, so no test can reach a shared or remote database.
- */
-function localServer(raw: string) {
-  const url = new URL(raw);
-  if (!["postgres:", "postgresql:"].includes(url.protocol))
-    throw new Error("TEST_DATABASE_URL must be a postgresql:// URL.");
-  if (url.search || url.hash)
-    throw new Error("TEST_DATABASE_URL must not carry connection options.");
-  if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
-    throw new Error("TEST_DATABASE_URL must point to a local test database.");
-  const host = url.hostname === "[::1]" ? "::1" : url.hostname;
-  const port = Number(url.port || "5432");
-  const user = decodeURIComponent(url.username);
-  const password = decodeURIComponent(url.password);
-  const settings = (database: string) => ({ host, port, user, password, database });
-  const urlFor = (database: string) => {
-    const clean = new URL(`${url.protocol}//${url.host}`);
-    clean.username = url.username;
-    clean.password = url.password;
-    clean.pathname = `/${encodeURIComponent(database)}`;
-    return clean.toString();
-  };
-  return { settings, urlFor, database: decodeURIComponent(url.pathname.slice(1)) || user };
-}
 
 export function applyMigrations(url: string, migrationsFolder = folder) {
   return Effect.runPromise(
@@ -55,7 +29,7 @@ export function applyMigrations(url: string, migrationsFolder = folder) {
 
 /** A fresh database with every migration applied, and a client connected to it. */
 export async function isolatedDatabase(prefix: string, migrated = true) {
-  const local = localServer(testDatabase!);
+  const local = localDatabase(testDatabase!);
   const name = `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
   const admin = new pg.Client(local.settings(local.database));
   await admin.connect();

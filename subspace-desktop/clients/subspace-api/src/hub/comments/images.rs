@@ -88,6 +88,12 @@ struct Row {
     removed: bool,
     retry_at: Option<Instant>,
 }
+
+impl Row {
+    fn can_claim(&self, existing: &HashSet<String>, media: &IssueMedia) -> bool {
+        !existing.contains(&media.media_id) && self.declaration.matches(media)
+    }
+}
 impl std::fmt::Debug for Attachment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Attachment([redacted])")
@@ -120,6 +126,19 @@ impl Attachment {
             && matches!(row.state, AttachmentState::Failed(error) if error.retryable())
             && row.retry_at.is_none_or(|at| Instant::now() >= at)
     }
+    pub(super) fn holds_media(&self, media: &IssueMedia) -> bool {
+        let row = lock(&self.inner);
+        if let Some(saved) = &row.media {
+            return saved.media_id == media.media_id;
+        }
+        // Protect candidates recovery could claim before an ID is confirmed.
+        (row.state == AttachmentState::Uploading || row.uncertain)
+            && row
+                .existing
+                .as_ref()
+                .is_some_and(|ids| row.can_claim(ids, media))
+    }
+
     fn block(&self) -> Option<String> {
         let row = lock(&self.inner);
         let media = row

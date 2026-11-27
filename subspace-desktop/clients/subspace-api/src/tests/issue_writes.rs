@@ -87,6 +87,34 @@ fn errors_never_replay_a_write() {
 }
 
 #[test]
+fn a_parent_refusal_is_distinct_from_other_create_and_update_conflicts() {
+    for (body, create, update) in [
+        (
+            json!({"errors":{"parentId":["The parent is archived or would create a cycle."]}}),
+            IssueSaveError::ParentRefused,
+            IssueSaveError::ParentRefused,
+        ),
+        (
+            json!({"currentVersion":8}),
+            IssueSaveError::ProjectArchived,
+            IssueSaveError::Conflict,
+        ),
+    ] {
+        let mock = Mock::with_headers(move |_| {
+            (
+                409,
+                vec![("Content-Type".into(), "application/problem+json".into())],
+                body.to_string(),
+            )
+        });
+        let c = client(&mock);
+        assert_eq!(c.create_issue("project-1", &changes()).unwrap_err(), create);
+        assert_eq!(c.update_issue("1", 7, &changes()).unwrap_err(), update);
+        assert_eq!(mock.requests().len(), 2);
+    }
+}
+
+#[test]
 fn blocked_tracker_children_are_a_validation_error() {
     let mock = Mock::new(|_| {
         (

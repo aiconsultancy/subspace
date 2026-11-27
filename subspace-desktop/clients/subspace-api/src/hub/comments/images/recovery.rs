@@ -45,7 +45,7 @@ pub(super) fn check(
     let existing = row.existing.as_ref().ok_or(UploadError::Checking)?;
     let mut matches = rows
         .into_iter()
-        .filter(|media| !existing.contains(&media.media_id) && row.declaration.matches(media));
+        .filter(|media| row.can_claim(existing, media));
     let Some(media) = matches.next() else {
         row.checked_absent = true;
         row.state = AttachmentState::NotFound;

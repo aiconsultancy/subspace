@@ -84,6 +84,21 @@ impl Hub {
         Ok(issue)
     }
 
+    /// Reads one cursor page of eligible parent trackers without replacing the list.
+    // qual:api — exercised by the parent picker's headless integration tests.
+    pub fn tracker_parents(
+        &self,
+        scope: &IssueWriteScope,
+        search: &str,
+        cursor: Option<String>,
+        issue: Option<&str>,
+    ) -> Result<crate::model::Page<crate::model::IssueListItem>, IssueSaveError> {
+        self.require_issue_scope(scope)?;
+        let page = crate::parent_search::tracker_parents(&self.0.client, search, cursor, issue)?;
+        self.require_issue_scope(scope)?;
+        Ok(page)
+    }
+
     pub fn update_issue(
         &self,
         scope: &IssueWriteScope,

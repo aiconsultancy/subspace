@@ -318,7 +318,7 @@ fn main_column(
         .child(description::render(issues, detail, tokens, cx))
         .children(crate::media::view::panel(issues, open, cx))
         .children(crate::media::files::panel(issues, open, cx))
-        .children(subissues::render(detail, open, tokens, cx))
+        .children(subissues::render(issues, detail, open, tokens, cx))
         .children(todos::render(open, tokens, cx))
         .child(pull_requests::render(open, tokens, cx))
         .child(timeline::render(issues, open, tokens, cx))

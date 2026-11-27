@@ -1,7 +1,9 @@
 //! Bounded multipart intake. A POST is sent once; recovery only reads metadata.
+mod policy;
 mod transport;
 mod validation;
 pub use crate::media::MAX_IMAGE_BYTES;
+pub use policy::AttachmentProtocol;
 use sha2::{Digest as _, Sha256};
 pub(crate) use validation::document;
 pub use validation::{file_mime, max_bytes, without_format_characters};
@@ -28,8 +30,12 @@ impl std::fmt::Debug for ImageDeclaration {
 }
 impl ImageDeclaration {
     pub fn new(name: &str, mime: &str, bytes: &[u8]) -> Result<Self, UploadError> {
+        Self::with_limit(name, mime, bytes, max_bytes(mime))
+    }
+
+    fn with_limit(name: &str, mime: &str, bytes: &[u8], limit: usize) -> Result<Self, UploadError> {
         let name = validation::normalize_name(name)?;
-        validation::validate(&name, mime, bytes)?;
+        validation::validate(&name, mime, bytes, limit)?;
         Ok(Self {
             file_name: name,
             content_type: mime.into(),
@@ -105,6 +111,8 @@ impl Default for AttachmentAttempt {
 pub enum UploadError {
     #[error("Choose a supported image (up to 10 MiB and 4,096 px per side) or file (up to 10 MB).")]
     InvalidImage,
+    #[error("Choose a supported file of up to 10 MB.")]
+    UnsupportedFile,
     #[error("Keep at most eight attachments and 32 MiB in this draft, and 64 MiB across drafts.")]
     Budget,
     #[error("The upload may have completed. Choose Check or Remove; it will not be sent again.")]
@@ -129,7 +137,11 @@ impl UploadError {
     pub fn retryable(self) -> bool {
         !matches!(
             self,
-            Self::InvalidImage | Self::Budget | Self::Removed | Self::Cleanup
+            Self::InvalidImage
+                | Self::UnsupportedFile
+                | Self::Budget
+                | Self::Removed
+                | Self::Cleanup
         )
     }
 }

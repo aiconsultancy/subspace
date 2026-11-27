@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
+import { testIssueHierarchy } from "./issue-hierarchy";
 
 const baseUrl = process.env.TEST_API_URL?.replace(/\/$/u, "");
 const version = "/api/v1";
@@ -58,6 +59,25 @@ async function signIn(email: string, organisation: string) {
 
 type Item = { id: string; name: string; version: number };
 type Page<T> = { items: T[]; nextCursor: string | null };
+type Attachment = { mediaId: string; kind: string; url: string; removal?: string };
+const gif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+
+function multipart(path: string, name: string, body: Blob) {
+  const form = new FormData();
+  form.append("file", body, name);
+  return request(path, { method: "POST", body: form }, admin);
+}
+
+async function attachment(path: string, name: string, body: Blob) {
+  const response = await multipart(path, name, body);
+  expect(response.status).toBe(201);
+  return response.json() as Promise<Attachment>;
+}
+
+async function removalStates(list: string) {
+  const { items } = await json<Page<Attachment>>(200, list, admin);
+  return Object.fromEntries(items.map(({ mediaId, removal }) => [mediaId, removal]));
+}
 type Fleet = Item & {
   slug: string;
   fleetApiUrl: string | null;
@@ -558,17 +578,10 @@ describe.skipIf(!baseUrl)("desktop API against Compose PostgreSQL", () => {
   test("multipart attachments and image reads and deletes", async () => {
     const issue = await createIssue("File issue");
     const prefix = `/issues/${issue.id}`;
-    const upload = async (name: string, body: Blob, path: string) => {
-      const form = new FormData();
-      form.append("file", body, name);
-      const response = await request(path, { method: "POST", body: form }, admin);
-      expect(response.status).toBe(201);
-      return response.json() as Promise<{ id?: string; mediaId?: string; url: string }>;
-    };
-    const txt = await upload(
+    const txt = await attachment(
+      `${prefix}/attachments`,
       "example.txt",
       new Blob(["example"], { type: "text/plain" }),
-      `${prefix}/attachments`,
     );
     expect((await json<Page<Item>>(200, `${prefix}/attachments`, admin)).items).toHaveLength(1);
     const content = await request(`/issues/attachments/${txt.mediaId}`, {}, ordinary);
@@ -577,18 +590,113 @@ describe.skipIf(!baseUrl)("desktop API against Compose PostgreSQL", () => {
     expect(
       await json<boolean>(200, `/issues/attachments/${txt.mediaId}`, admin, "DELETE", {}),
     ).toBe(true);
-    const gif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
-    const image = await upload(
+    const uploaded = await multipart(
+      `${prefix}/images`,
       "example.gif",
       new Blob([gif], { type: "image/gif" }),
-      `${prefix}/images`,
     );
+    expect(uploaded.status).toBe(201);
+    const image = (await uploaded.json()) as { id: string };
     expect((await json<Page<Item>>(200, `${prefix}/images`, admin)).items[0]?.id).toBe(image.id);
     const bytes = await request(`/issues/media/${image.id}`, {}, admin);
     expect(Buffer.from(await bytes.arrayBuffer())).toEqual(gif);
     expect(await json<boolean>(200, `/issues/media/${image.id}/delete`, admin, "POST", {})).toBe(
       true,
     );
+  });
+
+  test("the attachment list and DELETE guard agree about description, comment and document links", async () => {
+    const issue = await createIssue("Linked files");
+    const prefix = `/issues/${issue.id}`;
+    const list = `${prefix}/attachments`;
+    const bytes = new Blob(["example"], { type: "text/plain" });
+    const description = await attachment(list, "description.txt", bytes);
+    const comment = await attachment(list, "comment.txt", bytes);
+    const revision = await attachment(list, "revision.txt", bytes);
+    const free = await attachment(list, "free.txt", bytes);
+    expect(await removalStates(list)).toEqual(
+      Object.fromEntries(
+        [description, comment, revision, free].map(({ mediaId }) => [mediaId, "available"]),
+      ),
+    );
+    await json(200, prefix, admin, "PATCH", {
+      version: issue.version,
+      description: `[Example](${description.url})`,
+    });
+    const posted = await json<Comment>(201, `${prefix}/comments`, admin, "POST", {
+      body: `[Example](nett-media:${comment.mediaId})`,
+    });
+    const doc = await json<{ reference: string }>(201, `${prefix}/documents`, admin, "POST", {
+      type: "spec",
+      title: "Example specification",
+      content: `[Example](${revision.url})`,
+    });
+    await json(200, `/documents/${doc.reference}`, admin, "PUT", {
+      baseRevision: 1,
+      content: "The current revision does not link to a file.",
+    });
+    expect(await removalStates(list)).toEqual({
+      [description.mediaId]: "linked",
+      [comment.mediaId]: "linked",
+      [revision.mediaId]: "linked",
+      [free.mediaId]: "available",
+    });
+    for (const { mediaId } of [description, comment, revision]) {
+      const path = `/issues/attachments/${mediaId}`;
+      await json(409, path, admin, "DELETE", {});
+      expect(await (await request(path, {}, ordinary)).text()).toBe("example");
+    }
+    await json(200, `${prefix}/comments/${posted.id}/delete`, admin, "POST", {});
+    expect((await removalStates(list))[comment.mediaId]).toBe("available");
+    for (const { mediaId } of [comment, free]) {
+      expect(await json(200, `/issues/attachments/${mediaId}`, admin, "DELETE", {})).toBe(true);
+    }
+    expect(await removalStates(list)).toEqual({
+      [description.mediaId]: "linked",
+      [revision.mediaId]: "linked",
+    });
+  });
+
+  test("raster attachments are validated, downloaded as files, and protected in both Markdown forms", async () => {
+    const issue = await createIssue("Raster file fixture");
+    const prefix = `/issues/${issue.id}`;
+    const list = `${prefix}/attachments`;
+    const body = new Blob([gif], { type: "image/gif" });
+    const file = await attachment(list, "file.gif", body);
+    expect(file.kind).toBe("file");
+    expect(await json(200, list, ordinary)).toMatchObject({
+      items: [{ mediaId: file.mediaId, kind: "file", removal: "available" }],
+    });
+    expect(await json(200, `${prefix}/images`, ordinary)).toMatchObject({ items: [] });
+    const path = `/issues/attachments/${file.mediaId}`;
+    const response = await request(path, {}, ordinary);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("image/gif");
+    expect(response.headers.get("Content-Disposition")).toBe(
+      "attachment; filename*=UTF-8''file.gif",
+    );
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(gif);
+
+    const mismatched = new Blob(["not an image"], { type: "image/gif" });
+    expect((await multipart(list, "mismatch.gif", mismatched)).status).toBe(400);
+    const svg = new Blob(["<svg/>"], { type: "image/svg+xml" });
+    expect((await multipart(list, "vector.svg", svg)).status).toBe(400);
+    const large = new Uint8Array(10_000_001);
+    large.set(gif);
+    large[large.length - 1] = 0x3b;
+    const oversized = await multipart(list, "large.gif", new Blob([large], { type: "image/gif" }));
+    expect(oversized.status).toBe(413);
+
+    for (const markdown of [`[Download](${file.url})`, `![Preview](${file.url})`]) {
+      const comment = await json<Comment>(201, `${prefix}/comments`, admin, "POST", {
+        body: markdown,
+      });
+      expect((await removalStates(list))[file.mediaId]).toBe("linked");
+      await json(409, path, admin, "DELETE", {});
+      await json(200, `${prefix}/comments/${comment.id}/delete`, admin, "POST", {});
+    }
+    expect((await removalStates(list))[file.mediaId]).toBe("available");
   });
   test("issue relations and move previews preserve UUID and old identifier", async () => {
     const root = await createIssue("Moving root");
@@ -760,150 +868,7 @@ describe.skipIf(!baseUrl)("desktop API against Compose PostgreSQL", () => {
       expect(detail.pullRequestSummary.total).toBe(1);
     },
   );
-  test("tracker states follow children and issue archive retains attribution", async () => {
-    const tracker = await json<Issue>(201, "/issues", admin, "POST", {
-      projectId,
-      type: "tracker",
-      title: "Issue tracker",
-      summary: "Tracks the fixture child",
-    });
-    const states = await json<Page<{ id: string; type: string }>>(
-      200,
-      `/projects/${key}/workflow-states`,
-      admin,
-    );
-    const completed = states.items.find(({ type }) => type === "completed")!;
-    const child = await json<Issue>(201, "/issues", admin, "POST", {
-      projectId,
-      title: "Completed child",
-      summary: "Completed child fixture",
-      parentId: tracker.id,
-      stateId: completed.id,
-    });
-    expect((await json<Issue>(200, `/issues/${tracker.id}`, admin)).state.type).toBe("completed");
-    const archive = await json<Issue & { archivedBy: { userId: string } }>(
-      200,
-      `/issues/${child.id}/archive`,
-      admin,
-      "POST",
-      { version: child.version },
-    );
-    expect(archive.archivedBy.userId).toBe(adminId);
-    expect((await json<Issue>(200, `/issues/${tracker.id}`, admin)).state.type).toBe("backlog");
-    await json(200, `/issues/${child.id}/unarchive`, admin, "POST", { version: archive.version });
-    expect((await json<Issue>(200, `/issues/${tracker.id}`, admin)).state.type).toBe("completed");
-  });
-
-  test("tracker assignment and derived state update children only with confirmation", async () => {
-    type Assigned = Issue & { assignee: { userId: string } | null; readyForAgents: boolean };
-    const states = await json<Page<{ id: string; type: string }>>(
-      200,
-      `/projects/${key}/workflow-states`,
-      admin,
-    );
-    const backlog = states.items.find((state) => state.type === "backlog")!.id;
-    const todo = states.items.find((state) => state.type === "unstarted")!.id;
-    const done = states.items.find((state) => state.type === "completed")!.id;
-    const tracker = await json<Assigned>(201, "/issues", admin, "POST", {
-      projectId,
-      type: "tracker",
-      title: "Coordinator fixture",
-      summary: "Group child changes",
-    });
-    const child = (title: string, stateId: string, fields = {}) =>
-      json<Assigned>(201, "/issues", admin, "POST", {
-        projectId,
-        title,
-        summary: title,
-        parentId: tracker.id,
-        stateId,
-        ...fields,
-      });
-    const waiting = await child("Waiting fixture", backlog, { readyForAgents: true });
-    const assigned = await child("Already assigned", backlog, { assigneeId: adminId });
-    const completed = await child("Already completed", done);
-    const archived = await child("Archived child", backlog);
-    await json(200, `/issues/${archived.id}/archive`, admin, "POST", { version: archived.version });
-
-    const read = (id: string) => json<Assigned>(200, `/issues/${id}`, admin);
-    const patch = (status: number, version: number, changes: object) =>
-      json<Assigned>(status, `/issues/${tracker.id}`, admin, "PATCH", { version, ...changes });
-    const current = await read(tracker.id);
-    const onlyTracker = await patch(200, current.version, { assigneeId: ordinaryId });
-    expect(onlyTracker.assignee?.userId).toBe(ordinaryId);
-    expect((await read(waiting.id)).assignee).toBeNull();
-
-    await patch(400, onlyTracker.version, { moveOpenChildren: false });
-    await patch(400, onlyTracker.version, { assignUnassignedChildren: false });
-    expect((await read(tracker.id)).version).toBe(onlyTracker.version);
-    await patch(400, onlyTracker.version, { stateId: todo });
-    await patch(409, current.version, { assigneeId: ordinaryId, assignUnassignedChildren: true });
-    const updated = await patch(200, onlyTracker.version, {
-      assigneeId: ordinaryId,
-      assignUnassignedChildren: true,
-      stateId: todo,
-      moveOpenChildren: true,
-    });
-    expect(updated.assignee?.userId).toBe(ordinaryId);
-    expect(updated.state.type).toBe("started");
-    expect(await read(waiting.id)).toMatchObject({
-      assignee: { userId: ordinaryId },
-      state: { id: todo },
-      readyForAgents: false,
-      version: waiting.version + 1,
-    });
-    expect(await read(assigned.id)).toMatchObject({
-      assignee: { userId: adminId },
-      state: { id: todo },
-    });
-    expect((await read(completed.id)).state.id).toBe(done);
-    expect(await read(archived.id)).toMatchObject({ assignee: null, state: { id: backlog } });
-    const activity = await json<Page<{ kind: string }>>(
-      200,
-      `/issues/${waiting.id}/activity`,
-      admin,
-    );
-    expect(activity.items.some((item) => item.kind === "issue.changed")).toBe(true);
-
-    const childProject = await json<{ id: string; version: number }>(
-      201,
-      "/projects",
-      admin,
-      "POST",
-      {
-        key: "SIDE",
-        name: "Child project fixture",
-      },
-    );
-    await json<Assigned>(201, "/issues", admin, "POST", {
-      projectId: childProject.id,
-      title: "A child in another project",
-      summary: "Check atomic refusal.",
-      parentId: tracker.id,
-    });
-    await json(200, `/projects/${childProject.id}/archive`, admin, "POST", {
-      version: childProject.version,
-    });
-    const unchanged = await read(tracker.id);
-    const refused = await request(
-      `/issues/${tracker.id}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({
-          version: unchanged.version,
-          stateId: backlog,
-          moveOpenChildren: true,
-        }),
-      },
-      admin,
-    );
-    expect(refused.status).toBe(400);
-    expect(await refused.json()).toMatchObject({
-      errors: { trackerChildren: ["A child belongs to an archived project."] },
-    });
-    expect((await read(tracker.id)).version).toBe(unchanged.version);
-    expect((await read(waiting.id)).state.id).toBe(todo);
-  });
+  testIssueHierarchy(json, () => ({ admin, adminId, key, ordinaryId, projectId, runId }));
 
   test("todo batch, versioned changes, reorder, deletion and Issue detail", async () => {
     const issue = await createIssue("Issue with todos");

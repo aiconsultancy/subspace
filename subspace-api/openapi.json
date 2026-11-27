@@ -17304,6 +17304,16 @@
             "required": false
           },
           {
+            "name": "parentFor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            },
+            "required": false
+          },
+          {
             "name": "limit",
             "in": "query",
             "schema": {
@@ -17440,7 +17450,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Set `parentFor` to an issue key or UUID, or `new` for creation, to list only eligible parents. This excludes the issue itself, its descendants, and archived or cyclic ancestry."
       },
       "post": {
         "tags": [
@@ -39466,6 +39477,14 @@
           },
           "publicFileId": {
             "type": "string"
+          },
+          "removal": {
+            "type": "string",
+            "enum": [
+              "available",
+              "linked",
+              "archived"
+            ]
           }
         },
         "required": [
