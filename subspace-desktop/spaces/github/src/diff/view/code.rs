@@ -211,7 +211,7 @@ impl DiffView {
                         Some(IconName::RefreshCw),
                         "Refresh",
                     )
-                    .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx)))],
+                    .on_click(cx.listener(|view, _, _, cx| view.load(cx)))],
                 )
                 .into_any_element()
             }
@@ -253,18 +253,20 @@ impl DiffView {
                         .child(self.file_header(file, "diff-sticky", tokens, cx)),
                 )
             })
-            .when(self.error.is_some(), |el| {
-                let error = self.error.clone().unwrap_or_default();
-                el.child(div().absolute().bottom_0().left_0().right_0().child(
-                    feedback::error_banner(
-                        tokens,
-                        "github-diff-banner",
-                        "Reload failed",
-                        error,
-                        cx.listener(|view, _, _, cx| view.load(cx)),
-                    ),
-                ))
-            })
+            .when_some(
+                self.error.as_ref().filter(|_| self.item().is_some()),
+                |el, error| {
+                    el.child(div().absolute().bottom_0().left_0().right_0().child(
+                        feedback::error_banner(
+                            tokens,
+                            "github-diff-banner",
+                            "Reload failed",
+                            error.clone(),
+                            cx.listener(|view, _, _, cx| view.load(cx)),
+                        ),
+                    ))
+                },
+            )
             .into_any_element()
     }
 

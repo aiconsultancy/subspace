@@ -20,8 +20,13 @@ The viewer checks for changes again when the Space becomes active. A conflict
 or missing list continuation also asks for **Refresh**. If a list or file
 page reports an unstable read, the viewer still displays the content and
 shows **Changed while loading · Refresh**. Closing or refreshing cancels the
-old load before it requests another page. A stale snapshot cancels file, byte
-and preview reads but leaves already loaded content visible. Busy requests retry
+old load before it requests another page. **Refresh** keeps the displayed files,
+selection and scroll position until the new snapshot for the same mode is
+ready. It pauses reads from the old snapshot; if the refresh fails temporarily,
+the diff stays visible with an inline **Retry**. A mode or access change, or a
+confirmed unavailable diff, clears the previous result. A stale snapshot
+cancels file, byte and preview reads but leaves already loaded content visible.
+Busy requests retry
 the same page up to twice, respecting a numeric `Retry-After`. If the wait is
 over ten seconds or the retries run out, **Retry page** repeats the failed file,
 binary or preview page without reloading the file list or discarding loaded

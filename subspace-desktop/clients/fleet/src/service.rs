@@ -59,6 +59,14 @@ pub struct FleetInfo {
     pub state: FleetState,
 }
 
+/// The address and applied credential revision of a ready Fleet connection.
+/// Views can compare this without retaining a copy of the token.
+#[derive(PartialEq, Eq)]
+pub struct FleetAccess {
+    address: crate::FleetAddress,
+    revision: u64,
+}
+
 /// A Retry waiting for its fleet's interval: the generation it was asked
 /// in, its own identity and when the person asked.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -119,6 +127,7 @@ pub struct FleetApi {
     feeds: BTreeMap<String, Followed>,
     revision: u64,
     directory_revision: u64,
+    access_revisions: BTreeMap<String, u64>,
     /// Whether the timer that checks followed fleets runs.
     ticking: bool,
     _catalog: Option<Subscription>,
@@ -186,6 +195,7 @@ impl FleetApi {
             feeds: BTreeMap::new(),
             revision: 0,
             directory_revision: 0,
+            access_revisions: BTreeMap::new(),
             ticking: false,
             _catalog: None,
         }
@@ -199,6 +209,7 @@ impl FleetApi {
         }
         for gone in directory::removed(&self.fleets, &fleets) {
             self.supersede(&gone);
+            self.access_revisions.remove(&gone);
         }
         let new = directory::retain_tokens(&mut self.tokens, &fleets);
         self.fleets = fleets;
@@ -241,6 +252,23 @@ impl FleetApi {
     pub fn client(&self, fleet: &str) -> Result<FleetClient, FleetState> {
         let record = self.record(fleet).ok_or(FleetState::NotConfigured)?;
         directory::ready_client(record, self.token_load(fleet))
+    }
+
+    /// A ready client and the access scope it was created for.
+    pub fn client_with_access(
+        &self,
+        fleet: &str,
+    ) -> Result<(FleetClient, FleetAccess), FleetState> {
+        let client = self.client(fleet)?;
+        let access = FleetAccess {
+            address: client.address().clone(),
+            revision: self
+                .access_revisions
+                .get(fleet)
+                .copied()
+                .unwrap_or_default(),
+        };
+        Ok((client, access))
     }
 
     /// What the fleet's stream has delivered, while something follows it.
@@ -346,6 +374,8 @@ impl FleetApi {
             return;
         }
         self.tokens.insert(fleet.to_owned(), token);
+        self.access_revisions
+            .insert(fleet.to_owned(), self.directory_revision.wrapping_add(1));
         self.changed(cx);
     }
 

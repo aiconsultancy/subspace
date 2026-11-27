@@ -20,7 +20,9 @@ const SHIP: &str = "example-ship";
 const CREW: &str = "example-crew";
 
 mod reads;
+mod refresh;
 mod retry;
+pub(super) use refresh::ThreadedReads;
 pub(super) use retry::ReadGate;
 
 fn fixture(cursor: bool) -> String {

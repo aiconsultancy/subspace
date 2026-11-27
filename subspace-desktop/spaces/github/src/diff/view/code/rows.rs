@@ -149,6 +149,12 @@ impl DiffView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let row = h_flex().h(px(code_row_height(tokens))).px(px(BAR_PAD_PX));
+        if self.refreshing_crew() {
+            return row
+                .text_color(tokens.muted)
+                .child("Refreshing…")
+                .into_any_element();
+        }
         if self.fleet.changed() {
             return row
                 .child(
@@ -158,7 +164,7 @@ impl DiffView {
                         Some(IconName::RefreshCw),
                         "Refresh diff",
                     )
-                    .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
+                    .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
                 )
                 .into_any_element();
         }

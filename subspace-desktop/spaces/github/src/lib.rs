@@ -1780,11 +1780,11 @@ impl Dashboard for Github {
         })
     }
 
-    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn reload(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(diff) = self.diff.view()
             && diff.read(cx).item().is_none()
         {
-            diff.update(cx, |diff, cx| diff.reload(window, cx));
+            diff.update(cx, DiffView::load);
             return;
         }
         if !self.started {

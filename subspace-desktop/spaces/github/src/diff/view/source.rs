@@ -7,7 +7,7 @@ use std::sync::Arc;
 use gpui_kit::Subscription;
 use subspace_client_fleet::diff::{DiffMode, DiffRead, DiffStatus, DiffTarget, V1Diff, V1DiffFile};
 use subspace_client_fleet::navigation::OpenCrewDiff;
-use subspace_client_fleet::{Error, FleetApi, FleetClient, FleetFollow};
+use subspace_client_fleet::{Error, FleetAccess, FleetApi, FleetClient, FleetFollow};
 use subspace_framework::client_github::Client;
 use subspace_framework::client_github::model::{DiffResponse, GhDiffFile, GhFileStatus, GhItem};
 
@@ -34,6 +34,7 @@ pub(crate) struct FleetSource {
 #[derive(Default)]
 pub(super) struct FleetState {
     pub mode: DiffMode,
+    pub access: Option<FleetAccess>,
     pub fingerprint: Option<String>,
     pub live_fingerprint: Option<String>,
     pub live_revision: u64,
@@ -110,10 +111,14 @@ impl FleetSource {
     }
 
     pub fn client(&self, cx: &gpui_kit::App) -> Result<FleetClient, String> {
+        self.connection(cx).map(|(client, _)| client)
+    }
+
+    pub fn connection(&self, cx: &gpui_kit::App) -> Result<(FleetClient, FleetAccess), String> {
         FleetApi::current(cx)
             .ok_or_else(|| "Fleet connections are unavailable.".to_owned())?
             .read(cx)
-            .client(&self.target.fleet)
+            .client_with_access(&self.target.fleet)
             .map_err(|state| state.help().unwrap_or_else(|| state.label()).to_owned())
     }
 

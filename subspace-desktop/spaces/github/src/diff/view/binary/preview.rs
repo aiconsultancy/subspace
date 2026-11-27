@@ -77,7 +77,7 @@ impl DiffView {
         ) else {
             return;
         };
-        if self.fleet.changed() || binary.read.is_some() {
+        if self.crew_pages_suspended() || binary.read.is_some() {
             return;
         }
         if self.binary_retry_remaining(cx) > 0 {

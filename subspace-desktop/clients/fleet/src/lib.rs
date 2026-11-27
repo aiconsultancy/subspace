@@ -30,7 +30,7 @@ pub use directory::{FleetRecord, FleetState, SharedFleet, fleets_of};
 pub use error::Error;
 pub use events::FleetEvent;
 pub use feed::{Feed, FleetSnapshot, Link, MAX_ACTIVITY};
-pub use service::{FleetApi, FleetFollow, FleetInfo, TokenError};
+pub use service::{FleetAccess, FleetApi, FleetFollow, FleetInfo, TokenError};
 pub use tokens::{SavedToken, StoreError, TOKEN_FILE, TokenMismatch, TokenStore};
 
 #[cfg(test)]

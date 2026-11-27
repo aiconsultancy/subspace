@@ -18,9 +18,11 @@ impl DiffView {
         };
         let target = source.target.clone();
         let follow = api.update(cx, |api, cx| api.follow(&target.fleet, cx));
+        self.check_crew_access(cx);
         self.observe_crew_fingerprint(fingerprint(api.read(cx), &target));
         let observe = cx.observe(&api, move |view, api, cx| {
-            if view.observe_crew_fingerprint(fingerprint(api.read(cx), &target)) {
+            let access_changed = view.check_crew_access(cx);
+            if view.observe_crew_fingerprint(fingerprint(api.read(cx), &target)) || access_changed {
                 cx.notify();
             }
         });

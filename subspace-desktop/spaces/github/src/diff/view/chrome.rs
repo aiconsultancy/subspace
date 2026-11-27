@@ -8,7 +8,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, Div, Hsla, InteractiveElement as _, IntoElement, KeyContext,
     OperatingSystem, ParentElement as _, Pixels, StatefulInteractiveElement as _, Styled as _,
-    Window, div, px, uniform_list,
+    TestSupportExt as _, Window, div, px, uniform_list,
 };
 use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::truncated;
@@ -156,6 +156,7 @@ impl DiffView {
         let (letter, color) = status_mark(tree_status(view.file.status), tokens);
         h_flex()
             .id(("tree-file", index))
+            .test_support()
             .w_full()
             .h(px(TREE_ROW_H))
             .pl(px(TREE_PAD_PX + row.depth as f32 * TREE_INDENT_PX))

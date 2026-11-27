@@ -225,7 +225,7 @@ pub struct DiffView {
     binary_holds: binary::BinaryHolds,
     full_line: Option<full_line::FullLine>,
     _search_subscription: Subscription,
-    _load: Option<Task<()>>,
+    load_task: Option<Task<()>>,
 }
 
 impl EventEmitter<DiffEvent> for DiffView {}
@@ -275,7 +275,7 @@ impl DiffView {
             binary_holds: binary::BinaryHolds::default(),
             full_line: None,
             _search_subscription: subscription,
-            _load: None,
+            load_task: None,
         };
         cx.on_release(|view, cx| {
             view.fleet.list_read.cancel();

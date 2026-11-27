@@ -1,9 +1,11 @@
 //! Toolbar controls specific to a crew checkout.
 
 use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{Context, Div, Entity, ParentElement as _, Styled as _, Window, px};
 use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::dashboard::action::{Intent, action_button};
+use subspace_framework::dashboard::feedback;
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::segmented::{self, Segment};
 use subspace_framework::dashboard::{PaletteCommand, Tokens, truncated};
@@ -27,8 +29,8 @@ impl DiffView {
         let view = view.downgrade();
         commands.push(PaletteCommand::callback(
             "Refresh crew diff",
-            move |window, cx| {
-                _ = view.update(cx, |view, cx| view.reload(window, cx));
+            move |_, cx| {
+                _ = view.update(cx, DiffView::load);
             },
         ));
         commands
@@ -51,7 +53,13 @@ impl DiffView {
             .child(
                 Self::bar(tokens, cx)
                     .child(truncated::text("crew-diff-title", title).min_w_0().flex_1())
-                    .child(self.layout_toggles(tokens, cx))
+                    .when(self.refreshing_crew(), |bar| {
+                        bar.child(
+                            gpui_kit::div()
+                                .text_color(tokens.muted)
+                                .child("Refreshing…"),
+                        )
+                    })
                     .child(
                         action_button(
                             "crew-diff-refresh",
@@ -59,8 +67,9 @@ impl DiffView {
                             Some(IconName::RefreshCw),
                             "Refresh",
                         )
-                        .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
-                    ),
+                        .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
+                    )
+                    .child(self.layout_toggles(tokens, cx)),
             )
             .child(
                 h_flex()
@@ -71,6 +80,24 @@ impl DiffView {
                     .child(self.mode_control(tokens, cx)),
             )
             .children(self.fleet_notice(tokens, cx))
+            .children(self.refresh_error(tokens, cx))
+    }
+
+    fn refresh_error(&self, tokens: &Tokens, cx: &Context<Self>) -> Option<Div> {
+        let error = self.error.as_ref().filter(|_| self.loaded)?;
+        Some(feedback::error_banner_with_actions(
+            tokens,
+            "crew-diff-refresh-error",
+            "Refresh failed",
+            error.clone(),
+            [action_button(
+                "crew-diff-refresh-retry",
+                Intent::Neutral,
+                Some(IconName::RefreshCw),
+                "Retry",
+            )
+            .on_click(cx.listener(|view, _, _, cx| view.load(cx)))],
+        ))
     }
 
     fn fleet_notice(&self, tokens: &Tokens, cx: &Context<Self>) -> Option<Div> {
@@ -89,7 +116,7 @@ impl DiffView {
                         Some(IconName::RefreshCw),
                         "Refresh",
                     )
-                    .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
+                    .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
                 ),
         )
     }
@@ -119,7 +146,7 @@ impl DiffView {
     ) {
         if self.fleet.mode != mode {
             self.close_binary(window, cx);
-            self.binary_holds = Default::default();
+            self.clear_snapshot(cx);
             self.fleet.mode = mode;
             self.load(cx);
         }

@@ -147,7 +147,6 @@ impl DiffView {
             binary.read = None;
             binary.retry = None;
             binary.clock = None;
-            binary.hold_changes = None;
         }
     }
 
@@ -166,10 +165,13 @@ impl DiffView {
     fn other_binary_side(&self, file: usize, index: usize) -> Option<DiffSide> {
         let side = [DiffSide::Old, DiffSide::New].get(index).copied()?;
         let binary = self.binary.as_ref()?;
-        (binary.file == file && binary.side != side && !self.fleet.changed()).then_some(side)
+        (binary.file == file && binary.side != side && !self.crew_pages_suspended()).then_some(side)
     }
 
     pub(super) fn open_binary(&mut self, file: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refreshing_crew() {
+            return;
+        }
         let Some(view) = self.files.get(file).filter(|view| view.binary) else {
             return;
         };
@@ -261,7 +263,7 @@ impl DiffView {
 
 impl DiffView {
     fn retry_binary(&mut self, cx: &mut Context<Self>) {
-        if self.fleet.changed() || self.binary_retry_remaining(cx) > 0 {
+        if self.crew_pages_suspended() || self.binary_retry_remaining(cx) > 0 {
             return;
         }
         let Some(retry) = self.binary.as_mut().and_then(|binary| binary.retry.take()) else {

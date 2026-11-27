@@ -24,7 +24,7 @@ impl DiffView {
         let Some(page) = file.next_page.clone() else {
             return;
         };
-        if self.fleet.changed()
+        if self.crew_pages_suspended()
             || self.fleet.loading.contains(&index)
             || self
                 .fleet

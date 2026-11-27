@@ -12,6 +12,9 @@ use crate::diff::view::{DiffEvent, DiffSource, pages::validate_page};
 
 impl DiffView {
     pub(super) fn read_binary(&mut self, direction: Move, cx: &mut Context<Self>) {
+        if self.crew_pages_suspended() {
+            return;
+        }
         let held = self.binary_retry_remaining(cx) > 0;
         let (DiffSource::Fleet(source), Some(at), Some(binary)) = (
             self.source.clone(),
@@ -20,7 +23,7 @@ impl DiffView {
         ) else {
             return;
         };
-        if self.fleet.changed() || binary.read.is_some() {
+        if binary.read.is_some() {
             return;
         }
         if held {

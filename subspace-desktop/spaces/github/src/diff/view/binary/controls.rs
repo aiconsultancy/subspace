@@ -23,7 +23,7 @@ impl DiffView {
         tokens: &Tokens,
         cx: &Context<Self>,
     ) -> Div {
-        let changed = self.fleet.changed();
+        let changed = self.crew_pages_suspended();
         let status = self.files[binary.file].file.status;
         h_flex()
             .px_3()
@@ -79,20 +79,8 @@ fn paging_controls(
     cx: &Context<DiffView>,
 ) -> Div {
     let row = h_flex().gap_2().flex_wrap();
-    if view.fleet.changed() {
-        return row
-            .child(
-                action_button(
-                    "crew-binary-refresh",
-                    Intent::Quiet,
-                    Some(IconName::RefreshCw),
-                    "Refresh diff",
-                )
-                .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
-            )
-            .when(binary.preview.is_some(), |row| {
-                row.child(preview::bytes_button(cx))
-            });
+    if view.crew_pages_suspended() {
+        return suspended_controls(row, view, binary, cx);
     }
     let remaining = view.binary_retry_remaining(cx);
     let held = remaining > 0;
@@ -117,6 +105,28 @@ fn paging_controls(
     } else {
         row
     }
+}
+
+fn suspended_controls(
+    row: Div,
+    view: &DiffView,
+    binary: &BinaryView,
+    cx: &Context<DiffView>,
+) -> Div {
+    row.when(!view.refreshing_crew(), |row| {
+        row.child(
+            action_button(
+                "crew-binary-refresh",
+                Intent::Quiet,
+                Some(IconName::RefreshCw),
+                "Refresh diff",
+            )
+            .on_click(cx.listener(|view, _, _, cx| view.load(cx))),
+        )
+    })
+    .when(binary.preview.is_some(), |row| {
+        row.child(preview::bytes_button(cx))
+    })
 }
 
 fn retry_controls(
