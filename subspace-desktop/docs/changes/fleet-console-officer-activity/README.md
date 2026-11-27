@@ -383,3 +383,16 @@ except the generation control. They:
   generation;
 - charge nothing for a window unmounted by closing its turn or moving the
   items window, when its item is refitted later.
+
+The round 8 tests are in `test/activity-round8.test.js` (SUB decision
+`cf21d510`); each fails at `12f2d2e1`, except the check that a handover
+whose turn closed still shows its part. They:
+
+- read in parts every item on show that inline growth would free,
+  counting the room the latest request gives back as it reads in parts;
+- map a text part's other fields to where the part serves them;
+- read page 0 of the newest version when the snapshot grows during
+  **Load the latest**, and again on **Try again**;
+- let go of the outgoing window when its turn closes during a handover,
+  keeping the read and leaving nothing held when it fails;
+- name nothing in `wouldFree` that `reserve` would refuse.
