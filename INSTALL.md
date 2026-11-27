@@ -187,8 +187,10 @@ answer it now.
    For a local VM, **use an SSH tunnel if unsure**; it needs no extra network.
    For a cloud VM, plan a private route before creating it. If the user has
    no private network, offer [Tailscale or Cloudflare Zero Trust](#set-up-the-private-network)
-   for SSH. Ask whether they can sign in and approve the needed devices now.
-   If they cannot, offer a local VM or stop and leave the steps. Guided setup
+   for SSH. If they have no preference, use Tailscale: it needs no domain of
+   their own. Do the browser sign-in and device approval together before the
+   unattended run starts; if they cannot, do not create the cloud VM yet:
+   offer a local VM instead, or stop and leave them the steps. Guided setup
    does not deploy Headscale yet.
 
    Decide separately whether workstations should use the SSH tunnel or
@@ -200,6 +202,8 @@ answer it now.
    tunnel-only access to those services. **Keep SSH for administration**:
    `--access ssh|tailscale|cloudflare` and `--ssh-from` govern that route,
    not workstation sign-in. Do not open public inbound ports.
+   Also offer nginx with internal host names if they want browser-friendly
+   addresses.
 3. **How will people sign in?** A network route does not identify a person.
    For an API that already has [WorkOS or Entra configured](subspace-api/README.md#external-sign-in),
    use that provider and check that the owner has an administrator membership.
