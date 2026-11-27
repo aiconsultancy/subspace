@@ -8,12 +8,32 @@ import { PART_MAX_BYTES } from "../src/activity.js";
 import { servedPart, servedUnit } from "../src/document.js";
 import { itemDocument, measureSource } from "../src/activity-view.js";
 import { activityEvent, textItem, toolItem } from "./activity-fixtures.js";
-import { officer, pagedWith, prepare, settle, windowsIn } from "./activity-helpers.js";
+import { buttons, clickOn, officer, pagedWith, pagesOf, prepare, settle, windowsIn } from "./activity-helpers.js";
 
 const TURN = "turn-b";
 const PAGING = { pageBytes: 65536, partPages: 4 };
 /** A live item that grows the pinned inline charge by `size` bytes. */
 const growth = (size, seq = 10) => activityEvent(seq, { type: "item", item: textItem(`growth-${seq}`, seq, "g".repeat(size)) });
+/** The button that moves item `item`'s windows `to` first, previous, next or last. */
+const windowButton = (panel, item, to) => panel.root.findAll((node) => node.attributes["data-activity-item"] === item && node.attributes["data-activity-window"] === to)[0];
+/** A page reader that holds each read, with its signal, until the test answers it. */
+function holding(client) {
+  const held = [];
+  client.activityItemPage = (agent, turn, id, page, signal) => new Promise((resolve, reject) => held.push({ id, page, signal, resolve, reject }));
+  return held;
+}
+/** Answer the held reads from `from` on, in order, from `pages`, including those the answers lead to. */
+async function answer(held, pages, from = 0) {
+  for (let i = from; i < held.length; i += 1) {
+    held[i].resolve(pages[held[i].page]);
+    await settle();
+  }
+}
+/** Announce a newer version of `item` (its pages `pages`) in place of the placeholder shown. */
+function announce(watcher, item, pages) {
+  const placeholder = watcher.view.turns.find((turn) => turn.id === TURN).items.find((each) => each.id === item.id);
+  watcher.event(activityEvent(item.seq, { type: "item", item: { ...placeholder, seq: item.seq, paged: { bytes: pages[0].bytes, pages: pages.length } } }));
+}
 
 // ---------- P2-1: inline growth plans every refit against the final floor ----------
 
@@ -70,5 +90,45 @@ test("r8 2: every character of a text part's other fields, and of its text, maps
     const at = doc.indexOf(mark);
     assert.ok(at >= 0, mark);
     for (let i = 0; i < mark.length; i += 1) assert.equal(json[servedUnit(item, at + i)], mark[i], `${mark}[${i}]`);
+  }
+});
+
+// ---------- P2-3: a refit during Load the latest keeps asking for the fresh version ----------
+
+test("r8 3 (probe): growth during Load the latest asks again for page 0 of the fresh version, and Try again repeats it", async () => {
+  const { item, pages, snapshot } = pagedWith("a".repeat(600 * 1024), "ia");
+  const newer = { ...item, seq: 10, content: [{ type: "text", text: "b".repeat(480 * 1024) }] };
+  const newPages = pagesOf(newer);
+  assert.equal(newPages[8], undefined, "page 8 is outside the fresh version");
+  const { watcher, client, panel } = await prepare(snapshot, 2 * (pages[0].bytes + newPages[0].bytes) + 20_000);
+  try {
+    client.activityItemPage = async (agent, turn, id, page) => pages[page];
+    await watcher.loadItem(TURN, "ia");
+    panel.update(watcher.view, officer);
+    clickOn(panel, windowButton(panel, "ia", "last"));
+    announce(watcher, newer, newPages);
+    panel.update(watcher.view, officer);
+    assert.equal(buttons(panel.root, "Load the latest").length, 1);
+    const held = holding(client);
+    watcher.loadItem(TURN, "ia");
+    await settle();
+    assert.deepEqual(held.map((read) => read.page), [0]);
+    watcher.event(growth(100 * 1024, 11));
+    await settle();
+    assert.equal(held[0].signal.aborted, true);
+    assert.deepEqual(held.map((read) => read.page), [0, 0], "the refit asks for the fresh version's first page, not the old version's anchored part");
+    assert.equal(watcher.view.full(TURN, "ia").replacing, true, "the old version's window stays on show meanwhile");
+    held[1].reject(Object.assign(new Error("out of range"), { status: 404 }));
+    await settle();
+    assert.equal(watcher.view.full(TURN, "ia").state, "failed");
+    watcher.loadItem(TURN, "ia");
+    await settle();
+    assert.equal(held[2]?.page, 0, "Try again repeats page 0");
+    await answer(held, newPages, 2);
+    await settle();
+    const shown = watcher.view.full(TURN, "ia");
+    assert.deepEqual({ state: shown.state, part: shown.part, seq: shown.seq }, { state: "ready", part: 0, seq: 10 });
+  } finally {
+    watcher.stop();
   }
 });

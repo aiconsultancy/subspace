@@ -676,14 +676,23 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * in it, that hold the start of the window on show (`place`), found in the
    * item as served (SUB decision a5275d81). That window stays on show, and
    * charged, until the part arrives. Resolves once the part's read settles.
+   * One whose newest version is being read (Load the latest, Try again)
+   * keeps that intent: the fresh version, from its first page, unpinned
+   * (SUB decision cf21d510), never the shown version's part.
    */
   function wholeToParts(key) {
     const entry = full.get(key);
+    const reload = Boolean(entry.item) && (reading?.key === key || queue.includes(key));
     if (reading?.key === key) {
       reading.controller.abort();
       reading = null;
     }
     queue = queue.filter((each) => each !== key);
+    if (reload) {
+      const done = reloadInParts(key);
+      pump();
+      return done;
+    }
     const shown = positions.get(key);
     positions.delete(key);
     if (!entry.item || !entry.pages) return openParts(entry.turnId, entry.itemId);
