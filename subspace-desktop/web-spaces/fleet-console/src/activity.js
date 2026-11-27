@@ -385,7 +385,11 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * is freed. A refit that keeps no window is dropped: counting every
    * window on show the growth frees, a planned refit it frees included,
    * the one whose dropping loses the fewest goes first, while that loses no
-   * more than keeping it. Returns the keys to read in parts, in order.
+   * more than keeping it. As dropping one at a time can stop short, the
+   * plan with no optional refit and the single refit that loses the fewest
+   * are weighed too, and the one losing the fewest is kept, fewer refits on
+   * a tie; no larger set is searched. Returns the keys to read in parts, in
+   * order.
    */
   function planRefits(bytes) {
     // The budget does not change until the plan is made: what the growth frees is ordered once, and every plan weighed walks it.
@@ -395,9 +399,11 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
     if (key !== null && full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key) + growth)) plan.set(key, handover(key));
     /** How many windows on show the growth would free, other than those planned to read in parts. */
     const freedOnShow = () => plan.freed().filter((each) => displayed(each) && !plan.has(each)).length;
+    /** The items read whole on show that a refit could keep on show, other than the latest request. */
+    const optional = [...full.keys()].filter((each) => each !== key && displayed(each) && budget.has(each));
     const planned = [];
     while (freedOnShow() > 0) {
-      const best = mostGivenBack([...full.keys()].filter((each) => each !== key && displayed(each) && budget.has(each) && !plan.has(each)));
+      const best = mostGivenBack(optional.filter((each) => !plan.has(each)));
       if (best === null) break;
       plan.set(best, handover(best));
       planned.push(best);
@@ -416,6 +422,19 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
       if (drop === null) break;
       plan.delete(drop);
     }
+    // Dropping one at a time can stop short of the best plan (Sol r11 P3-1). Two more are as cheap to weigh: no optional
+    // refit, and the single refit that loses the fewest. The plan losing the fewest wins; on a tie, the one with fewer refits.
+    let kept = planned.filter(plan.has);
+    let fewest = lostOnShow();
+    for (const each of kept) plan.delete(each);
+    if (lostOnShow() <= fewest) [kept, fewest] = [[], lostOnShow()];
+    for (const each of optional.filter((other) => budget.bytes(other) > handover(other))) {
+      plan.set(each, handover(each));
+      const lost = lostOnShow();
+      plan.delete(each);
+      if (lost < fewest || (lost === fewest && kept.length > 1)) [kept, fewest] = [[each], lost];
+    }
+    for (const each of kept) plan.set(each, handover(each));
     return plan.keys();
   }
 

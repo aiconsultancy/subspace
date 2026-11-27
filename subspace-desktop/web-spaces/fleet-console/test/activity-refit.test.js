@@ -146,7 +146,7 @@ test("a planned refit is dropped when every window the growth frees, planned ref
   });
 });
 
-test("the refits kept are the set that loses fewest windows, not the first a fixed order reaches", async () => {
+test("the planned refit dropped first is the one whose dropping loses the fewest windows, not the latest planned", async () => {
   // Six wholes, W5 the latest request. Without refits the growth frees W0
   // and W1. W0's refit is planned, then W2's; with both, it frees W1 and W3.
   // Dropping the latest planned first, W2's goes (W0's alone frees W1 and
@@ -156,6 +156,18 @@ test("the refits kept are the set that loses fewest windows, not the first a fix
   assert.deepEqual(await grownBy([340, 100, 260, 130, 120, 140], 90_000, 971_000), {
     modes: { w0: "Load in full", w1: "whole", w2: "parts", w3: "whole", w4: "whole", w5: "whole" },
     read: ["w2"],
+  });
+});
+
+test("a single refit that loses fewer windows than the refits left after dropping is kept instead (Sol r11 P3-1)", async () => {
+  // Sol's six-whole case, W5 the latest request and still fitting. Planning
+  // the refits that give back the most and then dropping them one at a time
+  // ends with none, and the growth frees W0 to W3. Refitting W4 alone frees
+  // only W0 to W2: the single refit that loses the fewest is weighed too,
+  // beside no refit at all, without searching every set.
+  assert.deepEqual(await grownBy([207, 286, 295, 146, 177, 185], 73 * K, 1_698_230), {
+    modes: { w0: "Load in full", w1: "Load in full", w2: "Load in full", w3: "whole", w4: "parts", w5: "whole" },
+    read: ["w4"],
   });
 });
 
