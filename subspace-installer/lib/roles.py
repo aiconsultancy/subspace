@@ -184,7 +184,7 @@ def default_permissions(role, references, *, delegate=False, worktrees=None):
     reads; delegate gives a captain the delegate policy: no edits, and an open shell but for writes.
     """
     rules = [{"action": "*", "resource": "*", "effect": "deny"}]
-    rules.extend({"action": action, "resource": "*", "effect": "allow"} for action in ("read", "glob", "grep", "question", "skill"))
+    rules.extend({"action": action, "resource": "*", "effect": "allow"} for action in ("read", "glob", "grep", "skill"))
     if references and role == "rear_admiral":
         rules.append({"action": "external_directory", "resource": f"{references}/*", "effect": "allow"})
     if delegate:
@@ -336,8 +336,18 @@ def role_documents(cfg, person, references, home, *, flint=False):
                 "Upload the PNG with `subspace_files` tool `upload_file`, then put the returned UPL "
                 "reference in your IRC reply.\n"
             )
+    instructions += (
+        "\n## Clarifying requests\n\n"
+        "Ask for clarification in a plain-text reply to the originating conversation. Number the questions "
+        "when there are several and end the turn so the requester can answer in that conversation. "
+        "Do not open a native question form.\n"
+    )
     if has_tracker:
         instructions += (
+            "\nFor a choice that needs human approval, follow **Ask a human to decide** in the "
+            "`subspace-tracker` skill. Look for an existing decision or log a proposed one linked to the "
+            "affected issue or tracker. In your reply, include the recommendation, decision reference and "
+            "version, and ask for an explicit outcome.\n"
             "\n## Preparing files\n\n"
             "Use the `prepare_file` tool on the `subspace_publish` server for an issue attachment, existing "
             "chat upload, new text or a file staged in your private outbox at "
@@ -366,6 +376,14 @@ def role_documents(cfg, person, references, home, *, flint=False):
             f"Use {github_tool} with {repository_option} set to a configured repository key. "
             f"Your available operations are {names}.\n"
         )
+        if role == "captain" and not claude:
+            instructions += (
+                "\nTo post a comment or submit a review as your GitHub App, use "
+                "`subspace-github gh pr comment` or `subspace-github gh pr review` "
+                "with the PR number, `--repo OWNER/REPO` and `--body-file`. These commands work on PRs "
+                "from any author in repositories your App can access when it has Pull requests write. "
+                "Use `--comment` for a comment-only review. Follow the repository's review rules.\n"
+            )
     if person.get("delegatesCoding"):
         instructions += DELEGATE_GUIDANCE
     if "merge" in github_ops:

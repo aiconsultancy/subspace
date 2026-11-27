@@ -247,8 +247,10 @@ answer it now.
      captains have no crew;
    - the GitHub access the captains' GitHub Apps need. Captains push, and
      their crew push as them, so each captain's App needs Contents write on
-     these repositories, plus Pull requests and Issues write to open pull
-     requests and update issues. The rear admiral's App needs Contents read.
+     these repositories. Give each captain's App **Pull requests: Read and
+     write** so it can open, comment on and review pull requests by any
+     author in repositories where it is installed. Give it Issues write if
+     it updates GitHub issues. The rear admiral's App needs Contents read.
 
    Public repositories work straight away; without Apps, the agents can read
    and commit but not push. **Private** repositories need a GitHub App for

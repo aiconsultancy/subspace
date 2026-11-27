@@ -659,6 +659,13 @@ sign-in and the agent listener), the saved initiative and stand-ins for the
 tokens, so the comparison includes the API's tools. The installer applies a changed policy to a pinned root session too
 ([Captain sessions](#captain-sessions)).
 
+Officers ask clarifying questions in a plain-text reply to the original
+conversation. If a choice requires human approval and the tracker is
+available, the officer presents a proposed decision and its reference and
+version. The OpenCode starter policy denies the native `question` tool.
+An upgrade applies the new policy to pinned roots and new sessions. Older
+unpinned sessions may retain the permissions they were created with.
+
 To extend the starter policy, list rules in `harness.extraPermissions`: for
 the whole fleet, in `harness.captain` or `harness.rearAdmiral` for one role,
 or in an officer's own `harness`. The installer appends them in that order
@@ -2000,8 +2007,14 @@ captain that uses GitHub. Crew have no App of their own: they commit and
 push from their worktrees as their captain, with the captain's Git identity,
 App and token helper. Grant each App access to the configured repositories
 and the GitHub permissions its member and, for a captain, its crew need.
-Git pushes need Contents write. Issue and pull request operations use Issues
-and Pull requests permissions as appropriate. See
+Git pushes need Contents write. For captain Apps, grant **Pull requests:
+Read and write** so they can open, comment on and review PRs from any author
+in the repositories covered by the installation. Grant Issues write for
+GitHub issue updates. For existing Apps, check both the registration's
+repository permissions and the installation's permissions. An organisation
+owner may need to accept a permission update for the installation. See
+[Changing GitHub App permissions](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration#changing-the-permissions-of-a-github-app)
+and
 [GitHub's installation authentication guide](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
 
 Add `githubApp` to that member's fleet entry. The identifiers below are
@@ -2039,6 +2052,14 @@ and CI reads are allowed. Raw API calls are limited to selected read-only
 repository endpoints. The wrapper rejects administrative commands and flags.
 To use it from an operator shell, run
 `sudo -H -u ss-orion /opt/subspace-fleet/bin/subspace-github gh ...`.
+
+OpenCode captains can post as their App using these commands. Use the
+repository's review rules when choosing a review outcome.
+
+```sh
+subspace-github gh pr comment 42 --repo example/project --body-file comment.md
+subspace-github gh pr review 42 --repo example/project --comment --body-file review.md
+```
 
 Git credentials request repository-scoped Contents access. The rear admiral
 uses read access. Captain Apps default to write access for pushing feature

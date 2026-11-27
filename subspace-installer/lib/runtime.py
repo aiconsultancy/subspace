@@ -2045,6 +2045,9 @@ def harness_permissions(cfg, person, starter_grants=(), *, flint=False):
         commands.append({"action": "shell", "resource": "subspace-github-officer --help", "effect": "allow"})
         commands.extend({"action": "shell", "resource": f"subspace-github-officer {operation} *", "effect": "allow"}
                         for operation in operations)
+        if person["role"] == "captain":
+            commands.extend({"action": "shell", "resource": f"subspace-github gh pr {verb} *", "effect": "allow"}
+                            for verb in ("comment", "review"))
         if person.get("delegatesCoding"):
             commands.extend({"action": "shell", "resource": f"subspace-github-officer {operation} *", "effect": "deny"}
                             for operation in ("push", "publish", "branch-create"))

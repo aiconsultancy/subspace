@@ -134,6 +134,9 @@ class FleetPolicyTests(unittest.TestCase):
     def test_github_high_level_and_api_policy(self):
         self.assertEqual(cli_permissions(["issue", "close", "12", "-R", "example/project"]), {"issues": "write"})
         self.assertEqual(cli_permissions(["api", "repos/example/project/pulls/12/files", "--paginate"]), {"pull_requests": "read"})
+        for verb in ("comment", "review"):
+            self.assertEqual(cli_permissions(["pr", verb, "12", "--repo", "example/project"]),
+                             {"pull_requests": "write"})
         for args in (
             ["api", "orgs/example/members"], ["api", "repos/example/project/installations"],
             ["api", "repos/example/project/issues", "-X", "POST"], ["api", "graphql"],
@@ -165,6 +168,24 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(mint.call_args.args[1:], ({"contents": "write"}, ["project"]))
         self.assertEqual(gh.call_args.args[1], ["gh", "api", "--method", "PUT", "repos/example/project/pulls/4/merge",
                                                 "-f", "sha=" + "a" * 40, "-f", "merge_method=squash"])
+
+    def test_captain_app_grants_pr_comments_and_reviews_without_merge(self):
+        config = example_config()
+        config["captainTools"] = "standard"
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["captains"][0]["githubApp"] = {
+            "appId": 1, "installationId": 2, "clientId": "fixture-client", "botLogin": "fixture[bot]", "botId": 3,
+        }
+        cfg = validate(config, officer_secrets(), check_files=False)
+        _, captain = cfg["members"]
+        rules = runtime.captain_permissions(cfg, captain)
+        instructions = roles.role_documents(cfg, captain, None, Path("/home"))["instructions"]
+        for verb in ("comment", "review"):
+            self.assertIn(f"`subspace-github gh pr {verb}`", instructions)
+            command = f"subspace-github gh pr {verb} 42 --repo example/project --body-file feedback.md"
+            self.assertEqual(fixture.opencode_decision(rules, "shell", [command]), "allow")
+        merge = "subspace-github gh pr merge 42 --squash"
+        self.assertEqual(fixture.opencode_decision(rules, "shell", [merge]), "deny")
 
     def test_merge_repository_selection_only_grants_write_capable_captains(self):
         config = example_config()
@@ -561,6 +582,20 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(runtime.harness_permissions(cfg, person), person["harness"]["permissions"])
         self.assertIsNone(runtime.subspace_mcp_url(cfg))
 
+    def test_officer_guidance_asks_in_plain_text_and_uses_available_decisions(self):
+        for has_tracker in (False, True):
+            config = example_config()
+            if has_tracker:
+                config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+            cfg = validate(config, api_secrets() if has_tracker else officer_secrets())
+            for person in cfg["members"]:
+                with self.subTest(has_tracker=has_tracker, role=person["role"]):
+                    documents = roles.role_documents(cfg, person, None, Path("/home"))
+                    for prompt in (documents["instructions"], documents["claudePrompt"]):
+                        self.assertIn("plain-text reply to the originating conversation", prompt)
+                        self.assertIn("Do not open a native question form", prompt)
+                        self.assertEqual("Look for an existing decision or log a proposed one" in prompt, has_tracker)
+
     def test_issue_closeout_guidance_reaches_only_captains_with_tracker_access(self):
         local = {"url": "http://127.0.0.1:3000"}
         config = example_config()
@@ -942,6 +977,14 @@ class CaptainPolicyTests(unittest.TestCase):
     """captainTools: standard captains code; delegate captains have an open shell with writes refused."""
 
     worktrees = "/var/lib/subspace-fleet/agents/orion/worktrees"
+
+    def test_officer_starter_policies_deny_native_questions(self):
+        for tools in ("standard", "delegate"):
+            cfg = captain_fleet(tools)
+            for person in cfg["members"]:
+                with self.subTest(tools=tools, officer=person["id"]):
+                    for rules in (runtime.harness_permissions(cfg, person), runtime.captain_permissions(cfg, person)):
+                        self.assertEqual(fixture.opencode_decision(rules, "question", ["*"]), "deny")
 
     def test_a_delegate_captain_runs_any_command_but_writes(self):
         cfg = captain_fleet("delegate")
