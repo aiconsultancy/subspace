@@ -1,6 +1,6 @@
 //! Loading the diff and the text behind a hunk gap.
 
-use gpui_kit::{AppContext as _, Context, ScrollStrategy, Window};
+use gpui_kit::{Context, ScrollStrategy, Window};
 use subspace_client_fleet::{Error, FleetAccess, diff::DiffRead};
 use subspace_framework::dashboard::{Tokens, prefs};
 
