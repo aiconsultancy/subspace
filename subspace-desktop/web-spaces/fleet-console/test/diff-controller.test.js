@@ -53,7 +53,10 @@ function controllerOver({ token = true, ships = SHIPS, budget = null } = {}) {
     cancelFrame: (id) => frames.delete(id),
     createWatcher: (options) => {
       const watcher = { options, started: 0, stopped: 0, resets: 0, observed: [], view: { status: "loading", n: log.watchers.length } };
-      watcher.start = () => (watcher.started += 1);
+      watcher.start = () => {
+        watcher.started += 1;
+        watcher.startedAfter = watcher.observed.length;
+      };
       watcher.stop = () => (watcher.stopped += 1);
       watcher.reset = () => (watcher.resets += 1);
       watcher.observe = (fingerprint) => watcher.observed.push(fingerprint);
@@ -90,6 +93,7 @@ test("diff controller: opening shows the panel, reads the member's checkout and 
   assert.equal(inspector.scrollTop, 0);
   assert.equal(watcher.started, 1);
   assert.deepEqual(watcher.observed, ["fp-1"]);
+  assert.equal(watcher.startedAfter, 1, "the fingerprint already cached is observed before the first read starts");
   assert.deepEqual(panel.updates.at(-1)[1], { name: "Starbuck" });
   assert.equal(heading.focused, 1);
   assert.deepEqual(log.announced, ["Diff of subspace for Starbuck"]);

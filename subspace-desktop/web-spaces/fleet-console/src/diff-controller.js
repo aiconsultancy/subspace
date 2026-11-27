@@ -129,8 +129,10 @@ export function createDiffController({
     view = owner;
     inspector.replaceChildren(owner.panel.root);
     inspector.scrollTop = 0;
-    owner.watcher.start();
+    // The fingerprint already cached for this checkout first: it predates
+    // the read, so the read's answer is never measured against it as news.
     observe();
+    owner.watcher.start();
     draw();
     inspector.querySelector("h2")?.focus({ preventScroll: true });
     announce(`Diff of ${project ?? "the default project"} for ${owner.name}`);

@@ -123,7 +123,13 @@ one shows, and the differences are listed below with their reasons.
   update: once the snapshot has loaded, a value other than its fingerprint
   shows "Changed since loaded · Refresh", as does a stale page. As in #110,
   a value seen before the load started is not a change, a repeat proves
-  nothing, and no fingerprint shows no banner.
+  nothing, and no fingerprint shows no banner. The controller passes the
+  value already cached for the checkout before the first read starts, so
+  that value is the baseline, never news about the read. Once shown, the
+  banner stays until Refresh, even if the fingerprint comes back: the
+  snapshot's reads were cancelled and stay cancelled. What was read stays
+  on show (windows within a part on show still move), but every control
+  that would read is off and a freed or unread part says to Refresh.
 - **Cancellation.** All reads of one snapshot share one token. Refresh, a
   mode change, closing the view (Back, Escape or a tier change), a source
   change and a stale fingerprint (a moved live value, a 409 or another
@@ -233,8 +239,10 @@ without freeing the latest request, `wouldFree` on a scope naming only that
 view's keys with a yielding entry first and admitting as `reserve` does with
 its `pinned` option, the Activity view's growth refit on the shared budget,
 the fingerprint banner (moved, repeated, absent, moved during the load,
-unstable), cancellation of reads in backoff when the fingerprint goes stale,
-the view closes or Hide bytes is pressed, a late answer dropped after a
-stale fingerprint, Refresh and a mode change dropping the old snapshot, a
-token change while a read is held, and the sample checkout end to end with
+unstable, the cached value as the baseline before the first read, kept until
+Refresh when the fingerprint comes back, with reads off and what was read on
+show), cancellation of reads in backoff when the fingerprint goes stale, the
+view closes or Hide bytes is pressed, a late answer dropped after a stale
+fingerprint, Refresh and a mode change dropping the old snapshot, a token
+change while a read is held, and the sample checkout end to end with
 markers.

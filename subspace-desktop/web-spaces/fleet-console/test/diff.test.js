@@ -17,6 +17,7 @@ import {
   isDiffFile,
   validateContent,
 } from "../src/diff.js";
+import { createDiffController } from "../src/diff-controller.js";
 import { createDiffPanel, partWindows } from "../src/diff-view.js";
 import { WINDOW_BYTES } from "../src/document.js";
 import { base64Length, bytesOf, PATCH_START, patchLines } from "../src/diff-parts.js";
@@ -688,6 +689,37 @@ function binaryRoutes(sides, { pageBytes = BINARY_PAGE_BYTES, extra = () => ({})
   };
 }
 
+test("diff binary: once the snapshot moved, the bytes on show still move window by window, but nothing more is read until Refresh", async () => {
+  const bytes = new Uint8Array(HEX_WINDOW_BYTES * 6).map((_, i) => i % 251);
+  const { watcher, files } = watch(binaryRoutes({ new: bytes }, { pageBytes: HEX_WINDOW_BYTES * 2 }));
+  watcher.start();
+  await flush();
+  await watcher.openBinary(0, "new");
+  assert.equal(watcher.view.binary.windows, 2);
+  watcher.observe("fp-2");
+  watcher.observe(FP);
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  const disabled = (to) => panel.root.findAll((node) => node.attributes["data-diff-bytes"] === to)[0].attributes["aria-disabled"] === "true";
+  assert.equal(disabled("next"), false, "Next within the part reads nothing");
+  watcher.moveBinary("next");
+  assert.equal(watcher.view.binary.window, 1);
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(disabled("next"), true, "Next into the next part is a read");
+  assert.equal(disabled("previous"), false);
+  await watcher.moveBinary("next");
+  await watcher.retryBinary();
+  assert.equal(files().length, 1, "nothing more is read");
+  assert.equal(watcher.view.binary.part.part, 0);
+  assert.ok(panel.root.textContent.includes("New bytes 4,096–8,192"), "the bytes read stay on show");
+  watcher.refresh();
+  await flush();
+  await watcher.openBinary(0, "new");
+  watcher.moveBinary("next");
+  await watcher.moveBinary("next");
+  assert.equal(watcher.view.binary.part.part, 1, "after Refresh the next part is read");
+});
+
 test("diff binary: an empty file is one page of size 0", async () => {
   const { watcher, files } = watch(binaryRoutes({ old: new Uint8Array(0), new: new Uint8Array(3) }));
   watcher.start();
@@ -887,8 +919,67 @@ test("diff banner: the ship event's fingerprint moving shows Changed since loade
   assert.equal(watcher.view.banner, null, "the same fingerprint, or none, proves nothing");
   watcher.observe("fp-2");
   assert.equal(watcher.view.banner, DIFF_MESSAGES.changed);
+});
+
+test("diff banner: once the snapshot moved, the banner and the network controls stay stale until Refresh, even when the fingerprint comes back, and what was read stays on show", async () => {
+  const { watcher, files } = twoPatches(patchPage("a.ts"));
+  watcher.start();
+  await flush();
+  const panel = createDiffPanel({ doc: fakeDoc, watcher });
+  panel.update(watcher.view, { name: "Starbuck" });
+  await flush();
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.equal(watcher.view.patch(0).state, "ready");
+  const reads = files().length;
+  watcher.observe("fp-2");
   watcher.observe(FP);
-  assert.equal(watcher.view.banner, null, "back to the loaded fingerprint");
+  assert.equal(watcher.view.banner, DIFF_MESSAGES.changed, "A → B → A: the cancelled reads are not restored, so the banner stays");
+  assert.equal(watcher.view.changed, true);
+  panel.update(watcher.view, { name: "Starbuck" });
+  assert.ok(panel.root.textContent.includes("+a"), "the part already read stays on show");
+  const next = panel.root.findAll((node) => node.attributes["data-diff-part"] === "next")[0];
+  assert.equal(next.attributes["aria-disabled"], "true", "Next part is a read: off until Refresh");
+  await watcher.movePatch(0, "next");
+  await watcher.openPatch(1);
+  await flush();
+  assert.equal(files().length, reads, "nothing more is read");
+  assert.equal(watcher.view.patch(0).part, 0);
+  assert.equal(watcher.view.patch(1), null, "b.ts's patch was never read");
+  panel.root.listeners.click({ target: panel.root.findAll((node) => node.attributes["data-diff-select"] === "1")[0] });
+  assert.match(panel.root.textContent, /The checkout changed before this patch was read\. Refresh to read it\./);
+  watcher.refresh();
+  await flush();
+  assert.equal(watcher.view.banner, null, "Refresh clears it");
+  await watcher.openPatch(0);
+  await watcher.movePatch(0, "next");
+  assert.equal(watcher.view.patch(0).state, "ready");
+  assert.equal(watcher.view.patch(0).part, 1);
+});
+
+test("diff controller: the fingerprint already cached for the checkout is the baseline before the first list read, so a fresh list is not news", async () => {
+  let panelView;
+  const { client, files } = fakeClient({ list: () => page([file("a.ts", { patchNextPage: "p2" })]), file: patchPage("a.ts") });
+  const controller = createDiffController({
+    inspector: { replaceChildren() {}, querySelector: () => null },
+    open: () => ({ client, stop() {} }),
+    ships: () => ({ [TARGET.ship]: { crewMembers: [{ id: TARGET.member, contexts: [{ project: TARGET.project, git: { fingerprint: "fp-before-start" } }] }] } }),
+    toast() {},
+    announce() {},
+    frame: () => 1,
+    cancelFrame() {},
+    createPanel: ({ watcher }) => ({ root: {}, update: (view) => (panelView = { view, watcher }), destroy() {} }),
+  });
+  controller.open(TARGET.ship, TARGET.member, TARGET.project);
+  await flush();
+  controller.draw();
+  assert.equal(panelView.view.diff.fingerprint, FP);
+  assert.equal(panelView.view.banner, null, "a value cached before the read is not a change during it");
+  await panelView.watcher.openPatch(0);
+  await panelView.watcher.movePatch(0, "next");
+  assert.equal(panelView.watcher.view.patch(0).state, "ready", "the snapshot's reads were not cancelled");
+  assert.equal(panelView.watcher.view.patch(0).part, 1);
+  assert.equal(files().length, 2);
+  controller.close();
 });
 
 test("diff banner: a fingerprint that moved while the snapshot loaded shows once it lands", async () => {

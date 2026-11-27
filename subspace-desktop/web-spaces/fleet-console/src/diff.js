@@ -463,7 +463,10 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
   /** The parts read at this snapshot, one source per file patch: key -> createPartSource. */
   const sources = new Map();
   // The fingerprint banner, as desktop #110's FleetState: a repeat of the
-  // value already seen proves nothing, nor does a missing one.
+  // value already seen proves nothing, nor does a missing one. Once the
+  // snapshot is known to have moved its reads are cancelled, and a token
+  // cancelled stays cancelled, so the banner and the network controls stay
+  // stale until Refresh, even if the fingerprint comes back (A → B → A).
   let fingerprint = null;
   let live = null;
   let liveRevision = 0;
@@ -731,6 +734,8 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       emit();
     };
     const turn = (part, land) => {
+      // Another part is a read: none once the snapshot moved.
+      if (changed()) return;
       view.land = land;
       return view.source.move(part);
     };
@@ -741,7 +746,7 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
   }
 
   function retryBinary() {
-    return binary?.source.retry();
+    return changed() ? undefined : binary?.source.retry();
   }
 
   /** The open hex view as the panel draws it. */
@@ -879,12 +884,20 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       mode = next;
       load();
     },
-    /** Show file `index`'s patch: the part on show before, read again at the same `at` if the budget freed it. */
-    openPatch: (index) => patchSource(index)?.show(),
-    /** First, Previous, Next or Last part of file `index`'s patch. */
-    movePatch: (index, to) => patchSource(index)?.move(to),
-    /** Retry page: the part of file `index`'s patch that failed. */
-    retryPatch: (index) => patchSource(index)?.retry(),
+    /**
+     * Show file `index`'s patch: the part on show before, read again at the
+     * same `at` if the budget freed it. Once the snapshot moved, only a part
+     * still held shows: nothing more is read until Refresh.
+     */
+    openPatch(index) {
+      if (!changed()) return patchSource(index)?.show();
+      const held = status === "ready" && files[index] ? sources.get(patchKey(files[index])) : undefined;
+      return held?.view && !held.view.evicted ? held.show() : undefined;
+    },
+    /** First, Previous, Next or Last part of file `index`'s patch; none once the snapshot moved. */
+    movePatch: (index, to) => (changed() ? undefined : patchSource(index)?.move(to)),
+    /** Retry page: the part of file `index`'s patch that failed; none once the snapshot moved. */
+    retryPatch: (index) => (changed() ? undefined : patchSource(index)?.retry()),
     openBinary,
     moveBinary,
     retryBinary,
@@ -895,10 +908,11 @@ export function createDiffWatcher({ client, target, mode: startMode = "branch", 
       if (!isStr(value) || value === live) return;
       live = value;
       liveRevision += 1;
-      const was = liveChanged;
-      liveChanged = status === "ready" && fingerprint !== null && fingerprint !== value;
-      if (liveChanged && status === "ready") cancelSnapshotReads();
-      if (liveChanged !== was) emit();
+      // Latched: only Refresh (a new snapshot) clears it.
+      if (liveChanged || status !== "ready" || fingerprint === null || fingerprint === value) return;
+      liveChanged = true;
+      cancelSnapshotReads();
+      emit();
     },
     /** The fleet's address or token changed: drop what was read and read again from the new one. */
     reset() {

@@ -139,7 +139,8 @@ export function partWindows(data, start) {
 function partNotes(entry, patch, view) {
   const notes = [];
   const button = (attribute, words) => h("button", { class: "btn", type: "button", [attribute]: String(entry.index) }, words);
-  if (patch.evicted) notes.push(h("p", { class: "act-note" }, "This part was let go to make room for a newer read. It is read again, at the same snapshot, when shown."), button("data-diff-reopen", "Show it again"));
+  if (patch.evicted && view.changed) notes.push(h("p", { class: "act-note" }, "This part was let go to make room for a newer read. The checkout changed: Refresh to read it again."));
+  else if (patch.evicted) notes.push(h("p", { class: "act-note" }, "This part was let go to make room for a newer read. It is read again, at the same snapshot, when shown."), button("data-diff-reopen", "Show it again"));
   else if (patch.state === "loading") notes.push(h("p", { class: "act-note" }, patch.data === null ? "Reading the patch…" : `Reading part ${patch.want + 1}; this part stays on show until it arrives…`));
   else if (patch.state === "failed") {
     const problem = diffError(patch.error, { file: true, action: "Retry page" });
@@ -150,10 +151,10 @@ function partNotes(entry, patch, view) {
   return notes.length ? h("div", { class: "act-messages" }, notes) : null;
 }
 
-/** First, Previous, Next and Last part of a patch; Last only once the part count is known. */
-function partNav(patch) {
+/** First, Previous, Next and Last part of a patch; Last only once the part count is known. Each is a read: none once the checkout changed. */
+function partNav(patch, changed) {
   if (patch.data === null || patch.count === 1) return null;
-  const button = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-diff-part": to, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
+  const button = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-diff-part": to, ...(disabled || changed ? { "aria-disabled": "true" } : {}) }, words);
   const of = patch.count === null ? `${patch.known}+` : String(patch.count);
   return h(
     "div",
@@ -172,7 +173,7 @@ function patchTree(entry, shown, view) {
   const numbers = (line) => [h("span", { class: "ln" }, line.old === null ? "" : String(line.old)), h("span", { class: "ln" }, line.new === null ? "" : String(line.new))];
   const body = windows ? windows.lines(section).map((line) => h("div", { class: `dl ${line.kind}${line.more ? " more" : ""}` }, numbers(line), h("span", { class: "code" }, txt(line.text)))) : [];
   return [
-    partNav(patch),
+    partNav(patch, view.changed),
     windows ? pager("lines", section, windows.count, "Section") : null,
     windows ? h("div", { class: "diff-patch", role: "table", "aria-label": `Patch of ${entry.file.path}` }, body) : null,
     partNotes(entry, patch, view),
@@ -189,7 +190,8 @@ function hexTree(binary, view) {
   const side = SIDE[binary.side];
   const part = binary.part;
   const parts = [];
-  if (part?.evicted) parts.push(h("p", { class: "act-note" }, "These bytes were let go to make room for a newer read. They are read again, at the same snapshot, when shown."), h("button", { class: "btn", type: "button", "data-diff-binary": binary.side }, "Show them again"));
+  if (part?.evicted && view.changed) parts.push(h("p", { class: "act-note" }, "These bytes were let go to make room for a newer read. The checkout changed: Refresh to read them again."));
+  else if (part?.evicted) parts.push(h("p", { class: "act-note" }, "These bytes were let go to make room for a newer read. They are read again, at the same snapshot, when shown."), h("button", { class: "btn", type: "button", "data-diff-binary": binary.side }, "Show them again"));
   else if (binary.state === "loading") parts.push(h("p", { class: "act-note" }, part?.data === null ? `Reading ${side.toLowerCase()} bytes…` : `Reading more ${side.toLowerCase()} bytes; these stay on show until they arrive…`));
   else if (binary.state === "failed") {
     const problem = diffError(part.error, { file: true, action: "Retry page" });
@@ -205,7 +207,10 @@ function hexTree(binary, view) {
       const from = binary.offset + start;
       const atStart = after.part === 0 && binary.window === 0;
       const atEnd = !after.hasNext && binary.window >= binary.windows - 1;
-      const button = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-diff-bytes": to, ...(disabled ? { "aria-disabled": "true" } : {}) }, words);
+      // A move within the part on show reads nothing; one into another part is a read, none once the checkout changed.
+      const lastPart = after.count !== null && after.part === after.count - 1;
+      const reads = { first: after.part > 0, previous: binary.window === 0, next: binary.window >= binary.windows - 1, last: !lastPart };
+      const button = (to, words, disabled) => h("button", { class: "btn", type: "button", "data-diff-bytes": to, ...(disabled || (view.changed && reads[to]) ? { "aria-disabled": "true" } : {}) }, words);
       parts.push(
         h(
           "div",
@@ -214,7 +219,7 @@ function hexTree(binary, view) {
           button("previous", "Previous", atStart),
           h("span", { class: "act-sub" }, `${side} bytes ${count(from)}–${count(from + slice.length)}${binary.size === null ? "" : ` of ${count(binary.size)}`}`),
           button("next", "Next", atEnd),
-          after.count !== null && (after.hasLast || after.part === after.count - 1) ? button("last", "Last", atEnd) : null,
+          after.count !== null && (after.hasLast || lastPart) ? button("last", "Last", atEnd) : null,
         ),
         h("pre", { class: "act-pre diff-hex", "aria-label": `${side} bytes as hex and ASCII` }, hexRows(slice, from).join("\n")),
       );
@@ -229,21 +234,23 @@ const PREVIEW_NOTES = {
   unsupported: "Not a PNG, JPEG, GIF or WebP image. View its bytes instead.",
 };
 
-function previewTree(preview) {
+/** An image preview. Each of its buttons is a read: none once the checkout changed. */
+function previewTree(preview, changed) {
   const side = SIDE[preview.side];
   const parts = [];
+  const button = (attribute, words) => h("button", { class: "btn", type: "button", [attribute]: preview.side, ...(changed ? { "aria-disabled": "true" } : {}) }, words);
   if (PREVIEW_NOTES[preview.state]) parts.push(h("p", { class: "act-note" }, PREVIEW_NOTES[preview.state]));
   // A whole read takes only room no other read holds (SUB decision feb0d839).
   if (preview.state === "no-room") parts.push(h("p", { class: "act-note" }, `This image is ${formatBytes(preview.size)}, more than the ${formatBytes(preview.room)} the console has free for a preview. View its bytes instead, a page at a time.`));
-  if (preview.state === "given-back") parts.push(h("p", { class: "act-note" }, "The image gave its room back to a newer read."), h("button", { class: "btn", type: "button", "data-diff-preview": preview.side }, "Show image again"));
-  if (preview.state === "failed") parts.push(h("p", { class: "act-warn" }, txt(preview.error.message)), h("button", { class: "btn", type: "button", "data-diff-preview": preview.side }, "Retry page"));
+  if (preview.state === "given-back") parts.push(h("p", { class: "act-note" }, "The image gave its room back to a newer read."), button("data-diff-preview", "Show image again"));
+  if (preview.state === "failed") parts.push(h("p", { class: "act-warn" }, txt(preview.error.message)), button("data-diff-preview", "Retry page"));
   if (preview.state === "ready") parts.push(h("div", { class: "diff-image", "data-diff-image": "" }));
   return h(
     "div",
     { class: "diff-binary" },
     h("h4", { class: "act-label" }, `${side} image`),
     parts,
-    h("div", { class: "act-parts" }, h("button", { class: "btn", type: "button", "data-diff-binary": preview.side }, "Show bytes"), h("button", { class: "btn", type: "button", "data-diff-binary-close": "" }, "Hide image")),
+    h("div", { class: "act-parts" }, button("data-diff-binary", "Show bytes"), h("button", { class: "btn", type: "button", "data-diff-binary-close": "" }, "Hide image")),
   );
 }
 
@@ -254,7 +261,7 @@ function binaryTree(view, entry) {
   const sides = binarySides(entry.file);
   const actions = sides.map((side) => h("button", { class: "btn", type: "button", "data-diff-binary": side, ...(view.changed ? { "aria-disabled": "true" } : {}) }, `${SIDE[side]} bytes`));
   if (previewable(entry.file.path)) actions.push(...sides.map((side) => h("button", { class: "btn", type: "button", "data-diff-preview": side, ...(view.changed ? { "aria-disabled": "true" } : {}) }, `Preview ${side} image`)));
-  const open = view.binary?.index === entry.index ? hexTree(view.binary, view) : view.preview?.index === entry.index ? previewTree(view.preview) : null;
+  const open = view.binary?.index === entry.index ? hexTree(view.binary, view) : view.preview?.index === entry.index ? previewTree(view.preview, view.changed) : null;
   return [facts, h("div", { class: "act-parts" }, actions), open];
 }
 
@@ -285,6 +292,8 @@ export function fileTree(view, entry, shown) {
   if (KIND_NOTES[file.kind]) notes.push(h("p", { class: "act-note" }, KIND_NOTES[file.kind]));
   let body;
   if (file.binary) body = binaryTree(view, entry);
+  // A patch not read before the checkout changed: nothing more is read until Refresh.
+  else if (!shown && entry.patched && view.changed) body = h("p", { class: "act-note" }, "The checkout changed before this patch was read. Refresh to read it.");
   else if (!shown || (shown.patch.count === 1 && shown.patch.data === "")) body = h("p", { class: "act-note" }, file.status === "renamed" ? "Renamed with no changes to its content." : "No text changes.");
   else body = patchTree(entry, shown, view);
   return h("section", { class: "sec diff-detail" }, head, notes, body);
