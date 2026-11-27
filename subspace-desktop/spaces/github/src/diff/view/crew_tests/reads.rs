@@ -23,7 +23,8 @@ fn a_feed_change_during_a_list_load_is_compared_with_its_result(cx: &mut TestApp
     view.update(window, |view, cx| {
         view.observe_crew_fingerprint(Some("A".into()));
         view.load(cx);
-        assert!(view.fleet.fingerprint.is_none());
+        assert_eq!(view.fleet.fingerprint.as_deref(), Some("B"));
+        assert!(view.refreshing_crew());
         // Deliver the feed event before the newly scheduled HTTP read can apply.
         view.observe_crew_fingerprint(Some("C".into()));
     });
