@@ -241,14 +241,15 @@ pub(super) enum Reload {
     /// swapped in: what was shown stays, beside why and **Load the
     /// latest** (SUB decision `a884e4c6`).
     Deferred,
-    /// Moving to another part withdrew it, under way or failed: what was
-    /// shown stays, beside why and **Load the latest**.
+    /// Moving to another part set it aside, under way or failed: what was
+    /// shown stays, beside **Load the latest** and a caption, true of
+    /// both, that the move set the latest version aside.
     Withdrawn,
 }
 
 impl Reload {
     /// What moving to another part leaves of it: a read under way or
-    /// failed gives way to the part asked for, and says so.
+    /// failed gives way to the part asked for, and says it was set aside.
     fn paged(self) -> Self {
         match self {
             Self::Reading(_) | Self::Failed(_) => Self::Withdrawn,

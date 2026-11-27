@@ -15,6 +15,11 @@ use super::{
 };
 use crate::view::inspector::activity::{ask_for, latest_request, set_room, snapshot_pruned};
 
+/// The caption beside **Load the latest** once moving to another part set
+/// its read aside, under way or failed.
+const WITHDRAWN: &str =
+    "Moving to another part set the latest version aside: load it again to show it.";
+
 /// The bytes the view holds of the captain's activity.
 fn held(board: &Entity<Irc>, cx: &mut VisualTestContext) -> u64 {
     board.read_with(cx, |board, _| {
@@ -193,9 +198,38 @@ fn moving_to_another_part_withdraws_the_latest_and_says_so(cx: &mut TestAppConte
     );
     assert_eq!(drawn(&on("json-part"), cx), &json[PAGE..2 * PAGE]);
     assert!(drawn(&on("loading"), cx).is_empty());
-    assert_eq!(
-        drawn(&on("withdrawn"), cx),
-        "Moving to another part stopped loading the latest version: load it again to show it."
+    assert_eq!(drawn(&on("withdrawn"), cx), WITHDRAWN);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+}
+
+/// Round 10 Opus review (P3 1): moving to another part after **Load the
+/// latest** failed sets that failed read aside too. Its error goes with
+/// it, the part asked for arrives, and the caption beside **Load the
+/// latest** is true of a failed read: it never says a load was stopped.
+#[gpui_kit::test]
+fn moving_to_another_part_after_the_latest_failed_says_it_was_set_aside(cx: &mut TestAppContext) {
+    let (board, served, cx) = in_parts_with_room(cx, &"x".repeat(300_000));
+    let (json, pages) = served_json(&served);
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(7, json.len()))), cx);
+    *served.busy_first.lock().unwrap() = true;
+    load(cx);
+    assert!(drawn(&on("failed"), cx).starts_with("Stargate is busy"));
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Try again"));
+    assert!(drawn(&on("withdrawn"), cx).is_empty());
+
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("page-next")), cx);
+        window.render_frame(cx);
+    });
+    settle(cx);
+    assert_eq!(drawn(&on("page"), cx), format!("Part 2 of {pages}"));
+    assert_eq!(drawn(&on("json-part"), cx), &json[PAGE..2 * PAGE]);
+    assert!(
+        drawn(&on("failed"), cx).is_empty(),
+        "the error went with it"
     );
+    assert!(drawn(&on("loading"), cx).is_empty());
+    assert_eq!(drawn(&on("withdrawn"), cx), WITHDRAWN);
     assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
 }

@@ -143,9 +143,10 @@ const DEFERRED: &str =
     "The newer version did not fit beside a later request: load it again to show it.";
 
 /// Why **Load the latest** is offered again when moving to another part
-/// withdrew its read ([`Reload::Withdrawn`]).
+/// set its read aside, under way or failed ([`Reload::Withdrawn`]): true
+/// of both, so it never says a load was stopped when the read had failed.
 const WITHDRAWN: &str =
-    "Moving to another part stopped loading the latest version: load it again to show it.";
+    "Moving to another part set the latest version aside: load it again to show it.";
 
 /// **Load the latest** when the snapshot names a version `newer` than the
 /// one shown, beside why when it is offered again; while that read is
