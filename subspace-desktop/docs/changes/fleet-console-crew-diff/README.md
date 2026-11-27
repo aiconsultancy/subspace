@@ -90,11 +90,13 @@ one shows, and the differences are listed below with their reasons.
   later read needs it (**Show image again**). An image that does not fit
   says so with its size and the free room, and keeps Show bytes. The
   Activity view's refit (#115 round 7, SUB a5275d81) asks its own scope
-  what a larger inline charge would free (`wouldFree`); a scope names only
-  its own keys, in the order `reserve` frees them, so the Activity view
-  hands its displayed items read whole to parts and leaves the diff view's
-  entries to be freed, or kept, by the reservation itself. The budget is a
-  cache budget only: nothing is hidden or cut to keep within it.
+  what a larger inline charge would free (`wouldFree`, as a pinned
+  reservation); a scope names only its own keys, in the order `reserve`
+  frees them, and admits as `reserve` does, passing on its options (#115
+  round 8, SUB cf21d510), so the Activity view hands its displayed items
+  read whole to parts and leaves the diff view's entries to be freed, or
+  kept, by the reservation itself. The budget is a cache budget only:
+  nothing is hidden or cut to keep within it.
 - **Banners.** `unstable: true` on any list page shows "Changed while
   loading · Refresh". The `ship` event's
   `crewMembers[].contexts[].git.fingerprint` is passed to the view on each
@@ -197,9 +199,9 @@ bytes freed and read again at the same part, binary page checks, an image
 preview grown into free room and given back first, a preview that cannot
 fit, the Activity and diff views sharing one budget without freeing the
 latest request, `wouldFree` on a scope naming only that view's keys with a
-yielding entry first, the Activity view's growth refit on the shared
-budget, the fingerprint banner (moved,
-repeated, absent, moved during the load, unstable), cancellation of reads in
+yielding entry first and admitting as `reserve` does with its `pinned`
+option, the Activity view's growth refit on the shared budget, the
+fingerprint banner (moved, repeated, absent, moved during the load, unstable), cancellation of reads in
 backoff when the fingerprint goes stale, the view closes or Hide bytes is
 pressed, a late answer dropped after a stale fingerprint, Refresh and a mode
 change dropping the old snapshot, a token change while a read is held, and
