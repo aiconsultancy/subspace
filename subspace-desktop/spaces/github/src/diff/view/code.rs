@@ -15,7 +15,7 @@ use subspace_framework::dashboard::panel::IconName;
 
 use super::super::highlight::{self, Runs};
 use super::super::model::{DiffLine, DiffRow, Layout, LineKind, file_at};
-use super::full_line::{LineSource, read_line_button};
+use super::full_line::LineSource;
 use super::{CODE_FONT_PX, DiffView, NO_RUNS, SPLIT_DIVIDER_W_PX, Text, code_row_height};
 
 mod lines;
@@ -87,7 +87,7 @@ impl DiffView {
             DiffRow::Gap { file, gap } => self.gap_row(file, gap, index, tokens, cx),
             DiffRow::Line { file, line } => {
                 let runs = self.patch_runs(file, line);
-                let read = read_line_button(file, LineSource::Patch(line), false, cx);
+                let read = self.read_line_button(file, LineSource::Patch(line), false, cx);
                 let line = &self.files[file].patch.lines[line];
                 unified_line(line, runs, read, tokens)
                     .font_family(cx.theme().mono_font_family.clone())
@@ -100,7 +100,7 @@ impl DiffView {
                         (
                             &lines[i],
                             self.patch_runs(file, i),
-                            read_line_button(file, LineSource::Patch(i), right, cx),
+                            self.read_line_button(file, LineSource::Patch(i), right, cx),
                         )
                     })
                 };
@@ -142,7 +142,7 @@ impl DiffView {
             words: Vec::new(),
             no_newline: false,
         };
-        let read = |right| read_line_button(file, LineSource::Context(at), right, cx);
+        let read = |right| self.read_line_button(file, LineSource::Context(at), right, cx);
         match self.layout {
             Layout::Unified => unified_line(&line, runs, read(false), tokens)
                 .font_family(cx.theme().mono_font_family.clone())

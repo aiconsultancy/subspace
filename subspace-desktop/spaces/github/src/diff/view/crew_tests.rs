@@ -20,6 +20,7 @@ const SHIP: &str = "example-ship";
 const CREW: &str = "example-crew";
 
 mod access;
+mod partial_line;
 mod reads;
 mod refresh;
 mod retry;

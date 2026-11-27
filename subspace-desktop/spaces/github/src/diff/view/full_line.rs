@@ -1,7 +1,9 @@
 //! Read one line at full length without changing the fixed-height diff rows.
 
+use gpui_kit::base::TestTextExt as _;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, ScrollHandle,
     SharedString, StatefulInteractiveElement as _, Styled, div,
@@ -21,6 +23,7 @@ pub(super) enum LineSource {
 pub(super) struct FullLine {
     text: SharedString,
     scroll: ScrollHandle,
+    partial: Option<(usize, usize)>,
 }
 
 #[cfg(test)]
@@ -30,19 +33,23 @@ impl FullLine {
     }
 }
 
+fn reader_text(text: &str) -> SharedString {
+    text.chars()
+        .map(|ch| match ch {
+            '\t' => '⇥',
+            '\r' => '␍',
+            ch => ch,
+        })
+        .collect::<String>()
+        .into()
+}
+
 impl FullLine {
-    fn new(text: &str) -> Self {
+    fn new(text: &str, partial: Option<(usize, usize)>) -> Self {
         Self {
-            text: text
-                .chars()
-                .map(|ch| match ch {
-                    '\t' => '⇥',
-                    '\r' => '␍',
-                    ch => ch,
-                })
-                .collect::<String>()
-                .into(),
+            text: reader_text(text),
             scroll: ScrollHandle::new(),
+            partial,
         }
     }
 
@@ -57,7 +64,7 @@ impl FullLine {
                     .py_2()
                     .gap_2()
                     .justify_between()
-                    .child("Full line")
+                    .child(self.title())
                     .child(
                         action_button(
                             "diff-full-line-close",
@@ -76,6 +83,14 @@ impl FullLine {
                 self.text_view(tokens)
                     .font_family(cx.theme().mono_font_family.clone()),
             )
+    }
+
+    pub(super) fn title(&self) -> &'static str {
+        if self.partial.is_some() {
+            "Partial line"
+        } else {
+            "Full line"
+        }
     }
     fn text_view(&self, tokens: &Tokens) -> impl Styled + IntoElement {
         h_flex()
@@ -96,34 +111,74 @@ impl FullLine {
     }
 }
 
-pub(super) fn read_line_button(
-    file: usize,
-    source: LineSource,
-    right: bool,
-    cx: &Context<DiffView>,
-) -> AnyElement {
-    let id = match (source, right) {
-        (LineSource::Patch(index), false) => ("diff-line-left", index),
-        (LineSource::Patch(index), true) => ("diff-line-right", index),
-        (LineSource::Context(index), false) => ("diff-context-left", index),
-        (LineSource::Context(index), true) => ("diff-context-right", index),
-    };
-    div()
-        .id(("diff-read-file", file))
-        .flex_shrink_0()
-        .child(
-            icon_button(id, Intent::Quiet, IconName::Maximize2, "Read full line").on_click(
-                cx.listener(move |view, _, window, cx| {
-                    view.open_line(file, source, cx);
-                    view.focus.focus(window, cx);
-                }),
-            ),
-        )
-        .into_any_element()
-}
-
 impl DiffView {
+    pub(super) fn read_line_button(
+        &self,
+        file: usize,
+        source: LineSource,
+        right: bool,
+        cx: &Context<DiffView>,
+    ) -> AnyElement {
+        let id = match (source, right) {
+            (LineSource::Patch(index), false) => ("diff-line-left", index),
+            (LineSource::Patch(index), true) => ("diff-line-right", index),
+            (LineSource::Context(index), false) => ("diff-context-left", index),
+            (LineSource::Context(index), true) => ("diff-context-right", index),
+        };
+        let partial = self.is_partial_line(file, source);
+        let label = if partial {
+            "Read partial line"
+        } else {
+            "Read full line"
+        };
+        div()
+            .id(("diff-read-file", file))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .child(
+                icon_button(id, Intent::Quiet, IconName::Maximize2, label).on_click(cx.listener(
+                    move |view, _, window, cx| {
+                        view.open_line(file, source, cx);
+                        view.focus.focus(window, cx);
+                    },
+                )),
+            )
+            .when(partial, |row| {
+                row.child(div().px_1().child("Partial line").test_text("Partial line"))
+            })
+            .into_any_element()
+    }
+
+    fn is_partial_line(&self, file: usize, source: LineSource) -> bool {
+        let LineSource::Patch(index) = source else {
+            return false;
+        };
+        self.files.get(file).is_some_and(|file| {
+            file.patch.lines.len().checked_sub(1) == Some(index)
+                && file.partial_line() == Some(index)
+        })
+    }
+
+    pub(super) fn update_partial_line(&mut self, file: usize) {
+        let Some(reader) = &mut self.full_line else {
+            return;
+        };
+        let Some((open_file, line)) = reader.partial.filter(|(open, _)| *open == file) else {
+            return;
+        };
+        let patch = &self.files[file];
+        if let Some(text) = patch.patch.lines.get(line) {
+            reader.text = reader_text(&text.text);
+            reader.partial = (patch.partial_line() == Some(line)).then_some((open_file, line));
+        }
+    }
+
     fn open_line(&mut self, file: usize, source: LineSource, cx: &mut Context<Self>) {
+        let partial = match source {
+            LineSource::Patch(line) if self.is_partial_line(file, source) => Some((file, line)),
+            _ => None,
+        };
         let text = match source {
             LineSource::Patch(index) => self
                 .files
@@ -136,7 +191,7 @@ impl DiffView {
             },
         };
         if let Some(text) = text {
-            self.full_line = Some(FullLine::new(text));
+            self.full_line = Some(FullLine::new(text, partial));
             cx.notify();
         }
     }
@@ -148,7 +203,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn full_line_renders_each_tab_and_carriage_return() {
-        let line = FullLine::new("\tfn main() {\t}\r");
+        let line = FullLine::new("\tfn main() {\t}\r", None);
         assert_eq!(line.parts().0, "⇥fn main() {⇥}␍");
     }
 }

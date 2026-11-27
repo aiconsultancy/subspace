@@ -94,6 +94,7 @@ impl DiffView {
             Ok(page) => {
                 self.fleet.unstable |= page.unstable;
                 apply_page(&mut self.files[index], page);
+                self.update_partial_line(index);
                 self.highlights.remove(&index);
                 self.rebuild();
             }

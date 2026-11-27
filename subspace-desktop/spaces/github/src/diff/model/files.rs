@@ -89,4 +89,17 @@ impl FileView {
     pub fn image_only(&self) -> bool {
         self.file.patch.is_none() && is_image(&self.file)
     }
+
+    /// Only a displayed code row can be cut; a partial hunk header or
+    /// no-newline marker is not the preceding row's text.
+    pub fn partial_line(&self) -> Option<usize> {
+        self.next_page.as_ref()?;
+        let patch = self.file.patch.as_deref()?;
+        let tail = patch.rsplit('\n').next()?;
+        if matches!(tail.as_bytes().first(), Some(b'+' | b'-' | b' ')) {
+            self.patch.lines.len().checked_sub(1)
+        } else {
+            None
+        }
+    }
 }

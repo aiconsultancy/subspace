@@ -17,7 +17,8 @@ fingerprint. The toolbar shows the base ref, short base commit and short head,
 or says that the diff starts from an empty tree when there is no base. File
 headers label untracked files, submodules and symlinks. A submodule without a
 patch has its own note, not a binary reader. The shared Fleet feed can also
-report a new fingerprint for that checkout. A change observed during a load or after it can mark the
+report a new fingerprint for that checkout. A change observed during a load
+or after it can mark the
 snapshot stale; the feed value already known when the load started cannot.
 The viewer checks for changes again when the Space becomes active. A conflict
 or missing list continuation also asks for **Refresh**. If a list or file
@@ -61,7 +62,10 @@ Leaving or replacing a preview removes its texture from the window atlas.
 
 The shared unified and split lists keep their fixed-height virtual rows.
 **Read full line** opens a horizontally scrollable reader for a line from
-either layout, including lines without spaces. Tabs show as `⇥` and carriage
+either layout, including lines without spaces. A line cut at a patch page
+boundary is labelled **Partial line** in the diff and in the reader. If the
+next page arrives while the reader is open, it shows the newly loaded text
+without closing. Tabs show as `⇥` and carriage
 returns as `␍`. The virtual list sizes its horizontal extent from one
 measurement item; this avoids a guessed width that could still clip one of
 the split columns, or measuring the whole diff.

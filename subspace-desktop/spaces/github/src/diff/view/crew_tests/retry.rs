@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,7 +27,11 @@ impl ReadGate {
 
     pub(in crate::diff::view) fn pause(&self) {
         self.reached.send(()).unwrap();
-        self.resume.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_ne!(
+            self.resume.recv_timeout(Duration::from_secs(5)),
+            Err(RecvTimeoutError::Timeout),
+            "test did not release the HTTP gate",
+        );
     }
 }
 
