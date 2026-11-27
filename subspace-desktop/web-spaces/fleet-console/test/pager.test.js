@@ -415,11 +415,14 @@ function referenceBudget(limit) {
 
 test("budget: a plan and reserve free what round 11's order freed, over seeded random budgets", () => {
   let seed = 115;
-  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  // Multiplied within 32 bits: in doubles the product passes 2^53 and loses bits, and the stream falls into a
+  // short cycle that repeats most budgets.
+  const random = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 2147483648;
   const int = (n) => Math.floor(random() * n);
   const keys = ["a", "b", "c", "d", "e", "f", "pin", "pin2", "x"];
   const pick = () => keys[int(keys.length)];
   let checks = 0;
+  const runs = new Set();
   for (let n = 0; n < 400; n += 1) {
     const limit = 50 + int(300);
     const budget = createBudget(limit);
@@ -490,6 +493,9 @@ test("budget: a plan and reserve free what round 11's order freed, over seeded r
         checks += 1;
       }
     }
+    runs.add(`${limit}: ${steps.join("; ")}`);
   }
+  // Every budget is a different one: a generator that cycles would repeat earlier runs.
+  assert.equal(runs.size, 400, `${runs.size} of 400 budgets differ`);
   assert.ok(checks > 3000, `${checks} plans weighed`);
 });
