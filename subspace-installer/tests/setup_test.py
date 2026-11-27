@@ -289,6 +289,19 @@ class GuidedQuestionsTests(unittest.TestCase):
         self.assertEqual((answers["api"], answers["adminEmail"], answers["organisation"]),
                          (True, "developer@example.com", "local"))
 
+    def test_existing_dev_api_can_gather_identity_before_an_organisation_is_saved(self):
+        api_env = fleet_setup.INPUTS / "api.env"
+        settings = "AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\nAGENT_ORGANISATION=dev:example\n"
+        api_env.write_text(settings)
+        saved = {"adminEmail": "developer@example.com"}
+        for flags, replies in (([], ["example"]), (["--organisation", "example"], [])):
+            with self.subTest(flags=flags):
+                answers, asked = self.gather(flags, replies, saved=saved)
+                self.assertEqual(answers["organisation"], "example")
+                self.assertEqual(any(label.startswith("Development sign-in organisation") for label in asked),
+                                 not flags)
+                self.assertEqual(api_env.read_text(), settings)
+
     def test_existing_sso_and_private_route_are_reused_without_changing_ssh_access(self):
         api_env = fleet_setup.INPUTS / "api.env"
         settings = "NODE_ENV=production\nAUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\nWORKOS_CLIENT_ID=example\n"
@@ -322,6 +335,19 @@ class GuidedQuestionsTests(unittest.TestCase):
         self.assertEqual(asked, [])
         self.assertEqual((kept["topology"], kept["ircHost"], kept["apiUrl"], kept["api"]),
                          ("join", "irc.example.com", "https://subspace.example.com", False))
+        local, _ = self.gather(["--irc", "local"], saved=kept)
+        self.assertEqual((local["topology"], local["irc"], local["apiUrl"]),
+                         ("several", "local", "https://subspace.example.com"))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "To join, use shared IRC"):
+            self.gather(["--irc", "local", "--topology", "join"], saved=kept)
+
+    def test_single_topology_follows_a_switch_to_shared_irc(self):
+        saved, _ = self.gather(["--non-interactive"])
+        remote = ["--irc", "remote", "--irc-host", "irc.example.com"]
+        answers, _ = self.gather(remote, saved=saved)
+        self.assertEqual((answers["topology"], answers["irc"], answers["api"]), ("several", "remote", True))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "choose 'several' or 'join'"):
+            self.gather([*remote, "--topology", "single"], saved=saved)
 
 
 class SetupInputsTests(unittest.TestCase):

@@ -180,6 +180,8 @@ answer it now.
 
    For an unattended run, `--topology single|several|join` records the plan;
    the existing IRC and API flags control where the services actually run.
+   If new endpoint flags conflict with the saved topology, setup updates
+   that label to match instead of changing the endpoints.
 2. **Which private network connects workstations, fleets and shared services?**
    Use the organisation's existing ZTNA, VPN or routed network if available.
    For a local VM, **use an SSH tunnel if unsure**; it needs no extra network.

@@ -408,14 +408,22 @@ def gather_topology(args, answers, saved, interactive):
     remote_irc = (args.irc or saved.get("irc", "local")) == "remote"
     shared_api = args.shared_api_target or bool(answers.get("apiUrl"))
     suggested = "join" if remote_irc and shared_api else "several" if remote_irc or shared_api else "single"
-    choice = args.topology or saved.get("topology")
+    saved_topology = saved.get("topology")
+    choice = args.topology or saved_topology
     if choice is None and interactive and not saved:
         choice = prompt("Topology: single (recommended: this VM runs the fleet, API, Ergo and PostgreSQL), "
                         "several (first of several fleets), or join (use existing services)", suggested)
     require(choice is None or choice in ("single", "several", "join"), "Choose single, several or join for topology.")
-    if choice == "join" and (args.topology or not saved.get("topology")):
-        require(remote_irc and shared_api,
+    if choice == "join" and not (remote_irc and shared_api):
+        require(saved_topology and args.topology is None,
                 "To join, use shared IRC (--irc-server or --irc remote) and a shared API (--api-target or --api-url).")
+        say(f"The saved topology 'join' needs both shared services; recording '{suggested}' for these endpoints.")
+        choice = suggested
+    elif choice == "single" and suggested != "single":
+        require(saved_topology and args.topology is None,
+                "The 'single' topology uses local IRC and no shared API; choose 'several' or 'join' for shared services.")
+        say(f"The saved topology 'single' uses no shared services; recording '{suggested}' for these endpoints.")
+        choice = suggested
     answers["topology"] = choice or suggested
     answers["irc"] = "remote" if remote_irc else "local"
     if remote_irc:
@@ -453,7 +461,7 @@ def gather_workstation_network(args, answers, saved, interactive):
 
 def gather_identity(args, answers, saved, interactive):
     # Until SUB-76 supplies owner bootstrap, keep the configured sign-in or the existing development path.
-    environment = api_environment(answers, {})[0] if interactive and answers["api"] else {}
+    environment = {**DEV_AUTH, **read_api_settings()} if interactive and answers["api"] else {}
     development = dev_sign_in(environment)
     if development and answers["privateNetwork"] != "off":
         private_network.require_sso(environment)
@@ -2633,20 +2641,25 @@ def dev_sign_in(environment):
     return environment.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
 
 
+def read_api_settings():
+    previous = INPUTS / "api.env"
+    settings = {}
+    if previous.exists():
+        # Keep what the operator set, such as WorkOS or Entra and turning development sign-in off.
+        for line in previous.read_text().splitlines():
+            key, _, value = line.partition("=")
+            if key and not key.startswith("#"):
+                settings[key] = value
+    return settings
+
+
 def api_environment(answers, environment, external=False):
     """api.env as api_up writes it: environment (setup's own settings) over what an earlier run wrote there and
     the operator kept or changed. Returns the settings and whether the agent listener is on.
 
     external says the API uses an existing PostgreSQL, whose URL api_up passes in environment.
     """
-    previous = INPUTS / "api.env"
-    kept = {}
-    if previous.exists():
-        # Keep what the operator set, such as WorkOS or Entra and turning development sign-in off.
-        for line in previous.read_text().splitlines():
-            key, _, value = line.partition("=")
-            if key and not key.startswith("#") and key not in environment:
-                kept[key] = value
+    kept = {key: value for key, value in read_api_settings().items() if key not in environment}
     if not external:
         # The API's own PostgreSQL: never a URL an earlier run, or anyone, left in api.env, which Compose would
         # prefer to the local database and the image would migrate on start.
