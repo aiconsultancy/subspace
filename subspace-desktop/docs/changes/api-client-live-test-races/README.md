@@ -184,10 +184,11 @@ The same pushes saw two tests outside this work fail once each under load:
 and `subspace-space-lab-board`'s
 `project_runtime::proxy::tests::project_runtime_proxy_has_eight_active_slots_and_stop_cancels_idle_tunnels`.
 Their failure output was not kept, and the code does not show which wait
-failed, so they are left as they are. The settings test's store work and
-outcomes run on GPUI's test executor; its only real-time part is the
-fleet's feed thread, whose link the test accepts in any state. The proxy
-test has three wall-clock limits: a 2-second read timeout on each client,
+failed, so they were left as they were. The settings test was later traced
+to the fleet's feed thread changing the link the page shows between the
+frames of one click; see
+[A followed fleet's link changes only when announced](../fleet-api-client/README.md#a-followed-fleets-link-changes-only-when-announced).
+The proxy test has three wall-clock limits: a 2-second read timeout on each client,
 a 100 ms connect to the fixture per attempt in the proxy, and a 2-second
 bound on stopping the proxy.
 

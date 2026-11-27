@@ -1,11 +1,15 @@
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{AppContext as _, Entity, TestAppContext};
 use subspace_framework::core::Secret;
 
+use super::follow::TICK;
 use super::{FleetApi, TokenError};
-use crate::tests::{FleetFixture, TOKEN};
+use crate::feed::Feed;
+use crate::tests::{FleetFixture, TOKEN, closed_address};
 use crate::{FleetRecord, FleetState, Link, TokenStore};
 
 mod hold;
@@ -215,6 +219,51 @@ fn a_refused_token_is_reported_by_the_followed_fleet(cx: &mut TestAppContext) {
     let _follow = service.update(cx, |service, cx| service.follow("aurora", cx));
     assert!(until(cx, |cx| state(&service, cx)
         == FleetState::Followed(Link::TokenRefused)));
+}
+
+/// A feed's thread changes its link whenever the network answers. The
+/// fleet's state keeps the link the service last announced until its next
+/// check of the followed fleets, which announces the change: a page never
+/// renders a change it was not told about, such as between the frames of
+/// one click.
+#[gpui_kit::test]
+fn a_followed_fleets_link_changes_only_with_an_announced_check(cx: &mut TestAppContext) {
+    let service = service(
+        Arc::new(TokenStore::memory()),
+        aurora(closed_address().as_str()),
+        cx,
+    );
+    save(&service, TOKEN, cx).unwrap();
+    let _follow = service.update(cx, |service, cx| service.follow("aurora", cx));
+    // In place of the feed's thread, a feed only this test changes.
+    service.update(cx, |service, _| {
+        service.feeds.get_mut("aurora").unwrap().feed = Feed::detached();
+    });
+    let announced = Rc::new(Cell::new(0));
+    let _observer = cx.update(|cx| {
+        let announced = Rc::clone(&announced);
+        cx.observe(&service, move |_, _| announced.set(announced.get() + 1))
+    });
+    let check = |cx: &mut TestAppContext| {
+        cx.executor().advance_clock(TICK);
+        cx.run_until_parked();
+    };
+    check(cx);
+    assert_eq!(state(&service, cx), FleetState::Followed(Link::Connecting));
+    let before = announced.get();
+
+    service.read_with(cx, |service, _| {
+        service.feeds["aurora"]
+            .feed
+            .set_link_for_test(Link::Unreachable)
+    });
+    cx.run_until_parked();
+    assert_eq!(state(&service, cx), FleetState::Followed(Link::Connecting));
+    assert_eq!(announced.get(), before);
+
+    check(cx);
+    assert_eq!(state(&service, cx), FleetState::Followed(Link::Unreachable));
+    assert_eq!(announced.get(), before + 1);
 }
 
 #[gpui_kit::test]

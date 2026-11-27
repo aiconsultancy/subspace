@@ -98,6 +98,11 @@ cx.observe(&fleets, |this, fleets, cx| {
 // the latest lines.
 ```
 
+The service checks its feeds every 250 ms and notifies its observers when
+one has news. A followed fleet's link in `state` and `fleets` is the one
+that check took, so it changes only with a notification and never between
+two frames a page renders for another reason.
+
 `FleetApi::fleets()` lists every fleet as a `FleetInfo` (`record` with the
 ID, name and recorded address, the checked `address` and the `state`);
 `FleetApi::revision()` changes with any news and
