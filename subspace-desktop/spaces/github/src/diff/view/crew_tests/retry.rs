@@ -9,7 +9,7 @@ use serde_json::json;
 use subspace_client_fleet::{Error, diff::DiffFilePage};
 use subspace_framework::client_test_support::Mock;
 
-use super::{DiffSource, fixture, mount, refresh::ThreadedReads};
+use super::{DiffSource, fixture, mount, threaded_reads::ThreadedReads};
 
 /// Blocking HTTP runs on a real thread so the visual test can deliver a feed
 /// update while the simulated GPUI executor is otherwise idle.

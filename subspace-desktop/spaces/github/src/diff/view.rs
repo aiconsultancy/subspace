@@ -123,6 +123,7 @@ fn code_row_height(tokens: &Tokens) -> f32 {
 mod binary;
 mod chrome;
 mod code;
+mod crew_access;
 mod crew_chrome;
 mod crew_watch;
 mod full_line;

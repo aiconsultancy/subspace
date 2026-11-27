@@ -85,6 +85,10 @@ impl DiffView {
         if guard.check().is_err() || self.fleet.fingerprint.as_deref() != Some(at) {
             return;
         }
+        if self.check_crew_access(cx) {
+            cx.notify();
+            return;
+        }
         self.fleet.loading.remove(&index);
         match result {
             Ok(page) => {
@@ -121,6 +125,7 @@ impl DiffView {
     pub(super) fn fleet_page_error(&mut self, error: Error, cx: &mut Context<Self>) {
         match error {
             Error::DiffReadCancelled => {}
+            error if self.reject_crew_access(error, cx) => {}
             Error::StaleDiff => self.mark_crew_stale(),
             Error::NotFound => cx.emit(DiffEvent::Toast(Toast::error(
                 "This file is no longer available. Refresh the diff.",

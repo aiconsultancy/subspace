@@ -6,7 +6,7 @@ use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
-    div, px, uniform_list,
+    base::TestTextExt as _, div, px, uniform_list,
 };
 use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::action::{Intent, action_button};
@@ -213,6 +213,7 @@ impl DiffView {
                     )
                     .on_click(cx.listener(|view, _, _, cx| view.load(cx)))],
                 )
+                .test_text(error.clone())
                 .into_any_element()
             }
             Some(error) => feedback::error_box(

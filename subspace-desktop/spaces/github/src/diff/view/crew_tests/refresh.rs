@@ -1,67 +1,18 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{App, Entity, Global, Task, TestAppContext, VisualTestContext};
+use gpui_kit::{App, Entity, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
 use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::client_test_support::Mock;
-use tokio::sync::oneshot;
 
 use super::super::super::model::{DiffRow, Layout};
 use super::super::Text;
-use super::super::pages::PageResult;
-use super::super::read_executor::{ReadExecutor, ReadResult, ReadWork};
-use super::{DiffView, ReadGate, fixture, mount};
+use super::{DiffView, ReadGate, fixture, mount, threaded_reads::ThreadedReads};
 
-/// The test dispatcher runs blocking work on the UI thread. Opt in to a real
-/// worker so the test can draw and interact while an HTTP response is gated.
-#[derive(Default)]
-pub(super) struct ThreadedReads(Vec<JoinHandle<DeliverRead>>);
-
-type DeliverRead = Box<dyn FnOnce() + Send>;
-
-impl Global for ThreadedReads {}
-
-impl ThreadedReads {
-    pub(super) fn install(window: &mut VisualTestContext) {
-        window.update(|_, cx| {
-            cx.set_global(Self::default());
-            cx.set_global(ReadExecutor::<ReadResult>(Self::start));
-            cx.set_global(ReadExecutor::<PageResult>(Self::start));
-        });
-    }
-
-    fn start<T: Send + 'static>(cx: &mut App, work: ReadWork<T>) -> Task<T> {
-        let (tx, rx) = oneshot::channel();
-        cx.global_mut::<Self>()
-            .0
-            .push(thread::spawn(move || -> DeliverRead {
-                let result = work();
-                Box::new(move || {
-                    _ = tx.send(result);
-                })
-            }));
-        cx.spawn(async move |_| rx.await.expect("test worker delivers its result"))
-    }
-
-    pub(super) fn finish_last(window: &mut VisualTestContext) {
-        let index = window.update(|_, cx| cx.global::<Self>().0.len() - 1);
-        Self::finish(window, index);
-    }
-
-    fn finish(window: &mut VisualTestContext, index: usize) {
-        // Only the UI test thread can wake its deterministic scheduler.
-        let deliver =
-            window.update(|_, cx| cx.global_mut::<Self>().0.remove(index).join().unwrap());
-        deliver();
-        window.run_until_parked();
-    }
-}
-
-fn snapshot(mode: &str, at: &str, files: &[&str]) -> String {
+pub(super) fn snapshot(mode: &str, at: &str, files: &[&str]) -> String {
     let mut body: Value = serde_json::from_str(&fixture(false)).unwrap();
     let mut file = body["files"][0].clone();
     let patch = format!("@@ -0,0 +1,80 @@\n{}", "+example.com\n".repeat(80));

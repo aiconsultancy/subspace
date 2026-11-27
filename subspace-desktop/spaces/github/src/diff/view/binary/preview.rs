@@ -114,7 +114,11 @@ impl DiffView {
                 .await;
             _ = view.update(cx, |view, cx| {
                 if guard.check().is_ok() {
-                    view.finish_preview(result, format, progress, cx);
+                    if view.check_crew_access(cx) {
+                        cx.notify();
+                    } else {
+                        view.finish_preview(result, format, progress, cx);
+                    }
                 }
             });
         });

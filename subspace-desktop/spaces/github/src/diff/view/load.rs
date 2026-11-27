@@ -1,7 +1,7 @@
 //! Loading the diff and the text behind a hunk gap.
 
 use gpui_kit::{Context, ScrollStrategy, Window};
-use subspace_client_fleet::{Error, FleetAccess, diff::DiffRead};
+use subspace_client_fleet::{Error, diff::DiffRead};
 use subspace_framework::dashboard::{Tokens, prefs};
 
 use super::super::model::{
@@ -81,44 +81,10 @@ impl DiffView {
         cx.notify();
     }
 
-    fn cancel_list(&mut self) {
+    pub(super) fn cancel_list(&mut self) {
         self.fleet.list_read.cancel();
         self.load_task = None;
         self.fleet.generation += 1;
-    }
-
-    pub(super) fn set_access(
-        &mut self,
-        access: Option<FleetAccess>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.fleet.access == access {
-            return false;
-        }
-        self.cancel_list();
-        self.clear_snapshot(cx);
-        self.fleet.access = access;
-        true
-    }
-
-    pub(super) fn check_crew_access(&mut self, cx: &mut Context<Self>) -> bool {
-        let DiffSource::Fleet(source) = &self.source else {
-            return false;
-        };
-        if self.fleet.access.is_none() {
-            return false;
-        }
-        let (access, error) = match source.connection(cx) {
-            Ok((_, access)) => (Some(access), None),
-            Err(help) => (None, Some(help)),
-        };
-        if !self.set_access(access, cx) {
-            return false;
-        }
-        self.error = Some(error.unwrap_or_else(|| {
-            "The Fleet connection changed. Refresh to load the diff.".to_owned()
-        }));
-        true
     }
 
     fn finish_load(
@@ -131,10 +97,9 @@ impl DiffView {
             Ok(diff) => self.set_diff(diff, baseline, cx),
             Err(LoadError::Message(message)) => self.error = Some(message),
             Err(LoadError::Fleet(Error::DiffReadCancelled)) => {}
+            Err(LoadError::Fleet(error)) if self.reject_crew_access(error, cx) => {}
             Err(LoadError::Fleet(error)) => {
-                if matches!(error, Error::TokenRefused | Error::Forbidden) {
-                    self.set_access(None, cx);
-                } else if error == Error::StaleDiff {
+                if error == Error::StaleDiff {
                     self.mark_crew_stale();
                 }
                 self.error = Some(diff_error(error));

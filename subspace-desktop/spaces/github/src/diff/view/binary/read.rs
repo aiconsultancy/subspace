@@ -78,6 +78,10 @@ impl DiffView {
         direction: Move,
         cx: &mut Context<Self>,
     ) {
+        if self.check_crew_access(cx) {
+            cx.notify();
+            return;
+        }
         let Some(binary) = self.binary.as_mut() else {
             return;
         };
