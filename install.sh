@@ -85,6 +85,7 @@
 #   --usage-guard-warning | --usage-guard-cutoff [PROVIDER=]PERCENT
 #   --toolchains derive|none|node@24,pnpm@9.12.3 --system-packages zsh,clang
 #   --access ssh|tailscale|cloudflare --ssh-from 203.0.113.7/32
+#   --topology single|several|join (record the fleet topology)
 #   --private-network NAME,INTERFACE,ADDRESS,CLIENT-CIDR (or off; see docs/private-access.md)
 #   --accept-officer-tracker-access-loss (acknowledge the loss of officers' local tracker access)
 # Run `./install.sh --help` to see them all.
