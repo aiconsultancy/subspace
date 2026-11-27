@@ -223,7 +223,9 @@ the tab strip and toolbar, so the panel's header lines up with the tab strip.
 - Show selection through the row's own fill, never a leading bar.
 - A toolbar has at most one primary action, the Space's main one, at its
   trailing end, built with `action::main_action`; its other actions are
-  neutral or quiet. Use `fields::toolbar_search` for the toolbar's search.
+  neutral or quiet. The [Decisions exception](design-guide.md#contextual-action-in-decisions)
+  describes when a contextual Accept can take the primary slot. Use
+  `fields::toolbar_search` for the toolbar's search.
 
 Check the Space at the normal window size and in a narrow window, with both
 docks shown. The toolbar's leading items wrap onto another line and its

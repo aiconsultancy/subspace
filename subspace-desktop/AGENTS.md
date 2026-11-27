@@ -213,8 +213,9 @@ forwards the app's targets here.
   `subspace_api_client::has_backend()` tells a Space at run time.
 - **API-backed views.** Keep the visible result during refreshes for the
   same account, organisation, record and filters. Track the request
-  separately and apply the latest matching result in place. Place toolbar
-  Refresh at the trailing edge, after the primary action when there is one.
+  separately and apply the latest matching result in place. In record list
+  and detail toolbars, place Refresh immediately before the final trailing
+  action, or at the trailing edge when there are no trailing actions.
   See the [API-backed view pattern](../subspace-framework/docs/board-integration.md#api-backed-views).
 - **A Framework change and a Space change together.** Both projects live in
   this repository, and the desktop builds the Framework from

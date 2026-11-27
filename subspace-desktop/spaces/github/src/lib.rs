@@ -796,15 +796,20 @@ impl Github {
     }
 
     fn poll_visible_detail(&mut self, cx: &mut Context<Self>) {
-        if self.writing
-            || self
-                ._detail_task
-                .as_ref()
-                .is_some_and(|task| !task.is_ready())
+        if self
+            ._detail_task
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
         {
             return;
         }
-        if let Some(key) = self.visible_detail_key().map(str::to_owned) {
+        self.refresh_visible_detail(cx);
+    }
+
+    fn refresh_visible_detail(&mut self, cx: &mut Context<Self>) {
+        if !self.writing
+            && let Some(key) = self.visible_detail_key().map(str::to_owned)
+        {
             self.fetch_detail(key, false, cx);
         }
     }

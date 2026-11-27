@@ -77,7 +77,12 @@ fn hiding_the_navigator_puts_the_view_menu_and_pickers_in_the_toolbar(cx: &mut T
         let refresh = window.find("issues-refresh").bounds();
         let trailing = window.find("workspace-toolbar-trailing").bounds();
         assert!(picker.right() <= refresh.left());
-        assert_eq!(refresh.right(), trailing.right());
+        if let Some(create) = window.try_find("issues-create") {
+            assert!(refresh.right() <= create.bounds().left());
+            assert_eq!(create.bounds().right(), trailing.right());
+        } else {
+            assert_eq!(refresh.right(), trailing.right());
+        }
     });
     assert_eq!(saved(cx, "issues.navigator").as_deref(), Some("hidden"));
     use_dock_switch(&board, cx, SpaceDock::Navigator);

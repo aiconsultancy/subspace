@@ -142,10 +142,57 @@ fn conflict_fixture(board: &mut Decisions, versions: Arc<Mutex<Vec<u32>>>) {
     }));
 }
 #[gpui_kit::test]
+fn selecting_a_proposal_moves_accept_into_the_toolbar(cx: &mut TestAppContext) {
+    let (board, cx) = mount(cx);
+    assert!(has(cx, "decisions-new"));
+    assert!(!has(cx, "decisions-accept"));
+    crate::tests::select(&board, "d1", cx);
+    assert!(has(cx, "decisions-new"));
+    click(cx, "decisions-accept");
+    assert_eq!(
+        label(cx, "decision-author-dialog").as_deref(),
+        Some("Accept decision?")
+    );
+    click(cx, "decision-author-cancel");
+    crate::tests::select(&board, "d2", cx);
+    assert!(!has(cx, "decisions-accept"));
+    assert!(has(cx, "decisions-new"));
+}
+
+#[gpui_kit::test]
+fn dismissing_a_list_review_conflict_refreshes_the_selected_decision(cx: &mut TestAppContext) {
+    let (board, cx) = mount(cx);
+    crate::tests::select(&board, "d1", cx);
+    board.update(cx, |board, _| {
+        board.test_writer = Some(Arc::new(|_| {
+            Err(Problem::Write(DecisionWriteError::Conflict))
+        }));
+        let list = board.reader.list.clone();
+        board.reader.list = Arc::new(move |plan| {
+            let mut answer = list(plan);
+            if let Leased::Read(_, response) = &mut answer
+                && let Ok(found) = &mut response.found
+                && let Some(item) = found.items.iter_mut().find(|item| item.id == "d1")
+            {
+                item.status = DecisionStatus::Accepted;
+                item.version = Some(2);
+            }
+            answer
+        });
+    });
+    click(cx, "decisions-accept");
+    click(cx, "decision-author-submit");
+    assert!(has(cx, "decision-author-dialog"));
+    click(cx, "decision-author-cancel");
+    assert!(!has(cx, "decisions-accept"));
+    assert!(has(cx, "decisions-new"));
+}
+
+#[gpui_kit::test]
 fn reviewing_a_proposal_requires_confirmation_and_removes_write_actions(cx: &mut TestAppContext) {
     let (board, cx) = mount(cx);
-    board.update(cx, |board, cx| {
-        board.open_decision("d1", cx);
+    crate::tests::select(&board, "d1", cx);
+    board.update(cx, |board, _| {
         board.test_writer = Some(Arc::new(|job| {
             let Job::Review {
                 target,
@@ -161,12 +208,14 @@ fn reviewing_a_proposal_requires_confirmation_and_removes_write_actions(cx: &mut
         }));
     });
     render(cx);
-    click(cx, "decision-accept");
+    click(cx, "decisions-accept");
     assert_eq!(
         label(cx, "decision-author-dialog").as_deref(),
         Some("Accept decision?")
     );
     click(cx, "decision-author-submit");
+    assert!(has(cx, "decisions-page-heading"));
+    assert!(!has(cx, "decisions-accept"));
     assert!(!has(cx, "decision-edit"));
     assert!(!has(cx, "decision-accept"));
     assert!(!has(cx, "decision-reject"));

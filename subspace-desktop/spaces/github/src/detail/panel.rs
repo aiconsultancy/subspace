@@ -5,8 +5,8 @@ use gpui_kit::component::{Disableable as _, Selectable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Div, ElementId, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    px,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
+    TestSupportExt as _, Window, div, px,
 };
 use subspace_framework::client_github::model::{GhItem, GhItemDetail, ItemKind, display_name};
 use subspace_framework::dashboard::action::{Intent, action_button};
@@ -219,21 +219,19 @@ fn composer_or_actions(
     body.child(bar)
 }
 
-/// The error of a detail that did not load.
+/// Show a failed detail read alongside any content we can still display.
 fn load_error(body: Div, input: &PanelInput<'_>, tokens: &Tokens) -> Div {
-    match (input.error, input.detail) {
-        (Some(error), None) => body.child(
+    match input.error {
+        Some(error) => body.child(
             div()
+                .id(format!("github-detail-error-{}", input.item.key))
+                .test_support()
                 .mt_2()
                 .text_color(tokens.red)
-                .child(rich::plain_text(load_error_id(&input.item.key), error)),
+                .child(rich::plain_text("error", error)),
         ),
-        _ => body,
+        None => body,
     }
-}
-
-fn load_error_id(key: &str) -> String {
-    format!("github-detail-error-{key}")
 }
 
 /// The checks of a pull request, collapsed to the failing ones above
@@ -334,18 +332,5 @@ fn description(body: Div, input: &PanelInput<'_>, tokens: &Tokens, key: &str) ->
             Format::Html,
             &detail.body_html,
         ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::load_error_id;
-
-    #[test]
-    fn github_detail_error_ids_include_the_item() {
-        let first = load_error_id("owner/repo#1");
-        let second = load_error_id("owner/repo#2");
-        assert!(first.contains("owner/repo#1"));
-        assert_ne!(first, second);
     }
 }

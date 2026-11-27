@@ -91,6 +91,7 @@ fn toolbar(this: &Projects, cx: &mut Context<Projects>) -> workspace::Toolbar {
             );
         }
     }
+    bar = bar.trailing(refresh_button(cx));
     if this.milestone_pages.detail.is_some() {
         bar = bar.leading(
             action_button(
@@ -119,7 +120,7 @@ fn toolbar(this: &Projects, cx: &mut Context<Projects>) -> workspace::Toolbar {
             .on_click(cx.listener(|this, _, window, cx| this.open_project_editor(window, cx))),
         );
     }
-    bar.trailing(refresh_button(cx))
+    bar
 }
 
 fn refresh_button(cx: &mut Context<Projects>) -> IconButton {

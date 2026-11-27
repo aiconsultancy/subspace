@@ -2,13 +2,13 @@
 
 use gpui_kit::{Context, FocusHandle, Focusable as _, Window};
 use subspace_api_client::decision_writes::DecisionReview;
-use subspace_api_client::model::{DecisionDetail, DecisionStatus};
+use subspace_api_client::model::{DecisionDetail, DecisionListItem, DecisionStatus};
 
 use super::{Draft, Editor, Mode, Phase, Target, available};
 use crate::Decisions;
 use crate::page::PageState;
 
-fn active(detail: &DecisionDetail) -> bool {
+fn active(detail: &DecisionListItem) -> bool {
     detail
         .project
         .as_ref()
@@ -28,7 +28,7 @@ impl Decisions {
                 .any(|project| project.archived_at.is_none())
     }
 
-    pub(crate) fn can_change(&self, detail: &DecisionDetail) -> bool {
+    pub(crate) fn can_change(&self, detail: &DecisionListItem) -> bool {
         available()
             && detail.status == DecisionStatus::Proposed
             && active(detail)
@@ -37,6 +37,19 @@ impl Decisions {
                 me.kind == "human"
                     || (me.kind == "agent" && me.user_id == detail.recorded_by_user_id)
             })
+    }
+
+    /// The visible selection supplies the same versioned review as the detail page.
+    pub(crate) fn review_item(&self) -> Option<&DecisionListItem> {
+        let item = if self.shown_page().is_some() {
+            if self.history.snapshot().is_some() {
+                return None;
+            }
+            self.current_detail().map(|detail| &detail.item)?
+        } else {
+            self.selected_item()?
+        };
+        self.can_change(item).then_some(item)
     }
 
     pub(crate) fn can_replace(&self, detail: &DecisionDetail) -> bool {
@@ -126,10 +139,17 @@ impl Decisions {
         if self.follow_account(cx) || self.author.is_some() {
             return;
         }
-        let Some((detail, target)) = self.current_target() else {
+        let Some(item) = self.review_item() else {
             return;
         };
-        let title = detail.title.clone();
+        let Some(version) = item.version else {
+            return;
+        };
+        let target = Target {
+            id: item.id.clone(),
+            version,
+        };
+        let title = item.title.clone();
         self.open_author(
             Mode::Review {
                 target,
@@ -176,8 +196,15 @@ impl Decisions {
             return;
         }
         if let Some(editor) = self.author.take() {
-            if matches!(editor.phase, Phase::Current(_) | Phase::ReadFailed) {
-                self.read_page(cx);
+            if matches!(
+                editor.phase,
+                Phase::ReadingCurrent | Phase::Current(_) | Phase::ReadFailed
+            ) {
+                if self.shown_page().is_some() {
+                    self.read_page(cx);
+                } else {
+                    self.read(false, cx);
+                }
             }
             editor
                 .previous_focus

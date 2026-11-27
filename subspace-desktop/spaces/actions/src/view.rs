@@ -357,8 +357,8 @@ mod tests {
             assert_eq!(trigger.disabled(), Some(true), "no run is selected");
             let refresh = window.find("actions-refresh").bounds();
             let trailing = window.find("workspace-toolbar-trailing").bounds();
-            assert!(trigger.bounds().right() <= refresh.left());
-            assert_eq!(refresh.right(), trailing.right());
+            assert!(refresh.right() <= trigger.bounds().left());
+            assert_eq!(trigger.bounds().right(), trailing.right());
             assert!(window.try_find("actions-intent-Re-run").is_none());
         });
         select_run(&board, cx);

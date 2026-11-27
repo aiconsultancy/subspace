@@ -25,7 +25,6 @@ pub(crate) fn render(this: &Actions, cx: &mut Context<Actions>) -> workspace::To
         .leading(filter_popup::button(this, cx))
         .leading(picker(this, Picker::Account, cx))
         .leading(picker(this, Picker::Log, cx))
-        .trailing(trigger(this))
         .trailing(
             icon_button(
                 "actions-refresh",
@@ -35,6 +34,7 @@ pub(crate) fn render(this: &Actions, cx: &mut Context<Actions>) -> workspace::To
             )
             .on_click(cx.listener(|this, _, _, cx| this.refresh_all(cx))),
         )
+        .trailing(trigger(this))
 }
 
 /// A menu button that opens its picker from its own anchor.

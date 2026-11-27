@@ -107,7 +107,7 @@ fn bare_toolbar(
 }
 
 /// Search and filters on the leading side; how the list is grouped, the
-/// Sub-issues switch, New issue… and Refresh trail. The count is the
+/// Sub-issues switch, Refresh and New issue… trail. The count is the
 /// status bar's.
 fn list_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Toolbar {
     scoped_toolbar(issues, shown, cx)
@@ -119,19 +119,19 @@ fn list_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Tool
             toolbar.trailing(grouping(cx))
         })
         .trailing(sub_issues_button(issues, cx))
+        .trailing(refresh_button(cx))
         .when(issues.can_create_issue(), |toolbar| {
             toolbar.trailing(crate::editing::view::new_button(cx))
         })
-        .trailing(refresh_button(cx))
 }
 
-/// New issue… and Refresh stay beside the activity feed.
+/// Refresh and New issue… stay beside the activity feed.
 fn activity_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Toolbar {
     scoped_toolbar(issues, shown, cx)
+        .trailing(refresh_button(cx))
         .when(issues.can_create_issue(), |toolbar| {
             toolbar.trailing(crate::editing::view::new_button(cx))
         })
-        .trailing(refresh_button(cx))
 }
 
 /// The pane's toolbar, led by what the hidden navigator would hold.

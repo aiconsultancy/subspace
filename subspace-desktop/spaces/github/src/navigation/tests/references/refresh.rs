@@ -21,7 +21,7 @@ const FORBIDDEN: &str =
     r#"{"data":null,"errors":[{"type":"FORBIDDEN","message":"SAML enforcement"}]}"#;
 pub(super) const V2: &str = "Add paging to the work items endpoint (v2)";
 
-fn node() -> serde_json::Value {
+pub(super) fn node() -> serde_json::Value {
     json!({
         "__typename":"PullRequest", "id":"fixture-pr", "number":421, "title":V2,
         "url":URL, "state":"OPEN",
@@ -41,7 +41,7 @@ pub(super) fn github_v2(request: &Request) -> (u16, String) {
     (200, body.to_string())
 }
 
-fn is_detail_read(request: &Request) -> bool {
+pub(super) fn is_detail_read(request: &Request) -> bool {
     request.body.contains("issueOrPullRequest")
 }
 
