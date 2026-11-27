@@ -1,22 +1,15 @@
 //! Loading the diff and the text behind a hunk gap.
 
 use gpui_kit::{AppContext as _, Context, ScrollStrategy, Window};
-use subspace_client_fleet::{
-    Error, FleetAccess, FleetClient,
-    diff::{DiffMode, DiffRead},
-};
+use subspace_client_fleet::{Error, FleetAccess, diff::DiffRead};
 use subspace_framework::dashboard::{Tokens, prefs};
 
 use super::super::model::{
     FileView, RowOptions, VIEWED_KEY, ViewedStore, build_rows, file_at, tree_order, viewed_id,
 };
+use super::read_executor::{LoadError, ReadExecutor, ReadResult, diff_error, read_diff};
 use super::source::{Loaded, fleet_file, github_file};
 use super::{DiffSource, DiffView, Text, code_row_height};
-
-enum LoadError {
-    Message(String),
-    Fleet(Error),
-}
 
 impl DiffView {
     pub(crate) fn close(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
@@ -64,21 +57,12 @@ impl DiffView {
         let baseline = self.fleet.live_revision;
         let read = self.fleet.list_read.clone();
         self.error = None;
-        let work = move || read_diff(source, mode, fleet_client, &read);
-        #[cfg(test)]
-        let threaded = super::crew_tests::ThreadedReads::start_if_installed(cx, work.clone());
+        let worker = ReadExecutor::start(
+            cx,
+            Box::new(move || read_diff(source, mode, fleet_client, &read)),
+        );
         self.load_task = Some(cx.spawn(async move |view, cx| {
-            #[cfg(test)]
-            let result = if let Some(threaded) = threaded {
-                match threaded.await {
-                    Ok(result) => result,
-                    Err(_) => Err(LoadError::Fleet(Error::DiffReadCancelled)),
-                }
-            } else {
-                cx.background_spawn(async move { work() }).await
-            };
-            #[cfg(not(test))]
-            let result = cx.background_spawn(async move { work() }).await;
+            let result = worker.await;
             _ = view.update(cx, |view, cx| {
                 if view.fleet.generation != generation || view.check_crew_access(cx) {
                     cx.notify();
@@ -133,12 +117,7 @@ impl DiffView {
         true
     }
 
-    fn finish_load(
-        &mut self,
-        result: Result<Loaded, LoadError>,
-        baseline: u64,
-        cx: &mut Context<Self>,
-    ) {
+    fn finish_load(&mut self, result: ReadResult, baseline: u64, cx: &mut Context<Self>) {
         match result {
             Ok(diff) => self.set_diff(diff, baseline, cx),
             Err(LoadError::Message(message)) => self.error = Some(message),
@@ -337,42 +316,4 @@ impl Location {
 
 fn file_key(file: &FileView) -> FileKey {
     (file.file.path.clone(), file.file.previous_path.clone())
-}
-
-fn read_diff(
-    source: DiffSource,
-    mode: DiffMode,
-    fleet_client: Option<Result<FleetClient, String>>,
-    read: &DiffRead,
-) -> Result<Loaded, LoadError> {
-    match source {
-        DiffSource::GitHub(source) => source
-            .client
-            .ok_or_else(|| LoadError::Message("GitHub is not configured.".to_owned()))?
-            .diff(&source.login, &source.item.key)
-            .map(Loaded::GitHub)
-            .map_err(|error| LoadError::Message(error.to_string())),
-        DiffSource::Fleet(source) => source
-            .load(
-                &fleet_client
-                    .ok_or_else(|| {
-                        LoadError::Message("Fleet connections are unavailable.".to_owned())
-                    })?
-                    .map_err(LoadError::Message)?,
-                mode,
-                read,
-            )
-            .map_err(LoadError::Fleet),
-    }
-}
-
-fn diff_error(error: Error) -> String {
-    match error {
-        Error::Busy(Some(1)) => "Stargate is busy. Wait 1 second, then select Refresh.".to_owned(),
-        Error::Busy(Some(seconds)) => {
-            format!("Stargate is busy. Wait {seconds} seconds, then select Refresh.")
-        }
-        Error::Busy(None) => "Stargate is busy. Select Refresh to try again shortly.".to_owned(),
-        other => other.to_string(),
-    }
 }

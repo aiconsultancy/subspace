@@ -131,6 +131,7 @@ mod image;
 mod load;
 mod nav;
 mod pages;
+mod read_executor;
 mod source;
 mod toolbar;
 
