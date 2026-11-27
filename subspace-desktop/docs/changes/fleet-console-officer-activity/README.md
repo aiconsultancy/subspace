@@ -78,15 +78,16 @@ the desktop side are separate work.
   base to the same key (`drawWhole`, SUB decision `533c2b29`), and gives it
   back when another body is asked for.
 - **Refit** (SUB decisions `533c2b29`, `a5275d81`, `8346cf82`,
-  `fbc47f97`). An item read whole that no longer fits reads in parts
+  `fbc47f97`, `d43de89e`). An item read whole that no longer fits reads in parts
   instead: of the version it read when **Show** cannot keep it and its
   window beside the pinned content or the inline snapshot grows, and of
   the newest version, from its first part, when **Load the latest** or a
   read larger than its placeholder advertised cannot hold that version
   whole. Before the inline charge grows, the watcher plans every refit
   first (`planRefits`): it asks the budget what the larger charge would
-  free (`wouldFree`, with `as` naming the planned refits' handover
-  charges, so nothing changes while it asks) and, while that names an
+  free (`plan`, which sorts the entries by use once and then weighs the
+  planned refits' handover charges against that order, so nothing changes
+  while it asks and no plan sorts again) and, while that names an
   item read whole whose window is on show, plans, from every item read
   whole whose window is on show, named or not, the one whose refit gives
   back the most, then asks again. The latest request is never one of
@@ -96,7 +97,11 @@ the desktop side are separate work.
   window on show the growth would free, a planned refit's own handover
   included, the watcher drops the planned refit whose dropping loses the
   fewest, the latest planned on a tie, while that loses no more than
-  keeping it. The latest request's own refit is never dropped. Only then
+  keeping it. The latest request's own refit is never dropped. As
+  dropping one at a time can stop short, the plan with no optional refit
+  and the single refit that loses the fewest are weighed too; the plan
+  losing the fewest is kept, fewer refits on a tie, and no larger set is
+  searched. Only then
   are the planned pagers opened, their charges set without freeing
   anything (`fitted`), and the one pinned reservation frees only what the
   final floor still needs. So one large refit keeps the smaller wholes on
@@ -475,3 +480,17 @@ from `6b26128b`; five wholes where a planned refit looked as if it kept a
 window; and six where dropping the latest planned refit first loses one.
 The last two fail at `f88724d3`. The refit tests share the helpers in
 `test/activity-helpers.js`.
+
+The round 12 tests (SUB decision `d43de89e`) add to
+`test/activity-refit.test.js` and `test/pager.test.js`. Phobos's pressure
+case, smaller (40 wholes on show beside the latest request, each giving
+back a little, 20,000 bytes spare), counts the orders the budget builds
+for one growth: one, and no `wouldFree`, where `58d0eb77` asked
+`wouldFree`, sorting every entry, 902 times. Sol's six-whole case keeps
+W4's single refit, so the growth frees W0 to W2 rather than W0 to W3; it
+fails at `f52426bf`. The test of the drop order is named for what it
+proves: the planned refit dropped first is the one whose dropping loses
+the fewest windows. In `test/pager.test.js`, a budget plan answers as
+`wouldFree` does as entries are resized, set again and left out, also when
+the latest request in a reservation's floor is resized, and changes
+nothing.
