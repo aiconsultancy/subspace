@@ -101,7 +101,8 @@ one shows, and the differences are listed below with their reasons.
   draws. Past the budget the least recently opened entry of either view is
   freed, never the latest request; a freed part says so and is read again,
   at the same `at`, when next shown (**Show it again**), at the part shown
-  before once the count is known and otherwise from the first part. A 409
+  before, by the cursor already learned for it, whether or not the part
+  count is known yet (Last still waits for the count). A 409
   or another fingerprint on that read shows the Refresh banner. The image
   preview is a whole read (SUB decision feb0d839): once its first page
   gives its size, it is charged that size only in room no other read holds,
@@ -213,12 +214,12 @@ stale and invalid list pages, a 17-page list keeping no patch text outside
 the budget and reading an opened patch at the snapshot, charged, rows
 sharing a display path each showing their own patch from their own list
 page (stale at another fingerprint) and no bytes, patch parts one at a time
-with Last once the count is known, a one-part patch, windows of a long part numbered across
-windows, **Retry page** for a patch and a binary page keeping the part on
+with Last once the count is known, a one-part patch, windows of a long part
+numbered across windows, **Retry page** for a patch and a binary page keeping the part on
 show, busy and gone file pages, a self-pointing or wrong-path page, a 409
 or another fingerprint for a stale `at` leading to Refresh, a part freed by
-the budget read again at the same `at` and at the same part, a 409 on that
-read, an empty binary file, hex windows paging across a part boundary with
+the budget read again at the same `at` and at the same part, before the
+count is known too (by its own cursor, with no Last), a 409 on that read, an empty binary file, hex windows paging across a part boundary with
 offsets running on, no Last until the last page's token is known, binary
 bytes freed and read again at the same part, binary page checks, an image
 preview grown into free room and given back first, a preview that cannot

@@ -558,6 +558,29 @@ test("diff patch: a part the budget let go is read again at the same `at` when n
   assert.equal(watcher.view.patch(0).hasPrevious, true);
 });
 
+test("diff patch: a part the budget let go before the count is known is read again by its own cursor at the same `at`, with no Last", async () => {
+  // Every continuation names another, so the count is never learned.
+  const { watcher, files } = twoPatches(() => ({ fingerprint: FP, file: file("a.ts", { patch: `@@ -20,1 +20,1 @@\n-${"z".repeat(300)}\n+w\n`, patchNextPage: "p3" }) }));
+  watcher.start();
+  await flush();
+  await watcher.openPatch(0);
+  await watcher.movePatch(0, "next");
+  assert.equal(watcher.view.patch(0).part, 1);
+  assert.equal(watcher.view.patch(0).count, null, "the count is not known yet");
+  await watcher.openPatch(1);
+  assert.equal(watcher.view.patch(0).evicted, true);
+  await watcher.openPatch(0);
+  assert.deepEqual(files().map((call) => [call.query.path, call.query.page]), [["a.ts", undefined], ["a.ts", "p2"], ["b.ts", undefined], ["a.ts", "p2"]], "only the part shown before, by its cursor, never the first again");
+  assert.equal(files()[3].query.at, FP, "at the same `at`");
+  assert.equal(watcher.view.patch(0).part, 1, "the part shown before");
+  assert.equal(watcher.view.patch(0).state, "ready");
+  assert.equal(watcher.view.patch(0).hasPrevious, true);
+  assert.equal(watcher.view.patch(0).hasLast, false, "Last still needs the count");
+  await watcher.movePatch(0, "previous");
+  assert.deepEqual(files().at(-1).query, { project: "subspace", mode: "branch", path: "a.ts", page: undefined, at: FP }, "Previous reads the first page");
+  assert.equal(watcher.view.patch(0).part, 0);
+});
+
 test("diff patch: a 409 on the read after an eviction shows the Refresh banner", async () => {
   const later = `@@ -20,1 +20,1 @@\n-${"z".repeat(300)}\n+w\n`;
   const { watcher, files } = twoPatches((_, n) => (n === 0 ? { fingerprint: FP, file: file("a.ts", { patch: later }) } : Promise.reject(new HttpError(409))));

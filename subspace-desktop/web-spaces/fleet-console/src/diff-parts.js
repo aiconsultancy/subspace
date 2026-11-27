@@ -8,10 +8,9 @@
 // part's cursor and what starts there (a patch's line numbers, a binary
 // side's offset). Pages at a fixed fingerprint are fixed, so when the budget
 // frees a part it is read again at the same `at` when next opened, never
-// from the start: once the part count is known, a fresh pager opens the
-// part the person was on by its remembered cursor. Until the count is known
-// the pager can reach a part only through the ones before it, so a part
-// freed then is read again from the first.
+// from the start: a fresh pager is handed every cursor learned, and opens
+// the part the person was on by its remembered cursor, whether or not the
+// part count is known yet. Last still needs the count.
 
 import { createPager } from "./pager.js";
 
@@ -57,7 +56,8 @@ export function createPartSource({ budget, key, version, partBytes, drawn, first
       key,
       partBytes,
       drawn,
-      known: count !== null ? { version, count, carried: 0 } : null,
+      // What is known at this fingerprint, the count or not: every cursor learned.
+      known: { version, count, carried: 0, starts: table.map((entry) => entry?.cursor) },
       cursorAt: (index) => table[index]?.cursor,
       read: async ({ part: index, cursor, signal }) => {
         const reply = await read({ part: index, cursor, start: table[index].start, signal });
@@ -78,12 +78,12 @@ export function createPartSource({ budget, key, version, partBytes, drawn, first
 
   return {
     key,
-    /** Show the part on show before, or part 0: read again at the same `at` when the budget freed it. */
+    /** Show the part on show before (part 0 at first): read again at the same `at`, by its cursor, when the budget freed it. */
     show() {
       budget.request(key);
       if (!pager || evicted) {
         make();
-        return pager.open(count !== null ? part : 0);
+        return pager.open(part);
       }
       // Reading or failed: what is on show stays, a failure with its Retry page. Ready: only touched.
       return pager.view.state === "ready" ? pager.open(pager.view.part) : Promise.resolve();

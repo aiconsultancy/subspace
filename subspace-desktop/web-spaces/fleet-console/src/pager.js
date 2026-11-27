@@ -15,9 +15,11 @@
 //   - a source paged by number (activity pages) also gives `cursorAt(part)`,
 //     so any part, the last included, can be read directly;
 //   - a source paged by cursor (a patch's `next`) reaches a part only
-//     through the ones before it, and its page sizes may differ between
-//     reads: after an eviction it is read again from the start, never from
-//     a cursor kept from before.
+//     through the ones before it. An evicted pager forgets its cursors and
+//     reads from the start when opened again; a new pager for the same
+//     version can be handed the cursors already learned (`known.starts`),
+//     where that version's pages are fixed (a crew diff at one fingerprint),
+//     and opens any of those parts directly.
 // Nothing is cut: every part of every version stays reachable.
 
 import { utf8Length } from "./utf8.js";
@@ -97,8 +99,10 @@ export class PagerError extends Error {
  * @param {((part: number, version: unknown) => unknown)|null} [options.cursorAt]  a cursor for any part, for sources paged by number
  * @param {() => void} [options.onChange] the pager's view changed
  * @param {() => void} [options.onEvict]  the budget freed it; it reads from the start when opened again
- * @param {{version: unknown, count: number, carried: number}|null} [options.known]  a version already known (its
- *   part count), so any of its parts can be opened first, and the bytes of a window still on show from
+ * @param {{version: unknown, count: number|null, carried: number, starts?: unknown[]}|null} [options.known]  a
+ *   version already known (its part count, when known), so any of its parts can be opened first; the
+ *   cursors of its parts learned before (`starts[i]` part i's, once known), so those parts can be
+ *   opened first whether or not the count is known; and the bytes of a window still on show from
  *   before the pager (an item read whole), held beside the first read until a part arrives
  */
 export function createPager({ budget, key, read, partBytes, drawn = (data) => utf8Length(data), cursorAt = null, onChange = () => {}, onEvict = () => {}, known = null }) {
@@ -108,7 +112,7 @@ export function createPager({ budget, key, read, partBytes, drawn = (data) => ut
   let revision = 0;
   let controller = null;
   /** starts[i] is the cursor of part i, once known; part 0 starts at null. */
-  let starts = [null];
+  let starts = [null, ...(known?.starts?.slice(1) ?? [])];
   let count = known?.count ?? null;
   let version = known?.version ?? null;
   /** The window on show from before the pager, charged until its first part arrives. */
