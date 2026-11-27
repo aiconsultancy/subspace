@@ -1,3 +1,4 @@
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::Button;
 use gpui_kit::{AnyElement, Context, IntoElement as _};
 use subspace_lucide::IconName;
@@ -17,12 +18,21 @@ fn chrome_item(
     shell_button(button, control, icon, cx).into_any_element()
 }
 
+pub(super) const RELOAD_BUSY_LABEL: &str = "Reload (Space busy)";
+
 pub(super) fn reload_chrome(busy: bool, cx: &mut Context<SubspaceApp>) -> AnyElement {
     let control = ToolbarControl::Reload;
-    let button = chrome("reload", "Reload (Cmd/Ctrl+R)", "Reload (Cmd/Ctrl+R)", busy)
+    let show_spinner = busy && !subspace_dashboard::activity_mark::in_product_toolbar(cx);
+    let tooltip = if busy {
+        RELOAD_BUSY_LABEL
+    } else {
+        "Reload (Cmd/Ctrl+R)"
+    };
+    let button = chrome("reload", tooltip, tooltip, busy)
+        .disabled(busy)
         .on_click(cx.listener(|app, _, window, cx| app.reload(&Reload, window, cx)));
     let label = control.shows_label(cx).then(|| control.label().into());
-    let button = sized_button(button, IconName::RotateCw, label, busy);
+    let button = sized_button(button, IconName::RotateCw, label, show_spinner);
     with_label_menu(button, control, cx).into_any_element()
 }
 

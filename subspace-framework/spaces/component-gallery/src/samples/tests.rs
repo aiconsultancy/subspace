@@ -229,6 +229,7 @@ fn feedback_builders_caption_every_state(cx: &mut TestAppContext) {
 fn content_and_list_builders_caption_every_state(cx: &mut TestAppContext) {
     let items = captions(cx, |g, t, w, cx| {
         vec![
+            content::activity_marks(g, t, w, cx),
             content::disclosure::samples(g, t, w, cx),
             content::badges(g, t, w, cx),
             content::reference_cards(g, t, w, cx),

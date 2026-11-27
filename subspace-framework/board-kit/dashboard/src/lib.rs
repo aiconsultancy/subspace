@@ -12,6 +12,7 @@
 //! [`ListDashboard`] too and render with [`list::render`].
 
 pub mod action;
+pub mod activity_mark;
 pub mod alerts;
 pub mod anchored;
 pub mod animated_collapsible;

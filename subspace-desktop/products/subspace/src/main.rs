@@ -166,6 +166,10 @@ fn assets() -> &'static [(&'static str, &'static [u8])] {
             "product-dark.svg",
             include_bytes!("../assets/product-dark.svg"),
         ),
+        (
+            subspace_framework::dashboard::activity_mark::TOOLBAR_ARTWORK,
+            include_bytes!("../assets/subspace.svg"),
+        ),
         ("organization.svg", ORGANIZATION_LOGO),
     ];
     if ORGANIZATION_LOGO.is_empty() {
@@ -341,6 +345,7 @@ mod tests {
             ("product.svg", 0x779de1f19cfb06a0),
             ("product-light.svg", 0x779de1f19cfb06a0),
             ("product-dark.svg", 0x8ef38950ba8ecba6),
+            ("activity/subspace.svg", 0x779de1f19cfb06a0),
             #[cfg(feature = "tsx-spaces")]
             ("icons/tsx.svg", 0xbfa1e72703da8d08),
             #[cfg(feature = "copilot")]

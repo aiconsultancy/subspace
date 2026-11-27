@@ -338,8 +338,7 @@ impl SubspaceApp {
     fn first_row(
         &mut self,
         tokens: &Tokens,
-        middle: impl IntoElement,
-        shell_actions: impl IntoElement,
+        children: [AnyElement; 3],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -355,15 +354,7 @@ impl SubspaceApp {
             .items_center()
             .h(height)
             .gap(px(BAR_GAP))
-            .child(
-                div()
-                    .id("toolbar-logo")
-                    .test_support()
-                    .flex_shrink_0()
-                    .child(crate::assets::product_logo(cx, px(LOGO_SIZE))),
-            )
-            .child(middle)
-            .child(shell_actions)
+            .children(children)
             .into_any_element()
     }
 
@@ -407,11 +398,32 @@ impl SubspaceApp {
             (None, group_element)
         };
         let middle = self.toolbar_middle(show_tabs, gallery, beside_group, cx);
-        let first_row = self.first_row(tokens, middle, shell_actions, window, cx);
+        let children = [
+            toolbar_logo(busy, cx),
+            middle.into_any_element(),
+            shell_actions.into_any_element(),
+        ];
+        let first_row = self.first_row(tokens, children, window, cx);
         let busy_element = busy.then(|| busy_bar(tokens).into_any_element());
         let bar = super::titlebar::draggable(v_flex().id("app-toolbar"), window, cx);
         toolbar_view(bar, tokens, first_row, below_group, busy_element)
     }
+}
+
+fn toolbar_logo(busy: bool, cx: &App) -> AnyElement {
+    use subspace_dashboard::activity_mark::{ActivityMark, in_product_toolbar};
+    let size = px(LOGO_SIZE);
+    let artwork = if busy && in_product_toolbar(cx) {
+        ActivityMark::new("toolbar-activity-mark", size).into_any_element()
+    } else {
+        crate::assets::product_logo(cx, size)
+    };
+    div()
+        .id("toolbar-logo")
+        .test_support()
+        .flex_shrink_0()
+        .child(artwork)
+        .into_any_element()
 }
 
 fn tab_height(tokens: &Tokens) -> gpui_kit::Pixels {

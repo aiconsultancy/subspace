@@ -1,6 +1,6 @@
 //! Request status lines on the real transcript: trusted progress folds into
 //! one line under each request and updates in place, with a clock and a
-//! stage meter; a lookalike from another account, questions and final
+//! activity mark; a lookalike from another account, questions and final
 //! replies stay messages; the line goes stale while the network is down and
 //! settles into `Done in …` when the request ends.
 
@@ -142,15 +142,9 @@ fn assert_one_line_per_request(hub: &Entity<Hub>, cx: &mut VisualTestContext) {
             Some("astra: Using a tool")
         );
         assert_eq!(status(window, "second").as_deref(), Some("astra: Queued"));
-        assert_eq!(
-            window.find("irc-status:first:meter").label(),
-            Some("Stage 2 of 5: working"),
-            "the stage meter"
-        );
-        assert_eq!(
-            window.find("irc-status:second:meter").label(),
-            Some("Stage 1 of 5: accepted")
-        );
+        assert!(window.find("irc-status:first:activity").visible());
+        assert!(window.try_find("irc-status:second:activity").is_none());
+        assert!(window.try_find("irc-status:first:meter").is_none());
         assert!(window.find("irc-status:first:clock").visible());
         assert_eq!(
             status(window, "third").as_deref(),

@@ -187,10 +187,11 @@ A request to an agent can show one live status line beneath it, such as
 unconfirmed**, **Accepted**, **Queued**, **Thinking**, **Using a tool**,
 **Waiting to retry**, **Waiting for your answer** when the agent asked you
 something, **Answer received** or **Writing a reply**, and updates in place.
-After it come how long ago you asked, such as `0:35`, and a small meter of
-five steps with the step's name: **accepted**, **working**, **waiting**,
-**reply** and **done**. Each request has its own line, also when two
-requests share a thread. When the request finishes, its line settles into a
+The clock beside it shows how long ago you asked, such as `0:35`.
+The Subspace mark animates while the agent is thinking, using a tool or
+writing a reply. A reduced-motion setting active when the app starts keeps
+the mark steady. A pause glyph accompanies the waiting states. Each request has its own
+line, also when two requests share a thread. When the request finishes, its line settles into a
 quiet **Done in 42 m**, or **Failed after 3 m** when it failed, and keeps it
 after a restart. A request that ended before this version shows **Done**
 without a time. In a ship's channel or a Starbase the line also ends with

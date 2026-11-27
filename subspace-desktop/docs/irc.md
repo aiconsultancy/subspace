@@ -1178,18 +1178,14 @@ are in the [change record](changes/irc-thread-status/spec.md).
   others alone.
   The agent is the nick on the newest trusted notice, shown as plain
   text on one line and cut to 32 characters.
-- **Clock and stage meter.** While a request runs, its line also shows the
-  time since the request was sent by the server (`0:35`, `1:02:03` past an
-  hour) in quiet monospace, and Kit's `Progress` as a five-step stage meter
-  with the stage's word. Stargate's fixed stages map onto the meter:
-  `received`, `submitting`, `accepted`, `queued` and `delivered` are
-  *accepted*; `model`, `reasoning`, `tool` and `retry` *working*; `waiting`
-  and `clarified` *waiting*; `reply` *reply*; `completed` and `failed`
-  *done* (`thread_status::Stage`). The meter is named *Stage N of 5:
-  <stage>*. Nothing else is shown: Stargate's data has no delegation or
-  pull request stage. The conversation redraws once a second
-  (`conversation::clock::follow`) only while a line runs and is not stale,
-  and drops the timer once none does.
+- **Clock and activity.** While a request is current, its line shows the
+  time since it was sent (`0:35`, or `1:02:03` past an hour). A small
+  Subspace mark animates while the runtime reports thinking, tool use or
+  reply writing. The mark stays steady when GPUI reports reduced motion.
+  A pause glyph accompanies waiting and retry states. The conversation
+  redraws the clock once a second (`conversation::clock::follow`) while a
+  current line runs. The clock stops when a line becomes stale, and the
+  conversation drops the timer when no clock is running.
 - **Endings.** `completed` or `failed` settles its request's line, for good:
   no later or older notice reopens it. The settled line is quiet: a check
   and **Done in 42 m**, or a cross and **Failed after 3 m**, from the request's
@@ -1970,7 +1966,7 @@ messages after its anchor.
   `thread_status/model.rs` rebuilds each request's status from the folded
   notices on every conversation sync, beside the reply counts, and
   `transcript/status.rs` draws it under the request with GPUI Kit's
-  `Marker`, with Kit's `Progress` as the stage meter while it runs, and a
+  `Marker`, with the shared activity mark while the agent is active and a
   quiet settled line once it ends (see
   [Request status lines](#request-status-lines)).
   See [GPUI-Kit messaging reuse](../../subspace-framework/docs/ui-components.md#gpui-kit-messaging-reuse).

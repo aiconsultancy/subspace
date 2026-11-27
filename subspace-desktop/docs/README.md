@@ -203,6 +203,7 @@ record. [Change records](changes/README.md) explains the convention.
 
 - [Public repository examples](changes/public-repository-examples/README.md):
   fictional deployment settings, tracker references and fixture identifiers.
+- [Agent activity mark](changes/agent-activity-mark/README.md): animated Subspace mark for active turns and Space reloads.
 - [Markdown issue descriptions](changes/markdown-description-editor/README.md): formatted editing and highlighted Source in the issue form.
 - [Markdown compatibility with GPUI Fast](changes/markdown-gpui-fast/README.md) restores the editor build and scrolling after the Framework upgrade.
 - [Tracker parent picker in the Component gallery](changes/gallery-tracker-picker/README.md) shows search, paging and selection using local fixtures.

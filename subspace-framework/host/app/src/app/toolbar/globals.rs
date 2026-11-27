@@ -16,8 +16,8 @@ use super::TAB_WIDTH_GUESS;
 #[cfg(feature = "report-issue")]
 use super::chrome::report_issue_chrome;
 use super::chrome::{
-    about_chrome, about_presentation, help_chrome, jig_chrome, reload_chrome, settings_chrome,
-    wrap_chrome,
+    RELOAD_BUSY_LABEL, about_chrome, about_presentation, help_chrome, jig_chrome, reload_chrome,
+    settings_chrome, wrap_chrome,
 };
 use crate::toolbar_labels::ToolbarControl;
 
@@ -131,7 +131,7 @@ impl SubspaceApp {
         let control = spec.control;
         let label = match control {
             ToolbarControl::Jig => "Theme designer",
-            ToolbarControl::Reload if busy => "Reloading…",
+            ToolbarControl::Reload if busy => RELOAD_BUSY_LABEL,
             _ => control.label(),
         };
         let (icon, label) = if control == ToolbarControl::About {

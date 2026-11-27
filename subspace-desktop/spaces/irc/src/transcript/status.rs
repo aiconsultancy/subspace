@@ -1,19 +1,17 @@
 //! The status line under a request, from [`crate::thread_status`]: while it
 //! runs, who works on it and what they are doing, a clock counting from the
-//! request and a small stage meter; once it ends, a quiet settled line such
-//! as `Done in 42 m`. GPUI Kit's `Marker`, the row Kit offers for
-//! conversation status, with Kit's `Progress` as the meter and the shared
-//! warning pill while the last update may be out of date.
+//! request and an activity mark; once it ends, a quiet line such as
+//! `Done in 42 m`. The warning pill identifies an out-of-date status.
 
 use chrono::{DateTime, Local, TimeDelta, Utc};
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::marker::{Marker, MarkerContent, MarkerIcon};
-use gpui_kit::component::progress::Progress;
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::{
     AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _, Role,
-    SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
+    SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div, px,
 };
+use subspace_framework::dashboard::activity_mark::ActivityMark;
 use subspace_framework::dashboard::badge::{Pill, PillTone};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, Tone};
@@ -27,6 +25,7 @@ use crate::thread_status::{Outcome, Settled, Shown, Stage, Statuses};
 /// Seconds in a minute and an hour, for the clock and durations.
 const MINUTE: i64 = 60;
 const HOUR: i64 = 60 * MINUTE;
+const ACTIVITY_SIZE: f32 = 14.;
 
 /// The status line under `entry`, aligned with the message body, when it is
 /// a request with progress or an ending. `now` sets a running line's clock.
@@ -49,8 +48,7 @@ pub(super) fn line(
     Some(frame(&id, spoken, marker, (link, tokens)))
 }
 
-/// One running request's line, such as `astra · Using a tool 0:35`, then
-/// the stage meter and its word, updated in place.
+/// One running request's line, such as `astra · Using a tool 0:35`, updated in place.
 fn status_line(
     id: &str,
     status: &Shown,
@@ -65,10 +63,9 @@ fn status_line(
     let clock = since.is_none().then(|| clock(now - status.since));
     let marker = Marker::new()
         .text_size(tokens.caption_size())
-        .icon(MarkerIcon::new().child(Icon::from(glyph(since.is_some())).xsmall()))
+        .icon(MarkerIcon::new().child(status_icon(id, status)))
         .content(MarkerContent::new().text(text))
         .children(clock.map(|clock| clock_text(id, clock, tokens, cx)))
-        .child(meter(id, status.stage, tokens))
         .children(since.as_deref().map(|at| stale(id, at)));
     (spoken(status, since.as_deref()), marker)
 }
@@ -211,33 +208,6 @@ fn clock_text(id: &str, clock: String, tokens: &Tokens, cx: &App) -> AnyElement 
         .into_any_element()
 }
 
-/// Kit's progress bar as the stage meter, one fifth per stage, then the
-/// stage's word.
-fn meter(id: &str, stage: Stage, tokens: &Tokens) -> AnyElement {
-    h_flex()
-        .gap_1()
-        .child(
-            div().w_16().child(
-                Progress::new(SharedString::from(format!("{id}:meter")))
-                    .xsmall()
-                    .value(stage.percent())
-                    .accessibility_label(meter_label(stage)),
-            ),
-        )
-        .child(div().text_color(tokens.muted).child(stage.word()))
-        .into_any_element()
-}
-
-/// The meter's accessible name, such as *Stage 2 of 5: working*.
-fn meter_label(stage: Stage) -> String {
-    format!(
-        "Stage {} of {}: {}",
-        stage.step(),
-        Stage::ALL.len(),
-        stage.word()
-    )
-}
-
 /// What assistive technology reads, with when the line may be out of date.
 fn spoken(status: &Shown, since: Option<&str>) -> String {
     let line = format!("{}: {}", status.agent, status.label);
@@ -247,13 +217,22 @@ fn spoken(status: &Shown, since: Option<&str>) -> String {
     }
 }
 
-/// Decorative: the text says the same.
-fn glyph(stale: bool) -> IconName {
-    if stale {
-        IconName::Unplug
-    } else {
-        IconName::Bot
-    }
+/// Decorative: the status text provides the accessible state.
+fn status_icon(id: &str, status: &Shown) -> AnyElement {
+    let glyph = match (status.stale, status.active, status.stage) {
+        (Some(_), _, _) => IconName::Unplug,
+        (None, true, _) => {
+            let id = SharedString::from(format!("{id}:activity"));
+            return div()
+                .id(id.clone())
+                .test_support()
+                .child(ActivityMark::new(id, px(ACTIVITY_SIZE)))
+                .into_any_element();
+        }
+        (None, false, Stage::Waiting | Stage::Working) => IconName::Pause,
+        _ => IconName::Bot,
+    };
+    Icon::from(glyph).xsmall().into_any_element()
 }
 
 /// When the last update came, and the shared warning pill.

@@ -64,8 +64,7 @@ pub(crate) enum Outcome {
     Failed,
 }
 
-/// The segments of a request's stage meter, Stargate's fixed stages
-/// gathered into five: `received`, `submitting`, `accepted`, `queued` and
+/// The groups of phases in the thread timeline. `received`, `submitting`, `accepted`, `queued` and
 /// `delivered` are accepted; `model`, `reasoning`, `tool` and `retry` are
 /// working; `waiting` and `clarified` are waiting; `reply` is the reply;
 /// `completed` and `failed` are done.
@@ -76,39 +75,6 @@ pub(crate) enum Stage {
     Waiting,
     Reply,
     Done,
-}
-
-impl Stage {
-    /// Every stage, in order.
-    pub(crate) const ALL: [Self; 5] = [
-        Self::Accepted,
-        Self::Working,
-        Self::Waiting,
-        Self::Reply,
-        Self::Done,
-    ];
-
-    /// Each stage's word beside the meter, in order.
-    const WORDS: [&'static str; 5] = ["accepted", "working", "waiting", "reply", "done"];
-
-    /// The meter when full.
-    const FULL: f32 = 100.0;
-
-    /// The stage's step on the meter, from 1 for accepted to 5 for done.
-    pub(crate) fn step(self) -> usize {
-        self as usize + 1
-    }
-
-    /// The stage's word beside the meter.
-    pub(crate) fn word(self) -> &'static str {
-        Self::WORDS.get(self as usize).copied().unwrap_or_default()
-    }
-
-    /// How far along the meter the stage is, as Kit's progress value: one
-    /// fifth for accepted up to all of it for done.
-    pub(crate) fn percent(self) -> f32 {
-        Self::FULL * self.step() as f32 / Self::ALL.len() as f32
-    }
 }
 
 /// What one progress notice says.
@@ -138,7 +104,11 @@ impl Phase {
         })
     }
 
-    /// The meter's segment for this phase.
+    pub(crate) fn active(self) -> bool {
+        matches!(self, Self::Thinking | Self::Tool | Self::Writing)
+    }
+
+    /// The thread timeline group for this phase.
     pub(crate) fn stage(self) -> Stage {
         match self {
             Self::Unconfirmed | Self::Accepted | Self::Queued => Stage::Accepted,

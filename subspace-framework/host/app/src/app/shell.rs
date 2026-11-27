@@ -202,10 +202,13 @@ impl SubspaceApp {
             self.dashboard().and_then(|dashboard| dashboard.status(cx)),
             self.terminal_status(cx),
         ];
+        let mark_in_toolbar =
+            self.main.is_board() && subspace_dashboard::activity_mark::in_product_toolbar(cx);
         StatusFacts {
             status: join_status(status),
             docks: self.space_docks(cx),
-            loading: self.dashboard().is_some_and(|dashboard| dashboard.busy(cx)),
+            loading: !mark_in_toolbar
+                && self.dashboard().is_some_and(|dashboard| dashboard.busy(cx)),
             copilot_busy: chat.is_busy(),
             copilot_attention: chat.needs_attention(),
             copilot_unavailable: chat.is_unavailable(),

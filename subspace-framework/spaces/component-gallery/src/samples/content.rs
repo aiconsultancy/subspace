@@ -1,7 +1,8 @@
 //! Content: media previews, badges, links, shortened and rich text, headings,
 //! toolbar labels and avatars.
 
-use gpui_kit::{Context, ParentElement as _, Styled as _, Window, div};
+use gpui_kit::{Context, ParentElement as _, Styled as _, Window, div, px};
+use subspace_dashboard::activity_mark::ActivityMark;
 use subspace_dashboard::rich::{self, Format};
 use subspace_dashboard::toolbar_label::{self, ToolbarLabel};
 use subspace_dashboard::{Tokens, avatar, truncated, typography};
@@ -31,6 +32,13 @@ const MARKDOWN: &str = "**Bold**, *italic*, `code` and a [link](https://example.
 const HTML: &str = "<p><b>Bold</b> HTML with <code>code</code>.</p>";
 
 pub(crate) const ITEMS: &[Item] = &[
+    Item {
+        name: "activity_mark::ActivityMark",
+        source: "board-kit/dashboard/src/activity_mark.rs",
+        used_in: "Active agent turns in Channels and the Subspace toolbar while the current Space is busy.",
+        samples: activity_marks,
+        kit: None,
+    },
     Item {
         name: "animated_collapsible::AnimatedCollapsible",
         source: "board-kit/dashboard/src/animated_collapsible.rs",
@@ -324,4 +332,22 @@ fn sample_label(
         text: text.into(),
         accessible: accessible.into(),
     }
+}
+
+pub(super) fn activity_marks(
+    _: &ComponentGallery,
+    _: &Tokens,
+    _: &mut Window,
+    _: &mut Context<ComponentGallery>,
+) -> Vec<Sample> {
+    vec![
+        sample(
+            "Working",
+            ActivityMark::new("gallery-activity-running", px(20.)),
+        ),
+        sample(
+            "Steady",
+            ActivityMark::new("gallery-activity-steady", px(20.)).active(false),
+        ),
+    ]
 }

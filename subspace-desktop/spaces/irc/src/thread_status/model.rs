@@ -35,7 +35,9 @@ pub(crate) struct Shown {
     /// its event stream, the network is not connected, or the notice was
     /// already held when the network's current connection began.
     pub stale: Option<DateTime<Utc>>,
-    /// The segment of the stage meter the request has reached.
+    /// Whether this phase reports activity instead of being queued or waiting.
+    pub active: bool,
+    /// The request's current phase group.
     pub stage: Stage,
     /// When the request was sent, by the server: the line's clock counts
     /// from here.
@@ -198,6 +200,7 @@ fn live_line(
         agent: observation.agent.clone(),
         label: phase.label(entry.line.own)?,
         stale: stale(observation, connected),
+        active: phase.active(),
         stage: phase.stage(),
         since: entry.line.time,
         settled: None,
@@ -219,6 +222,7 @@ fn settled_line(entry: &Entry, agent: String, ending: &Ending) -> Shown {
             None => "Ended",
         },
         stale: None,
+        active: false,
         stage: Stage::Done,
         since: entry.line.time,
         settled: Some(Settled {

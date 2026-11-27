@@ -1,4 +1,4 @@
-//! A request's line while it runs, with its stage on the meter and the
+//! A request's line while it runs, with its current phase and the
 //! time it was sent, and the quiet line it settles into: done or failed,
 //! with how long it took, also after a restart, and a neutral `Ended` for an
 //! ending stored before its outcome was kept.
@@ -14,23 +14,24 @@ use crate::state::IrcState;
 use crate::thread_status::{Ending, Outcome, Settled, Stage};
 
 #[test]
-fn a_running_line_maps_stargate_s_stages_onto_the_meter() {
+fn a_running_line_maps_phases_and_animates_reported_activity() {
     let mut state = joined(vec![ship()]);
     live(&mut state, [request(&room(), "first", 1)]);
-    for (minute, (value, stage)) in (2..).zip([
-        ("received", Stage::Accepted),
-        ("queued", Stage::Accepted),
-        ("delivered", Stage::Accepted),
-        ("reasoning", Stage::Working),
-        ("tool", Stage::Working),
-        ("retry", Stage::Working),
-        ("waiting", Stage::Waiting),
-        ("clarified", Stage::Waiting),
-        ("reply", Stage::Reply),
+    for (minute, (value, stage, active)) in (2..).zip([
+        ("received", Stage::Accepted, false),
+        ("queued", Stage::Accepted, false),
+        ("delivered", Stage::Accepted, false),
+        ("reasoning", Stage::Working, true),
+        ("tool", Stage::Working, true),
+        ("retry", Stage::Working, false),
+        ("waiting", Stage::Waiting, false),
+        ("clarified", Stage::Waiting, false),
+        ("reply", Stage::Reply, true),
     ]) {
         live(&mut state, [progress(&room(), "first", value, minute)]);
         let shown = line(&state, &room(), "first").unwrap();
         assert_eq!(shown.stage, stage, "{value}");
+        assert_eq!(shown.active, active, "{value}");
         assert_eq!(shown.since, at(1), "the clock counts from the request");
         assert!(shown.ticking(), "{value} is live");
     }
@@ -73,24 +74,6 @@ fn a_failed_request_settles_into_failed_after_its_duration() {
             outcome: Some(Outcome::Failed),
             took: Some(TimeDelta::minutes(3)),
         })
-    );
-}
-
-#[test]
-fn each_stage_has_its_step_word_and_share_of_the_meter() {
-    let steps: Vec<(usize, &str, f32)> = Stage::ALL
-        .iter()
-        .map(|stage| (stage.step(), stage.word(), stage.percent()))
-        .collect();
-    assert_eq!(
-        steps,
-        [
-            (1, "accepted", 20.0),
-            (2, "working", 40.0),
-            (3, "waiting", 60.0),
-            (4, "reply", 80.0),
-            (5, "done", 100.0),
-        ]
     );
 }
 
