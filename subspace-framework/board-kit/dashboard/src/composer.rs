@@ -257,7 +257,6 @@ impl Composer {
     }
 
     /// Frozen text remains selectable; submit and editing are held separately.
-    // qual:api
     pub fn set_readonly(&mut self, readonly: bool, cx: &mut Context<Self>) {
         self.state.readonly = readonly;
         cx.notify();

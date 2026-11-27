@@ -1,7 +1,8 @@
-//! The trailing side of the pane's toolbar: the page's own action, then
-//! Refresh at the right edge. In a narrow pane the strip's leading side
-//! keeps room for its overflow button, so these yield the rest of the line
-//! and move into their own overflow menu, Refresh first.
+//! The trailing side of the pane's toolbar: Refresh, then the page's own
+//! action at the right edge, where every Space keeps its primary action. In
+//! a narrow pane the strip's leading side keeps room for its overflow button,
+//! so these yield the rest of the line and move into their own overflow
+//! menu, the page action first.
 
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::menu::PopupMenuItem;
@@ -23,11 +24,11 @@ const UNMEASURED_WIDTH: f32 = 0.;
 const NEW_MILESTONE: &str = "New milestone";
 const EDIT_PROJECT: &str = "Edit project";
 
-/// The page's action and Refresh, as one overflowing row.
+/// Refresh and the page's action, as one overflowing row.
 pub(super) fn render(this: &mut Projects, cx: &mut Context<Projects>) -> AnyElement {
     let owner = cx.entity().downgrade();
     let page = page_action(this, owner.clone());
-    let units = page.into_iter().chain([refresh_unit(owner)]).collect();
+    let units = std::iter::once(refresh_unit(owner)).chain(page).collect();
     let trailing = OverflowToolbar::sync(&mut this.trailing, units, cx);
     div()
         .min_w_0()

@@ -29,9 +29,9 @@ app imports it as `subspace_framework::dashboard::workspace`.
 
 | Zone | Holds | Never holds | Size |
 | --- | --- | --- | --- |
-| Navigator, the leading dock | The Space's name in its header, then where you are looking: views, projects, networks, repositories, groups. The signed-in account may sit in its footer. | Filters, actions on the selection, the detail of an item. | `--nav-w` wide; header `--strip-h` high; rows `--row-h` high |
-| Tab strip, the top of the pane | What is open: the list or view on show, and an opened item beside it. | The Space's views; those are navigator rows. | `--strip-h` high |
-| Toolbar, under the tab strip | Search and filters on the leading side, actions for what is open on the trailing side. | A Space title, a line of context, selection actions outside the [Decisions exception](#contextual-action-in-decisions), the dock switches. | at least `--toolbar-h` high |
+| Navigator, the leading dock | The Space's name in its header, then where you are looking: views, projects, networks, repositories, groups. The signed-in account may sit in its footer. | Filters, actions on the selection, the detail of an item. | `--nav-w` wide; header exactly the strip height; rows `--row-h` high |
+| Tab strip, the top of the pane | What is open: the list or view on show, and an opened item beside it. | The Space's views; those are navigator rows. | exactly the strip height |
+| Toolbar, under the tab strip | Search and filters on the leading side, actions for what is open on the trailing side. | A Space title, a line of context, selection actions outside the [Decisions exception](#contextual-action-in-decisions), the dock switches. | at least `--toolbar-h` high; exactly the strip height when it heads a pane with no tab strip (`Toolbar::strip`) |
 | Content | The list, the page, the conversation or the graph. | A heading for the Space, its own outer padding. | the rest of the pane |
 | Inspector or detail panel, the trailing dock | The detail of the selection, with the actions that act on it in its footer. Tabs only under [Inspector tabs](#inspector-tabs). | Views, filters, the Space's own state. | `--inspector-w` wide, or the detail panel's own width; header exactly the strip height |
 | Status bar, the shell's | Account, connection, counts and sync time, from `Dashboard::status`; the navigator's switch at its leading end and the inspector's at its trailing end, from `Dashboard::docks`. | Any other control of the Space's. Besides the dock switches, it holds only the shell's own commands, such as About and Help. | the shell's |
@@ -118,15 +118,12 @@ nothing to this control.
 9. **One primary action per toolbar.** A pane toolbar has at most one
    primary action: the Space's main one, at the trailing end, such as
    **New issue…**, **Trigger…** or **New project**, built with
-   `action::main_action`. Every other toolbar action is neutral or quiet. In
-   a dialog or a footer, `Intent::Primary` marks the action that completes a
-   decision, such as Save.
-10. **Shared components and tokens only.** No literal colours or sizes, no
-    one-off styled controls. Read sizes from `Tokens::current(cx)`.
    `action::main_action`. Every other toolbar action is neutral or quiet.
    [Decisions](#contextual-action-in-decisions) can replace its usual primary
    action with Accept for an eligible selection. In a dialog or a footer,
    `Intent::Primary` marks the action that completes a decision, such as Save.
+10. **Shared components and tokens only.** No literal colours or sizes, no
+    one-off styled controls. Read sizes from `Tokens::current(cx)`.
 
 ### Inspector tabs
 
