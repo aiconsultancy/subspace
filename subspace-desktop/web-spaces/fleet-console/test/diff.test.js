@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { createApiClient, HttpError, MAX_DIFF_BODY_BYTES, MAX_DIFF_FILE_BODY_BYTES } from "../src/api.js";
 import {
   BINARY_PAGE_BYTES,
@@ -300,6 +302,55 @@ test("diff list: a repeated page token, a page past the total, an empty later pa
     assert.equal(watcher.view.error.kind, "invalid", JSON.stringify(watcher.view.error));
     assert.ok(lists().length <= 3, "no endless paging");
   }
+});
+
+// A garbage collection on demand, for checks that a value is no longer reachable.
+setFlagsFromString("--expose-gc");
+const gc = runInNewContext("gc");
+/** Collect garbage until weak references to unreachable values clear: each turn lets go of the last one's. */
+const collect = async () => {
+  for (let i = 0; i < 4; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    gc();
+  }
+};
+
+test("diff list: while a later page is pending, neither the first page's raw answer nor any raw row of it is reachable", async () => {
+  let firstRow = null;
+  let firstAnswer = null;
+  let asked;
+  const reached = new Promise((resolve) => (asked = resolve));
+  let release;
+  const pending = new Promise((resolve) => (release = resolve));
+  const client = {
+    diff: async (ship, member, query) => {
+      if (query.page !== undefined) {
+        asked();
+        return pending;
+      }
+      // A gateway-sized first page: 64 rows, each with a 64 KiB inline patch of its own.
+      const files = Array.from({ length: 64 }, (_, i) => file(`a${i}.txt`, { patch: `+${String(i).padStart(4, "0")}${"x".repeat(64 * 1024)}\n` }));
+      const answer = page(files, { total: 65, nextPage: "more" });
+      firstRow = new WeakRef(files[0]);
+      firstAnswer = new WeakRef(answer);
+      return answer;
+    },
+    diffFile: async () => Promise.reject(new HttpError(404)),
+  };
+  const watcher = createDiffWatcher({ client, target: TARGET, onChange: () => {}, ...fakeTimers().options });
+  watcher.start();
+  await reached;
+  await collect();
+  assert.equal(watcher.view.status, "loading");
+  assert.equal(firstRow.deref(), undefined, "the first page's raw row was let go before the second page was asked for");
+  assert.equal(firstAnswer.deref(), undefined, "nor the answer that held it");
+  release(page([file("last.txt")], { total: 65 }));
+  await flush();
+  assert.equal(watcher.view.status, "ready");
+  assert.equal(watcher.view.files.length, 65);
+  assert.equal(watcher.view.files[0].file.path, "a0.txt", "its metadata is kept");
+  assert.equal(watcher.view.files[0].file.patch, undefined);
+  watcher.stop();
 });
 
 test("diff list: an unknown status or kind is kept and shown, never dropped", () => {

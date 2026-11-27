@@ -41,9 +41,11 @@ one shows, and the differences are listed below with their reasons.
   page's fingerprint (else stale) and the same ship, member, project, mode
   and total, and add files; a repeated token, a token after `total` files
   or a list that does not add up to `total` is an invalid response. Nothing
-  is cut. Each page is cut down to its rows' metadata as it arrives: the
-  list keeps every row but none of the inline patch text, so a 17-page list
-  of 1,088 files (68 MiB of inline patches) holds no patch byte outside the
+  is cut. Each page, the first included, is cut down to its summary, its
+  rows' metadata and its next token as it arrives, before the next page is
+  asked for: the list keeps every row but none of the inline patch text,
+  not even the first page's while later pages load, so a 17-page list of
+  1,088 files (68 MiB of inline patches) holds no patch byte outside the
   budget.
 - **Patch parts.** Each file's patch is one `createPager` (`src/pager.js`,
   through `src/diff-parts.js`), keyed by the snapshot's fingerprint, the
@@ -228,7 +230,9 @@ fingerprint on `isGit`, the routes' query strings and unread error bodies,
 each status code of the first page, busy retries with `Retry-After`, the
 default wait and the ten-second cap, an empty snapshot, list paging by
 `nextPage` through the real client with an opaque token, stale and invalid
-list pages, a 17-page list keeping no patch text outside the budget and
+list pages, no raw row or answer of the first page reachable while a later
+page is pending (a `WeakRef` after forced garbage collection), a 17-page
+list keeping no patch text outside the budget and
 reading an opened patch at the snapshot, charged, rows sharing a display
 path each showing their own patch from their own list page (stale at another
 fingerprint) and no bytes, the file route's path rule, a unique path it

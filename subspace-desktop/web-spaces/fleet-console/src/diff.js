@@ -291,43 +291,52 @@ function listedRow(file, page, slot) {
 }
 
 /**
+ * One page of the file list at `token` (null for the first), cut down
+ * before anything else is awaited: its summary (the answer less its files
+ * and token), its rows' metadata (`listedRow`) and its next token. The raw
+ * answer, with its inline patch text, is never held past this read.
+ */
+async function readListPage(client, target, mode, read, token) {
+  const answer = await retryBusy(read, (signal) => client.diff(target.ship, target.member, { project: target.project, mode, page: token ?? undefined }, signal));
+  checkDiffPage(answer, target, mode);
+  const { files, nextPage, ...summary } = answer;
+  return { summary, rows: files.map((file, slot) => listedRow(file, token, slot)), next: nextPage ?? null };
+}
+
+/**
  * Read every page of the file list for one snapshot, following each page's
  * opaque `nextPage` token (STAR-5's `page` parameter). Each page must carry
  * the first page's fingerprint (else the snapshot moved on: stale) and
  * checkout, add files, and never repeat a token; the pages must list exactly
  * `total` files. Nothing is cut: it returns the whole list or throws. Each
- * page is cut down to its rows' metadata (`listedRow`) as it arrives, so no
- * page's patch text outlives the read of that page.
+ * page, the first included, is cut down to its summary and rows' metadata
+ * (`readListPage`) as it arrives, so no page's patch text outlives the read
+ * of that page, not even across the reads of later pages.
  */
 export async function loadDiffList(client, target, mode, read) {
-  const query = (page) => ({ project: target.project, mode, page });
-  let first;
+  let head;
   try {
-    first = await retryBusy(read, (signal) => client.diff(target.ship, target.member, query(undefined), signal));
+    head = await readListPage(client, target, mode, read, null);
   } catch (error) {
     throw tagFirst(error);
   }
-  checkDiffPage(first, target, mode);
-  const files = first.files.map((file, slot) => listedRow(file, null, slot));
-  let unstable = first.unstable === true;
-  let token = first.nextPage ?? null;
+  const { summary, rows: files } = head;
+  let unstable = summary.unstable === true;
+  let token = head.next;
   const seen = new Set();
   while (token !== null) {
     read.check();
-    if (files.length >= first.total || seen.has(token)) throw new InvalidResponseError("The file list repeats a page or runs past its total.");
+    if (files.length >= summary.total || seen.has(token)) throw new InvalidResponseError("The file list repeats a page or runs past its total.");
     seen.add(token);
     // A 404 here means the snapshot moved on: diffError reads it as stale.
-    const page = await retryBusy(read, (signal) => client.diff(target.ship, target.member, query(token), signal));
-    checkDiffPage(page, target, mode);
-    if (page.fingerprint !== first.fingerprint) throw new StaleError();
-    if (!page.files.length || !sameCheckout(first, page)) throw new InvalidResponseError("A later page of the file list is for another checkout or is empty.");
-    const from = token;
-    files.push(...page.files.map((file, slot) => listedRow(file, from, slot)));
-    unstable ||= page.unstable === true;
-    token = page.nextPage ?? null;
+    const page = await readListPage(client, target, mode, read, token);
+    if (page.summary.fingerprint !== summary.fingerprint) throw new StaleError();
+    if (!page.rows.length || !sameCheckout(summary, page.summary)) throw new InvalidResponseError("A later page of the file list is for another checkout or is empty.");
+    files.push(...page.rows);
+    unstable ||= page.summary.unstable === true;
+    token = page.next;
   }
-  if (files.length !== first.total) throw new InvalidResponseError(`The file list has ${files.length} files, not ${first.total}.`);
-  const { nextPage: _, files: __, ...summary } = first;
+  if (files.length !== summary.total) throw new InvalidResponseError(`The file list has ${files.length} files, not ${summary.total}.`);
   return { summary: { ...summary, unstable }, files };
 }
 
