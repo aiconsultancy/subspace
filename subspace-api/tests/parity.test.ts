@@ -1226,12 +1226,27 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       "POST",
       { type: "spec", title: "Fixture", content },
     );
-    const chat = await call<{ reference: string }>(201, "/chat/uploads", "admin", "POST", {
-      uploadId: crypto.randomUUID(),
-      fileName: "note.md",
-      contentType: "text/markdown",
-      base64: Buffer.from(content).toString("base64"),
+    const chat = await call<{ reference: string; url: string }>(
+      201,
+      "/chat/uploads",
+      "admin",
+      "POST",
+      {
+        uploadId: crypto.randomUUID(),
+        fileName: "example.HTM",
+        contentType: "text/plain",
+        base64: Buffer.from(content).toString("base64"),
+      },
+    );
+    const download = await fetch(new URL(chat.url, origin), {
+      headers: { Authorization: `Bearer ${tokens.get("admin")}` },
     });
+    expect(download.status).toBe(200);
+    expect(download.headers.get("content-type")).toContain("text/plain");
+    expect(download.headers.get("content-disposition")).toBe(
+      "attachment; filename*=UTF-8''example.HTM",
+    );
+    expect(Buffer.from(await download.arrayBuffer())).toEqual(Buffer.from(content));
     const form = new FormData();
     form.append("file", new Blob([content], { type: "text/markdown" }), "note.md");
     const upload = await fetch(`${origin}/api/v1/issues/${issue.id}/attachments`, {

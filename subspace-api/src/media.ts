@@ -115,7 +115,10 @@ function storeChatUpload(
   bytes: Buffer,
 ) {
   return Effect.gen(function* () {
-    if (bytes.length > maxChatBytes || !validContent(input.fileName, input.contentType, bytes)) {
+    if (
+      bytes.length > maxChatBytes ||
+      !validContent(input.fileName, input.contentType, bytes, true)
+    ) {
       return yield* Effect.fail(
         problem(
           400,

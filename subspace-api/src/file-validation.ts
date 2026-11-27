@@ -15,7 +15,33 @@ export const chatTypes = [
   zip,
   word,
   excel,
+  slides,
 ] as const;
+
+// Channels shares web source as plain UTF-8 so readers can inspect it as text.
+const chatTextExtensions = new Set([
+  "html",
+  "htm",
+  "css",
+  "js",
+  "mjs",
+  "cjs",
+  "ts",
+  "jsx",
+  "tsx",
+  "json",
+  "jsonl",
+  "xml",
+  "svg",
+  "csv",
+  "tsv",
+  "yaml",
+  "yml",
+  "toml",
+  "log",
+  "diff",
+  "patch",
+]);
 
 const extensions: Readonly<Record<string, readonly string[]>> = {
   "image/png": ["png"],
@@ -91,13 +117,12 @@ function zipNames(bytes: Buffer) {
   return at === end ? names : null;
 }
 
-export function validContent(name: string, type: string, bytes: Buffer) {
-  if (
-    !validName(name) ||
-    !bytes.length ||
-    !Object.hasOwn(extensions, type) ||
-    !extensions[type]?.includes(name.split(".").at(-1)?.toLowerCase() ?? "")
-  )
+export function validContent(name: string, type: string, bytes: Buffer, chat = false) {
+  const extension = name.split(".").at(-1)?.toLowerCase() ?? "";
+  const matchingExtension =
+    extensions[type]?.includes(extension) ||
+    (chat && type === "text/plain" && chatTextExtensions.has(extension));
+  if (!validName(name) || !bytes.length || !Object.hasOwn(extensions, type) || !matchingExtension)
     return false;
   switch (type) {
     case "image/png":

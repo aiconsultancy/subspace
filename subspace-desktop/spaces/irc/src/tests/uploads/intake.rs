@@ -3,7 +3,7 @@ use std::path::Path;
 use super::super::completion::{composer, text};
 use crate::uploads::outgoing::ItemState;
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{ExternalPaths, FileDropEvent, InputEvent as _, TestAppContext, point, px};
+use gpui_kit::{ExternalPaths, FileDropEvent, InputEvent as _, TestAppContext};
 
 fn file(folder: &Path, name: &str) -> std::path::PathBuf {
     let path = folder.join(name);
@@ -45,25 +45,37 @@ fn the_paperclip_opens_a_file_picker_with_an_empty_draft(cx: &mut TestAppContext
     });
 }
 
+const WEBP: &[u8] = b"RIFF\x24\0\0\0WEBPVP8 \x18\0\0\0\x30\x01\0\x9d\x01\x2a\x01\0\x01\0\x02\0\x34\x25\xa4\0\x03\x70\0\xfe\xfb\x94\0\0";
+
 #[gpui_kit::test]
-fn a_file_dropped_over_the_focused_text_box_keeps_the_draft(cx: &mut TestAppContext) {
+fn mixed_files_dropped_over_the_focused_text_box_keep_the_draft(cx: &mut TestAppContext) {
     let (conversation, input, cx) = composer(cx);
     let folder = tempfile::tempdir().unwrap();
-    let path = file(folder.path(), "fixture.txt");
-    cx.update(|window, cx| {
-        input.update(cx, |input, cx| {
-            input.set_text("Keep this draft", window, cx)
-        });
+    let image = folder.path().join("fixture.webp");
+    std::fs::write(&image, WEBP).unwrap();
+    let paths = [
+        file(folder.path(), "fixture.txt"),
+        file(folder.path(), "index.HTM"),
+        image,
+        file(folder.path(), "theme.css"),
+    ];
+    cx.simulate_input("Keep this draft");
+    let position = cx.update(|window, cx| {
         window.render_frame(cx);
+        assert!(window.last_input_was_keyboard());
         let position = window.find("chat-input").bounds().center();
         window.dispatch_event(
             FileDropEvent::Entered {
-                position: point(position.x, px(120.)),
-                paths: ExternalPaths([path].into_iter().collect()),
+                position,
+                paths: ExternalPaths(paths.into_iter().collect()),
             }
             .to_platform_input(),
             cx,
         );
+        position
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
         window.render_frame(cx);
         window.dispatch_event(FileDropEvent::Pending { position }.to_platform_input(), cx);
         window.render_frame(cx);
@@ -72,11 +84,19 @@ fn a_file_dropped_over_the_focused_text_box_keeps_the_draft(cx: &mut TestAppCont
     cx.run_until_parked();
     assert_eq!(text(&input, cx), "Keep this draft");
     conversation.read_with(cx, |view, _| {
-        assert_eq!(view.tray.items.len(), 1);
-        let ItemState::Ready(pending) = &view.tray.items[0].state else {
-            panic!("dropped file should be ready");
-        };
-        assert_eq!(pending.draft.name(), "fixture.txt");
-        assert!(pending.uploaded.is_none());
+        assert_eq!(view.tray.items.len(), 4);
+        let expected = [
+            ("fixture.txt", "text/plain"),
+            ("index.HTM", "text/plain"),
+            ("fixture.webp", "image/webp"),
+            ("theme.css", "text/plain"),
+        ];
+        for (item, (name, mime)) in view.tray.items.iter().zip(expected) {
+            let ItemState::Ready(pending) = &item.state else {
+                panic!("dropped file {name} should be ready");
+            };
+            assert_eq!((pending.draft.name(), pending.draft.mime()), (name, mime));
+            assert!(pending.uploaded.is_none());
+        }
     });
 }

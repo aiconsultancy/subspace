@@ -426,7 +426,7 @@ none.
 ### Send files as attachments
 
 Choose the paperclip (**Attach files…**) to browse for one or more files.
-You can also drop files onto the message box or paste them into the
+You can also drop several files at once onto the message box or paste them into the
 conversation. The draft stays in the message box. When you want to send the
 draft itself as a Markdown file, choose **Attach draft as Markdown**.
 
@@ -436,11 +436,13 @@ text back when the composer is empty.
 
 A message carries up to 10 attachments, 25 MB (25,000,000 bytes) in total.
 Files are checked in the order they were added: Subspace keeps the files that
-fit and says when it left some out. Supported files are Markdown, plain text,
-PNG, JPEG, GIF, WebP, ZIP, PDF, DOCX and XLSX. Images must be at most 4096
+fit and says when it left some out. Supported files include Markdown, plain text,
+HTML (including HTM), CSS, JavaScript, TypeScript, JSON, XML, SVG, CSV, TSV, YAML,
+TOML, logs and patches. Web source opens as text. You can also send PNG, JPEG,
+GIF, WebP, ZIP, PDF, DOCX, XLSX and PPTX. Images must be at most 4096
 pixels on each edge and 16 megapixels. ZIPs must be unencrypted, contain at
 most 4,096 entries, expand to at most 250 MB and use relative paths. DOCX and
-XLSX packages also have a 250 MB expansion limit.
+XLSX and PPTX packages also have a 250 MB expansion limit.
 
 Press **Enter** to send. Subspace uploads every attachment first, then sends
 your text with one `UPL-… name (size)` reference per file as one IRC message.

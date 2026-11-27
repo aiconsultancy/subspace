@@ -23,10 +23,11 @@ use std::{rc::Rc, sync::Arc};
 
 use chrono::Local;
 use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Styled as _, Subscription, TestSupportExt as _,
-    WeakEntity, Window, div,
+    AnyElement, App, Context, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle,
+    InteractiveElement as _, IntoElement, ParentElement as _, PlatformInput, Render, Styled as _,
+    Subscription, TestSupportExt as _, WeakEntity, Window, div,
 };
 use subspace_client_irc::{BufferKey, Command, Target};
 use subspace_framework::contracts::github::recognition::PullRequestLink;
@@ -543,13 +544,19 @@ impl Render for Conversation {
             .child(self.reacting.hover_anchor.clone());
         let notice = reacting::notice(self, cx);
         let dialog = crate::tracker::message::render(self, cx);
+        let uploads = !matches!(self.buffer.target, Target::Server)
+            && subspace_api_client::capabilities().chat_uploads;
         let content = v_flex()
             .id("irc-conversation")
             .track_focus(&self.focus)
             .key_context(keys::CONVERSATION)
-            .on_drop(cx.listener(|this, paths: &gpui_kit::ExternalPaths, _, cx| {
-                crate::uploads::outgoing::paths(this, paths.0.to_vec(), cx);
-            }))
+            .when(uploads, |target| {
+                target.on_drag_move(file_drag_pointer).on_drop(cx.listener(
+                    |this, paths: &ExternalPaths, _, cx| {
+                        crate::uploads::outgoing::paths(this, paths.0.to_vec(), cx);
+                    },
+                ))
+            })
             .on_action(cx.listener(|this, _: &keys::FocusTranscript, window, cx| {
                 keys::enter(this, window, cx);
             }))
@@ -563,15 +570,25 @@ impl Render for Conversation {
                 div()
                     .flex_shrink_0()
                     .children(notice)
-                    .child(self.draft.render(
-                        &self.tray,
-                        !matches!(self.buffer.target, Target::Server)
-                            && subspace_api_client::capabilities().chat_uploads,
-                        cx,
-                    )),
+                    .child(self.draft.render(&self.tray, uploads, cx)),
             )
             .children(dialog)
             .into_any_element();
         find::scope(self, content, cx)
     }
+}
+
+/// External file moves arrive as drag events while GPUI can still be in
+/// keyboard mode. Restore pointer hit-testing before its drop handler runs.
+fn file_drag_pointer(drag: &DragMoveEvent<ExternalPaths>, window: &mut Window, cx: &mut App) {
+    if !window.last_input_was_keyboard() || !drag.bounds.contains(&drag.event.position) {
+        return;
+    }
+    let motion = drag.event.clone();
+    // Wait until GPUI has restored the current frame's mouse listeners.
+    window.defer(cx, move |window, cx| {
+        if window.last_input_was_keyboard() && cx.has_active_drag() {
+            window.dispatch_event(PlatformInput::MouseMove(motion), cx);
+        }
+    });
 }
