@@ -87,9 +87,8 @@ pub(super) struct Loaded {
     pub(super) version: u64,
     /// The read under way or last made: a reply for any other is dropped.
     read: u64,
-    /// An item found larger than its room is read again, once, with room
-    /// for the size it claimed, when that fits the budget.
-    regrow: bool,
+    /// Why that read was made: only a person's request may be read again.
+    origin: Origin,
     /// Set when the item goes or its read is replaced, so that read asks
     /// for no further page.
     cancel: Arc<AtomicBool>,
@@ -100,7 +99,7 @@ impl Loaded {
     /// A first read under way, granted `allowance`.
     fn reading(
         allowance: u64,
-        (read, regrow): (u64, bool),
+        (read, origin): (u64, Origin),
         (cancel, task): (Arc<AtomicBool>, Task<()>),
     ) -> Self {
         Self {
@@ -112,7 +111,7 @@ impl Loaded {
             reload: Reload::None,
             version: read,
             read,
-            regrow,
+            origin,
             cancel,
             _read: Some(task),
         }
@@ -158,14 +157,14 @@ impl Loaded {
     fn reload(
         &mut self,
         (reserve, allowance): (u64, u64),
-        (read, regrow): (u64, bool),
+        (read, origin): (u64, Origin),
         (cancel, task): (Arc<AtomicBool>, Task<()>),
     ) {
         self.cancel.store(true, Ordering::Release);
         self.incoming = reserve;
         self.reload = Reload::Reading(allowance);
         self.read = read;
-        self.regrow = regrow;
+        self.origin = origin;
         self.cancel = cancel;
         self._read = Some(task);
     }
@@ -212,6 +211,18 @@ pub(super) enum Held {
     /// Too large to hold whole: one page of its JSON at a time.
     Parts(Parts),
     Failed(Error),
+}
+
+/// Why an item is read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    /// A person's request: it changes priority ([`stamp`]), and an item
+    /// found larger than its room is read again, once, with room for the
+    /// size it claimed, when that fits the budget.
+    Request,
+    /// That read again: no request, so priority stays, and it is never
+    /// read again.
+    ReadAgain,
 }
 
 /// A newer read of an item, replacing what it shows (SUB decision
@@ -268,21 +279,26 @@ pub(super) fn fits_whole(selection: &Selection, bytes: u64) -> bool {
 /// declared size, `bytes`, and its drawn copy fit the room left, part by
 /// part otherwise.
 pub(super) fn load(board: &mut Irc, turn: &str, item: &str, bytes: u64, cx: &mut Context<Irc>) {
-    read_item(board, (turn.to_owned(), item.to_owned()), (bytes, true), cx);
+    read_item(
+        board,
+        (turn.to_owned(), item.to_owned()),
+        (bytes, Origin::Request),
+        cx,
+    );
 }
 
 /// Reads the item `key` of declared size `bytes` within the room made for
 /// it before the read: a whole read never holds more than that room, and
-/// page 0 claiming more comes back alone. Once, when `regrow`, an item
-/// that grew past its room but fits the budget is read again with room
-/// made for the size its page 0 claimed; only the first read is the
-/// person's request, so only it changes priority ([`stamp`]). What an
-/// earlier read shows stays shown and charged until this one arrives
-/// (SUB decision `4311830a` item 2).
+/// page 0 claiming more comes back alone. Once, for a person's request
+/// ([`Origin::Request`]), an item that grew past its room but fits the
+/// budget is read again with room made for the size its page 0 claimed
+/// ([`Origin::ReadAgain`]); only the request changes priority ([`stamp`]).
+/// What an earlier read shows stays shown and charged until this one
+/// arrives (SUB decision `4311830a` item 2).
 fn read_item(
     board: &mut Irc,
     key: (String, String),
-    (bytes, regrow): (u64, bool),
+    (bytes, origin): (u64, Origin),
     cx: &mut Context<Irc>,
 ) {
     let client = board
@@ -301,7 +317,7 @@ fn read_item(
             selection.loaded.remove(&key);
         }
     }
-    if regrow {
+    if origin == Origin::Request {
         stamp(selection, &key);
     }
     let read = next_read(selection);
@@ -324,10 +340,10 @@ fn read_item(
     });
     match selection.loaded.get_mut(&key) {
         Some(shown) if shown.shows() => {
-            shown.reload((reserve, allowance), (read, regrow), (cancel, task));
+            shown.reload((reserve, allowance), (read, origin), (cancel, task));
         }
         _ => {
-            let loaded = Loaded::reading(allowance, (read, regrow), (cancel, task));
+            let loaded = Loaded::reading(allowance, (read, origin), (cancel, task));
             selection.loaded.insert(key, loaded);
         }
     }
@@ -420,7 +436,7 @@ fn publish(
     if let Ok(ItemRead::Larger(first)) = &result
         && grew(board, (key, read), first.bytes)
     {
-        read_item(board, key.clone(), (first.bytes, false), cx);
+        read_item(board, key.clone(), (first.bytes, Origin::ReadAgain), cx);
         return;
     }
     if current(board, (key, read)).is_none() {
@@ -498,15 +514,17 @@ fn restamp(selection: &mut Selection, key: &(String, String)) {
 }
 
 /// The item read `read` of `key`, still wanted, came back larger than
-/// the room made for it, may be read again, and would be admitted whole
-/// at the size its page 0 claimed ([`whole_read`]): with its drawn copy,
-/// and beside what it replaces while it is read, within one ledger with
-/// every request made since. The read again is no request, so it never
-/// lets go of a newer one, and otherwise its page 0 is shown in parts
-/// (SUB decisions `084f5236` item 4 and `a884e4c6`).
+/// the room made for it, was a person's request ([`Origin::Request`]),
+/// and would be admitted whole at the size its page 0 claimed
+/// ([`whole_read`]): with its drawn copy, and beside what it replaces
+/// while it is read, within one ledger with every request made since. The
+/// read again is no request, so it never lets go of a newer one, and
+/// otherwise its page 0 is shown in parts (SUB decisions `084f5236` item
+/// 4 and `a884e4c6`).
 fn grew(board: &mut Irc, (key, read): (&(String, String), u64), bytes: u64) -> bool {
-    let regrow = current(board, (key, read)).is_some_and(|loaded| loaded.regrow);
-    regrow
+    let request =
+        current(board, (key, read)).is_some_and(|loaded| loaded.origin == Origin::Request);
+    request
         && board
             .inspector_activity
             .as_ref()
