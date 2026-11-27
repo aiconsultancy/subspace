@@ -13,8 +13,11 @@ The `open-crew-diff` navigation request identifies the fleet, ship, crew member
 and project. The PRs Space resolves the fleet connection and displays **All
 changes**, **Committed only** or **Uncommitted only**. It reads file-list pages
 for one snapshot; **Load next page** continues a long patch at that snapshot’s
-fingerprint. The toolbar shows the base ref, short base commit and short head,
-or says that the diff starts from an empty tree when there is no base. File
+fingerprint. The toolbar shows what the selected mode compares: the merge
+base (ref and short commit) against the working tree for **All changes**, or
+against HEAD for **Committed only**. Both start from an empty tree if there
+is no merge base. **Uncommitted only** compares HEAD (short commit) against
+the working tree, and starts from an empty tree only on an unborn branch. File
 headers label untracked files, submodules and symlinks. A submodule without a
 patch has its own note, not a binary reader. The shared Fleet feed can also
 report a new fingerprint for that checkout. A change observed during a load

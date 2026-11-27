@@ -257,19 +257,27 @@ fn file_tags(untracked: bool, kind: Option<DiffKind>) -> &'static [&'static str]
     }
 }
 
-pub(super) fn comparison(diff: &V1Diff) -> String {
+pub(super) fn comparison(diff: &V1Diff, mode: DiffMode) -> String {
+    if mode == DiffMode::Working {
+        return match diff.head.as_deref() {
+            Some(head) => format!("HEAD @ {} → working tree", short_commit(head)),
+            None => "Empty tree → working tree".to_owned(),
+        };
+    }
     let Some(base) = &diff.base else {
         return "No base; the diff starts from an empty tree.".to_owned();
     };
-    let commit: String = base.commit.chars().take(7).collect();
-    let head: String = diff
-        .head
-        .as_deref()
-        .unwrap_or("HEAD")
-        .chars()
-        .take(7)
-        .collect();
-    format!("{} @ {commit} → {head}", base.r#ref)
+    let commit = short_commit(&base.commit);
+    let destination = if mode == DiffMode::Committed {
+        short_commit(diff.head.as_deref().unwrap_or("HEAD"))
+    } else {
+        "working tree".to_owned()
+    };
+    format!("{} @ {commit} → {destination}", base.r#ref)
+}
+
+fn short_commit(commit: &str) -> String {
+    commit.chars().take(7).collect()
 }
 
 #[cfg(test)]

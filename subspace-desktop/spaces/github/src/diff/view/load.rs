@@ -155,7 +155,7 @@ impl DiffView {
                     self.loaded && self.fleet.fingerprint.as_ref() == Some(&diff.fingerprint);
                 self.settle_page_notices(unchanged, diff.unstable, &baseline);
                 self.fleet.unavailable = false;
-                self.fleet.comparison = Some(comparison(&diff));
+                self.fleet.comparison = Some(comparison(&diff, self.fleet.mode));
                 self.binary_holds.pin_to(self.fleet.mode, &diff.fingerprint);
                 self.fleet
                     .accept_fingerprint(diff.fingerprint, baseline.live);

@@ -3,12 +3,13 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{Empty, TestAppContext};
+use gpui_kit::{Empty, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
 use subspace_client_fleet::Error;
+use subspace_client_fleet::diff::DiffMode;
 use subspace_framework::client_test_support::Mock;
 
-use super::{DiffSource, fixture, mount};
+use super::{CREW, DiffSource, SHIP, fixture, mount};
 
 #[gpui_kit::test]
 fn the_gateway_list_contract_loads_two_pages_or_an_empty_snapshot(cx: &mut TestAppContext) {
@@ -16,7 +17,7 @@ fn the_gateway_list_contract_loads_two_pages_or_an_empty_snapshot(cx: &mut TestA
     for empty in [false, true] {
         let mock = Mock::new(move |request| {
             let mut response = json!({
-                "ship": super::SHIP, "member": super::CREW, "project": null, "mode": "branch",
+                "ship": SHIP, "member": CREW, "project": null, "mode": "branch",
                 "fingerprint": "B", "unstable": false, "branch": "example",
                 "base": if empty { Value::Null } else { json!({"ref": "origin/main", "commit": "abcdef0123456789"}) },
                 "head": "0123456789abcdef", "total": if empty { 0 } else { 2 },
@@ -42,7 +43,7 @@ fn the_gateway_list_contract_loads_two_pages_or_an_empty_snapshot(cx: &mut TestA
         let comparison = if empty {
             "No base; the diff starts from an empty tree."
         } else {
-            "origin/main @ abcdef0 → 0123456"
+            "origin/main @ abcdef0 → working tree"
         };
         view.read_with(window, |view, _| {
             assert_eq!(view.fleet.fingerprint.as_deref(), Some("B"));
@@ -60,16 +61,78 @@ fn the_gateway_list_contract_loads_two_pages_or_an_empty_snapshot(cx: &mut TestA
                     &["first.txt", "second.txt"]
                 }
             );
-            assert_eq!(view.fleet.comparison.as_deref(), Some(comparison));
         });
-        window.update(|window, _| {
-            assert!(
-                gpui_kit::base::test_support::texts(window)
-                    .iter()
-                    .any(|text| text.visible() && text.text() == comparison)
-            );
-        });
+        assert_comparison(window, comparison);
     }
+}
+
+#[gpui_kit::test]
+fn working_compares_head_not_the_reported_base(cx: &mut TestAppContext) {
+    check_working_comparison(
+        cx,
+        true,
+        Some("0123456789abcdef"),
+        "HEAD @ 0123456 → working tree",
+    );
+}
+
+#[gpui_kit::test]
+fn working_compares_head_even_without_a_reported_base(cx: &mut TestAppContext) {
+    check_working_comparison(
+        cx,
+        false,
+        Some("0123456789abcdef"),
+        "HEAD @ 0123456 → working tree",
+    );
+}
+
+#[gpui_kit::test]
+fn working_compares_the_empty_tree_when_unborn(cx: &mut TestAppContext) {
+    check_working_comparison(cx, false, None, "Empty tree → working tree");
+}
+
+fn check_working_comparison(
+    cx: &mut TestAppContext,
+    has_base: bool,
+    head: Option<&'static str>,
+    expected: &str,
+) {
+    let mock = Mock::new(move |request| {
+        if request.path.ends_with("/diff?mode=working") {
+            let base =
+                has_base.then(|| json!({"ref": "origin/main", "commit": "abcdef0123456789"}));
+            return (200, json!({
+                "ship": SHIP, "member": CREW, "mode": "working", "fingerprint": "C",
+                "base": base, "head": head, "total": 0, "additions": 0, "deletions": 0, "files": [],
+            }).to_string());
+        }
+        (200, fixture(false))
+    });
+    let (view, window) = mount(cx, &mock);
+    view.update(window, |view, cx| {
+        view.set_mode(DiffMode::Working, None, cx)
+    });
+    window.run_until_parked();
+    view.read_with(window, |view, _| {
+        assert_eq!(view.fleet.fingerprint.as_deref(), Some("C"));
+    });
+    assert_comparison(window, expected);
+}
+
+fn assert_comparison(window: &mut VisualTestContext, expected: &str) {
+    window.update(|window, cx| {
+        gpui_kit::base::test_support::begin_frame(window);
+        window.draw(cx).clear(cx);
+        let actual: Vec<_> = gpui_kit::base::test_support::texts(window)
+            .into_iter()
+            .filter(|text| text.visible())
+            .collect();
+        assert!(
+            actual.iter().any(|text| text.text() == expected),
+            "expected a visible comparison line {expected:?}; visible text: {:?}",
+            actual.iter().map(|text| text.text()).collect::<Vec<_>>()
+        );
+    });
 }
 
 fn listed_file(path: &str) -> Value {
