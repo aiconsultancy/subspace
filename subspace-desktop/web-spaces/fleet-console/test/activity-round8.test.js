@@ -11,6 +11,7 @@ import { activityEvent, textItem, toolItem } from "./activity-fixtures.js";
 import { buttons, clickOn, officer, pagedWith, pagesOf, prepare, settle, windowsIn } from "./activity-helpers.js";
 
 const TURN = "turn-b";
+const KEY = `${TURN}\u0000ia`;
 const PAGING = { pageBytes: 65536, partPages: 4 };
 /** A live item that grows the pinned inline charge by `size` bytes. */
 const growth = (size, seq = 10) => activityEvent(seq, { type: "item", item: textItem(`growth-${seq}`, seq, "g".repeat(size)) });
@@ -128,6 +129,63 @@ test("r8 3 (probe): growth during Load the latest asks again for page 0 of the f
     await settle();
     const shown = watcher.view.full(TURN, "ia");
     assert.deepEqual({ state: shown.state, part: shown.part, seq: shown.seq }, { state: "ready", part: 0, seq: 10 });
+  } finally {
+    watcher.stop();
+  }
+});
+
+// ---------- P3-4: closing a turn during a handover releases the outgoing window ----------
+
+/** A whole of 600 KiB drawn, then a held Load the latest of a 600 KiB newer version, its window kept on show. */
+async function heldHandover() {
+  const { item, pages, snapshot } = pagedWith("a".repeat(600 * 1024), "ia");
+  const newer = { ...item, seq: 10, content: [{ type: "text", text: "b".repeat(600 * 1024) }] };
+  const newPages = pagesOf(newer);
+  const prepared = await prepare(snapshot, 2 * pages[0].bytes + 20_000);
+  const { watcher, client, panel } = prepared;
+  client.activityItemPage = async (agent, turn, id, page) => pages[page];
+  await watcher.loadItem(TURN, "ia");
+  panel.update(watcher.view, officer);
+  announce(watcher, newer, newPages);
+  const held = holding(client);
+  watcher.loadItem(TURN, "ia");
+  await settle();
+  panel.update(watcher.view, officer);
+  assert.equal(watcher.view.full(TURN, "ia").replacing, true);
+  const details = panel.root.findAll((node) => node.tag === "details")[0];
+  details.removeAttribute("open");
+  details.listeners.toggle();
+  assert.equal(windowsIn(panel.root).length, 0);
+  return { ...prepared, held, newPages };
+}
+
+test("r8 4 (probe): closing a turn during a handover releases the outgoing window's charge, and a failed read leaves nothing held", async () => {
+  const { watcher, held } = await heldHandover();
+  try {
+    assert.equal(watcher.view.budget.bytes(KEY), PART_MAX_BYTES, "only the incoming part is charged while it is read");
+    assert.equal(held[0].signal.aborted, false, "the incoming read goes on");
+    held[0].reject(new Error("gateway down"));
+    await settle();
+    const shown = watcher.view.full(TURN, "ia");
+    assert.equal(shown.state, "failed");
+    assert.deepEqual({ bytes: watcher.view.budget.bytes(KEY), replacing: shown.replacing }, { bytes: 0, replacing: false });
+  } finally {
+    watcher.stop();
+  }
+});
+
+test("r8 4: closing a turn during a handover still shows the fresh version's first part once it arrives", async () => {
+  const { watcher, panel, held, newPages } = await heldHandover();
+  try {
+    await answer(held, newPages);
+    await settle();
+    const shown = watcher.view.full(TURN, "ia");
+    assert.deepEqual({ state: shown.state, part: shown.part, seq: shown.seq, replacing: shown.replacing }, { state: "ready", part: 0, seq: 10, replacing: false });
+    const details = panel.root.findAll((node) => node.tag === "details")[0];
+    details.setAttribute("open", "");
+    details.listeners.toggle();
+    panel.update(watcher.view, officer);
+    assert.equal(windowsIn(panel.root).length, 1, "the part shows when the turn opens again");
   } finally {
     watcher.stop();
   }

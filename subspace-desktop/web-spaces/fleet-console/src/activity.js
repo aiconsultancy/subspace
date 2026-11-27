@@ -919,10 +919,19 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
        * The view unmounted an item's body (its turn closed, the items window
        * moved off it): an item read whole keeps where it showed, but owns no
        * bytes of a window on show, so a later switch to parts carries none.
+       * One handing over to parts lets go of the outgoing window it kept on
+       * show; the incoming read and where it opens are kept (SUB decision
+       * cf21d510).
        */
       unmount: (turnId, itemId) => {
-        const shown = positions.get(fullKey(turnId, itemId));
+        const key = fullKey(turnId, itemId);
+        const shown = positions.get(key);
         if (shown) shown.bytes = 0;
+        const entry = full.get(key);
+        if (entry?.mode === "parts" && entry.replacing) {
+          entry.replacing = false;
+          entry.pager.dropCarried();
+        }
       },
       drawWhole: (turnId, itemId, extra) => drawWhole(fullKey(turnId, itemId), extra),
       /** Bytes held for items read (whole or a part); the panel's share of the budget is not counted here. */
