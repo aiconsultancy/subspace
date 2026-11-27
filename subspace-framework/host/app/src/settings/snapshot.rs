@@ -68,6 +68,7 @@ struct LayoutDraft {
     boards: Vec<&'static str>,
     navigation: Option<String>,
     collapsed: bool,
+    navigator_title: bool,
     terminal: Option<super::terminal::TerminalSnapshot>,
     toolbar: ToolbarDraft,
 }
@@ -150,6 +151,7 @@ impl Settings {
                 boards: self.boards.iter().map(|board| board.id).collect(),
                 navigation: selection(&self.board_navigation.mode, cx),
                 collapsed: self.board_navigation.collapsed,
+                navigator_title: self.board_navigation.navigator_title,
                 terminal: self.terminal.as_ref().map(|terminal| terminal.snapshot(cx)),
                 toolbar: self.toolbar,
             },

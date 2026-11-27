@@ -2,6 +2,7 @@ use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AppContext as _, TestAppContext, WindowHandle};
 use subspace_core::state::State;
 use subspace_dashboard::prefs;
+use subspace_dashboard::workspace::navigator_title;
 
 use super::Settings;
 use super::preview_tests::open_settings;
@@ -149,6 +150,37 @@ fn layout_navigation_save_and_reopen_preserves_the_draft(cx: &mut TestAppContext
                 Some(&"Vertical tabs".to_owned())
             );
             assert!(settings.board_navigation.collapsed);
+        })
+        .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_navigator_title_switch_is_a_draft_until_save(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let settings = open_settings(root.path(), cx);
+    settings
+        .update(cx, |settings, _, cx| {
+            assert!(settings.board_navigation.navigator_title);
+            settings.board_navigation.navigator_title = false;
+            assert!(navigator_title::shown(cx), "a draft changes nothing");
+        })
+        .unwrap();
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.save(window, cx).unwrap()
+        })
+        .unwrap();
+    cx.update(|cx| {
+        assert!(!navigator_title::shown(cx));
+        assert_eq!(
+            prefs::get(cx, "layout.navigator-title").as_deref(),
+            Some("0")
+        );
+    });
+    let reopened = open_settings(root.path(), cx);
+    reopened
+        .update(cx, |settings, _, _| {
+            assert!(!settings.board_navigation.navigator_title)
         })
         .unwrap();
 }

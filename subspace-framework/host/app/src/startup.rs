@@ -63,6 +63,10 @@ pub struct ProductBuild {
     /// of its variants as `default_theme`, to use it. An id must not repeat a
     /// Framework theme id. `&[]` adds none.
     pub product_themes: crate::ProductThemes,
+    /// Whether a navigator starts with the Space's title in the accent
+    /// colour, for people who have not chosen in Settings › Layout. A saved
+    /// choice always wins. [`ProductBuild::new`] sets `true`.
+    pub navigator_title: bool,
     /// The GitHub repository (`owner/name`) Report issue files into. `None`
     /// or blank hides Report issue; a malformed one hides it with a notice.
     #[cfg(feature = "report-issue")]
@@ -106,6 +110,7 @@ impl ProductBuild {
             github_oauth: None,
             fonts: &[],
             product_themes: &[],
+            navigator_title: true,
             #[cfg(feature = "report-issue")]
             report_issue_repository: None,
         }
@@ -233,6 +238,7 @@ fn start_mode(
                 github_oauth: build.github_oauth,
                 fonts: build.fonts,
                 product_themes: build.product_themes,
+                navigator_title: build.navigator_title,
                 #[cfg(feature = "report-issue")]
                 report_issue_repository: build.report_issue_repository,
             },

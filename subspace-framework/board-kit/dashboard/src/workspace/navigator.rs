@@ -93,16 +93,21 @@ impl RenderOnce for Navigator {
         )
         .text_color(tokens.accent)
         .test_support();
-        let height = strip_height(window, cx);
-        let head = header::strip(
-            "workspace-navigator-header",
-            tokens.sidebar_line,
-            height,
-            &tokens,
-        )
-        .child(title)
-        .children(self.badge.map(|badge| badge_mark(badge, &tokens)))
-        .children(self.actions);
+        // Settings › Layout can hide the title. The header strip stays only
+        // for a badge or actions, which have no other place.
+        let show_title = super::navigator_title::shown(cx);
+        let head = (show_title || self.badge.is_some() || !self.actions.is_empty()).then(|| {
+            header::strip(
+                "workspace-navigator-header",
+                tokens.sidebar_line,
+                strip_height(window, cx),
+                &tokens,
+            )
+            .when(show_title, |strip| strip.child(title))
+            .children(self.badge.map(|badge| badge_mark(badge, &tokens)))
+            .children(self.actions)
+            .test_support()
+        });
         v_flex()
             .id("workspace-navigator")
             .test_support()
@@ -111,7 +116,7 @@ impl RenderOnce for Navigator {
             .bg(tokens.sidebar)
             .border_r_1()
             .border_color(tokens.sidebar_line)
-            .child(head.test_support())
+            .children(head)
             .child(
                 v_flex()
                     .id("workspace-navigator-body")
