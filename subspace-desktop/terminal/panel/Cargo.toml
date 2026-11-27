@@ -14,7 +14,7 @@ gpui-base = { path = "../../../subspace-framework/vendor/gpui-base" }
 markdown = { path = "../../../subspace-framework/vendor/markdown" }
 
 [dependencies]
-subspace-framework = { path = "../../../subspace-framework", version = "0.8.0" }
+subspace-framework = { path = "../../../subspace-framework", version = "0.9.0" }
 subspace-ghostty-config = { path = "../ghostty-config" }
 subspace-terminal = { path = "../runtime" }
 gpui-kit = { version = "0.11.0", features = ["gpui-fast"] }

@@ -4,6 +4,37 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.9.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.8.0...subspace-framework-v0.9.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* apps built on the Framework use GPUI Kit 0.11 and GPUI Fast.
+
+### Features
+
+* **desktop:** edit issue descriptions as formatted Markdown ([#200](https://github.com/aiconsultancy/subspace/issues/200)) ([22b716a](https://github.com/aiconsultancy/subspace/commit/22b716a90a068b812a305aff9e2d6b06ab9d7cc3))
+* **desktop:** show activity with the Subspace mark ([#202](https://github.com/aiconsultancy/subspace/issues/202)) ([23186a7](https://github.com/aiconsultancy/subspace/commit/23186a7429c0a219d7ccff1ff9abcbc1dd661773))
+* **framework:** demonstrate the tracker parent picker ([#203](https://github.com/aiconsultancy/subspace/issues/203)) ([a3eb49b](https://github.com/aiconsultancy/subspace/commit/a3eb49b4fe15a84c3e012974914f75a8fe45fb68))
+* **framework:** give the menu bar idiomatic menus on each platform ([#160](https://github.com/aiconsultancy/subspace/issues/160)) ([d83200f](https://github.com/aiconsultancy/subspace/commit/d83200f9633b924765df321396e24c0cb8b43ccb))
+
+
+### Bug Fixes
+
+* **framework:** line up the workspace strips and draw one line per edge ([#162](https://github.com/aiconsultancy/subspace/issues/162)) ([c11ffb4](https://github.com/aiconsultancy/subspace/commit/c11ffb4569917840777fc7a9036f012e60bb61cd))
+* **framework:** repair [#162](https://github.com/aiconsultancy/subspace/issues/162)'s merge into main ([#206](https://github.com/aiconsultancy/subspace/issues/206)) ([42953c1](https://github.com/aiconsultancy/subspace/commit/42953c162ac6e926d0e15f50c7a98453a5710cff))
+* **framework:** restore Markdown editing with GPUI Fast ([#207](https://github.com/aiconsultancy/subspace/issues/207)) ([9a7ad82](https://github.com/aiconsultancy/subspace/commit/9a7ad829031f5831cb5945e9d811bc55086931c3))
+
+
+### Performance Improvements
+
+* stop rendering hidden Spaces and speed up Actions rows ([#157](https://github.com/aiconsultancy/subspace/issues/157)) ([98c32a6](https://github.com/aiconsultancy/subspace/commit/98c32a664a4725fdf8bd348a1e241c3acb4ab623))
+
+
+### Code Refactoring
+
+* build on GPUI Kit 0.11 with GPUI Fast ([#191](https://github.com/aiconsultancy/subspace/issues/191)) ([90611c3](https://github.com/aiconsultancy/subspace/commit/90611c344337eb1499feae9070f35d83b70be90b))
+
 ## [0.8.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.7.0...subspace-framework-v0.8.0) (2026-11-27)
 
 
