@@ -55,16 +55,25 @@ export function createBudget(limit) {
     return () => entry.evict?.(key);
   }
 
-  /** Free least recently used entries, never a kept one or `keep`, until `bytes` more fit; returns their eviction calls. */
-  function makeRoom(bytes, keep) {
-    const freed = [];
-    while (total + bytes > limit) {
-      const oldest = oldestKey((key) => key === keep);
-      if (oldest === null) break;
-      freed.push(take(oldest));
+  /**
+   * The entries to free, least recently used first and never a kept one or
+   * `key`, for `bytes` under `key` (replacing what it holds) to fit: the one
+   * order both `reserve` and `wouldFree` use.
+   */
+  function freeOrder(key, bytes) {
+    let held = total - (entries.get(key)?.bytes ?? 0);
+    const order = [];
+    const others = [...entries].filter(([other]) => other !== key && !kept(other)).sort((a, b) => a[1].used - b[1].used);
+    for (const [other, entry] of others) {
+      if (held + bytes <= limit) break;
+      order.push(other);
+      held -= entry.bytes;
     }
-    return freed;
+    return order;
   }
+
+  /** Free least recently used entries, never a kept one or `keep`, until `bytes` more fit; returns their eviction calls. */
+  const makeRoom = (bytes, keep) => freeOrder(keep, bytes).map(take);
 
   function release(key) {
     const entry = entries.get(key);
@@ -109,17 +118,7 @@ export function createBudget(limit) {
      * @param {number} bytes
      * @returns {string[]}
      */
-    wouldFree(key, bytes) {
-      let held = total - (entries.get(key)?.bytes ?? 0);
-      const freed = [];
-      const others = [...entries].filter(([other]) => other !== key && !kept(other)).sort((a, b) => a[1].used - b[1].used);
-      for (const [other, entry] of others) {
-        if (held + bytes <= limit) break;
-        freed.push(other);
-        held -= entry.bytes;
-      }
-      return freed;
-    },
+    wouldFree: (key, bytes) => freeOrder(key, bytes),
     /**
      * Hold `bytes` under `key`, replacing what it held, after freeing the
      * least recently used other entries until it fits. Each freed entry's
