@@ -282,3 +282,39 @@ test("budget: wouldFree names what a reservation would free, in the order it wou
   budget.reserve("pin", 40, null, { pinned: true });
   assert.deepEqual(out, ["b"], "reserve frees what it named");
 });
+
+test("budget: a plan weighs changes against one order and answers as wouldFree does, also leaving one change out", () => {
+  const budget = createBudget(200);
+  budget.reserve("pin", 30, null, { pinned: true });
+  for (const [key, bytes] of [["a", 25], ["b", 40], ["c", 15], ["d", 30], ["e", 20]]) budget.reserve(key, bytes, null);
+  budget.request("r");
+  budget.reserve("r", 35, null);
+  budget.touch("b");
+  const without = (as, key) => new Map([...as].filter(([other]) => other !== key));
+  // The pinned growth, and an ordinary reservation whose floor includes the latest request, `r`, itself resized: at 140
+  // bytes it is refused until `r` holds less, and refused again when `r` is left out.
+  assert.deepEqual(budget.wouldFree("x", 140), []);
+  assert.deepEqual(budget.wouldFree("x", 140, { as: new Map([["r", 10]]) }), ["a", "c", "d", "e", "b"]);
+  for (const [key, bytes, options] of [["pin", 120, { pinned: true }], ["x", 60, {}], ["x", 140, {}]]) {
+    const plan = budget.plan(key, bytes, options);
+    const as = new Map();
+    const agree = (label) => {
+      assert.deepEqual(plan.freed(), budget.wouldFree(key, bytes, { ...options, as }), `${key} ${bytes} ${label}`);
+      for (const other of as.keys()) assert.deepEqual(plan.freed(other), budget.wouldFree(key, bytes, { ...options, as: without(as, other) }), `${key} ${bytes} ${label} without ${other}`);
+      assert.deepEqual(plan.keys(), [...as.keys()]);
+    };
+    agree("as held");
+    for (const [other, size] of [["d", 5], ["r", 10], ["a", 2], ["e", 1]]) {
+      plan.set(other, size);
+      as.set(other, size);
+      agree(`with ${other}`);
+    }
+    plan.set("d", 25);
+    as.set("d", 25);
+    agree("d set again, in its place");
+    plan.delete("a");
+    as.delete("a");
+    agree("without a");
+  }
+  assert.deepEqual({ used: budget.used, d: budget.bytes("d"), r: budget.bytes("r") }, { used: 195, d: 30, r: 35 }, "weighing changes nothing");
+});

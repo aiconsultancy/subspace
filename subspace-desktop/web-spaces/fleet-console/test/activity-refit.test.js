@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { applyChange, INLINE_KEY, PART_MAX_BYTES } from "../src/activity.js";
 import { jsonBytes } from "../src/document.js";
 import { activityEvent, textItem } from "./activity-fixtures.js";
-import { givenBack, grow, keyOf, modesOf, officer, settle, wholesOnShow, windowsIn } from "./activity-helpers.js";
+import { givenBack, grow, keyOf, modesOf, officer, pagedWith, prepare, settle, wholesOnShow, windowsIn } from "./activity-helpers.js";
 
 const K = 1024;
 /** The live item `grow` sends, `size` bytes of text. */
@@ -157,4 +157,82 @@ test("the refits kept are the set that loses fewest windows, not the first a fix
     modes: { w0: "Load in full", w1: "whole", w2: "parts", w3: "whole", w4: "whole", w5: "whole" },
     read: ["w2"],
   });
+});
+
+/**
+ * `count` wholes of `size` KiB loaded in order, the last the latest request,
+ * in a view `spare` bytes larger than they need. Each window is reported on
+ * show through the panel's hook (`place`) rather than drawn, as an open turn
+ * draws at most ITEM_WINDOW items.
+ */
+async function placedWholes(count, size, spare) {
+  const ids = Array.from({ length: count }, (_, i) => `w${i}`);
+  const made = ids.map((id) => pagedWith("p".repeat(size * K), id));
+  const { snapshot } = made[0];
+  for (const other of made.slice(1)) snapshot.turns[1].items.push(other.snapshot.turns[1].items[0]);
+  const requested = [];
+  const load = async (extra) => {
+    const { watcher, client, inline } = await prepare(snapshot, extra);
+    client.activityItemPage = async (agent, turn, id, page) => {
+      requested.push(id);
+      return made[ids.indexOf(id)].pages[page];
+    };
+    for (const id of ids) {
+      await watcher.loadItem("turn-b", id);
+      watcher.view.place("turn-b", id, 0, 64 * K);
+    }
+    return { watcher, inline };
+  };
+  const roomy = await load(64 * K * K);
+  const held = roomy.watcher.view.budget.used - roomy.inline;
+  roomy.watcher.stop();
+  const { watcher } = await load(held + spare);
+  requested.length = 0;
+  return { ids, watcher, requested };
+}
+
+test("a growth orders what it frees once and weighs every refit plan against that order (Sol r11 P2-1)", async () => {
+  // Phobos's pressure case, smaller: 40 wholes on show beside the latest
+  // request, each giving back a little, 20,000 bytes spare. Every refit is
+  // planned and then dropped, one at a time, as none keeps a window: the
+  // growth frees the oldest whole either way. Before, each plan weighed
+  // asked wouldFree, which sorted every entry again (902 times here); now
+  // the budget sorts them once.
+  const { ids, watcher, requested } = await placedWholes(41, 161, 20_000);
+  try {
+    const { budget, turns } = watcher.view;
+    const bytes = 200_000;
+    assert.ok(givenBack(watcher, "w0") > 0, "each refit gives something back, so each is planned");
+    assert.ok(20_000 + 40 * givenBack(watcher, "w0") < bytes, "together they still cannot keep the oldest whole");
+    const counted = { orders: 0, weighed: 0, wouldFree: 0 };
+    const { plan, wouldFree } = budget;
+    budget.plan = (...args) => {
+      counted.orders += 1;
+      const made = plan(...args);
+      const { freed } = made;
+      made.freed = (without) => {
+        counted.weighed += 1;
+        return freed(without);
+      };
+      return made;
+    };
+    budget.wouldFree = (...args) => {
+      counted.wouldFree += 1;
+      return wouldFree(...args);
+    };
+    const framing = jsonBytes(applyChange(turns, growth(0))) - jsonBytes(turns);
+    const before = budget.bytes(INLINE_KEY);
+    watcher.event(growth(bytes - framing));
+    await settle();
+    assert.equal(budget.bytes(INLINE_KEY) - before, bytes);
+    assert.deepEqual({ orders: counted.orders, wouldFree: counted.wouldFree }, { orders: 1, wouldFree: 0 }, "one order for every plan weighed");
+    assert.ok(counted.weighed > 40, `every candidate drop is still weighed (${counted.weighed})`);
+    const modes = modesOf(watcher, ids);
+    assert.equal(modes.w0, "Load in full", "the oldest whole is freed");
+    assert.deepEqual(new Set(Object.values(modes).slice(1)), new Set(["whole"]), "every other whole stays");
+    assert.deepEqual(requested, [], "nothing reads in parts");
+    assert.ok(budget.used <= budget.limit);
+  } finally {
+    watcher.stop();
+  }
 });

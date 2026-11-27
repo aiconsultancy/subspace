@@ -388,34 +388,35 @@ export function createActivityWatcher({ client, agent, onChange, awaitStream = t
    * more than keeping it. Returns the keys to read in parts, in order.
    */
   function planRefits(bytes) {
-    const sizes = new Map();
+    // The budget does not change until the plan is made: what the growth frees is ordered once, and every plan weighed walks it.
+    const plan = budget.plan(INLINE_KEY, bytes, { pinned: true });
     const key = budget.requested;
     const growth = bytes - budget.bytes(INLINE_KEY);
-    if (key !== null && full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key) + growth)) sizes.set(key, handover(key));
-    /** How many windows on show the growth would free with the refits in `as`. */
-    const freedOnShow = (as) => budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as }).filter((each) => displayed(each) && !as.has(each)).length;
+    if (key !== null && full.get(key)?.mode === "whole" && budget.has(key) && !budget.fits(key, budget.bytes(key) + growth)) plan.set(key, handover(key));
+    /** How many windows on show the growth would free, other than those planned to read in parts. */
+    const freedOnShow = () => plan.freed().filter((each) => displayed(each) && !plan.has(each)).length;
     const planned = [];
-    while (freedOnShow(sizes) > 0) {
-      const best = mostGivenBack([...full.keys()].filter((each) => each !== key && displayed(each) && budget.has(each) && !sizes.has(each)));
+    while (freedOnShow() > 0) {
+      const best = mostGivenBack([...full.keys()].filter((each) => each !== key && displayed(each) && budget.has(each) && !plan.has(each)));
       if (best === null) break;
-      sizes.set(best, handover(best));
+      plan.set(best, handover(best));
       planned.push(best);
     }
     // When the floor still frees a window anyway, a refit planned for it may keep none. Counting every window on show the growth
     // frees, a planned handover it would evict included, drop the planned refit whose dropping loses the fewest, the latest
     // planned on a tie, while that loses no more than keeping it. The latest request's own refit is never dropped.
-    const lostOnShow = (as) => budget.wouldFree(INLINE_KEY, bytes, { pinned: true, as }).filter(displayed).length;
+    const lostOnShow = (without = null) => plan.freed(without).filter(displayed).length;
     for (;;) {
       let drop = null;
-      let fewest = lostOnShow(sizes);
-      for (const each of planned.filter((other) => sizes.has(other))) {
-        const lost = lostOnShow(new Map([...sizes].filter(([other]) => other !== each)));
+      let fewest = lostOnShow();
+      for (const each of planned.filter(plan.has)) {
+        const lost = lostOnShow(each);
         if (lost <= fewest) [drop, fewest] = [each, lost];
       }
       if (drop === null) break;
-      sizes.delete(drop);
+      plan.delete(drop);
     }
-    return [...sizes.keys()];
+    return plan.keys();
   }
 
   /** Of `keys`, the one whose refit gives back the most bytes, or null when none gives any back. */

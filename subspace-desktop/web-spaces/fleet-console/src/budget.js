@@ -29,13 +29,22 @@ export function createBudget(limit) {
   const kept = (key) => key === requested || entries.get(key)?.pinned === true;
   /** No entry held at another size. */
   const AS_HELD = new Map();
-  /** What `key` holds, or would hold with `sizes` (key -> bytes) in place of what those keys hold now. */
-  const sizeOf = (key, sizes) => (sizes.has(key) ? sizes.get(key) : (entries.get(key)?.bytes ?? 0));
   /** The bytes that can never be freed for `key`: the pinned entries and the latest request, other than `key` itself. */
-  function fixedBeside(key, sizes = AS_HELD) {
+  function fixedBeside(key) {
     let bytes = 0;
-    for (const other of entries.keys()) if (other !== key && kept(other)) bytes += sizeOf(other, sizes);
+    for (const [other, entry] of entries) if (other !== key && kept(other)) bytes += entry.bytes;
     return bytes;
+  }
+  /** The floor a reservation under `key` must fit beside: null when `key` is part of it (`pinned`, or the latest request). */
+  const floorFor = (key, pinned) => (pinned || key === requested ? null : fixedBeside(key));
+  /**
+   * Whether `bytes` under `key` may be held: they fit beside what is never
+   * freed for it, or `key` is part of that floor. The rule `reserve` and
+   * every plan (`wouldFree`) use.
+   */
+  function admits(key, bytes, pinned) {
+    const floor = floorFor(key, pinned);
+    return floor === null || floor + bytes <= limit;
   }
 
   /** The least recently used entry that may be freed and that `skip` does not name, or null. */
@@ -60,35 +69,70 @@ export function createBudget(limit) {
   }
 
   /**
-   * The entries to free, least recently used first and never a kept one or
-   * `key`, for `bytes` under `key` (replacing what it holds) to fit: the one
-   * order both `reserve` and `wouldFree` use. With `sizes`, as if those
-   * entries held those bytes instead, reserved just now in that order.
+   * A reservation of `bytes` under `key` (replacing what it holds), weighed
+   * against changes to other entries before any is made: the one order both
+   * `reserve` and `wouldFree` use. The entries that may be freed are sorted
+   * by use once, and what is held is counted once; `set` and `delete` then
+   * resize an entry, as if reserved just now, after every other and in the
+   * order set, and `freed` walks that order without sorting again (SUB
+   * decisions 8346cf82, d43de89e). It reads the entries as they are when
+   * made, so it is used before the budget changes.
    */
-  function freeOrder(key, bytes, sizes = AS_HELD) {
+  function plan(key, bytes, pinned) {
+    const sizes = new Map();
+    const counts = (other) => other !== key && entries.has(other);
+    const change = (other, size) => (counts(other) ? size - entries.get(other).bytes : 0);
+    // What stays held beside `key`, and the part of it never freed for `key` (null when `key` is part of that floor).
     let held = total - (entries.get(key)?.bytes ?? 0);
-    const resized = [...sizes.keys()].filter((other) => other !== key && entries.has(other));
-    for (const other of resized) held += sizes.get(other) - entries.get(other).bytes;
-    const used = (other) => (sizes.has(other) ? clock + 1 + resized.indexOf(other) : entries.get(other).used);
-    const order = [];
-    const others = [...entries.keys()].filter((other) => other !== key && !kept(other)).sort((a, b) => used(a) - used(b));
-    for (const other of others) {
-      if (held + bytes <= limit) break;
-      order.push(other);
-      held -= sizeOf(other, sizes);
-    }
-    return order;
+    let fixed = floorFor(key, pinned);
+    const byUse = [...entries.keys()].filter((other) => other !== key && !kept(other)).sort((a, b) => entries.get(a).used - entries.get(b).used);
+    /** Count `bytesMore` more bytes (fewer when negative) under `other`. */
+    const add = (other, bytesMore) => {
+      held += bytesMore;
+      if (fixed !== null && kept(other)) fixed += bytesMore;
+    };
+    return {
+      /** Weigh `other` as holding `size` bytes. One set again keeps its place in the order. */
+      set(other, size) {
+        add(other, change(other, size) - (sizes.has(other) ? change(other, sizes.get(other)) : 0));
+        sizes.set(other, size);
+      },
+      delete(other) {
+        if (!sizes.has(other)) return;
+        add(other, -change(other, sizes.get(other)));
+        sizes.delete(other);
+      },
+      has: (other) => sizes.has(other),
+      /** The entries resized, in the order set. */
+      keys: () => [...sizes.keys()],
+      /**
+       * The keys the reservation would free, least recently used first; none
+       * when `reserve` would refuse it. `without` weighs one resized entry as
+       * it holds now, in its own place in the order, without changing the plan.
+       */
+      freed(without = null) {
+        const undo = sizes.has(without) ? change(without, sizes.get(without)) : 0;
+        if (fixed !== null && fixed - (without !== null && kept(without) ? undo : 0) + bytes > limit) return [];
+        let room = held - undo;
+        const holds = (other) => (other !== without && sizes.has(other) ? sizes.get(other) : entries.get(other).bytes);
+        const order = [];
+        /** Free `other` unless `bytes` already fit; returns whether it was needed. */
+        const free = (other) => {
+          if (room + bytes <= limit) return false;
+          order.push(other);
+          room -= holds(other);
+          return true;
+        };
+        // Those held as now, by when they were used, then the resized ones, in the order set.
+        for (const other of byUse) if ((other === without || !sizes.has(other)) && !free(other)) return order;
+        for (const other of sizes.keys()) if (other !== without && counts(other) && !kept(other) && !free(other)) break;
+        return order;
+      },
+    };
   }
 
-  /**
-   * Whether `bytes` under `key` may be held: they fit beside what is never
-   * freed for it, or `key` is part of that floor (`pinned`, or the latest
-   * request). The one rule both `reserve` and `wouldFree` use.
-   */
-  const admits = (key, bytes, pinned, sizes = AS_HELD) => pinned || key === requested || fixedBeside(key, sizes) + bytes <= limit;
-
   /** Free least recently used entries, never a kept one or `keep`, until `bytes` more fit; returns their eviction calls. */
-  const makeRoom = (bytes, keep) => freeOrder(keep, bytes).map(take);
+  const makeRoom = (bytes, keep, pinned) => plan(keep, bytes, pinned).freed().map(take);
 
   function release(key) {
     const entry = entries.get(key);
@@ -139,7 +183,25 @@ export function createBudget(limit) {
      * @param {{pinned?: boolean, as?: Map<string, number>}} [options]
      * @returns {string[]}
      */
-    wouldFree: (key, bytes, { pinned = false, as = AS_HELD } = {}) => (admits(key, bytes, pinned, as) ? freeOrder(key, bytes, as) : []),
+    wouldFree(key, bytes, { pinned = false, as = AS_HELD } = {}) {
+      const weighed = plan(key, bytes, pinned);
+      for (const [other, size] of as) weighed.set(other, size);
+      return weighed.freed();
+    },
+    /**
+     * `wouldFree` for an owner weighing many plans of one reservation, the
+     * order made once: `set(key, bytes)` and `delete(key)` change the plan,
+     * `freed(without)` names what it would free, as `wouldFree` with `as`
+     * (or with `without` left out of it), and `keys()` lists what is
+     * resized, in order. Nothing changes in the budget. It answers for the
+     * entries as they were when it was made: use it before the budget
+     * changes (SUB decision d43de89e).
+     *
+     * @param {string} key
+     * @param {number} bytes
+     * @param {{pinned?: boolean}} [options]
+     */
+    plan: (key, bytes, { pinned = false } = {}) => plan(key, bytes, pinned),
     /**
      * Hold `bytes` under `key`, replacing what it held, after freeing the
      * least recently used other entries until it fits. Each freed entry's
@@ -160,7 +222,7 @@ export function createBudget(limit) {
     reserve(key, bytes, evict, { pinned = false, makeRoom: free = true } = {}) {
       if (!admits(key, bytes, pinned)) return false;
       release(key);
-      const freed = free ? makeRoom(bytes, key) : [];
+      const freed = free ? makeRoom(bytes, key, pinned) : [];
       clock += 1;
       entries.set(key, { bytes, used: clock, evict, pinned });
       total += bytes;
