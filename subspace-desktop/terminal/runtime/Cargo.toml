@@ -27,7 +27,7 @@ subspace-framework = { path = "../../../subspace-framework", version = "0.8.0" }
 # REQ-17). Zig-free, so it stays testable in the workspace as well.
 subspace-ghostty-config = { path = "../ghostty-config" }
 # The one GPUI dependency, as the rest of the workspace uses it.
-gpui-kit = "0.9.1"
+gpui-kit = { version = "0.11.0", features = ["gpui-fast"] }
 # The published 0.2.2 requires exactly Zig 0.15.2, which cannot link on
 # macOS 26 with only the Command Line Tools. This rev pins Ghostty 3425025e,
 # whose manifest declares Zig 0.16.0, and carries
@@ -59,7 +59,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 # The view's resize contract (REQ-17) is only observable through the real
 # element, so those tests draw it in a GPUI test window.
 [dev-dependencies]
-gpui-kit = { version = "0.9.1", features = ["test-support"] }
+gpui-kit = { version = "0.11.0", features = ["gpui-fast", "test-support"] }
 
 [lints.clippy]
 dbg_macro = "deny"

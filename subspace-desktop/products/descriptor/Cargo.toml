@@ -17,6 +17,7 @@ copilot = []
 agentsview = []
 space-lab = []
 component-gallery = []
+tsx-spaces = []
 
 [dev-dependencies]
 serde_json.workspace = true

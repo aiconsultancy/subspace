@@ -162,7 +162,7 @@ cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 # Cargo reads every whitespace character as a separator, so must the guard. A
 # character it cannot place (a no-break space here) stops the build too.
 refused='release builds (must not include unreleased Spaces|refuse an unexpected character)'
-for features in unreleased-spaces 'terminal space-lab' 'terminal,subspace/component-gallery' \
+for features in unreleased-spaces tsx-spaces 'terminal,subspace/tsx-spaces' 'terminal space-lab' 'terminal,subspace/component-gallery' \
     $'terminal\nsubspace-framework/component-gallery' $'terminal,space-lab\r' $'terminal\tspace-lab' \
     $'terminal\vspace-lab' $'terminal\fsubspace/space-lab' $'terminal\xc2\xa0space-lab'; do
     if SUBSPACE_BUILD_FEATURES="$features" bash "$fixture/scripts/package-release.sh" "$host_target" "$version" 2>"$fixture/unreleased.err"; then

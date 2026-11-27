@@ -243,6 +243,7 @@ fn window_options(cx: &App) -> WindowOptions {
         focus: false,
         inactive_frame_interval: None,
         window_bounds: Some(WindowBounds::centered(
+            None,
             size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)),
             cx,
         )),

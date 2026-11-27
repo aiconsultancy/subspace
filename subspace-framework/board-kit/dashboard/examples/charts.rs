@@ -324,7 +324,11 @@ fn main() {
                 _ => apply_theme(ONE_DARK_THEME, "dark", cx),
             }
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(WINDOW.0), px(WINDOW.1)), cx)),
+                window_bounds: Some(WindowBounds::centered(
+                    None,
+                    size(px(WINDOW.0), px(WINDOW.1)),
+                    cx,
+                )),
                 ..Default::default()
             };
             if let Err(error) = gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| Gallery)) {

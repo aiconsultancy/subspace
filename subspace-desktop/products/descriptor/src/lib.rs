@@ -94,6 +94,8 @@ fn descriptor_for_version(channel: Channel, version: &str, agentsview: bool) -> 
         boards.push(board("agentsview", true));
     }
     boards.push(board("actions", true));
+    #[cfg(feature = "tsx-spaces")]
+    boards.push(board("tsx", false));
     #[cfg(feature = "component-gallery")]
     boards.push(board("component-gallery", false));
 
@@ -246,12 +248,14 @@ mod tests {
             .unwrap();
         assert!(actions.default_enabled);
         let ids: Vec<_> = full.boards.iter().map(|board| board.id.as_str()).collect();
-        let tail: &[&str] = if cfg!(feature = "component-gallery") {
-            &["actions", "component-gallery"]
-        } else {
-            &["actions"]
-        };
-        assert_eq!(&ids[ids.len() - tail.len()..], tail);
+        let mut tail = vec!["actions"];
+        if cfg!(feature = "tsx-spaces") {
+            tail.push("tsx");
+        }
+        if cfg!(feature = "component-gallery") {
+            tail.push("component-gallery");
+        }
+        assert_eq!(&ids[ids.len() - tail.len()..], tail.as_slice());
     }
 
     #[test]
@@ -413,6 +417,8 @@ mod tests {
                 #[cfg(all(feature = "agentsview", any(target_os = "macos", windows)))]
                 "agentsview",
                 "actions",
+                #[cfg(feature = "tsx-spaces")]
+                "tsx",
                 #[cfg(feature = "component-gallery")]
                 "component-gallery"
             ]

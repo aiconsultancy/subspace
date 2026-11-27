@@ -83,6 +83,17 @@ run = "node --test web-spaces/fleet-console/test/*.test.js"
 description = "Validate a web Space folder and write a reproducible ZIP (FOLDER [OUT.zip])"
 run = "python3 scripts/package-web-space.py"
 
+[tasks.tsx-package]
+description = "Build, sign and verify a TSX Space package with a local development key ([PACKAGE_DIR [OUT.nshpkg]])"
+tools = { "github:longbridge/nsh" = "0.7.1" }
+run = "bash scripts/tsx-package.sh"
+
+[tasks.tsx-space-test]
+description = "Type check and test the system monitor TSX Space headless"
+tools = { "github:longbridge/nsh" = "0.7.1" }
+dir = "tsx-spaces/system-monitor"
+run = ["nsh check", "nsh test"]
+
 [tasks.interfaces]
 description = "Check the product CLI without GUI, credentials or live services"
 run = "bash scripts/test-product-interfaces.sh"
@@ -140,7 +151,7 @@ exit "$status"
 
 [tasks.check]
 description = "Architecture, format check, lint, Rust tests and script fixtures"
-depends = ["architecture", "board-docs", "docs-index", "fmt-check", "licence-check", "lint", "test", "script-test", "web-bridge-test", "weather-space-test", "component-gallery-space-test", "fleet-console-space-test"]
+depends = ["architecture", "board-docs", "docs-index", "fmt-check", "licence-check", "lint", "test", "script-test", "web-bridge-test", "weather-space-test", "component-gallery-space-test", "fleet-console-space-test", "tsx-space-test"]
 
 [tasks.licence-check]
 description = "Check the Rust licence policy for desktop release targets and verify copied notices"

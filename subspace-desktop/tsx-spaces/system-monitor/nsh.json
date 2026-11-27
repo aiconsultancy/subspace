@@ -1,0 +1,11 @@
+{
+  "name": "System monitor",
+  "id": "dev.subspace.system-monitor",
+  "version": "0.1.0",
+  "build": 1,
+  "minRuntime": "0.6.0",
+  "theme": "theme.json",
+  "capabilities": {
+    "host": ["subspace.system.metrics", "subspace.system.apps", "subspace.system.facts"]
+  }
+}

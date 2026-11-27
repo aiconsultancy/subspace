@@ -6,7 +6,7 @@ use super::{
     LONG_LINKS, NEW, OLD, choose, has, long_fixture, normal_fixture, open, open_issue, open_row,
     render, settle_detail, settle_page,
 };
-use crate::{Issues, detail::timeline::TimelineMode};
+use crate::Issues;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, FocusHandle, ScrollHandle, TestAppContext, VisualTestContext, px};
 
@@ -119,11 +119,37 @@ fn tab_reveals_each_clipped_control_and_keys_scroll_the_reasoning(cx: &mut TestA
     tab_through(&scroll, &backward, "shift-tab", cx);
 }
 
+/// The selected Activity tab's handle, which GPUI Kit's tab list owns, found
+/// by focusing it.
 fn comments_tab(board: &Entity<Issues>, cx: &mut VisualTestContext) -> FocusHandle {
-    cx.update(|_, cx| {
-        let view = &board.read(cx).issue_view;
-        let focus = view.timeline_focus.as_ref().unwrap();
-        focus.tab(TimelineMode::Comments).clone()
+    cx.update(|window, cx| {
+        board.update(cx, |board, cx| {
+            let focus = board.issue_view.timeline_focus.as_ref().unwrap();
+            focus.focus_selected(window, cx);
+        });
+    });
+    // The frames until the Tab order has the selected tab, then its handle
+    // before anything reacts to the focus.
+    for _ in 0..2 {
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
+        render(cx);
+    }
+    cx.update(|window, cx| {
+        window.simulate_next_frame(cx);
+        let tabs = &board
+            .read(cx)
+            .issue_view
+            .timeline_focus
+            .as_ref()
+            .unwrap()
+            .tabs;
+        assert!(
+            tabs.contains_focused(window, cx),
+            "an Activity tab has focus"
+        );
+        window.focused(cx).unwrap()
     })
 }
 

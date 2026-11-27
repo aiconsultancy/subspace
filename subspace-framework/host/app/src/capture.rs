@@ -3,7 +3,7 @@
 //! script's private X server. Neither path captures the user's desktop.
 //!
 //! `SUBSPACE_CAPTURE_DIR` enables it. `SUBSPACE_CAPTURE_STEPS` is a `;` list of
-//! `wait:<ms>`, `action:<name>`, `click:<x>,<y>`, `right-click:<x>,<y>`,
+//! `wait:<ms>`, `sleep:<ms>`, `action:<name>`, `click:<x>,<y>`, `right-click:<x>,<y>`,
 //! `move:<x>,<y>`, `drag:<x1>,<y1>,<x2>,<y2>`, `scroll:<x>,<y>,<dy>`,
 //! `type:<text>`, `key:<keystrokes>`, `drop:<x>,<y>,<fixture-path>`, `installed:<version>`,
 //! `resize:<width>,<height>` and `shot:<name>` steps, run in order
@@ -14,7 +14,9 @@
 //! space-separated keystrokes such as `down tab`; `installed` puts the updater
 //! in the state after an update to `<version>` installed, without installing
 //! anything; `resize` sets the window's content size, for a start with no
-//! saved window bounds. Actions dispatch at the app root independently of focus. Each
+//! saved window bounds. `wait` draws every window each 100 ms; `sleep` waits
+//! without drawing, so the app's own frames are all that run, as when
+//! measuring idle CPU. Actions dispatch at the app root independently of focus. Each
 //! key step focuses the active Space, then sends its sequence to normal focus;
 //! type steps preserve focus. The initial Space is the first unless fixture
 //! state sets `app.dashboard`. The default waits four
@@ -84,6 +86,7 @@ fn target<'a>(window: &Window, cx: &'a App) -> Option<&'a Shell> {
 #[derive(Debug, Clone, PartialEq)]
 enum Step {
     Wait(Duration),
+    Sleep(Duration),
     Action(String),
     Click(f32, f32),
     RightClick(f32, f32),
@@ -112,6 +115,10 @@ fn parse_step(step: &str) -> Option<Step> {
             .parse()
             .ok()
             .map(|ms| Step::Wait(Duration::from_millis(ms))),
+        ("sleep", _) => value
+            .parse()
+            .ok()
+            .map(|ms| Step::Sleep(Duration::from_millis(ms))),
         ("action", _) => Some(Step::Action(value.to_owned())),
         ("shot", _) => Some(Step::Shot(value.to_owned())),
         ("type", _) => Some(Step::Type(value.to_owned())),
@@ -186,6 +193,10 @@ async fn run_step(step: &Step, dir: &Path, cx: &mut AsyncApp) -> Result<(), Stri
                 cx.background_executor().timer(tick).await;
                 cx.update(draw)?;
             }
+            Ok(())
+        }
+        Step::Sleep(duration) => {
+            cx.background_executor().timer(*duration).await;
             Ok(())
         }
         Step::Action(name) => cx.update(|cx| dispatch(name, cx)),
@@ -475,11 +486,12 @@ mod tests {
     fn steps_parse_in_order_and_reject_unknown_kinds() {
         assert_eq!(
             parse_steps(
-                "wait:10; action:app::Quit;click:4,5;right-click:6,7;move:8,9;drag:1,2,3,4;drop:5,6,/tmp/fixture.zip;scroll:1,2,-30;type:@gal;key:down tab;installed:1.2.0;resize:1440,900;shot:main;"
+                "wait:10;sleep:20; action:app::Quit;click:4,5;right-click:6,7;move:8,9;drag:1,2,3,4;drop:5,6,/tmp/fixture.zip;scroll:1,2,-30;type:@gal;key:down tab;installed:1.2.0;resize:1440,900;shot:main;"
             )
             .unwrap(),
             vec![
                 Step::Wait(Duration::from_millis(10)),
+                Step::Sleep(Duration::from_millis(20)),
                 Step::Action("app::Quit".into()),
                 Step::Click(4., 5.),
                 Step::RightClick(6., 7.),

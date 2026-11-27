@@ -85,14 +85,6 @@ fn reveal(scroll: &ScrollHandle, target: Bounds<Pixels>, window: &mut Window, cx
     });
 }
 
-impl IntoElement for RevealOnFocus {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 impl Element for RevealOnFocus {
     type RequestLayoutState = (AnyElement, Tracked);
     type PrepaintState = ();

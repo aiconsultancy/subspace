@@ -98,6 +98,17 @@ pub(crate) fn render(cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.render_frame(cx));
 }
 
+/// Delivers frames as the display would: the window's next-frame callbacks,
+/// then a draw, so work waiting for frames runs.
+pub(crate) fn settle_frames(cx: &mut VisualTestContext) {
+    for _ in 0..4 {
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
+        render(cx);
+    }
+}
+
 /// Uses a dock's switch as the shell's status bar does: through the Space's
 /// dock contract.
 pub(crate) fn use_dock_switch(board: &Entity<Issues>, cx: &mut VisualTestContext, dock: SpaceDock) {

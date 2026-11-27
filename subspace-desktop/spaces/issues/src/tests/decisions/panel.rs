@@ -1,5 +1,5 @@
 use super::super::offline::{attach_hub, wait_for};
-use super::super::{mount_at, press};
+use super::super::{mount_at, press, settle_frames};
 use super::{
     ALL, NEW, OLD, ROW, choose, click, has, label, normal_fixture, open, open_issue, open_row,
     render, reveal, reveal_issue, settle_board, settle_detail, settle_page, switched,
@@ -20,6 +20,7 @@ fn keyboard_only_from_activity_to_decision_and_back(cx: &mut TestAppContext) {
     let fixture = normal_fixture();
     let (board, cx) = open(&fixture, cx);
     press(cx, "m");
+    settle_frames(cx);
     for key in ["right", "right", "enter"] {
         press(cx, key);
     }

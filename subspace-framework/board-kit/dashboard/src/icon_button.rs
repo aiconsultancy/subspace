@@ -224,6 +224,10 @@ impl IconButton {
             Finish::Quiet(paint) if !self.disabled => Some(paint.hover_glyph),
             _ => None,
         };
+        let glyph = match &finish {
+            Finish::Quiet(paint) => Some(paint.glyph),
+            _ => None,
+        };
         let mut button = self.button;
         if !self.explicit_name
             && let Some(label) = &self.label
@@ -247,6 +251,7 @@ impl IconButton {
                 loading: self.loading,
                 children: self.children,
                 hover_glyph,
+                glyph,
             },
             geometry,
         )

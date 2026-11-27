@@ -1,0 +1,10 @@
+System monitor TSX Space
+Copyright 2026 The Subspace Authors
+
+src/model.ts adapts formatters and the null-means-unavailable rule of
+sysmon (https://github.com/huacnlee/sysmon, src/model.ts at commit
+8defd3c), used under the MIT licence:
+
+  Copyright (c) 2026 Jason Lee
+
+The full licence is in licenses/LICENSE-SYSMON.

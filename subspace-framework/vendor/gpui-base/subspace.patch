@@ -1,265 +1,4 @@
-diff --git a/src/selectable_text.rs b/src/selectable_text.rs
-index 3f4d1123..436ebc69 100644
---- a/src/selectable_text.rs
-+++ b/src/selectable_text.rs
-@@ -1,12 +1,16 @@
-+// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
-+
- use std::ops::Range;
- 
- use gpui::{
--    App, BorderStyle, Bounds, Corners, Edges, Element, ElementId, GlobalElementId, Hitbox,
--    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels, Point,
--    SharedString, StyledText, TextStyleRefinement, Window, transparent_black,
-+    App, BorderStyle, Bounds, Corners, Edges, Element, ElementId, GlobalElementId, HighlightStyle,
-+    Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels,
-+    Point, SharedString, StyledText, TextStyleRefinement, Window, transparent_black,
- };
- 
--use crate::{TextSelectionHandle, TextSelectionRegistration, TextSelectionRun};
-+use crate::{
-+    TextSelectionHandle, TextSelectionRegistration, TextSelectionRun, text::RevealHandlerFn,
-+};
- 
- /// Plain text that participates in the window-scoped [`TextSelection`](crate::TextSelection).
- ///
-@@ -24,8 +28,14 @@ pub struct SelectableText {
-     document_order: u64,
-     text_style: Option<TextStyleRefinement>,
-     selection_color: Option<Hsla>,
-+    reveal_range: Option<Range<usize>>,
-+    reveal_handler: Option<Box<RevealHandlerFn>>,
- }
- 
-+/// The range last revealed by a [`SelectableText`], so a reveal only runs
-+/// when the requested range changes.
-+struct RevealedRange(Range<usize>);
-+
- impl SelectableText {
-     /// Creates a run that owns its own selection.
-     pub fn new(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
-@@ -50,6 +60,8 @@ impl SelectableText {
-             document_order: 0,
-             text_style: None,
-             selection_color: None,
-+            reveal_range: None,
-+            reveal_handler: None,
-         }
-     }
- 
-@@ -65,6 +77,17 @@ impl SelectableText {
-         self
-     }
- 
-+    /// Styles ranges of the text, such as the matches of a search, as
-+    /// [`StyledText::with_highlights`] does. The ranges are UTF-8 offsets, in
-+    /// order and without overlap.
-+    pub fn highlights(
-+        mut self,
-+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
-+    ) -> Self {
-+        self.styled_text = self.styled_text.with_highlights(highlights);
-+        self
-+    }
-+
-     /// Overrides the selection background, which defaults to the theme's
-     /// `colors.selection` token.
-     pub fn selection_color(mut self, color: Hsla) -> Self {
-@@ -72,6 +95,61 @@ impl SelectableText {
-         self
-     }
- 
-+    /// Request that the visual line containing the start of this UTF-8 byte
-+    /// range scroll into view. The line is revealed once when the range is
-+    /// first supplied or changes, matching `TextViewState::reveal_range`, so
-+    /// the user can scroll away afterwards. Invalid ranges are ignored.
-+    pub fn reveal_range(mut self, range: Range<usize>) -> Self {
-+        self.reveal_range = Some(range);
-+        self
-+    }
-+
-+    /// Receive the requested line's bounds in window coordinates during
-+    /// prepaint, for containers that manage scrolling through a custom handle.
-+    /// Without a handler, the element requests GPUI autoscroll.
-+    pub fn on_reveal(
-+        mut self,
-+        handler: impl Fn(Bounds<Pixels>, &mut Window, &mut App) + 'static,
-+    ) -> Self {
-+        self.reveal_handler = Some(Box::new(handler));
-+        self
-+    }
-+
-+    fn reveal(
-+        &self,
-+        global_id: Option<&GlobalElementId>,
-+        bounds: Bounds<Pixels>,
-+        window: &mut Window,
-+        cx: &mut App,
-+    ) {
-+        let (Some(range), Some(global_id)) = (self.reveal_range.as_ref(), global_id) else {
-+            return;
-+        };
-+        if self.text.get(range.clone()).is_none() {
-+            return;
-+        }
-+        let changed = window.with_element_state(global_id, |revealed: Option<RevealedRange>, _| {
-+            let changed = revealed.is_none_or(|revealed| revealed.0 != *range);
-+            (changed, RevealedRange(range.clone()))
-+        });
-+        if !changed {
-+            return;
-+        }
-+        let layout = self.styled_text.layout();
-+        let Some(position) = layout.position_for_index(range.start) else {
-+            return;
-+        };
-+        let line = Bounds::new(
-+            gpui::point(bounds.left(), position.y),
-+            gpui::size(bounds.size.width, layout.line_height()),
-+        );
-+        if let Some(handler) = self.reveal_handler.as_ref() {
-+            handler(line, window, cx);
-+        } else {
-+            window.request_autoscroll(line);
-+        }
-+    }
-+
-     fn paint_selection(
-         layout: &gpui::TextLayout,
-         range: Range<usize>,
-@@ -193,6 +271,7 @@ impl Element for SelectableText {
-             .with_text_bounds(vec![bounds])
-             .with_rendered_element(handle, window, cx);
-         handle.register(registration, window, cx);
-+        self.reveal(global_id, bounds, window, cx);
-         hitbox
-     }
- 
-@@ -297,6 +376,122 @@ mod tests {
-         });
-     }
- 
-+    struct HighlightedTestView;
-+
-+    impl Render for HighlightedTestView {
-+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-+            let mark = gpui::HighlightStyle {
-+                background_color: Some(gpui::red()),
-+                font_weight: Some(gpui::FontWeight::BOLD),
-+                ..Default::default()
-+            };
-+            div().size_full().child(TextSelectionLayer).child(
-+                div()
-+                    .w(px(240.))
-+                    .h(px(32.))
-+                    .child(SelectableText::new("local", "alpha beta").highlights([(6..10, mark)])),
-+            )
-+        }
-+    }
-+
-+    #[gpui::test]
-+    fn highlighted_text_selects_and_copies_as_plain_text(cx: &mut TestAppContext) {
-+        let (_, cx) = cx.add_window_view(|_, _| HighlightedTestView);
-+        cx.update(|window, cx| {
-+            let _ = window.draw(cx);
-+        });
-+
-+        cx.simulate_mouse_down(
-+            gpui::point(px(1.), px(12.)),
-+            MouseButton::Left,
-+            Modifiers::default(),
-+        );
-+        cx.simulate_mouse_move(
-+            gpui::point(px(220.), px(12.)),
-+            Some(MouseButton::Left),
-+            Modifiers::default(),
-+        );
-+        cx.simulate_mouse_up(
-+            gpui::point(px(220.), px(12.)),
-+            MouseButton::Left,
-+            Modifiers::default(),
-+        );
-+        cx.update(|window, cx| {
-+            let _ = window.draw(cx);
-+            assert_eq!(TextSelection::selected_text(window, cx), "alpha beta");
-+        });
-+    }
-+
-+    struct RevealTestView {
-+        first: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
-+        last: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
-+        invalid: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
-+    }
-+
-+    impl Render for RevealTestView {
-+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-+            let text = "é alpha beta gamma delta epsilon";
-+            let reveal = |id, range, observed: Rc<Cell<_>>| {
-+                div().w(px(80.)).child(
-+                    SelectableText::new(id, text)
-+                        .reveal_range(range)
-+                        .on_reveal(move |bounds, _, _| observed.set(Some(bounds))),
-+                )
-+            };
-+            div()
-+                .flex()
-+                .items_start()
-+                .child(TextSelectionLayer)
-+                .child(reveal("first", 0..2, self.first.clone()))
-+                .child(reveal("last", 26..33, self.last.clone()))
-+                .child(reveal("invalid", 1..2, self.invalid.clone()))
-+        }
-+    }
-+
-+    #[gpui::test]
-+    fn reveal_reports_the_wrapped_line_and_ignores_invalid_utf8(cx: &mut TestAppContext) {
-+        let first = Rc::new(Cell::new(None));
-+        let last = Rc::new(Cell::new(None));
-+        let invalid = Rc::new(Cell::new(None));
-+        let (_, cx) = cx.add_window_view(|_, _| RevealTestView {
-+            first: first.clone(),
-+            last: last.clone(),
-+            invalid: invalid.clone(),
-+        });
-+        cx.update(|window, cx| {
-+            let _ = window.draw(cx);
-+        });
-+
-+        let first = first.get().expect("first line bounds");
-+        let last = last.get().expect("last line bounds");
-+        assert!(last.top() >= first.bottom());
-+        assert_eq!(last.size.height, first.size.height);
-+        assert_eq!(invalid.get(), None);
-+    }
-+
-+    #[gpui::test]
-+    fn reveal_runs_once_per_range(cx: &mut TestAppContext) {
-+        let first = Rc::new(Cell::new(None));
-+        let last = Rc::new(Cell::new(None));
-+        let invalid = Rc::new(Cell::new(None));
-+        let (view, cx) = cx.add_window_view(|_, _| RevealTestView {
-+            first: first.clone(),
-+            last: last.clone(),
-+            invalid: invalid.clone(),
-+        });
-+        cx.update(|window, cx| {
-+            let _ = window.draw(cx);
-+        });
-+        assert!(first.take().is_some());
-+
-+        // Redrawing with the same range must not reveal again.
-+        cx.update(|window, cx| {
-+            view.update(cx, |_, cx| cx.notify());
-+            let _ = window.draw(cx);
-+        });
-+        assert_eq!(first.get(), None);
-+    }
-+
-     struct CopyCallbackTestView {
-         handle: TextSelectionHandle,
-     }
 diff --git a/src/text/inline.rs b/src/text/inline.rs
-index 67b5fe9d..a408c785 100644
 --- a/src/text/inline.rs
 +++ b/src/text/inline.rs
 @@ -1,3 +1,5 @@
@@ -267,8 +6,8 @@ index 67b5fe9d..a408c785 100644
 +
  mod selection_paint;
  
- #[cfg(target_family = "wasm")]
-@@ -1504,8 +1506,9 @@ impl Element for Inline {
+ use super::state::ParagraphRows;
+@@ -1510,8 +1512,9 @@
              });
          }
  
@@ -280,7 +19,7 @@ index 67b5fe9d..a408c785 100644
              window.on_mouse_event({
                  let links = self.links.clone();
                  let text_layout = text_layout.clone();
-@@ -1517,9 +1520,11 @@ impl Element for Inline {
+@@ -1523,9 +1526,11 @@
                      if !phase.bubble() || !hitbox.is_hovered(window) {
                          return;
                      }
@@ -295,67 +34,7 @@ index 67b5fe9d..a408c785 100644
                      {
                          return;
                      }
-diff --git a/src/text/inline_flow.rs b/src/text/inline_flow.rs
-index 8081fa02..1ebf3cb8 100644
---- a/src/text/inline_flow.rs
-+++ b/src/text/inline_flow.rs
-@@ -1,3 +1,5 @@
-+// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
-+
- use std::{
-     cell::RefCell,
-     ops::Range,
-@@ -10,12 +12,11 @@ use gpui::{
-     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, DefiniteLength, Element, ElementId,
-     GlobalElementId, Hsla, ImageSource, InspectorElementId, InteractiveElement as _, IntoElement,
-     LayoutId, LineFragment as WrapLineFragment, ObjectFit, Pixels, Refineable as _, ShapedLine,
--    SharedString, Size, StatefulInteractiveElement as _, StyleRefinement, Styled, StyledImage as _,
--    TextRun, TextStyle, WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative,
--    size,
-+    SharedString, Size, StyleRefinement, Styled, StyledImage as _, TextRun, TextStyle, WhiteSpace,
-+    Window, img, point, prelude::FluentBuilder as _, px, relative, size,
- };
- 
--use crate::text::text_view::{LinkClickHandlerFn, handle_link_click};
-+use crate::text::text_view::{LinkClickHandlerFn, linked_image};
- 
- use super::{
-     inline::{Inline, InlineHighlight, InlineState, code_insets, text_runs, text_size_ranges},
-@@ -310,31 +311,7 @@ impl InlineFlow {
-             .w(size.width)
-             .h(size.height)
-             .when_some(link.clone(), |this, link| {
--                let aux_link = link.clone();
--                let aux_link_click_handler = link_click_handler.clone();
--                this.cursor_pointer()
--                    .on_click(move |event, window, cx| {
--                        crate::TextSelection::end(window, cx);
--                        cx.stop_propagation();
--                        handle_link_click(
--                            &link_click_handler,
--                            link.url.clone(),
--                            event.clone(),
--                            window,
--                            cx,
--                        );
--                    })
--                    .on_aux_click(move |event, window, cx| {
--                        crate::TextSelection::end(window, cx);
--                        cx.stop_propagation();
--                        handle_link_click(
--                            &aux_link_click_handler,
--                            aux_link.url.clone(),
--                            event.clone(),
--                            window,
--                            cx,
--                        );
--                    })
-+                linked_image(this, link.url, link_click_handler)
-             })
-             .into_any_element()
-     }
 diff --git a/src/text/inline_object.rs b/src/text/inline_object.rs
-index 72173945..9ef6fbf2 100644
 --- a/src/text/inline_object.rs
 +++ b/src/text/inline_object.rs
 @@ -1,3 +1,5 @@
@@ -364,7 +43,7 @@ index 72173945..9ef6fbf2 100644
  use std::{
      cell::RefCell,
      rc::Rc,
-@@ -371,9 +373,10 @@ impl Element for InlineObject {
+@@ -364,9 +366,10 @@
              window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, window, cx| {
                  if !phase.bubble()
                      || !link_hitbox.is_hovered(window)
@@ -379,9 +58,7 @@ index 72173945..9ef6fbf2 100644
                      return;
                  }
 diff --git a/src/text/link_click_tests.rs b/src/text/link_click_tests.rs
-new file mode 100644
-index 00000000..c2198940
---- /dev/null
+--- a/src/text/link_click_tests.rs
 +++ b/src/text/link_click_tests.rs
 @@ -0,0 +1,124 @@
 +use std::sync::{Arc, Mutex};
@@ -508,110 +185,16 @@ index 00000000..c2198940
 +        cx,
 +    );
 +}
-diff --git a/src/text/node.rs b/src/text/node.rs
-index d460ee57..cbff42e5 100644
---- a/src/text/node.rs
-+++ b/src/text/node.rs
-@@ -1,3 +1,5 @@
-+// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
-+
- use std::{
-     borrow::Cow,
-     collections::HashMap,
-@@ -29,7 +31,7 @@ use crate::{
-         inline_flow::{InlineFlow, InlineFlowItem, slice_ranges},
-         range_highlight::{RangeHighlightFrame, RevealAt, RevealRequest},
-         stream_fade::{StreamFadeFrame, TextLeafKey},
--        text_view::handle_link_click,
-+        text_view::linked_image,
-     },
-     theme::ActiveTheme as _,
- };
-@@ -3053,32 +3055,7 @@ impl Paragraph {
-                         .max_w(relative(1.))
-                         .when_some(image.width, |this, width| this.w(width))
-                         .when_some(image.link.clone(), |this, link| {
--                            let link_click_handler = link_click_handler.clone();
--                            let aux_link = link.clone();
--                            let aux_link_click_handler = link_click_handler.clone();
--                            this.cursor_pointer()
--                                .on_click(move |event, window, cx| {
--                                    crate::TextSelection::end(window, cx);
--                                    cx.stop_propagation();
--                                    handle_link_click(
--                                        &link_click_handler,
--                                        link.url.clone(),
--                                        event.clone(),
--                                        window,
--                                        cx,
--                                    );
--                                })
--                                .on_aux_click(move |event, window, cx| {
--                                    crate::TextSelection::end(window, cx);
--                                    cx.stop_propagation();
--                                    handle_link_click(
--                                        &aux_link_click_handler,
--                                        aux_link.url.clone(),
--                                        event.clone(),
--                                        window,
--                                        cx,
--                                    );
--                                })
-+                            linked_image(this, link.url, link_click_handler.clone())
-                         })
-                         .into_any_element(),
-                 );
 diff --git a/src/text/text_view.rs b/src/text/text_view.rs
-index c2ba36f5..309e9ff8 100644
 --- a/src/text/text_view.rs
 +++ b/src/text/text_view.rs
-@@ -1,11 +1,13 @@
+@@ -1,3 +1,5 @@
 +// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
 +
  use std::{ops::Range, rc::Rc, sync::Arc};
  
  use gpui::prelude::FluentBuilder as _;
- use gpui::{
-     AnyElement, AnyView, App, Bounds, ClickEvent, ContentMask, Element, ElementId, Entity, Global,
--    GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, InteractiveElement, IntoElement,
--    LayoutId, MouseButton, ParentElement, Pixels, Refineable as _, SharedString, StyleRefinement,
--    Styled, Window, div, point, px,
-+    GlobalElementId, Hitbox, HitboxBehavior, Img, InspectorElementId, InteractiveElement,
-+    IntoElement, LayoutId, MouseButton, ParentElement, Pixels, Refineable as _, SharedString,
-+    Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div, point, px,
- };
- 
- use crate::StyledExt;
-@@ -155,6 +157,28 @@ impl TaskToggleEvent {
- /// may hold a `ScrollHandle`.
- pub(crate) type RevealHandlerFn = dyn Fn(Bounds<Pixels>, &mut Window, &mut App);
- 
-+/// Make a linked image activate its link on primary and auxiliary clicks.
-+pub(super) fn linked_image(
-+    image: Stateful<Img>,
-+    url: SharedString,
-+    click_handler: Option<Arc<LinkClickHandlerFn>>,
-+) -> Stateful<Img> {
-+    let aux_url = url.clone();
-+    let aux_handler = click_handler.clone();
-+    image
-+        .cursor_pointer()
-+        .on_click(move |event, window, cx| {
-+            TextSelection::end(window, cx);
-+            cx.stop_propagation();
-+            handle_link_click(&click_handler, url.clone(), event.clone(), window, cx);
-+        })
-+        .on_aux_click(move |event, window, cx| {
-+            TextSelection::end(window, cx);
-+            cx.stop_propagation();
-+            handle_link_click(&aux_handler, aux_url.clone(), event.clone(), window, cx);
-+        })
-+}
-+
- pub(crate) fn handle_link_click(
-     handler: &Option<Arc<LinkClickHandlerFn>>,
-     url: SharedString,
-@@ -1637,7 +1661,7 @@ mod tests {
+@@ -1845,7 +1847,7 @@
          fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
              self.renders.fetch_add(1, Ordering::Relaxed);
              div().child(
@@ -620,7 +203,7 @@ index c2ba36f5..309e9ff8 100644
                      .markdown_block_parser(|_, _| None),
              )
          }
-@@ -5162,3 +5186,7 @@ mod tests {
+@@ -5539,3 +5541,7 @@
          );
      }
  }
@@ -628,63 +211,3 @@ index c2ba36f5..309e9ff8 100644
 +#[cfg(test)]
 +#[path = "link_click_tests.rs"]
 +mod link_click_tests;
-diff --git a/src/text_selection.rs b/src/text_selection.rs
-index e6adbd0e..fde62dbf 100644
---- a/src/text_selection.rs
-+++ b/src/text_selection.rs
-@@ -1,3 +1,5 @@
-+// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
-+
- use std::{
-     cell::{Cell, RefCell},
-     collections::HashMap,
-@@ -3287,6 +3289,15 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
-                 state.prepare_for_mouse_down(event.click_count == 1 && event.modifiers.shift, cx)
-             });
-             dispatch_clear_handlers(handlers, cx);
-+
-+            // Selection layers share this latch for one dispatch. A release
-+            // may be stopped by a child or occur outside the window.
-+            let latch = state.downgrade();
-+            cx.defer(move |cx| {
-+                if let Some(state) = latch.upgrade() {
-+                    state.update(cx, |state, _| state.mouse_down_prepared = false);
-+                }
-+            });
-         } else if event.click_count == 1 {
-             if GlobalState::is_text_selection_suppressed(cx) {
-                 state.update(cx, |state, _| state.pending_extension_anchor = None);
-@@ -3447,10 +3458,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
-         if phase.bubble()
-             && let Some(state) = mouse_up_state.upgrade()
-         {
--            state.update(cx, |state, cx| {
--                state.mouse_down_prepared = false;
--                state.end(cx)
--            });
-+            state.update(cx, |state, cx| state.end(cx));
-         }
-     });
- 
-@@ -5793,6 +5801,21 @@ mod tests {
-         assert_eq!(painted_selection(cx), "two three\nfour five");
-     }
- 
-+    #[gpui::test]
-+    fn a_press_without_a_release_does_not_keep_a_stale_selection(cx: &mut TestAppContext) {
-+        let (_, cx) = cx.add_window_view(|_, _| SelectableTextsView {
-+            texts: vec!["one two three", "four five six"],
-+        });
-+        painted_selection(cx);
-+
-+        press_at("one two three", 0, 1, false, cx);
-+        assert_eq!(drag_to("one two three", 7, cx), "one two");
-+
-+        press_at("four five six", 2, 1, false, cx);
-+        release(1, cx);
-+        assert_eq!(painted_selection(cx), "");
-+    }
-+
-     #[gpui::test]
-     fn triple_click_drag_extends_the_selection_by_lines(cx: &mut TestAppContext) {
-         let text = "first line\nsecond line\nthird line";

@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui_kit::{Context, FocusHandle, ScrollAnchor, ScrollHandle, Window};
 use subspace_api_client::hub::{IssueSnapshot, IssueStatus};
 use subspace_api_client::model::{ActivityKind, IssueActivity};
@@ -32,14 +35,6 @@ impl TimelineMode {
         match index {
             1 => Self::All,
             2 => Self::Decisions,
-            _ => Self::Comments,
-        }
-    }
-
-    pub(crate) fn adjacent(self, forward: bool) -> Self {
-        match (self, forward) {
-            (Self::Comments, true) | (Self::Decisions, false) => Self::All,
-            (Self::All, true) | (Self::Comments, false) => Self::Decisions,
             _ => Self::Comments,
         }
     }
@@ -88,28 +83,76 @@ impl TimelineView {
     }
 }
 
+/// GPUI Kit's tab list owns each tab's focus handle and makes the selected
+/// tab its one tab stop. `tabs` is a handle on the list's wrapper, not a tab
+/// stop itself, so focusing it and moving to the next stop reaches the
+/// selected tab.
 pub(crate) struct TimelineFocus {
-    tabs: [FocusHandle; Self::TAB_COUNT],
+    pub(crate) tabs: FocusHandle,
     pub(crate) anchor: ScrollAnchor,
+    /// The latest focus request: an earlier one still waiting does nothing.
+    request: Rc<Cell<u64>>,
 }
 
-impl TimelineFocus {
-    const TAB_COUNT: usize = 3;
+/// Frames a focus request waits: the first draws the new selection and
+/// GPUI Kit's tab list marks the selected tab its Tab stop while laying it
+/// out; the second draws the tab with that flag, so the window's Tab order
+/// has it; focus moves before the third.
+const FRAMES_UNTIL_TAB_STOP: usize = 2;
 
+impl TimelineFocus {
     pub(crate) fn new(scroll: &ScrollHandle, cx: &Context<Issues>) -> Self {
         Self {
-            tabs: std::array::from_fn(|_| cx.focus_handle()),
+            tabs: cx.focus_handle().tab_stop(false),
             anchor: ScrollAnchor::for_handle(scroll.clone()),
+            request: Rc::default(),
         }
     }
 
-    pub(crate) fn tab(&self, mode: TimelineMode) -> &FocusHandle {
-        &self.tabs[mode.tab_index()]
+    /// Focuses the selected Activity tab once the window's Tab order has it
+    /// as the list's one Tab stop. Nothing is focused while the list is not
+    /// drawn, so focus never falls to the window's first Tab stop.
+    pub(crate) fn focus_selected(&self, window: &mut Window, cx: &mut Context<Issues>) {
+        let request = self.request.get() + 1;
+        self.request.set(request);
+        let (tabs, latest) = (self.tabs.clone(), self.request.clone());
+        after_frames(FRAMES_UNTIL_TAB_STOP, window, move |window, cx| {
+            if latest.get() == request {
+                focus_tab_stop(&tabs, window, cx);
+            }
+        });
+        cx.notify();
     }
 
-    fn reveal(&self, mode: TimelineMode, window: &mut Window, cx: &mut Context<Issues>) {
-        self.tab(mode).focus(window, cx);
+    fn reveal(&self, window: &mut Window, cx: &mut Context<Issues>) {
+        self.focus_selected(window, cx);
         self.anchor.scroll_to(window, cx);
+    }
+}
+
+/// Runs `then` before the frame after `frames` more drawn frames, each
+/// drawn whether or not anything else changed.
+fn after_frames(
+    frames: usize,
+    window: &mut Window,
+    then: impl FnOnce(&mut Window, &mut gpui_kit::App) + 'static,
+) {
+    window.on_next_frame(move |window, cx| {
+        if frames == 0 {
+            then(window, cx);
+        } else {
+            window.refresh();
+            after_frames(frames - 1, window, then);
+        }
+    });
+}
+
+/// Moves focus from the list's wrapper to its one Tab stop, the selected
+/// tab, if the list was drawn.
+fn focus_tab_stop(tabs: &FocusHandle, window: &mut Window, cx: &mut gpui_kit::App) {
+    if tabs.is_rendered(window) {
+        tabs.focus(window, cx);
+        window.focus_next(cx);
     }
 }
 
@@ -177,7 +220,7 @@ impl Issues {
 
     pub(crate) fn focus_timeline(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(focus) = &self.issue_view.timeline_focus {
-            focus.reveal(self.issue_view.timeline.mode, window, cx);
+            focus.reveal(window, cx);
         }
     }
 }

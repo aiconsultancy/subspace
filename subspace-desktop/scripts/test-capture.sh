@@ -43,6 +43,8 @@ while [ $# -gt 0 ]; do
         case "$2" in
         HOME=*)
             cp "${2#HOME=}/Library/Application Support/subspace/"*.json "$log/"
+            ls "${2#HOME=}/Library/Application Support/subspace/tsx/packages" >"$log/tsx.txt" 2>/dev/null || true
+            cp "${2#HOME=}/Library/Application Support/subspace/tsx/installs.json" "$log/tsx-installs.json" 2>/dev/null || true
             fleet="$(jq -r '.webBoards["fleet-console"].settings.endpoint // empty' "$log/config.json")"
             if [ -n "$fleet" ]; then
                 printf '%s\n' "$fleet" >>"$log/urls.txt"
@@ -74,8 +76,18 @@ chmod 755 "$fixture/bin/open"
 mkdir -p "$fixture/tmp" "$fixture/shots"
 shots="$(cd "$fixture/shots" && pwd)"
 fail() { echo "capture: $*" >&2; exit 1; }
+# A package as tsx-package.sh names it, <app id>-<build>.nshpkg: NSHP, the
+# format and flags, the header length (little-endian u32) and the header,
+# here spaced and ordered unlike nsh's, then a payload with a decoy ID.
+tsx_header='{ "created_at": 1,  "app" : { "build": 3, "id" : "dev.example.monitor" } }'
+{
+    printf 'NSHP\001\000\000\000'
+    printf "\\$(printf '%03o' "${#tsx_header}")\\000\\000\\000"
+    printf '%s' "$tsx_header"
+    printf '%s' '"app":{"id":"dev.example.decoy"}'
+} >"$fixture/dev.example.monitor-3.nshpkg"
 if [[ "$host_platform" = Darwin ]]; then
-TMPDIR="$fixture/tmp" XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user/gh GH_TOKEN=real-user-token \
+TMPDIR="$fixture/tmp" CAPTURE_TSX_PACKAGE="$fixture/dev.example.monitor-3.nshpkg" CAPTURE_TSX_KEY=fixture-release XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user/gh GH_TOKEN=real-user-token \
     CAPTURE_FEATURES='' CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" \
     CAPTURE_CONFIG='{"boards": {"actions": true}, "webBoards": {"notes": {"path": "/apps/notes"}}}' \
     CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 CAPTURE_UPLOAD_SCENARIO=unknown \
@@ -117,6 +129,10 @@ test "$(jq -r '.webBoards.notes.path' "$fixture/open/config.json")" = /apps/note
 test "$(jq -r '."appearance.theme"' "$fixture/open/state.json")" = "One Dark" || fail "theme not saved"
 test "$(jq -c '[.repos[0], .boards.actions]' "$fixture/open/config.json")" = '["acme/web",true]' || fail "config not merged"
 grep -Fq 'captured main' "$fixture/capture.out" || fail "capture result not reported"
+test "$(cat "$fixture/open/tsx.txt")" = dev.example.monitor.nshpkg ||
+    fail "the TSX package is not kept under its app ID"
+test "$(jq -c '.' "$fixture/open/tsx-installs.json")" = '{"dev.example.monitor":["fixture-release","capture"]}' ||
+    fail "CAPTURE_TSX_KEY did not record the install"
 test -z "$(ls -A "$fixture/tmp")" || fail "the fixture home was left behind"
 # Check the actual listening endpoints; process listing is unavailable in some sandboxes.
 while IFS= read -r address; do
@@ -146,6 +162,18 @@ jq -e '."fleet-api:aurora" | fromjson | .endpoint == "https://aurora-old.example
 if TMPDIR="$fixture/tmp" CAPTURE_FLEET_TOKEN=other bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null 2>&1; then
     fail "an unknown fleet token scenario was accepted"
 fi
+# Packages capture refuses before it reads a header: a short prefix, a
+# header past the end of the file, a header over nsh's 16 MiB cap.
+printf 'NSHP\001\000' >"$fixture/short.nshpkg"
+printf 'NSHP\001\000\000\000\377\000\000\000{}' >"$fixture/cut.nshpkg"
+printf 'NSHP\001\000\000\000\001\000\000\001{}' >"$fixture/huge.nshpkg"
+for case in short:'no package prefix' cut:'runs past the end' huge:'oversized header'; do
+    if TMPDIR="$fixture/tmp" CAPTURE_TSX_PACKAGE="$fixture/${case%%:*}.nshpkg" \
+        bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null 2>"$fixture/tsx.err"; then
+        fail "the ${case%%:*} package was accepted"
+    fi
+    grep -Fq "${case#*:}" "$fixture/tsx.err" || fail "the ${case%%:*} package did not say: ${case#*:}"
+done
 rm -rf "$fixture/open"
 TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 CAPTURE_NO_API=1 CAPTURE_FEATURES=space-lab,component-gallery \
     bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null

@@ -18,7 +18,9 @@ subspace-issues-board = { path = "../../spaces/issues" }
 subspace-projects-board = { path = "../../spaces/projects" }
 subspace-decisions-board = { path = "../../spaces/decisions" }
 subspace-web-board = { path = "../../spaces/web" }
+subspace-tsx-board = { path = "../../spaces/tsx", optional = true }
 subspace-descriptor.workspace = true
+rustls.workspace = true
 subspace-terminal-panel = { path = "../../terminal/panel", optional = true }
 url.workspace = true
 # Reads the connection file, `src/connection.rs`.
@@ -55,9 +57,11 @@ component-gallery = [
     "subspace-framework/component-gallery",
     "subspace-descriptor/component-gallery",
 ]
-# Both, for development: `make run-unreleased`, and the workspace lint and
-# tests.
-unreleased-spaces = ["space-lab", "component-gallery"]
+# TSX Spaces: signed nsh packages as native Spaces (experimental).
+tsx-spaces = ["dep:subspace-tsx-board", "subspace-descriptor/tsx-spaces"]
+# All of them, for development: `make run-unreleased`, and the workspace
+# lint and tests.
+unreleased-spaces = ["space-lab", "component-gallery", "tsx-spaces"]
 # The debug-only screenshot capture build.
 capture = ["subspace-framework/capture"]
 

@@ -64,13 +64,6 @@ struct Highlight {
     palette: Palette,
 }
 
-impl IntoElement for Highlight {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 fn absolute(window: &mut Window, cx: &mut App) -> LayoutId {
     let style = Style {
         position: Position::Absolute,
@@ -240,13 +233,6 @@ fn paint_tag(
 /// moving across the panel keeps the element picked in the application.
 pub(super) struct PickShield {
     pub(super) picking: bool,
-}
-
-impl IntoElement for PickShield {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
-    }
 }
 
 impl Element for PickShield {

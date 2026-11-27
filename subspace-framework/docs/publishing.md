@@ -208,7 +208,7 @@ dependency's `[patch]`, so every app must carry it; the crates do not ship
 `vendor/markdown`.
 
 The desktop also uses the optional [GPUI Kit text patch](../vendor/gpui-base/SUBSPACE-PATCH.md).
-All three desktop manifests patch `gpui-base` 0.9.1 from the same vendor
+All three desktop manifests patch `gpui-base` 0.11.0 from the same vendor
 directory. The published Framework's default features compile against the
 registry's GPUI Kit.
 

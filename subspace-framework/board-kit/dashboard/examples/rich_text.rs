@@ -91,6 +91,7 @@ fn main() -> std::io::Result<()> {
             gpui_kit::init(cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(
+                    None,
                     size(px(WINDOW_WIDTH_PX), px(WINDOW_HEIGHT_PX)),
                     cx,
                 )),

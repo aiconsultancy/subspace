@@ -14,6 +14,7 @@ relative to this NOTICE, including in Subspace.app/Contents/Resources/.
 - licenses/onnxruntime/ contains the ONNX Runtime licence and third-party notices in macOS and Linux archives.
 - licenses/rust-crates/ contains pinned source licences reproduced in THIRD_PARTY_LICENSES.
 - Release archives include the toolchain's Rust standard library licences and copyright notices under licenses/rust-std/.
+- licenses/sysmon/ covers code adapted from sysmon in the TSX system capability and the system monitor TSX Space.
 - licenses/terminal/ covers Ghostty, portable-pty and the terminal bindings.
 - licenses/themes/ covers the GPUI Kit themes and their provenance.
 - licenses/webview2/ contains the WebView2 loader licence and SDK notices in the Windows archive.

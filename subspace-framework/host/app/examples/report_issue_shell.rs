@@ -20,6 +20,7 @@ fn main() -> Result<(), String> {
                 focus: false,
                 inactive_frame_interval: None,
                 window_bounds: Some(WindowBounds::centered(
+                    None,
                     size(px(FIXTURE_WIDTH), px(FIXTURE_HEIGHT)),
                     cx,
                 )),

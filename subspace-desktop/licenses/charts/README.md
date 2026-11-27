@@ -11,11 +11,12 @@ JavaScript engine.
   The Framework's `scripts/refresh-flint.sh` replaces both files from npm; it checks the
   tarball against the registry's `dist.integrity` and is run by hand, not
   by the build.
-- **QuickJS NG** is built from the source bundled in
-  [`rquickjs-sys` 0.14.0](https://crates.io/crates/rquickjs-sys/0.14.0).
-  [LICENSE-QUICKJS-NG](LICENSE-QUICKJS-NG) comes from `quickjs/LICENSE` in
-  that crate. [LICENSE-RQUICKJS](LICENSE-RQUICKJS) comes from
-  [`rquickjs` 0.14.0](https://crates.io/crates/rquickjs/0.14.0).
+- **QuickJS** is built from the source bundled in
+  [`quickjs-jit-sys` 0.14.2](https://crates.io/crates/quickjs-jit-sys/0.14.2),
+  nsh's fork of `rquickjs`, which TSX Spaces also links: one QuickJS in
+  the binary. [LICENSE-QUICKJS](LICENSE-QUICKJS) comes from
+  `quickjs/LICENSE` in that crate. [LICENSE-QUICKJS-JIT](LICENSE-QUICKJS-JIT)
+  comes from [`quickjs-jit` 0.14.2](https://crates.io/crates/quickjs-jit/0.14.2).
 
 The Flint guide in the Subspace Framework's `services/charts/src/guide.md` is adapted from the same
 project's MIT-licensed `flint-chart-author` agent skill and names its source

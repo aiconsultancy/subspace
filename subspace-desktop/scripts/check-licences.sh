@@ -58,4 +58,20 @@ markdown_manifest="$(jq -er '
 ' "$scratch/licences.json")"
 markdown_manifest="$(resolve_target_dir "$markdown_manifest")"
 check_copy "$(dirname "$markdown_manifest")/license" licenses/markdown/LICENSE
+# Every crate an about-notices.json entry names must be in one of the
+# workspace's lockfiles, so an upgrade cannot leave a pinned notice silently unused.
+lockfiles=()
+for lockfile in Cargo.lock terminal/panel/Cargo.lock terminal/runtime/Cargo.lock; do
+    [[ -f "$lockfile" ]] && lockfiles+=("$lockfile")
+done
+locked="$(cat "${lockfiles[@]}" |
+    awk -F'"' '/^name = /{name=$2} /^version = /{print name " v" $2}' | sort -u)"
+stale="$(jq -r '.[].crates[]' about-notices.json | sort -u | comm -23 - <(printf '%s\n' "$locked"))"
+if [[ -n "$stale" ]]; then
+    echo 'about-notices.json names crates no lockfile has:' >&2
+    echo "$stale" >&2
+    exit 1
+fi
+check_copy licenses/sysmon/LICENSE spaces/tsx/crates/system/LICENSE-SYSMON
+check_copy licenses/sysmon/LICENSE tsx-spaces/system-monitor/licenses/LICENSE-SYSMON
 echo 'Desktop release licence policy passed'

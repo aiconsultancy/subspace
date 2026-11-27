@@ -12,5 +12,5 @@ Apache License 2.0 (LICENSE).
   flint-chart-author agent skill. MIT License, Copyright (c) Microsoft
   Corporation (the same licence text).
 
-QuickJS reaches the crate through the rquickjs dependency (MIT), which
-carries its own licence.
+QuickJS reaches the crate through the quickjs-jit dependency (MIT, imported
+as `rquickjs`), which carries its own licence.

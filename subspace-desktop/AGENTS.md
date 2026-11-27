@@ -325,7 +325,8 @@ compare them yourself before asking for review.
   `scripts/irc-test-server.sh` (`127.0.0.1:16667`). The build runs in your
   environment, so `SUBSPACE_REPORT_ISSUE_REPOSITORY= make capture …`
   captures a build without Report issue.
-- `STEPS` is a `;` list of `wait:<ms>`, `action:<name>` (for example
+- `STEPS` is a `;` list of `wait:<ms>`, `sleep:<ms>` (a wait that draws
+  nothing, for measuring idle CPU), `action:<name>` (for example
   `subspace_app::OpenSettings`), `click:<x>,<y>`, `right-click:<x>,<y>`,
   `move:<x>,<y>` (the pointer without a click, for hover states),
   `resize:<width>,<height>` (the window's content size, for a start with no

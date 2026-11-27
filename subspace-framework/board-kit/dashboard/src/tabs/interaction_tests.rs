@@ -105,8 +105,11 @@ fn an_inactive_close_button_can_receive_keyboard_focus_and_activate(cx: &mut Tes
     let (view, cx) = mount(cx);
     cx.update(|window, cx| {
         window.render_frame(cx);
-        window.press("tab", cx);
-        window.press("tab", cx);
+        // GPUI Kit 0.11 makes the selected tab a stop of its own, before
+        // the first close button.
+        for _ in 0..3 {
+            window.press("tab", cx);
+        }
         assert_eq!(
             window
                 .within("test-resource-tabs")
@@ -237,15 +240,16 @@ fn the_glass_hover_rim_is_sized_to_the_tab(cx: &mut TestAppContext) {
         bar.hover(1usize, cx);
         let bounds = bar.find(1usize).bounds();
         let rim = crate::Tokens::current(cx).glass_rim;
-        assert!(window.painted_quads().iter().any(|quad| {
-            quad.border_color == rim
-                && quad.bounds.size.width <= bounds.size.width.scale(window.scale_factor())
-                && quad.bounds.size.width
+        let none = gpui_kit::px(0.).scale(window.scale_factor());
+        let rims = crate::painted_border::painted_borders(window, rim);
+        assert!(rims.iter().any(|(quad, edges)| {
+            quad.size.width <= bounds.size.width.scale(window.scale_factor())
+                && quad.size.width
                     >= (bounds.size.width - gpui_kit::px(2.)).scale(window.scale_factor())
-                && quad.border_widths.left > gpui_kit::px(0.).scale(window.scale_factor())
-                && quad.border_widths.right > gpui_kit::px(0.).scale(window.scale_factor())
-                && quad.border_widths.top > gpui_kit::px(0.).scale(window.scale_factor())
-                && quad.border_widths.bottom > gpui_kit::px(0.).scale(window.scale_factor())
+                && edges.left > none
+                && edges.right > none
+                && edges.top > none
+                && edges.bottom > none
         }));
     });
 }

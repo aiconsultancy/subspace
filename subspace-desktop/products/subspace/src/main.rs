@@ -9,6 +9,7 @@ mod new_install;
 mod settings;
 mod sign_in;
 mod surfaces;
+mod tls;
 mod web_spaces;
 
 include!(concat!(env!("OUT_DIR"), "/organization_logo.rs"));
@@ -44,6 +45,7 @@ const SETTINGS_EXTENSIONS: &[subspace_framework::shell::SettingsExtension] = &[
 ];
 
 fn main() -> ExitCode {
+    tls::install_provider();
     let mut descriptor = subspace_descriptor::subspace_descriptor();
     identity::adjust_descriptor(&mut descriptor);
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -202,6 +204,13 @@ fn all_board_registrations() -> Vec<BoardRegistration> {
         BoardRegistration::new::<subspace_web_board::agentsview::AgentsView>(),
         BoardRegistration::new::<subspace_actions_board::Actions>()
             .description("GitHub Actions runs, deployments and releases (experimental)"),
+        #[cfg(feature = "tsx-spaces")]
+        BoardRegistration::new::<subspace_tsx_board::TsxSpaces>()
+            .description("Native Spaces from signed TSX packages (experimental)")
+            .with_field_source(|| {
+                subspace_framework::core::config::path()
+                    .map(|config| subspace_tsx_board::settings_fields(&config))
+            }),
         #[cfg(feature = "component-gallery")]
         BoardRegistration::new::<subspace_framework::component_gallery::ComponentGallery>()
             .description("Shared UI components in their states (developer)"),
@@ -332,6 +341,8 @@ mod tests {
             ("product.svg", 0x779de1f19cfb06a0),
             ("product-light.svg", 0x779de1f19cfb06a0),
             ("product-dark.svg", 0x8ef38950ba8ecba6),
+            #[cfg(feature = "tsx-spaces")]
+            ("icons/tsx.svg", 0xbfa1e72703da8d08),
             #[cfg(feature = "copilot")]
             ("logos/copilot-agents.svg", 0xdfe0f3122ef1418e),
             ("logos/irc.svg", 0xfeb1f97f6bd091e8),

@@ -10,4 +10,4 @@ Bundled themes adapted from third-party themes, with their licences:
 The GPUI Kit theme catalogue under the Subspace Framework's
 `host/app/themes/gpui-kit/` ships with its [provenance](gpui-kit/PROVENANCE.md)
 and [Apache 2.0 licence](gpui-kit/LICENSE-APACHE). The same licence covers
-the Framework's vendored GPUI Base 0.9.1 patch.
+the Framework's vendored GPUI Base 0.11.0 patch.

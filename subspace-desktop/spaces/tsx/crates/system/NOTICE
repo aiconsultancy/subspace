@@ -1,0 +1,10 @@
+subspace-tsx-system
+Copyright 2026 The Subspace Authors
+
+src/apps.rs adapts the application grouping of sysmon
+(https://github.com/huacnlee/sysmon, ext/sysmon-native/src/apps.rs at
+commit 8defd3c), used under the MIT licence:
+
+  Copyright (c) 2026 Jason Lee
+
+The full licence is in LICENSE-SYSMON alongside this file.

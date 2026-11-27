@@ -174,6 +174,9 @@ macro_rules! secondary {
 }
 
 #[cfg(test)]
+mod painted_border;
+
+#[cfg(test)]
 mod key_context_tests {
     use super::{RAW_KEYS_CONTEXT, app_keys, view_keys};
 

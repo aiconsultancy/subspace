@@ -78,7 +78,11 @@ fn main() {
             gpui_kit::init(cx);
             apply_theme(mode.as_deref(), cx);
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(WINDOW.0), px(WINDOW.1)), cx)),
+                window_bounds: Some(WindowBounds::centered(
+                    None,
+                    size(px(WINDOW.0), px(WINDOW.1)),
+                    cx,
+                )),
                 ..Default::default()
             };
             if let Err(error) = gpui_kit::open_window(options, cx, |_, cx| {

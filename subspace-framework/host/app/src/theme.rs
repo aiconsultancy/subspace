@@ -54,7 +54,7 @@ pub const SUBSPACE_THEMES: &[(&str, &str)] = &[
 #[cfg(test)]
 pub const THEME_NAME: &str = "Subspace One Dark";
 
-/// The complete GPUI Kit 0.9.1 theme catalogue, vendored from the matching
+/// The complete GPUI Kit 0.11.0 theme catalogue, vendored from the matching
 /// `gpui-kit` release and embedded so startup never depends on the filesystem.
 pub const GPUI_KIT_THEMES: &[(&str, &str)] = &[
     (

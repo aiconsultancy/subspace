@@ -13,7 +13,7 @@
   The [MIT licence](LICENSE-FEATHER) covers the outline.
 - Issues embeds the [Lucide Circle Dot icon](https://github.com/lucide-icons/lucide/blob/1.75.0/icons/circle-dot.svg)
   in `spaces/issues/assets/issues.svg`. The Framework also embeds Lucide icons
-  from `gpui-kit-assets` 0.9.1. The [ISC licence](LICENSE-LUCIDE) covers both.
+  from `gpui-kit-assets` 0.11.0. The [ISC licence](LICENSE-LUCIDE) covers both.
   The Framework's asset loader is ported from Sushao's
   [gpui-lucide](https://github.com/suxiaoshao/gupi/tree/9fb1bf1a298e66425b691d74df6ec4a5cbb9c19e/crates/gpui-lucide) and distributed under
   the [Apache License 2.0](../../../LICENSE) in the repository root.

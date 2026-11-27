@@ -1,0 +1,15 @@
+[package]
+name = "subspace-tsx-system"
+description = "Read-only system metrics, apps and facts for TSX Spaces"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+
+[lints]
+workspace = true

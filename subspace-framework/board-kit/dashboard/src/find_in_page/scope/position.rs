@@ -15,12 +15,6 @@ struct Measured {
     id: ElementId,
     child: AnyElement,
 }
-impl IntoElement for Measured {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
-    }
-}
 impl Element for Measured {
     type RequestLayoutState = <AnyElement as Element>::RequestLayoutState;
     type PrepaintState = <AnyElement as Element>::PrepaintState;

@@ -24,7 +24,11 @@ fn main() -> Result<(), String> {
                 focus: false,
                 inactive_frame_interval: None,
                 // Native window dimensions are a platform boundary, not UI spacing.
-                window_bounds: Some(WindowBounds::centered(size(px(WIDTH), px(HEIGHT)), cx)),
+                window_bounds: Some(WindowBounds::centered(
+                    None,
+                    size(px(WIDTH), px(HEIGHT)),
+                    cx,
+                )),
                 ..Default::default()
             };
             if let Err(error) = gpui_kit::open_window(options, cx, |window, cx| {

@@ -1,0 +1,8 @@
+{
+  "name": "subspace-system-monitor",
+  "cssVars": {
+    "theme": {
+      "text-edge": "16px"
+    }
+  }
+}

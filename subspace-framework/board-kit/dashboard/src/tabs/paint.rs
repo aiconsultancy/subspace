@@ -24,7 +24,7 @@ const GROUP: &str = "subspace-resource-tab";
 // Kit's TabVariant::Tab heights are private. Keep this mapping aligned with
 // its public Sizable API; render tests check the small and default heights.
 const SMALL_HEIGHT: f32 = 24.;
-const DEFAULT_HEIGHT: f32 = 32.;
+pub(in crate::tabs) const DEFAULT_HEIGHT: f32 = 32.;
 const XSMALL_HEIGHT: f32 = 20.;
 const LARGE_HEIGHT: f32 = 36.;
 /// Wider than any tab; the tab's own `overflow_hidden` clips the layers.

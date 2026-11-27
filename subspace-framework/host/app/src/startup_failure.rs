@@ -35,7 +35,11 @@ pub fn report_startup_failure(app_name: &str, title: &str, detail: &str) -> Exit
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(WIDTH), px(HEIGHT)), cx)),
+            window_bounds: Some(WindowBounds::centered(
+                None,
+                size(px(WIDTH), px(HEIGHT)),
+                cx,
+            )),
             titlebar: Some(TitlebarOptions {
                 title: Some(name.clone()),
                 ..Default::default()

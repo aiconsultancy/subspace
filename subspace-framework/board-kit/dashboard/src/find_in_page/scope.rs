@@ -62,12 +62,6 @@ fn enter<T>(scope: Scope, cx: &mut App, f: impl FnOnce(&mut App) -> T) -> T {
     result
 }
 
-impl IntoElement for Scoped {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
-    }
-}
 impl Element for Scoped {
     type RequestLayoutState = <AnyElement as Element>::RequestLayoutState;
     type PrepaintState = <AnyElement as Element>::PrepaintState;
@@ -126,12 +120,6 @@ impl Element for Scoped {
                 cx,
             )
         });
-    }
-}
-impl IntoElement for ScrollScope {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
     }
 }
 impl Element for ScrollScope {

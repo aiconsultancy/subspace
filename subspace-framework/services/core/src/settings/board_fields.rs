@@ -72,12 +72,19 @@ pub(super) fn validate(edits: &[BoardFieldEdits]) -> Result<(), SettingsError> {
     Ok(())
 }
 
-/// Apply `edits` to the config file's `root`. The boards must already exist.
+/// Apply `edits` to the config file's `root`. A nested board section, such
+/// as `webBoards.notes`, must already exist: a board removed meanwhile is
+/// not recreated. A Space's own top-level section, such as `tsxSpaces`, is
+/// created on its first save.
 pub(super) fn write(
     root: &mut Map<String, Value>,
     edits: &[BoardFieldEdits],
 ) -> Result<(), SettingsError> {
     for edit in edits {
+        if let [key] = edit.section.as_slice() {
+            root.entry(key.clone())
+                .or_insert_with(|| Value::Object(Map::new()));
+        }
         let board = object_at(root, &edit.section).ok_or(SettingsError::Validation {
             field: "board settings",
             reason: "the board is no longer in the config file",
@@ -220,6 +227,26 @@ mod tests {
             ..Default::default()
         };
         assert!(write(&mut root, &[missing]).is_err());
+    }
+
+    #[test]
+    fn a_top_level_section_is_created_but_a_missing_board_is_refused() {
+        let mut root = root();
+        let edit = |section: Vec<String>| BoardFieldEdits {
+            section,
+            values: BTreeMap::from([("roots".into(), Some(json!("key")))]),
+            ..Default::default()
+        };
+        write(&mut root, &[edit(vec!["tsxSpaces".into()])]).unwrap();
+        assert_eq!(root["tsxSpaces"]["settings"]["roots"], json!("key"));
+        let missing = edit(vec!["webBoards".into(), "missing".into()]);
+        assert!(write(&mut root, &[missing]).is_err());
+        assert!(
+            !root["webBoards"]
+                .as_object()
+                .unwrap()
+                .contains_key("missing")
+        );
     }
 
     #[test]

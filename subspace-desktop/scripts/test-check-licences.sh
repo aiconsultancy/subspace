@@ -37,6 +37,9 @@ cp "$root/../LICENSE" "$scratch/LICENSE"
 printf '[]\n' >"$desktop/about-notices.json"
 cp -R "$root/licenses" "$desktop/"
 cp "$root/spaces/actions/assets/OCTICONS-LICENSE.txt" "$desktop/spaces/actions/assets/"
+mkdir -p "$desktop/spaces/tsx/crates/system" "$desktop/tsx-spaces/system-monitor/licenses"
+cp "$root/spaces/tsx/crates/system/LICENSE-SYSMON" "$desktop/spaces/tsx/crates/system/"
+cp "$root/tsx-spaces/system-monitor/licenses/LICENSE-SYSMON" "$desktop/tsx-spaces/system-monitor/licenses/"
 
 copy_notice() {
     mkdir -p "$framework/$(dirname "$1")"
@@ -101,9 +104,17 @@ check_failure() {
     grep -F -- "$1" "$scratch/check.log" || { cat "$scratch/check.log" >&2; return 1; }
 }
 
+printf '[{"crates": ["gone v0.1.0"], "id": "MIT", "path": "LICENSE", "sha256": "0"}]\n' >"$desktop/about-notices.json"
+check_failure 'gone v0.1.0'
+printf '[]\n' >"$desktop/about-notices.json"
+
 echo 'fixture drift in the selected patch' >>"$markdown/license"
 check_failure "licenses/markdown/LICENSE must match $markdown/license"
 cp "$desktop/licenses/markdown/LICENSE" "$markdown/license"
+
+echo 'fixture drift' >>"$desktop/tsx-spaces/system-monitor/licenses/LICENSE-SYSMON"
+check_failure 'tsx-spaces/system-monitor/licenses/LICENSE-SYSMON must match licenses/sysmon/LICENSE'
+cp "$desktop/licenses/sysmon/LICENSE" "$desktop/tsx-spaces/system-monitor/licenses/LICENSE-SYSMON"
 
 echo 'fixture drift' >>"$framework/host/chat/assets/LICENSE-OCTICONS"
 check_failure 'OCTICONS-LICENSE.txt must match'

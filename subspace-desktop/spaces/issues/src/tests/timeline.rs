@@ -8,7 +8,7 @@ use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
 
 use super::offline::{Offline, board_with_hub, offline_with, settle_board};
-use super::{has, press, render};
+use super::{has, press, render, settle_frames};
 use crate::{Issues, detail::timeline::TimelineMode};
 
 const PAGES: &str = include_str!("../../fixtures/issue-timeline.json");
@@ -60,17 +60,20 @@ fn comments_are_default_and_all_includes_activity_until_opening_another_issue(
     assert!(!has(cx, "timeline-event:event-2"));
     assert_eq!(mode(&board, cx), TimelineMode::Comments);
     press(cx, "m");
+    settle_frames(cx);
     cx.update(|window, cx| {
+        let tabs = &board
+            .read(cx)
+            .issue_view
+            .timeline_focus
+            .as_ref()
+            .unwrap()
+            .tabs;
         assert!(
-            board
-                .read(cx)
-                .issue_view
-                .timeline_focus
-                .as_ref()
-                .unwrap()
-                .tab(TimelineMode::Comments)
-                .is_focused(window)
+            tabs.contains_focused(window, cx),
+            "an Activity tab has focus"
         );
+        assert!(!tabs.is_focused(window), "the selected tab, not the list");
     });
 
     board.update(cx, |board, cx| board.show_timeline(TimelineMode::All, cx));
@@ -270,4 +273,44 @@ fn fixture() -> (Offline, Arc<AtomicBool>) {
         Some((200, pages["head"].to_string()))
     });
     (offline, fail_older)
+}
+
+#[gpui_kit::test]
+fn a_palette_command_selects_and_focuses_its_activity_tab(cx: &mut TestAppContext) {
+    use subspace_framework::dashboard::CommandRun;
+    let (fixture, _) = fixture();
+    let (board, cx) = open_timeline(&fixture, cx);
+    render(cx);
+    cx.update(|window, cx| {
+        let commands = board.read(cx).palette_commands();
+        let command = commands
+            .iter()
+            .find(|command| command.label == "Show issue decisions")
+            .unwrap();
+        let CommandRun::Callback(run) = &command.run else {
+            panic!("expected a callback")
+        };
+        run(window, cx);
+    });
+    settle_frames(cx);
+    assert_eq!(mode(&board, cx), TimelineMode::Decisions);
+    cx.update(|window, cx| {
+        let tabs = &board
+            .read(cx)
+            .issue_view
+            .timeline_focus
+            .as_ref()
+            .unwrap()
+            .tabs;
+        assert!(
+            tabs.contains_focused(window, cx),
+            "an Activity tab has focus"
+        );
+        let decisions = window.within("issue-timeline-tabs").find(2usize);
+        assert_eq!(
+            decisions.focused(),
+            Some(true),
+            "the Decisions tab has focus"
+        );
+    });
 }

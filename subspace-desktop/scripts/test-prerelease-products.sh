@@ -50,11 +50,11 @@ check_packaged_licences() {
         echo 'the runtime report includes a compile-time proc macro' >&2; exit 1
     fi
     for file in canvas/mermaid-rs-renderer-MIT.txt \
-        charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS-NG charts/LICENSE-RQUICKJS \
+        charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS charts/LICENSE-QUICKJS-JIT \
         fonts/LICENSE-INTER fonts/LICENSE-JETBRAINS-MONO fonts/README.md \
         icons/LICENSE-FEATHER icons/LICENSE-LOBE-ICONS icons/LICENSE-LUCIDE \
         markdown/LICENSE \
-        rust-std/README.md \
+        rust-std/README.md sysmon/LICENSE sysmon/README.md \
         terminal/LICENSE-APACHE terminal/LICENSE-GHOSTTY terminal/LICENSE-MIT terminal/LICENSE-PORTABLE-PTY \
         themes/gpui-kit/LICENSE-APACHE themes/gpui-kit/PROVENANCE.md; do
         cmp "$root/licenses/$file" "$destination/licenses/$file"

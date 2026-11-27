@@ -1,7 +1,9 @@
 use super::IconButtonSize;
 use super::size::Nominal;
 use crate::tokens::{ButtonMetrics, ButtonRole};
-use gpui_kit::component::{Icon, Sizable as _, Size, button::Button, h_flex, spinner::Spinner};
+use gpui_kit::component::{
+    Disableable as _, Icon, Sizable as _, Size, button::Button, h_flex, spinner::Spinner,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Rems,
@@ -15,6 +17,8 @@ pub(super) struct Content {
     pub(super) children: Vec<AnyElement>,
     /// A quiet button's glyph and text colour under the pointer.
     pub(super) hover_glyph: Option<Hsla>,
+    /// A quiet button's glyph and text colour at rest, kept while it is busy.
+    pub(super) glyph: Option<Hsla>,
 }
 
 /// The hover group that brightens a quiet button's glyph and text.
@@ -74,6 +78,23 @@ impl Geometry {
 
 const REFERENCE: f32 = crate::density::REFERENCE_REM;
 
+/// A loading button: disabled, so pointers, keys and assistive technology
+/// all find it unavailable, but drawn in its resting colours, faded as GPUI
+/// Kit fades a loading button. It is not marked loading: GPUI Kit 0.11 then
+/// draws its own spinner beside this glyph's. A quiet button keeps its glyph
+/// colour; GPUI Kit replays the button's own fill and edge in its disabled
+/// state, and a native variant takes GPUI Kit's disabled fill, as GPUI Kit
+/// does not expose its resting colours.
+fn busy(button: Button, glyph: Option<Hsla>) -> Button {
+    button
+        .disabled(true)
+        .opacity(BUSY_OPACITY)
+        .when_some(glyph, |button, glyph| button.text_color(glyph))
+}
+
+/// GPUI Kit's fade of a loading button.
+const BUSY_OPACITY: f32 = 0.8;
+
 pub(super) fn compose(mut button: Button, content: Content, geometry: Geometry) -> Button {
     let icon_only = content.label.is_none() && content.children.is_empty();
     let has_width = button.style().size.width.is_some();
@@ -86,7 +107,7 @@ pub(super) fn compose(mut button: Button, content: Content, geometry: Geometry) 
         .when(content.hover_glyph.is_some(), |button| {
             button.group(HOVER_GROUP)
         })
-        .loading(content.loading);
+        .when(content.loading, |button| busy(button, content.glyph));
     let label = content.label.map(|label| {
         div()
             .id("icon-button-label")

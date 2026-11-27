@@ -22,6 +22,10 @@
 #   CAPTURE_RUNS_DELAY=<secs>  hold each Actions run list
 #   CAPTURE_ITEM_DELAY=<secs>  hold each GitHub issue or pull request detail read
 #   CAPTURE_IRC_CONFIG=<file>  IRC board config; use scripts/irc-test-server.sh
+#   CAPTURE_TSX_PACKAGE=<file> a TSX Spaces package, such as mise run tsx-package's output,
+#                              kept under its app ID as the Space keeps an install
+#   CAPTURE_TSX_KEY=<key id>   with CAPTURE_TSX_PACKAGE, its release key ID: the install is then
+#                              recorded as `capture`, so CAPTURE_CONFIG can grant its capabilities
 #   CAPTURE_NO_GH=1            no gh accounts, as for a user without the GitHub CLI
 #   CAPTURE_NO_API=1           no Subspace API variables for the app, for a build with no API
 #                              backend (SUBSPACE_BUILD_CONFIG naming {"api_backend": "none"}),
@@ -242,6 +246,45 @@ fi
 if [ -n "${CAPTURE_IRC_CONFIG:-}" ]; then
     mkdir -m 700 "$config_dir/irc"
     install -m 600 "$CAPTURE_IRC_CONFIG" "$config_dir/irc/config.json"
+fi
+if [ -n "${CAPTURE_TSX_PACKAGE:-}" ]; then
+    # The store keeps each app as <app id>.nshpkg and refuses any other
+    # name. A package starts with NSHP, a format and flags, then the JSON
+    # header's length as a little-endian u32 and the header itself; the app
+    # ID is read from that header alone. The app verifies the package, so a
+    # wrong ID is refused, not trusted.
+    # nsh refuses a header over 16 MiB; the header must fit in the file.
+    tsx_size="$(wc -c <"$CAPTURE_TSX_PACKAGE" | tr -d ' ')"
+    if [ "$tsx_size" -lt 12 ]; then
+        echo "capture: $CAPTURE_TSX_PACKAGE is truncated: no package prefix" >&2
+        exit 1
+    fi
+    if [ "$(head -c 4 "$CAPTURE_TSX_PACKAGE")" != NSHP ]; then
+        echo "capture: $CAPTURE_TSX_PACKAGE is not an nsh package" >&2
+        exit 1
+    fi
+    read -r b0 b1 b2 b3 < <(od -An -t u1 -j 8 -N 4 "$CAPTURE_TSX_PACKAGE")
+    tsx_header_len=$((b0 + (b1 << 8) + (b2 << 16) + (b3 << 24)))
+    if [ "$tsx_header_len" -gt $((16 << 20)) ]; then
+        echo "capture: $CAPTURE_TSX_PACKAGE has an oversized header ($tsx_header_len bytes; nsh allows 16 MiB)" >&2
+        exit 1
+    fi
+    if [ $((12 + tsx_header_len)) -gt "$tsx_size" ]; then
+        echo "capture: $CAPTURE_TSX_PACKAGE is truncated: its header runs past the end" >&2
+        exit 1
+    fi
+    tsx_app_id="$(tail -c +13 "$CAPTURE_TSX_PACKAGE" | head -c "$tsx_header_len" |
+        jq -er '.app.id | strings' 2>/dev/null || true)"
+    if ! [[ "$tsx_app_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+        echo "capture: $CAPTURE_TSX_PACKAGE names no valid app ID" >&2
+        exit 1
+    fi
+    mkdir -p "$config_dir/tsx/packages"
+    install -m 600 "$CAPTURE_TSX_PACKAGE" "$config_dir/tsx/packages/$tsx_app_id.nshpkg"
+    if [ -n "${CAPTURE_TSX_KEY:-}" ]; then
+        jq -n --arg app "$tsx_app_id" --arg key "$CAPTURE_TSX_KEY" '{($app): [$key, "capture"]}' \
+            >"$config_dir/tsx/installs.json"
+    fi
 fi
 
 app_env=(

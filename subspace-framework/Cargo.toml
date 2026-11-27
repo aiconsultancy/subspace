@@ -182,7 +182,10 @@ subspace-component-gallery-board = { path = "spaces/component-gallery", version 
 # The tree-sitter grammars colour code in code views. Not
 # `tree-sitter-languages`: its SQL grammar pins a `cc` that conflicts with the
 # workspace lock.
-gpui-kit = { version = "0.9.1", features = [
+# `gpui-fast` selects GPUI Fast, the GPUI that nsh draws with, for the core,
+# platform and GPUI Kit layers without changing imports.
+gpui-kit = { version = "0.11.0", features = [
+    "gpui-fast",
     "tree-sitter-bash",
     "tree-sitter-csharp",
     "tree-sitter-css",
@@ -200,7 +203,7 @@ gpui-kit = { version = "0.9.1", features = [
 notify-rust = "4.19"
 # Same version as GPUI Kit's own; listed directly only so `subspace-lucide`'s build
 # script receives the Lucide icon directory from its `links` metadata.
-gpui-kit-assets = "=0.9.1"
+gpui-kit-assets = "=0.11.0"
 
 anyhow = "1"
 base64 = "0.23"
@@ -220,7 +223,10 @@ rmcp = { version = "3.10", default-features = false }
 rusqlite = { version = "0.42", features = ["bundled"] }
 # The JavaScript engine that compiles a Flint chart, built from source with
 # the crate; `subspace-charts` embeds Flint itself, so a chart needs no Node.
-rquickjs = { version = "0.14", default-features = false }
+# nsh's QuickJS fork, published as `quickjs-jit` under the crate name
+# `rquickjs`: an app that also embeds nsh links one QuickJS, as two copies
+# of its un-prefixed C symbols would resolve to one engine.
+rquickjs = { package = "quickjs-jit", version = "0.14.2", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustix = { version = "=1.1.6", features = ["fs"] }
 # Pre-release update versions compare by semver precedence.
@@ -268,5 +274,5 @@ resvg = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 taffy = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
-gpui-pre = { opt-level = 3 }
-gpui-pre-platform = { opt-level = 3 }
+gpui-fast = { opt-level = 3 }
+gpui-fast-platform = { opt-level = 3 }

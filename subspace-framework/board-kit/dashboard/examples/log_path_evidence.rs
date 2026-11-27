@@ -138,7 +138,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             gpui_kit::init(cx);
             subspace_dashboard::bind_keys(cx);
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(width), px(HEIGHT)), cx)),
+                window_bounds: Some(WindowBounds::centered(
+                    None,
+                    size(px(width), px(HEIGHT)),
+                    cx,
+                )),
                 focus: false,
                 show: true,
                 ..Default::default()

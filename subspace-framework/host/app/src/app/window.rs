@@ -18,7 +18,7 @@ pub fn window_bounds(cx: &App) -> WindowBounds {
     let saved = prefs::get(cx, WINDOW_KEY).and_then(|text| parse_bounds(&text));
     match saved.filter(|bounds| fits(bounds, &displays)) {
         Some(bounds) => WindowBounds::Windowed(bounds),
-        None => WindowBounds::centered(size(px(DEFAULT_WIDTH), px(DEFAULT_HEIGHT)), cx),
+        None => WindowBounds::centered(None, size(px(DEFAULT_WIDTH), px(DEFAULT_HEIGHT)), cx),
     }
 }
 

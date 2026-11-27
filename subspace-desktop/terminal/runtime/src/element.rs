@@ -27,8 +27,8 @@ use std::rc::Rc;
 use gpui_kit::{
     App, Bounds, DispatchPhase, Element, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
-    InspectorElementId, IntoElement, LayoutId, Pixels, Point, ScrollEvent, SharedString, Style,
-    TextAlign, Window, fill, point, px, relative, size,
+    InspectorElementId, LayoutId, Pixels, Point, ScrollEvent, SharedString, Style, TextAlign,
+    Window, fill, point, px, relative, size,
 };
 use subspace_ghostty_config::Rgb;
 
@@ -108,14 +108,6 @@ impl<V: EntityInputHandler> TerminalElement<V> {
             view,
             focus,
         }
-    }
-}
-
-impl<V: EntityInputHandler> IntoElement for TerminalElement<V> {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

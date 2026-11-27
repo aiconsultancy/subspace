@@ -125,10 +125,11 @@ load_release_toolchain() {
 product_licence_files() {
     printf '%s\n' ../LICENSE NOTICE \
         licenses/canvas/mermaid-rs-renderer-MIT.txt \
-        licenses/charts/{LICENSE-FLINT-CHART,LICENSE-QUICKJS-NG,LICENSE-RQUICKJS,README.md} \
+        licenses/charts/{LICENSE-FLINT-CHART,LICENSE-QUICKJS,LICENSE-QUICKJS-JIT,README.md} \
         licenses/fonts/{LICENSE-INTER,LICENSE-JETBRAINS-MONO,README.md} \
         licenses/icons/{LICENSE-FEATHER,LICENSE-LOBE-ICONS,LICENSE-LUCIDE,README.md} \
         licenses/markdown/{LICENSE,README.md} licenses/rust-std/README.md \
+        licenses/sysmon/{LICENSE,README.md} \
         licenses/terminal/{LICENSE-APACHE,LICENSE-GHOSTTY,LICENSE-MIT,LICENSE-PORTABLE-PTY,README.md} \
         licenses/themes/{LICENSE-MACOS-CLASSIC,README.md,gpui-kit/LICENSE-APACHE,gpui-kit/PROVENANCE.md} \
         spaces/actions/assets/{README.md,OCTICONS-LICENSE.txt}
@@ -174,7 +175,7 @@ release_cargo_args() {
 }
 
 # Spaces that are not ready to ship (see `products/subspace/Cargo.toml`).
-UNRELEASED_FEATURES=(unreleased-spaces space-lab component-gallery)
+UNRELEASED_FEATURES=(unreleased-spaces space-lab component-gallery tsx-spaces)
 
 # Release archives and signed apps never build an unreleased Space, even when
 # the calling shell exports SUBSPACE_BUILD_FEATURES with one. A feature counts

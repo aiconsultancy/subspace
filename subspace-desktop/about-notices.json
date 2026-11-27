@@ -44,11 +44,11 @@
     "upstream": ["https://raw.githubusercontent.com/google/flatbuffers/7e163021e59cca4f8e1e35a7c828b5c6b7915953/LICENSE"]
   },
   {
-    "crates": ["gpui-kit v0.9.1", "gpui-kit-assets v0.9.1", "gpui-webview v0.9.1"],
+    "crates": ["gpui-kit v0.11.0", "gpui-kit-assets v0.11.0", "gpui-webview v0.11.0"],
     "id": "Apache-2.0",
     "path": "licenses/themes/gpui-kit/LICENSE-APACHE",
     "sha256": "d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811",
-    "upstream": ["https://raw.githubusercontent.com/longbridge/gpui-kit/39ab849a93b5f15507b969164d49891db8d5b470/LICENSE-APACHE"]
+    "upstream": ["https://raw.githubusercontent.com/longbridge/gpui-kit/e97fe438129c5e4ccab504f2e6fafd9a4e396bba/LICENSE-APACHE"]
   },
   {
     "crates": ["granit-parser v1.3.0"],
@@ -93,7 +93,7 @@
     "crate_file": true
   },
   {
-    "crates": ["lyon v1.0.19", "lyon_algorithms v1.0.22", "lyon_geom v1.0.20", "lyon_path v1.0.19", "lyon_tessellation v1.0.23"],
+    "crates": ["lyon_geom v1.0.20", "lyon_path v1.0.19"],
     "id": "MIT",
     "path": "licenses/rust-crates/lyon-MIT",
     "sha256": "80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e",
@@ -158,11 +158,11 @@
     "crate_file": true
   },
   {
-    "crates": ["rquickjs-core v0.14.0"],
+    "crates": ["quickjs-jit-core v0.14.2"],
     "id": "MIT",
-    "path": "licenses/charts/LICENSE-RQUICKJS",
+    "path": "licenses/charts/LICENSE-QUICKJS-JIT",
     "sha256": "976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70",
-    "upstream": ["https://raw.githubusercontent.com/DelSkayn/rquickjs/d7ef5eeae702fea24c03643064de454f1c1dd4b0/LICENSE"]
+    "upstream": ["https://raw.githubusercontent.com/longbridge/rquickjs/c4d75b659ee2ef3e510e222203607b988fba494a/LICENSE"]
   },
   {
     "crates": ["rust-i18n-macro v4.2.4", "rust-i18n-support v4.2.4"],

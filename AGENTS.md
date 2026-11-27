@@ -29,8 +29,9 @@ README and documentation index to find the pages relevant to your change.
 ## Toolchains
 
 - **Framework and desktop.** Both Rust workspaces use edition 2024 and pin
-  stable Rust 1.99.0 through mise. Use GPUI through `gpui-kit` (0.9.1 in the
-  workspace manifests). The desktop terminal also pins Zig 0.16.0. Follow the
+  stable Rust 1.99.0 through mise. Use GPUI through `gpui-kit` (0.11.0 with
+  its `gpui-fast` backend in the workspace manifests). The desktop terminal
+  also pins Zig 0.16.0. Follow the
   pins in the [Framework mise config](subspace-framework/mise.toml),
   [desktop mise config](subspace-desktop/mise.toml) and
   [terminal mise config](subspace-desktop/mise.terminal.toml).

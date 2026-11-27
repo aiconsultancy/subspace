@@ -53,13 +53,6 @@ struct Surface {
     drawn: Option<AnyElement>,
 }
 
-impl IntoElement for Surface {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 impl Element for Surface {
     type RequestLayoutState = ();
     type PrepaintState = ();
@@ -142,14 +135,6 @@ impl Element for Surface {
 struct ExactBody {
     body: AnyElement,
     origin: Rc<Cell<Point<Pixels>>>,
-}
-
-impl IntoElement for ExactBody {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
 }
 
 impl Element for ExactBody {

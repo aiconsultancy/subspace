@@ -4,9 +4,9 @@ These JSON files originate in the `themes/` directory of
 [longbridge/gpui-component](https://github.com/longbridge/gpui-component) at
 release tag `v0.7.0`, commit `0c830f4d257e69fdd17200650533ab4ca9a40cc0`.
 
-The installed `gpui-kit` dependency is version `0.9.1`. Its `themes/`
-directory at tag `v0.9.1`, commit `39ab849a93b5f15507b969164d49891db8d5b470`,
-holds the same upstream palettes. The upstream repository is
+The installed `gpui-kit` dependency is version `0.11.0`. Its `themes/`
+directory at tag `v0.11.0`, commit `e97fe438129c5e4ccab504f2e6fafd9a4e396bba`,
+holds the same upstream palettes, unchanged since `v0.9.1`. The upstream repository is
 licensed under Apache License 2.0. The accompanying `LICENSE-APACHE` file is
 copied from that exact upstream commit.
 
