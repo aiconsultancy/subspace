@@ -464,26 +464,34 @@ def gather_workstation_network(args, answers, saved, interactive):
     answers["privateNetwork"] = network.choice if network else "off"
 
 
-def gather_identity(args, answers, saved, interactive):
+def ask_identity(answers, saved):
+    """Explain or confirm the configured sign-in, then report whether to ask for dev inputs."""
     # Until SUB-76 supplies owner bootstrap, keep the configured sign-in or the existing development path.
-    environment = {**DEV_AUTH, **read_api_settings()} if interactive and answers["api"] else {}
-    development = dev_sign_in(environment)
-    if development and answers["privateNetwork"] != "off":
-        private_network.require_sso(environment)
-    if development and (not saved or not saved.get("api", True)):
-        require(yes_no("Identity: use development sign-in to register this fleet on its local API for now? "
-                       "Owner device pairing is not available in setup yet", False, interactive),
-                "Set up the API's production sign-in first (see INSTALL.md), use a hosted API, pass --no-api, "
-                "or rerun and answer y to use development sign-in.")
-    elif interactive and not saved:
+    if answers["api"]:
+        environment = merged_api_settings({})
+        if dev_sign_in(environment):
+            if answers["privateNetwork"] != "off":
+                private_network.require_sso(environment)
+            if not saved or not saved.get("api", True):
+                require(yes_no("Identity: use development sign-in to register this fleet on its local API for now? "
+                               "Owner device pairing is not available in setup yet", False, interactive=True),
+                        "Set up the API's production sign-in first (see INSTALL.md), use a hosted API, pass --no-api, "
+                        "or rerun and answer y to use development sign-in.")
+            return True
+    if not saved:
         say("Identity: setup leaves sign-in to the configured API, if any. It does not pair an owner.")
+    return False
+
+
+def gather_identity(args, answers, saved, interactive):
+    ask_development_inputs = interactive and ask_identity(answers, saved)
     for key, flag, label, default in (
             ("adminEmail", args.admin_email, "Development sign-in email", "developer@example.com"),
             ("organisation", args.organisation, "Development sign-in organisation", "local")):
         if flag is not None:
             answers[key] = flag
         elif key not in answers:
-            answers[key] = prompt(label, default) if development else default
+            answers[key] = prompt(label, default) if ask_development_inputs else default
 
 
 def gather(args, saved):
@@ -2651,30 +2659,30 @@ def dev_sign_in(environment):
     return environment.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
 
 
-def read_api_settings():
+def read_api_settings(*, missing_ok=True):
     previous = INPUTS / "api.env"
-    settings = {}
-    if previous.exists():
-        # Keep what the operator set, such as WorkOS or Entra and turning development sign-in off.
-        for line in previous.read_text().splitlines():
-            key, _, value = line.partition("=")
-            if key and not key.startswith("#"):
-                settings[key] = value
-    return settings
+    if missing_ok and not previous.exists():
+        return {}
+    return {key: value for key, _, value in (line.partition("=") for line in previous.read_text().splitlines())
+            if key and not key.startswith("#")}
 
 
-def api_environment(answers, environment, external=False):
-    """api.env as api_up writes it: environment (setup's own settings) over what an earlier run wrote there and
-    the operator kept or changed. Returns the settings and whether the agent listener is on.
-
-    external says the API uses an existing PostgreSQL, whose URL api_up passes in environment.
-    """
+def merged_api_settings(environment, external=False):
+    """Apply setup-owned values and defaults while retaining the operator's settings."""
     kept = {key: value for key, value in read_api_settings().items() if key not in environment}
     if not external:
         # The API's own PostgreSQL: never a URL an earlier run, or anyone, left in api.env, which Compose would
         # prefer to the local database and the image would migrate on start.
         kept.pop("DATABASE_URL", None)
-    merged = {**environment, **DEV_AUTH, "AGENT_PORT": "", **kept}
+    return {**environment, **DEV_AUTH, "AGENT_PORT": "", **kept}
+
+
+def api_environment(answers, environment, external=False):
+    """Return the settings api_up writes and whether the agent listener is on.
+
+    external says the API uses an existing PostgreSQL, whose URL api_up passes in environment.
+    """
+    merged = merged_api_settings(environment, external=external)
     requested = answers.get("agentListener")
     if requested is True:
         require(dev_sign_in(merged) and merged.get("NODE_ENV") != "production",
@@ -2914,17 +2922,12 @@ def api_healthy():
 
 def dev_auth_enabled():
     """Whether the API still offers development sign-in, which setup uses to act as the admin."""
-    environment = {}
-    for line in (INPUTS / "api.env").read_text().splitlines():
-        key, _, value = line.partition("=")
-        environment[key] = value
-    return dev_sign_in(environment)
+    return dev_sign_in(read_api_settings(missing_ok=False))
 
 
 def agent_listener_enabled():
     """Whether api.env turns the API's agent listener on, on the port the fleet's agents are given."""
-    environment = dict(line.partition("=")[::2] for line in (INPUTS / "api.env").read_text().splitlines())
-    return environment.get("AGENT_PORT") == str(AGENT_API_PORT)
+    return read_api_settings(missing_ok=False).get("AGENT_PORT") == str(AGENT_API_PORT)
 
 
 def api_down():

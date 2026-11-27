@@ -286,7 +286,9 @@ class GuidedQuestionsTests(unittest.TestCase):
             with self.subTest(reply=reply), self.assertRaisesRegex(fleet_setup.SetupError, message):
                 self.gather(replies=["", "", reply])
         self.assertFalse((fleet_setup.INPUTS / "answers.json").exists())
-        answers, asked = self.gather(["--non-interactive"])
+        with patch.object(fleet_setup, "read_api_settings") as settings:
+            answers, asked = self.gather(["--non-interactive"])
+        settings.assert_not_called()
         self.assertEqual(asked, [])
         self.assertEqual((answers["api"], answers["adminEmail"], answers["organisation"]),
                          (True, "developer@example.com", "local"))
@@ -306,11 +308,15 @@ class GuidedQuestionsTests(unittest.TestCase):
 
     def test_existing_sso_and_private_route_are_reused_without_changing_ssh_access(self):
         api_env = fleet_setup.INPUTS / "api.env"
-        settings = "NODE_ENV=production\nAUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\nWORKOS_CLIENT_ID=example\n"
+        settings = ("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\n# AUTH_PROVIDERS=comment\n"
+                    "NODE_ENV=production\nAUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\nWORKOS_CLIENT_ID=example\n")
         api_env.write_text(settings)
         network = "fleet.example.com,eth0,10.20.1.4,10.21.0.0/24"
         answers, asked = self.gather(["--access", "tailscale"], ["several", network])
         self.assertFalse(any(label.startswith("Development sign-in") for label in asked))
+        effective, _ = fleet_setup.api_environment(answers, {})
+        self.assertEqual(effective["AUTH_PROVIDERS"], "workos")
+        self.assertFalse(fleet_setup.dev_sign_in(effective) or fleet_setup.dev_auth_enabled())
         path = fleet_setup.INPUTS / "answers.json"
         fleet_setup.save_answers(answers)
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
