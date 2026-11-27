@@ -511,3 +511,14 @@ And a short reference copy of round 11's `freeOrder` and `admits`
 Freeing a resized pinned entry or the latest request fails both; each of
 the eight other mutations of the plan in Charon's round 12 review fails
 at least one of them.
+
+The round 14 test change (SUB decision `642cacc7`) makes the 400 seeded
+budgets different from one another (Charon's round 13 P3-1). Their
+generator multiplied in floating point: past 2^53 the product lost its
+low bits and the stream fell into a cycle of 10,466 values, so only 118
+of the budgets differed, and the reference let through a floor that
+ignores the change left out. It now multiplies within 32 bits
+(`Math.imul`), from the same seed, and the test fails unless all 400
+budgets differ; with the old generator it reports 118. The reference now
+fails on that floor too, and each of the nine mutations of the plan still
+fails at least one test.
