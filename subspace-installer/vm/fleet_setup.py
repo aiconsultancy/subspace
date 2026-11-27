@@ -59,6 +59,7 @@ import irc_accounts  # noqa: E402
 import memory  # noqa: E402
 import mockups  # noqa: E402
 import postgres_check  # noqa: E402
+import private_network  # noqa: E402
 import runtime  # noqa: E402
 import standard_channels  # noqa: E402
 import toolchains  # noqa: E402
@@ -336,6 +337,11 @@ def parse_args(argv):
     parser.add_argument("--ssh-from", help="comma-separated source addresses or CIDRs allowed to SSH in")
     parser.add_argument("--allow-port", help="comma-separated TCP ports to accept from private networks only, "
                         "for example 443 for an nginx listener on the tailnet")
+    parser.add_argument("--private-network", metavar="NAME,INTERFACE,ADDRESS,CLIENT-CIDR",
+                        help="serve HTTPS and TLS IRC on an existing private route; remembered on reruns (or set off)")
+    parser.add_argument("--accept-officer-tracker-access-loss", action="store_true",
+                        help="allow private ingress to remove an existing local API's officer tracker tools, "
+                        "signed enrolment and dispatch; not saved")
     parser.add_argument("--agent-egress", action="append", metavar="HOST:PORT",
                         help="allow a private TCP destination for officers. Repeat to set several; "
                         "use --agent-egress '' to clear the saved list")
@@ -702,6 +708,9 @@ def gather(args, saved):
     if args.allow_port is not None:
         answers["allowPorts"] = [value.strip() for value in args.allow_port.split(",") if value.strip()]
     answers.setdefault("allowPorts", [])
+    if args.private_network is not None:
+        network = private_network.Network.parse(args.private_network)
+        answers["privateNetwork"] = network.choice if network else "off"
     if args.agent_egress is not None:
         answers["agentEgress"] = list(dict.fromkeys(value for value in args.agent_egress if value))
     if args.key_vault is not None:
@@ -3547,6 +3556,30 @@ def summary(answers, members, stargate_api, lockdown_id=""):
 
 # Main ------------------------------------------------------------------------
 
+def planned_private_ingress(network, answers, *, accept_officer_tracker_access_loss=False):
+    require(answers["api"] and answers["irc"] == "local" and answers["lockdown"],
+            "--private-network requires an API and Ergo on this VM and lockdown enabled.")
+    require(not answers["agentDispatch"], "Guided agent dispatch still uses development sign-in; pass --no-agent-dispatch.")
+    https, irc_tls = private_network.PORTS
+    require(not (set(map(int, answers["allowPorts"])) & {https, irc_tls}),
+            f"Private ingress sets its own firewall policy for TCP {https} and {irc_tls}. Remove them from --allow-port.")
+    for path in (FLEET_ETC / "fleet.json", INPUTS / "fleet.json"):
+        api = read_json(path, {}).get("api") or {}
+        if urlsplit(api.get("url", "")).hostname in {"localhost", LOOPBACK, "::1"}:
+            impact = ("Production sign-in removes officers' installer-managed tracker access (Subspace MCP and REST "
+                      "tools, signed enrolment and dispatch) until setup supports SSO fleet registration.")
+            require(accept_officer_tracker_access_loss,
+                    f"{impact} Leave private ingress off or pass --accept-officer-tracker-access-loss.")
+            say(f"WARNING: {impact}")
+            break
+    private_network.require_sso(api_environment(answers, {}, external=external_database(answers))[0])
+    ingress = private_network.IngressPlan.prepare(network, INPUTS, API_PORT, IRC_PLAIN,
+                                                 secret_file=secret_file, write_private=write_private, run=run)
+    say(f"private workstations: https://{network.name} and TLS IRC at {network.name}:{irc_tls} "
+        f"(on {network.interface}, from {network.clients}); other endpoints stay on loopback")
+    return ingress
+
+
 def setup(args):
     global INPUTS
     INPUTS = Path(args.inputs)
@@ -3573,6 +3606,12 @@ def configure(args):
     answers = gather(args, saved)
     check_outbound(answers)
     rear, captains = check_answers(answers)
+    network = private_network.Network.parse(answers.get("privateNetwork"))
+    require(answers["lockdown"] or not private_network.UNIT.is_file(),
+            "Remove existing private ingress with --private-network off and lockdown enabled before skipping it.")
+    ingress = planned_private_ingress(
+        network, answers, accept_officer_tracker_access_loss=args.accept_officer_tracker_access_loss,
+    ) if network else None
     if saved.get("slug") and saved["slug"] != answers["slug"]:
         raise SetupError("The fleet ID cannot change on an installed VM. Reinstall on a fresh VM to rename it.")
     # The API has run here with its own PostgreSQL (setup writes api.env only then): its tracker is in that
@@ -3598,6 +3637,9 @@ def configure(args):
         say(f"Stargate {stargate_ref[:12]} has subspaceAgents ({runtime.SUBSPACE_AGENTS_FILE})")
         enrolment = enrolment_token(args, saved)
         hosted_checks(answers, enrolment)
+    if not args.dry_run and not ingress:
+        # Disable ingress before recording off. An interrupted run must not bring it back on boot.
+        private_network.remove()
     save_answers(answers)
     if enrolment:
         store_enrolment_token(enrolment)
@@ -3673,6 +3715,9 @@ def configure(args):
         say("dry run complete; nothing on this VM changed")
         return
 
+    if ingress:
+        # Never proxy the API while changing its sign-in settings, even if setup is interrupted.
+        ingress.quiesce(write_private=write_private, run=run)
     local_signing = False
     if answers["api"]:
         # The API comes first (its token and registration go into the fleet's inputs), so check now that the
@@ -3697,7 +3742,7 @@ def configure(args):
     # same PostgreSQL (a second database), so the fleet installer runs once with both.
     # Keep the agents away from operator-only ports and cloud metadata before any service starts.
     # This never blocks the operator, so it applies at once and is never rolled back.
-    run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
+    run(HERE / "lockdown.sh", "isolate", *isolation_args(answers, ingress))
     api_block, token, history = None, "", None
     if answers["api"]:
         run(HERE / "docker.sh")
@@ -3767,7 +3812,7 @@ def configure(args):
     if dispatch_uses_api(answers) or answers["api"]:
         # The installer has created the officers' users and Stargate's gateway user: let the gateway, and only it,
         # reach the API's port, and the officers, and only they, reach the agent listener.
-        run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
+        run(HERE / "lockdown.sh", "isolate", *isolation_args(answers, ingress))
     if stargate_api is None:
         stargate_api = confirm_fleet_api(None, installed_stargate_source())
         if stargate_api:
@@ -3791,17 +3836,30 @@ def configure(args):
 
     lockdown_id = ""
     if answers["lockdown"]:
-        lockdown = [HERE / "lockdown.sh", "apply", *isolation_args(answers)]
+        lockdown = [HERE / "lockdown.sh", "apply", *isolation_args(answers, ingress)]
         for address in answers["sshFrom"]:
             lockdown += ["--ssh-from", address]
         for value in answers["allowPorts"]:
             lockdown += ["--allow-port", str(value)]
         if answers["access"] in ("tailscale", "cloudflare"):
             lockdown.append(f"--{answers['access']}")
+        if ingress:
+            lockdown.extend(["--private-ingress", ingress.network.firewall_target])
         run(*lockdown)
         lockdown_id = run(HERE / "lockdown.sh", "applied-id", capture=True)
     else:
         say("WARNING: lockdown skipped. Run 'sudo subspace-setup lockdown apply' before putting anything on this VM.")
+    retirement = None
+    if ingress:
+        ingress.enable(lockdown_id, write_private=write_private, run=run)
+    else:
+        try:
+            private_network.retire_account(run=run)
+        except private_network.RetirementBlocked as error:
+            # The proxy is stopped and isolation no longer exempts the account. Stopping now would only skip the
+            # host's confirmation of this lockdown, so it rolls back, and fail every later run the same way.
+            retirement = error
+            say(f"WARNING: {error}")
     values = summary(answers, members, stargate_api, lockdown_id)
     if run(HERE / "audit.sh", check=False):
         say("WARNING: the privacy audit found problems (FAIL lines above). Fix them before using this fleet.")
@@ -3835,6 +3893,9 @@ def configure(args):
     if run(HERE / "providers.sh", "status", check=False):
         say("next: bring the agents online by signing CLIProxyAPI in to a provider account "
             "(INSTALL.md, 'Bring the agents online').")
+    if retirement:
+        # Again last, where the summary and audit cannot scroll it away.
+        say(f"WARNING: {retirement}")
 
 
 def remote_irc_next_step(answers, operator):
@@ -3851,13 +3912,15 @@ def remote_irc_next_step(answers, operator):
             "'sudo subspace-setup irc-server add <file>' (the host installer does this with --irc-server).")
 
 
-def isolation_args(answers):
+def isolation_args(answers, ingress=None):
     """lockdown.sh options that keep the agents away from operator-only ports and cloud metadata."""
     args = ["--operator", answers["operator"], "--protect-metadata"]
     if answers["api"] or (INPUTS / "api.env").is_file():
         # The API (development sign-in) and PostgreSQL, also through their container addresses,
         # and still after a switch to --no-api in case stopping them failed.
         args += ["--operator-only-port", str(API_PORT)]
+        if ingress:
+            args += ingress.isolation_args
         if not answers.get("databaseUrlFile"):
             args += ["--operator-only-port", str(runtime.SUBSPACE_DATABASE_PORT)]  # Bundled PostgreSQL.
         try:
@@ -4403,7 +4466,7 @@ def main(argv):
 if __name__ == "__main__":
     try:
         main(sys.argv[1:])
-    except SetupError as error:
+    except (SetupError, private_network.PrivateNetworkError) as error:
         sys.exit(f"subspace-setup: {error}")
     except KeyboardInterrupt:
         sys.exit(130)

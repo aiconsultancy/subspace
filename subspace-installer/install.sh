@@ -146,6 +146,10 @@ disable_units() {
 uninstall() {
     local unit
     local -a units=() enabled=()
+    local -a ingress_cleanup=(remove)
+    if "$no_systemd"; then ingress_cleanup+=(--no-systemd); fi
+    # Keep the account until guided setup removes its UID's firewall exception.
+    python3 -B "$here/vm/private_network.py" "${ingress_cleanup[@]}"
     if [[ -f $etc/units || -f $etc/retired-units ]]; then
         mapfile -t units < <(sort -u -- "$etc/"*units)
         for unit in "${units[@]}"; do

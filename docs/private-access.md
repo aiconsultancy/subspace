@@ -1,18 +1,19 @@
 # Private access to a fleet VM
 
 A fleet VM holds the agents' GitHub keys, model provider logins and private
-code. **None of its services are designed to face the internet.** They all
-listen on `127.0.0.1`, the installer's lockdown drops every unsolicited inbound
-connection except SSH, and SSH accepts keys only, for your login only.
+code. **None of its services are designed to face the internet.** By default
+the services listen on `127.0.0.1`, the installer's lockdown drops unsolicited
+inbound connections except SSH, and SSH accepts keys only, for your login only.
 
-You reach the services in one of three ways. All of them end in the same place:
-the desktop app talks to `127.0.0.1` on your own computer.
+Keep an SSH route for administration. Workstations can either tunnel through
+SSH or reach the API and IRC directly on an existing private network.
 
 | Method | Good for | What crosses the network |
 | --- | --- | --- |
 | [SSH tunnel](#ssh-tunnel) (default for a local VM) | One person, local VMs, getting started | SSH only |
-| [Tailscale](#tailscale) | Cloud VMs with no public IP; several fleets; shared IRC | WireGuard between your devices |
-| [Cloudflare Zero Trust](#cloudflare-zero-trust) | Cloud VMs with no inbound ports at all; identity-checked access; free for up to 50 users | An outbound tunnel from the VM to Cloudflare |
+| [Tailscale for SSH](#tailscale) | Cloud VMs with no public IP; several fleets; shared IRC | SSH over WireGuard between your devices |
+| [Cloudflare Zero Trust for SSH](#cloudflare-zero-trust) | Cloud VMs with no inbound ports at all; identity-checked access; free for up to 50 users | SSH over an outbound tunnel from the VM to Cloudflare |
+| [An existing private network](#an-existing-private-network) | Workstations already on the organisation's ZTNA, VPN or routed network | HTTPS and TLS IRC to a private name; no SSH tunnel for either |
 
 Optionally, add [nginx with internal host names](#nginx-with-internal-host-names)
 on top of Tailscale for browser-friendly addresses.
@@ -20,6 +21,177 @@ on top of Tailscale for browser-friendly addresses.
 Coding agents: explain these options to the user and let them choose. Help
 them set up the one they pick, step by step. Never make a service reachable
 from the internet, and never weaken the lockdown to make something work.
+
+## An existing private network
+
+Use this when the VM and workstations already have a private route. The
+installer does not create a VPN, change DNS or open the cloud firewall. Ask
+the network operator for a stable private VM address, its Linux ingress
+interface, the narrow client or connector CIDR **as seen by the VM**, and a
+DNS name resolving to that address on the workstations. Use one IPv4 or
+IPv6 address and a client CIDR of the same family that excludes the listener
+address. Use the actual client or connector addresses, not the whole subnet
+if it includes the listener. Allow TCP 443 and 6697 only on that private path
+in the cloud and network access policies. Do not forward public traffic to
+those ports, including through a public tunnel.
+
+**Existing guided fleets:** production sign-in removes the local API block
+from `fleet.json`. Officers lose installer-managed tracker access (Subspace
+MCP and REST tools, signed enrolment and dispatch) until setup supports SSO
+fleet registration. If you need those tools, keep your current sign-in and
+leave private ingress off. If you choose to proceed, pass
+`--accept-officer-tracker-access-loss` on the dry run and the real run that
+remove the block. This flag is not saved.
+
+The API must already be configured for production WorkOS or Entra sign-in.
+Set `NODE_ENV=production`, `ENABLE_DEV_AUTH=false`, and `AUTH_PROVIDERS` to
+`workos`, `entra` or `workos,entra` in the VM's root-only `/root/fleet/api.env`,
+with the provider's settings from the [API guide](../subspace-api/README.md#external-sign-in).
+Keep `AGENT_PORT` empty. Provision the organisation and its members using
+the membership command in that guide. This version of setup does not
+automatically register a local SSO API's fleet or agents or seed demo data.
+Turn off guided agent dispatch for this run. **Never serve the development
+API through a proxy**: reaching it is enough to act as its administrator.
+
+Install the distribution's `haproxy` package on the VM. Subspace uses a
+separate unit and does not use or reconfigure the package's own proxy
+service. Check that it and any other proxy are not listening on these ports.
+Provide a PEM certificate chain (leaf first) covering the private DNS name
+and its matching unencrypted PEM key. Put them on the VM through your
+approved private channel, as root-owned mode-0600 files:
+
+- `/root/fleet/private-network/fullchain.pem`
+- `/root/fleet/private-network/privkey.pem`
+
+Use a certificate from the organisation's CA if all clients trust it, or
+one issued by a public CA for a name you control using DNS validation. The
+name can still resolve only in private DNS. Do not issue an untrusted
+self-signed leaf or turn off verification. Distribute an internal CA to
+the system trust store used by Desktop and to the runtimes the skills use:
+Python/OpenSSL and, for a client that makes its own HTTPS requests, the
+client's trust store. A CA trusted by all those runtimes avoids per-client
+configuration. The installer checks the key and the leaf's DNS SAN
+and validity; the workstation must verify the full chain. The installer
+does not renew the certificate. Replace the two files and rerun setup to
+pick up a renewal. The privacy audit warns if the installed certificate
+expires within 30 days.
+
+For example, on a fleet VM with a configured production API and no local
+`api` block in `fleet.json`:
+
+```sh
+sudo subspace-setup --dry-run --no-agent-dispatch \
+  --private-network fleet.example.com,eth0,10.20.1.4,10.21.0.0/24
+sudo subspace-setup --no-agent-dispatch \
+  --private-network fleet.example.com,eth0,10.20.1.4,10.21.0.0/24
+```
+
+Confirm the lockdown from a new SSH session, as setup directs. If using
+`./install.sh --remote …`, pass the same options; put the certificates and
+API settings on the VM first. Remove 443 and 6697 from any existing
+`--allow-port` list: pass a new list or `--allow-port ''` to clear it.
+`--access` still only selects the SSH policy;
+for a routed ZTNA connector elsewhere, use `--access ssh --ssh-from` with
+the source allowed to administer the VM. It can differ from the client CIDR.
+
+The managed proxy listens on the one private address. It terminates TLS
+and opens connections to the API and Ergo's plain listener **on loopback**.
+Its unit retains `CAP_NET_RAW` for HAProxy's `interface` socket binding.
+Use IRC TLS with SASL PLAIN, not client certificate login, on the proxy
+address. Officer connections, local IRC certificate login and the SSH
+tunnel still use their existing endpoints. PostgreSQL is not published;
+the header-only agent listener, dashboard, AgentsView and Stargate Fleet
+API are not proxied. Both backends see the relay's address, not individual
+workstations. IRC accounts still authenticate separately, but an enforced
+host ban or DLINE on the shared address affects all relayed clients. Look
+for the original connection addresses in the proxy's journal:
+`sudo journalctl -u subspace-private-network.service`.
+
+The name, interface, address and client CIDR are saved in
+`/root/fleet/answers.json`. Omit `--private-network` to reuse them or pass
+`--private-network off` to remove the proxy and its inbound rules. Allow for
+a brief interruption to direct connections on a setup rerun. The proxy's
+guard rechecks the live firewall and API about once a minute and stops the
+proxy if either check fails. It does not restart the proxy. Turn off direct
+access **before** changing the API's sign-in outside guided setup; the
+periodic check is a fallback, not a safe way to make that change.
+
+While the guard or a lockdown rollback has stopped the proxy, a local user
+on the VM can bind the private listener address on port 6697. Workstation
+clients must verify the server's TLS certificate, as the agent skills do.
+
+On a workstation, use `https://fleet.example.com` in a Desktop build for
+your identity provider. For IRC, add `fleet.example.com:6697` with TLS on
+and the Ergo account and password supplied by the operator. No SSH local
+forward is needed. The [WorkOS agent skills](../agent-skills/README.md#hosted-api-with-workos)
+use the same HTTPS origin for MCP. For their API-issued IRC login, the
+registered fleet's IRC endpoint and `IRC_AUTH_SERVERS` must name
+`fleet.example.com:6697` and Ergo must use the [API sign-in hook](../subspace-irc/README.md#sign-in-through-the-subspace-api).
+An organisation administrator creates or edits the API's fleet record with
+`ircHost: "fleet.example.com"`, `ircPort: 6697` and `ircTls: true`.
+On a single VM, the installer mounts the hook files and points Ergo at the
+loopback API's container when `api.env` sets:
+
+```dotenv
+IRC_CREDENTIAL_SECRET_FILE=/run/subspace-managed-irc/credential-secret
+IRC_AUTH_HOOK_TOKEN_FILE=/run/subspace-managed-irc/hook-token
+IRC_AUTH_ORGANISATION=workos:org_EXAMPLE
+IRC_AUTH_SERVERS=fleet.example.com:6697
+```
+
+The current agent skills support WorkOS, not Entra. Network presence does
+not substitute for sign-in.
+
+Test on a workstation on that route, with the tunnel closed:
+
+```sh
+curl --fail https://fleet.example.com/health
+openssl s_client -connect fleet.example.com:6697 -servername fleet.example.com \
+  -verify_hostname fleet.example.com -verify_return_error </dev/null
+```
+
+Then sign in to the API and IRC, run `sudo subspace-setup audit` on the VM,
+and verify the two ports cannot be reached from outside the allowed path.
+
+### Recovering the proxy account
+
+The proxy runs as the `subspace-ingress` system account and group. Setup
+creates them only when neither exists and records their `uid:gid` in
+`/etc/subspace-lockdown/private-ingress-account`. It never adopts an
+account or group it did not create. Fleet uninstall keeps them, because
+lockdown's isolation rules can still exempt the UID after a reboot.
+`--private-network off` removes them and the receipt once its new isolation
+rules no longer exempt that UID, and a rerun finishes a removal that stopped
+part-way. If `off` finds an account, group or receipt it will not retire,
+or `userdel` or `groupdel` fails, it prints a warning, keeps the receipt,
+completes the rest of the run and repeats the warning last. Any other
+failure, such as an error reading the receipt file, still stops the run.
+
+If setup or the proxy's guard cannot verify the account, or `off` reports
+one it cannot remove, compare `getent passwd subspace-ingress` and
+`getent group subspace-ingress` with the receipt. Do not delete an account
+the receipt names while lockdown may still exempt its UID: rerun setup with
+`--private-network off` first. Then:
+
+- If `off` lists added members, remove each with
+  `sudo gpasswd -d MEMBER subspace-ingress`. It lists them only when they
+  are all that differs from the receipt, so run `off` again to finish
+  retiring the account and group and clear the receipt, then enable direct
+  access.
+- Otherwise, once nothing depends on the account or group that remains,
+  remove or rename it: setup did not create it as it is now. Run `off` again
+  to clear the receipt, then enable direct access.
+
+If setup reports that it cannot read the receipt, because it does not hold
+a `uid:gid` pair, it removes and adopts nothing: it cannot tell which
+account or group it created. After `off`, check both with `getent`. Once
+nothing depends on an account or group that remains, remove or rename it.
+Then move the receipt out of the active path, keeping it, before you enable
+direct access again:
+
+```sh
+sudo mv /etc/subspace-lockdown/private-ingress-account /root/private-ingress-account.bad
+```
 
 ## SSH tunnel
 

@@ -39,6 +39,17 @@ import sessions  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
 
 
+def setUpModule():
+    # Setup without private ingress removes the proxy and retires the account its receipt records: never the
+    # host's. remove() runs systemctl and unlinks the proxy's files itself, so it is a stub here, and nothing may
+    # reach the private network module's own command runner.
+    for attribute, value in (("ACCOUNT_RECEIPT", {"new": Path("/nonexistent/receipt")}), ("remove", {}),
+                             ("command", {"side_effect": AssertionError("a setup test ran a host command")})):
+        patcher = patch.object(fleet_setup.private_network, attribute, **value)
+        patcher.start()
+        unittest.addModuleCleanup(patcher.stop)
+
+
 # Tests never reach the network: setup's outbound check is replaced here, and OutboundTests checks the real one.
 check_outbound = fleet_setup.check_outbound
 fleet_setup.check_outbound = lambda answers: None

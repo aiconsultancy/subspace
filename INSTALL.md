@@ -329,9 +329,13 @@ answer it now.
     `--access tailscale` or `--access cloudflare`. If they have no
     preference, use Tailscale: it needs no domain of their own. For a local
     VM the default is the **SSH tunnel**, which needs nothing else. Either
-    way the desktop's ports travel through the SSH tunnel, which for a cloud
-    VM runs over the private network. Ask for any addresses that alone may
-    use SSH (`--ssh-from`). See [Private access](docs/private-access.md).
+    way the desktop's ports normally travel through the SSH tunnel. If
+    workstations and the VM already share the organisation's ZTNA, VPN or
+    routed network, offer [direct private HTTPS and IRC](docs/private-access.md#an-existing-private-network)
+    instead (`--private-network`). This requires configured production SSO
+    and a trusted certificate for the private name; it is not available with
+    the default development sign-in. Ask for any addresses that alone may
+    use SSH (`--ssh-from`). Keep the SSH route for administration.
     Also offer nginx with internal host names if they want browser-friendly
     addresses.
 
@@ -574,8 +578,16 @@ then move to Tailscale or Cloudflare and remove that rule.
 ### Set up the private network
 
 [Private access](docs/private-access.md) has the commands and policies for
-both documented routes; follow it rather than improvising.
+these routes; follow it rather than improvising.
 
+- **An existing ZTNA, VPN or routed private network.** Check routing and
+  private DNS from the workstations and collect the VM's private address,
+  interface, client CIDR and the certificate for the private name. Follow
+  [the direct access steps](docs/private-access.md#an-existing-private-network).
+  Keep a private SSH route for installation and administration. Workstation
+  IRC clients must verify the server's certificate: while the proxy is
+  stopped by its guard or a rollback, a local VM user can bind its private
+  address on port 6697.
 - **Tailscale.** The user, in their browser: signs in to Tailscale, adds
   `tag:fleet` to the tailnet policy as Private access shows, signs this
   computer in to the tailnet, and creates a one-off, pre-approved auth key
@@ -1141,7 +1153,14 @@ subnets in the user's virtual network. Run it only when the user asks.
      rear admiral's own agent record, gives Stargate's gateway user, and no
      agent, access to the API's port, and switches dispatch on in the rear
      admiral's gateway;
-   - applies the lockdown and runs the privacy audit.
+   - applies the lockdown, starts the TLS proxy if direct private access
+     was selected, and runs the privacy audit. Direct private access
+     requires production sign-in; it skips the development sign-in steps
+     above and leaves fleet registration to the operator. For an existing
+     local API, setup refuses this change unless you pass
+     `--accept-officer-tracker-access-loss`: officers lose installer-managed
+     tracker access (MCP and REST tools, signed enrolment and dispatch) until
+     setup supports SSO fleet registration.
 4. Confirms the lockdown over a fresh SSH connection, then runs the audit
    again. If that connection fails, the change rolls itself back after three
    minutes to the last confirmed lockdown, and the installer stops with an
@@ -1191,6 +1210,12 @@ covers models and harnesses. On the VM, `sudo subspace-setup providers`
 does the same as `./install.sh providers`.
 
 ## Connect the desktop app
+
+If you chose direct private access, follow the
+[private workstation steps](docs/private-access.md#an-existing-private-network)
+to configure the HTTPS API and TLS IRC endpoints, instead of the tunnel and
+development sign-in below. A tunnel is still needed for the dashboards and
+Stargate's Fleet API unless your site separately provides private access.
 
 1. **Start the tunnel.** It forwards the fleet's ports to `127.0.0.1` on your
    computer: the API (3000), IRC (6667 and 6697), the dashboard (8070),
@@ -1350,10 +1375,14 @@ in `fleet/`. To update: bump the pins, sync, review, deploy.
 ./install.sh audit
 ```
 
-The audit fails if any service listens beyond loopback (apart from SSH and a
-VPN agent), if the lockdown firewall is not loaded, if SSH accepts passwords or
-root logins, if a container publishes a port publicly, or if secrets are
-readable by anyone but root. It warns when the VM has a public address: then
+The audit fails if an unexpected service listens or publishes a container
+port beyond loopback. On existing installs, a custom TCP listener on a
+private address now fails rather than warns unless a live `--allow-port`
+rule covers it. `--allow-port` does not cover UDP: unexpected private UDP
+listeners also fail. The audit recognises SSH, VPN agents and the managed
+TLS endpoints with their recorded firewall rules. It also fails if lockdown is
+not loaded, SSH accepts passwords or root logins, or secrets are readable
+by anyone but root. It warns when the VM has a public address: then
 check from outside that nothing answers, for example `nc -vz <public-ip> 22`
 should time out unless you chose public SSH.
 
@@ -1450,6 +1479,15 @@ firewall and SSH hardening entirely, for example when a confirmed `--ssh-from`
 no longer matches your address; run the installer again afterwards to restore
 them. Agent isolation stays, because it never blocks your login.
 
+Lockdown rollback, or applying lockdown without the private ingress rules,
+stops the private TLS proxy. Rollback also disables the proxy at boot if
+the restored rules do not include private ingress. Use SSH to administer
+the VM. Rerun guided setup to restore the saved private ingress and confirm
+the lockdown from a fresh SSH connection, or run
+`sudo subspace-setup --private-network off` and confirm it to return to
+tunnel-only access. If the proxy stopped after a periodic check, fix the
+reported firewall or sign-in problem before rerunning setup.
+
 Setup limits officers and their crew to public network destinations and local
 fleet services. Private IPv4 and IPv6 destinations are blocked, with access to
 the VM's configured DNS resolvers. If officers need a private TCP service,
@@ -1488,6 +1526,12 @@ destinations. The list is saved, and `--agent-egress ''` clears it.
 
 ## Uninstall
 
+If direct workstation access is enabled, rerun `sudo subspace-setup
+--private-network off` first and confirm the lockdown to remove its firewall
+rules and dedicated account. Fleet uninstall also stops and removes the
+managed proxy and its periodic check if you have not already done so, but
+keeps the account reserved because its UID can still be exempt in lockdown
+([recovering the account](docs/private-access.md#recovering-the-proxy-account)).
 On the VM, `sudo /opt/subspace/bootstrap/subspace-installer/install.sh uninstall`
 stops the fleet and keeps its data. `sudo docker compose --project-name subspace-api down`
 stops the API. For a local VM, `./install.sh destroy`

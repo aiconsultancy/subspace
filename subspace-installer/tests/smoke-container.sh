@@ -49,6 +49,7 @@ systemd-analyze verify "${units[@]/#//etc/systemd/system/}"
 python3 /installer/tests/fixture.py check_shape "$work" uncommissioned
 python3 /installer/tests/fixture.py officer_file_tools "$work"
 python3 -B /installer/tests/policy_test.py
+python3 -B /installer/tests/private_network_test.py
 python3 -B /installer/tests/medical_test.py
 (
     cd -- /
