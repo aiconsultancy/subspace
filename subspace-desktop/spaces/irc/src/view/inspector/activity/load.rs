@@ -42,7 +42,8 @@ use subspace_client_fleet::{Error, FleetApi, FleetClient};
 use super::Selection;
 use super::draw::{Key, Pieced};
 use super::ledger::{
-    fits_before_newer, fits_beside, make_room, room, spare, stamp, window_allowance,
+    arrival_room, fits_before_newer, fits_beside, make_room, room, spare, stamp, swap_allowance,
+    window_allowance,
 };
 use super::parts::PART;
 use crate::Irc;
@@ -409,29 +410,45 @@ fn publish(
         read_item(board, key.clone(), (first.bytes, false), cx);
         return;
     }
-    let Some(loaded) = current(board, (key, read)) else {
+    if current(board, (key, read)).is_none() {
         return;
-    };
-    match (
-        outcome(result),
-        std::mem::replace(&mut loaded.reload, Reload::None),
-    ) {
-        // What was shown stays, beside the error and a retry.
-        (Err(error), Reload::Reading(_)) => loaded.reload = Reload::Failed(error),
-        (Err(error), _) => (loaded.held, loaded.raw) = (Held::Failed(error), 0),
-        (Ok(read), reload) => {
-            (loaded.held, loaded.raw) = read;
-            if let Reload::Reading(allowance) = reload {
-                loaded.allowance = allowance;
-            }
-        }
     }
-    loaded.incoming = 0;
     if let Some(selection) = board.inspector_activity.as_mut() {
+        let room = arrival_room(selection, key);
+        receive(selection, key, (outcome(result), room));
         restamp(selection, key);
         place(selection, key);
     }
     cx.notify();
+}
+
+/// Puts the answer to the read under way of `key` in place: what it read,
+/// or the error, beside what was shown when it replaces that. A read
+/// replacing what is shown is swapped in only within the `room` it may
+/// take letting go of nothing newer, beside whether it is the latest
+/// request ([`swap_allowance`]); otherwise what is shown stays, and the
+/// newer version waits to be asked for again (SUB decision `a884e4c6`).
+fn receive(
+    selection: &mut Selection,
+    key: &Key,
+    (outcome, room): (Result<(Held, u64), Error>, (u64, bool)),
+) {
+    let Some(loaded) = selection.loaded.get_mut(key) else {
+        return;
+    };
+    match (outcome, std::mem::replace(&mut loaded.reload, Reload::None)) {
+        // What was shown stays, beside the error and a retry.
+        (Err(error), Reload::Reading(_)) => loaded.reload = Reload::Failed(error),
+        (Err(error), _) => (loaded.held, loaded.raw) = (Held::Failed(error), 0),
+        (Ok(read), Reload::Reading(granted)) => {
+            if let Some(allowance) = swap_allowance(granted, read.1, room) {
+                (loaded.held, loaded.raw) = read;
+                loaded.allowance = allowance;
+            }
+        }
+        (Ok(read), _) => (loaded.held, loaded.raw) = read,
+    }
+    loaded.incoming = 0;
 }
 
 /// What a read's answer holds, and the bytes of item JSON in it.

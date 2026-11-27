@@ -188,12 +188,12 @@ pub(super) fn fits_beside(selection: &Selection, keep: &Key, wanted: u64) -> boo
     kept.saturating_add(wanted) <= room(selection)
 }
 
-/// Whether `wanted` more for `key`, and its own body, fits the room beside
-/// every request newer than `key`'s, the items read and bodies asked for
-/// since: room it could take letting go of nothing newer. A read that
-/// continues on its own is no request, so it never displaces a newer one
-/// (SUB decision `084f5236` item 4).
-pub(super) fn fits_before_newer(selection: &Selection, key: &Key, wanted: u64) -> bool {
+/// The room `key` may take beside every request newer than its own, the
+/// items read and bodies asked for since, and its own body: room it could
+/// take letting go of nothing newer. A read that continues on its own, or
+/// arrives, is no request, so it never displaces a newer one (SUB
+/// decisions `084f5236` item 4 and `a884e4c6`).
+pub(super) fn room_before_newer(selection: &Selection, key: &Key) -> u64 {
     let priority = |other: &Key| selection.asked.get(other).copied().unwrap_or(0);
     let own = priority(key);
     let newer = |other: &&Key| *other != key && priority(other) > own;
@@ -208,8 +208,39 @@ pub(super) fn fits_before_newer(selection: &Selection, key: &Key, wanted: u64) -
         .filter(|(other, _)| newer(other) && !selection.loaded.contains_key(*other))
         .map(|(_, bytes)| bytes)
         .sum();
-    let wanted = wanted.saturating_add(body(selection, Some(key)));
-    reads.saturating_add(bodies).saturating_add(wanted) <= room(selection)
+    room(selection)
+        .saturating_sub(reads)
+        .saturating_sub(bodies)
+        .saturating_sub(body(selection, Some(key)))
+}
+
+/// The room a read of `key` arriving may take letting go of nothing newer,
+/// measured again ([`room_before_newer`]), and whether `key` is the latest
+/// request, to which the floor belongs.
+pub(super) fn arrival_room(selection: &mut Selection, key: &Key) -> (u64, bool) {
+    measure(selection);
+    let latest = latest(selection) == Some(key);
+    (room_before_newer(selection, key), latest)
+}
+
+/// Whether `wanted` more for `key` fits the room it may take letting go of
+/// nothing newer ([`room_before_newer`]).
+pub(super) fn fits_before_newer(selection: &Selection, key: &Key, wanted: u64) -> bool {
+    wanted <= room_before_newer(selection, key)
+}
+
+/// The steady allowance of a read replacing what is shown, granted
+/// `granted` at admission, once it arrives holding `raw` bytes, within the
+/// `room` it may take letting go of nothing newer ([`room_before_newer`]):
+/// the latest request keeps its grant, the floor being its own; any other
+/// read is granted no more than that room, when it holds what arrived and
+/// a part of its window. `None` when it does not: the swap would displace
+/// a newer request, so what is shown stays (SUB decision `a884e4c6`).
+pub(super) fn swap_allowance(granted: u64, raw: u64, (room, latest): (u64, bool)) -> Option<u64> {
+    if latest {
+        return Some(granted);
+    }
+    (raw.saturating_add(MIN_WINDOW) <= room).then_some(granted.min(room))
 }
 
 /// What a page's window may draw beside it, given the `left` bytes the
@@ -224,23 +255,26 @@ pub(super) fn window_allowance(left: u64) -> u64 {
     }
 }
 
-/// Fits the read `keep`, the request being made or the latest, into the
-/// `left` bytes the room leaves it: unchanged when it fits; otherwise its
-/// window sized to what is left, or the floor ([`floor_allowance`]). When
-/// the floor holds what it shows but not beside the read under way for it,
-/// that read is withdrawn and what it shows stays (SUB decision `084f5236`
-/// item 2); it is let go only when not even the floor holds what it shows.
+/// Fits the read `keep`, the request being made, the latest or a read
+/// arriving, into the `left` bytes the room leaves it: unchanged when it
+/// fits; otherwise its window sized to what is left, or, for the latest
+/// request alone, the floor ([`kept_allowance`]). When that holds what it
+/// shows but not beside the read under way for it, that read is withdrawn
+/// and what it shows stays (SUB decision `084f5236` item 2); it is let go
+/// only when not even that holds what it shows.
 fn fit_kept(selection: &mut Selection, keep: &Key, left: u64) {
+    let latest = latest(selection) == Some(keep);
     let Some(loaded) = selection.loaded.get_mut(keep) else {
         return;
     };
     if loaded.charge() <= left {
         return;
     }
-    if floor_allowance(loaded.charges(), left).is_none() {
+    let fitted = |loaded: &Loaded| kept_allowance(loaded.charges(), (left, latest));
+    if fitted(loaded).is_none() {
         loaded.withdraw();
     }
-    match floor_allowance(loaded.charges(), left) {
+    match fitted(loaded) {
         Some(allowance) => refit(selection, keep, allowance),
         None => {
             selection.loaded.remove(keep);
@@ -249,27 +283,51 @@ fn fit_kept(selection: &mut Selection, keep: &Key, left: u64) {
 }
 
 /// The steady allowance of a read that passes the `left` bytes the room
+/// leaves it: within the floor for the latest request
+/// ([`floor_allowance`]), and only within what is left for any other read
+/// ([`left_allowance`]). The floor belongs to the latest request alone
+/// (SUB decision `a884e4c6`).
+fn kept_allowance(charges: (u64, u64, Option<u64>), (left, latest): (u64, bool)) -> Option<u64> {
+    if latest {
+        floor_allowance(charges, left)
+    } else {
+        left_allowance(charges, left)
+    }
+}
+
+/// The steady allowance of a read that passes the `left` bytes the room
 /// leaves it, from what it holds (`raw`), what comes in for it
 /// (`incoming`) and, while its first read is under way, its allowance
 /// (`reading`): the room left beside what comes in, when that holds what
-/// it holds and a part of its window; otherwise the floor's, a part and
-/// its window, beside at most a page coming in. `None` when not even the
-/// floor holds it.
+/// it holds and a part of its window. `None` when it does not.
+fn left_allowance((raw, incoming, reading): (u64, u64, Option<u64>), left: u64) -> Option<u64> {
+    if let Some(allowance) = reading {
+        return (allowance <= left).then_some(allowance);
+    }
+    let steady = left.saturating_sub(incoming);
+    (steady >= raw.saturating_add(MIN_WINDOW)).then_some(steady)
+}
+
+/// The steady allowance of the latest request's read that passes the
+/// `left` bytes the room leaves it: what is left ([`left_allowance`]);
+/// otherwise the floor's, a part and its window, beside at most a page
+/// coming in, and while its first read is under way its allowance within
+/// that. `None` when not even the floor holds it.
 fn floor_allowance((raw, incoming, reading): (u64, u64, Option<u64>), left: u64) -> Option<u64> {
     if let Some(allowance) = reading {
         return (allowance <= PAGE_READ).then_some(allowance);
     }
     let need = raw.saturating_add(MIN_WINDOW);
-    let steady = left.saturating_sub(incoming);
-    if steady >= need {
-        return Some(steady);
-    }
-    (incoming <= PAGE && need <= PAGE_READ).then_some(PAGE_READ)
+    let floor = (incoming <= PAGE && need <= PAGE_READ).then_some(PAGE_READ);
+    left_allowance((raw, incoming, None), left).or(floor)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MIN_WINDOW, PAGE, PAGE_READ, PART, floor_allowance, window_allowance};
+    use super::{
+        MIN_WINDOW, PAGE, PAGE_READ, PART, floor_allowance, kept_allowance, swap_allowance,
+        window_allowance,
+    };
 
     /// SUB decision `4311830a` item 1: a window is sized to the positive
     /// room left, and to the floor only when none is.
@@ -299,5 +357,43 @@ mod tests {
         // A first read under way keeps its allowance only within the floor.
         assert_eq!(floor_allowance((0, 0, Some(PAGE_READ)), 0), Some(PAGE_READ));
         assert_eq!(floor_allowance((0, 0, Some(PAGE_READ + 1)), 0), None);
+    }
+
+    /// SUB decision `a884e4c6`: the floor belongs to the latest request
+    /// alone; any other read is fitted only within what is left.
+    #[test]
+    fn only_the_latest_request_is_fitted_to_the_floor() {
+        let shown = (PAGE, 0, None);
+        assert_eq!(kept_allowance(shown, (0, true)), Some(PAGE_READ));
+        assert_eq!(kept_allowance(shown, (0, false)), None);
+        let left = PAGE + MIN_WINDOW;
+        assert_eq!(kept_allowance(shown, (left, false)), Some(left));
+        assert_eq!(kept_allowance(shown, (left - 1, false)), None);
+        // A first read under way keeps its allowance only within what is left.
+        assert_eq!(
+            kept_allowance((0, 0, Some(PAGE)), (PAGE, false)),
+            Some(PAGE)
+        );
+        assert_eq!(kept_allowance((0, 0, Some(PAGE)), (PAGE - 1, false)), None);
+    }
+
+    /// SUB decision `a884e4c6`: a read replacing what is shown takes no
+    /// more than the room newer requests leave it once it arrives, and
+    /// when that does not hold what arrived, what is shown stays.
+    #[test]
+    fn a_replacement_arriving_is_granted_only_the_room_newer_requests_leave() {
+        let granted = PAGE_READ;
+        // Deimos's case: 85,000 bytes left beside a newer body.
+        assert_eq!(swap_allowance(granted, PAGE, (85_000, false)), Some(85_000));
+        assert_eq!(
+            swap_allowance(granted, PAGE, (u64::MAX, false)),
+            Some(granted)
+        );
+        assert_eq!(
+            swap_allowance(granted, PAGE, (PAGE + MIN_WINDOW - 1, false)),
+            None
+        );
+        // The latest request keeps its grant: the floor is its own.
+        assert_eq!(swap_allowance(granted, PAGE, (0, true)), Some(granted));
     }
 }

@@ -35,14 +35,15 @@ fn settle(selection: &mut Selection, key: &Key) {
 /// The steady allowance of the read `key`, within the `room` beside
 /// everything else. A read in parts, once its page is in, gets back the
 /// room its window gave up while the page came in: a page and a window of
-/// what the room leaves beside it, up to a part, never less than it had
-/// (SUB decision `4311830a` item 1).
+/// what the room leaves beside it, up to a part, never less than it had;
+/// it grows only into that room, so growing never lets anything go (SUB
+/// decisions `4311830a` item 1 and `a884e4c6`).
 fn regrant(selection: &mut Selection, key: &Key, room: u64) -> u64 {
     let Some(loaded) = selection.loaded.get_mut(key) else {
         return 0;
     };
     if matches!(loaded.held, Held::Parts(_)) {
-        loaded.allowance = loaded.allowance.max(page_allowance(room));
+        loaded.allowance = loaded.allowance.max(page_allowance(room).min(room));
     }
     loaded.allowance
 }

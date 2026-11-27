@@ -21,7 +21,7 @@ use crate::view::inspector::activity::{
 const ROOM: u64 = 255_000;
 
 /// `room` bytes left beside the inline content, drawn again.
-fn roomed(board: &Entity<Irc>, room: u64, cx: &mut VisualTestContext) {
+pub(super) fn roomed(board: &Entity<Irc>, room: u64, cx: &mut VisualTestContext) {
     board.update(cx, |board, cx| {
         set_room(board.inspector_activity.as_mut().unwrap(), room);
         cx.notify();
@@ -98,7 +98,10 @@ fn load_second(cx: &mut VisualTestContext) {
 
 /// The items read, and what they and the open turns' bodies count beside
 /// the inline content.
-fn ledger(board: &Entity<Irc>, cx: &mut VisualTestContext) -> (Vec<(String, String)>, u64) {
+pub(super) fn ledger(
+    board: &Entity<Irc>,
+    cx: &mut VisualTestContext,
+) -> (Vec<(String, String)>, u64) {
     board.read_with(cx, |board, _| {
         let selection = board.inspector_activity.as_ref().unwrap();
         let used = held_bytes(selection) + drawn_bytes(selection) - inline_bytes(selection);
@@ -107,13 +110,13 @@ fn ledger(board: &Entity<Irc>, cx: &mut VisualTestContext) -> (Vec<(String, Stri
 }
 
 /// What the open turns' bodies draw: the body asked for among them.
-fn drawn_body(board: &Entity<Irc>, cx: &mut VisualTestContext) -> u64 {
+pub(super) fn drawn_body(board: &Entity<Irc>, cx: &mut VisualTestContext) -> u64 {
     board.read_with(cx, |board, _| {
         drawn_bytes(board.inspector_activity.as_ref().unwrap())
     })
 }
 
-fn key(item: &str) -> (String, String) {
+pub(super) fn key(item: &str) -> (String, String) {
     ("t-now".to_owned(), item.to_owned())
 }
 
