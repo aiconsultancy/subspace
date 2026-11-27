@@ -21,12 +21,16 @@ last check time or a queue count neither start a read nor discard one in
 flight. A current task's identity, status or `updatedAt` queues a roster-driven
 read, with at most one follow-up. The roster carries the first 180 code points
 of the summary, the first 80 of the phase, and the last 400 of progress, with
-no ellipsis. A preview matching fetched text or its capped head or tail never
-replaces it. A changed field on a newer revision replaces the old text until
-the reread; at the cap it is marked as partial, with an ellipsis at the cut
-edge and a note. If the reread fails, the marked preview stays visible. A
-divergent preview for the same revision keeps the fetched text and queues one
-reread; replaying that preview does not poll.
+no ellipsis. When timestamps establish a strictly newer feed revision of the
+same task, the view compares each field with the fetched reply, not the roster
+at request start. An exact match or a matching capped head or tail keeps the
+fetched text. Other fields are replaced whole by their roster value; a value at
+the cap is marked with an ellipsis at the cut edge and a note. The newer feed
+also supplies the task status. If the follow-up read fails, the marked preview
+stays visible. A definitely newer fetched task takes precedence even over a
+roster task with a different ID. Missing timestamps alone do not establish
+which task is newer. A divergent preview for the same revision keeps the
+fetched text and queues one reread; replaying that preview does not poll.
 A change of fleet directory, selected member identity or task assignment
 invalidates an older response; removal or an unavailable roster takes
 effect immediately. Directory changes drop the old request and allow a
@@ -35,8 +39,10 @@ and up to five automatic retries, with delays of one to 16 seconds or
 the gateway's longer requested wait (up to 30 seconds). Reloading Channels
 or reconnecting to the fleet also rearms the read. Hidden crew views do
 not start reads; showing a retained view rearms the read and ignores any
-older response. A 404 falls back to the roster without polling. Showing the
-detail again, Reload, a reconnect or a returning member each probes the route.
+older response. A 404 falls back to the roster without polling or offering
+**Try again**. Its cut markers remain, and its notes identify roster text
+without promising that full detail will load. Showing the detail again,
+Reload, a reconnect or a returning member each probes the route.
 Only a successful crew reply with `taskText: "full"` confirms full task text.
 Other successful replies still show all text they supplied, with the same
 pager and a note that Stargate may have shortened or replaced parts of it.
@@ -63,12 +69,15 @@ its usual handling. Fleet and ship reads still allow 8 MiB.
   response identity and JSON budgets for different context counts.
 - The Channels tests cover roster changes, whole Git observations, checkout
   changes and pull request identity, including same-revision previews and
-  a context added during a read. Ship tab tests check accessible names,
-  keyboard focus, clearing detail on a buffer change, and paging to the end
-  of a 64,000-code-point progress field at the minimum inspector width
+  a context added during a read. Ordering tests cover a newer feed both
+  before and during a read, a failed follow-up, field and status changes, a
+  fetched successor and missing timestamps. Ship tab tests check accessible
+  names, keyboard focus, clearing detail on a buffer change, and paging to the
+  end of a 64,000-code-point progress field at the minimum inspector width
   without losing control markers. The detail render tests check the cut marks
-  and notes, their removal on receipt of full text, and paging of unchanged
-  text returned by gateways that don't confirm completeness.
+  and notes, their removal on receipt of full text, neutral notes when the
+  detail route returns 404, and paging of unchanged text returned by gateways
+  that don't confirm completeness.
 
 ### Captures
 
@@ -83,7 +92,7 @@ conversation as the inspector moves from the roster to a crew member.
 
 ![An older successful reply shows all the text it supplied and one note about completeness](evidence/crew-detail-legacy.png)
 
-![A missing crew-detail route falls back to roster data and marks the cut side of the progress tail](evidence/crew-detail-roster-preview.png)
+![A missing crew-detail route falls back to roster data and marks the progress tail with an ellipsis and a neutral note](evidence/crew-detail-roster-preview.png)
 
 ![The open crew view shows the Settings › Fleets hint after the fleet token is cleared and the roster is unavailable](evidence/crew-detail-no-token.png)
 
