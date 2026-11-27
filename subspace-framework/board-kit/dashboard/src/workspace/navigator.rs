@@ -19,14 +19,14 @@ use gpui_kit::{
 };
 use subspace_lucide::SvgIcon;
 
+use super::navigator_header::{self, Head};
 use super::row_parts::{
     ClickHandler, MenuBuilder, count_mark, fill, row_focus, with_handlers, with_menu,
 };
-use super::{header, row_order, strip_height, text_edge};
+use super::{header, row_order, text_edge};
 use crate::row_menu::GroupedMenu;
 use crate::tokens::Tokens;
 use crate::truncated;
-use crate::typography::heading_font;
 
 /// The leading dock: a header naming the Space, a scrolling body of sections
 /// and rows, and an optional footer. Add the body with `child` or `children`.
@@ -37,6 +37,9 @@ pub struct Navigator {
     actions: Vec<AnyElement>,
     children: Vec<AnyElement>,
     footer: Option<AnyElement>,
+    /// The Component gallery's preview of the title setting
+    /// (`navigator_title::preview`).
+    pub(super) title_preview: Option<bool>,
 }
 
 impl Navigator {
@@ -48,6 +51,7 @@ impl Navigator {
             actions: Vec::new(),
             children: Vec::new(),
             footer: None,
+            title_preview: None,
         }
     }
 
@@ -83,31 +87,20 @@ impl RenderOnce for Navigator {
         row_order::begin(window, cx);
         let tokens = Tokens::current(cx);
         let tree_label = self.title.clone();
-        // The Space's name takes the accent, so it reads as where you are.
-        let title = header::title(
-            "workspace-navigator-title",
-            self.title,
-            FontWeight::BOLD,
-            heading_font(cx),
-            &tokens,
-        )
-        .text_color(tokens.accent)
-        .test_support();
-        // Settings › Layout can hide the title. The header strip stays only
-        // for a badge or actions, which have no other place.
-        let show_title = super::navigator_title::shown(cx);
-        let head = (show_title || self.badge.is_some() || !self.actions.is_empty()).then(|| {
-            header::strip(
-                "workspace-navigator-header",
-                tokens.sidebar_line,
-                strip_height(window, cx),
-                &tokens,
-            )
-            .when(show_title, |strip| strip.child(title))
-            .children(self.badge.map(|badge| badge_mark(badge, &tokens)))
-            .children(self.actions)
-            .test_support()
-        });
+        // Settings › Layout can hide the title.
+        let show_title = self
+            .title_preview
+            .unwrap_or_else(|| super::navigator_title::shown(cx));
+        let head = navigator_header::head(
+            Head {
+                title: self.title,
+                badge: self.badge,
+                actions: self.actions,
+                show_title,
+            },
+            window,
+            cx,
+        );
         v_flex()
             .id("workspace-navigator")
             .test_support()
@@ -131,14 +124,6 @@ impl RenderOnce for Navigator {
             )
             .children(self.footer.map(|footer| foot(footer, &tokens)))
     }
-}
-
-fn badge_mark(badge: SharedString, tokens: &Tokens) -> Div {
-    div()
-        .flex_shrink_0()
-        .text_size(tokens.caption_size())
-        .text_color(tokens.muted)
-        .child(badge)
 }
 
 fn foot(footer: AnyElement, tokens: &Tokens) -> Stateful<Div> {

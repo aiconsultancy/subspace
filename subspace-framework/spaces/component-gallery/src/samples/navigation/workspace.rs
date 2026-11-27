@@ -17,7 +17,7 @@ use subspace_dashboard::icon_button::IconButton;
 use subspace_dashboard::row_menu::{GroupedMenu, MenuCommand, MenuGroup};
 use subspace_dashboard::tabs::{self, TabSpec};
 use subspace_dashboard::toolbar_label::{self, ToolbarLabel};
-use subspace_dashboard::workspace::{self, Navigator, Pane, SpaceDock, Toolbar};
+use subspace_dashboard::workspace::{self, Navigator, Pane, SpaceDock, Toolbar, navigator_title};
 use subspace_dashboard::{Tokens, avatar, rich};
 use subspace_lucide::IconName;
 
@@ -35,6 +35,7 @@ const PANE_SOURCE: &str = "board-kit/dashboard/src/workspace/pane.rs";
 const DOCKS_SOURCE: &str = "board-kit/dashboard/src/workspace/docks.rs";
 const VIEWS_BOX: (f32, f32) = (240., 320.);
 const NETWORKS_BOX: (f32, f32) = (240., 300.);
+const HIDDEN_TITLE_BOX: (f32, f32) = (240., 200.);
 const TOOLBAR_WIDTH: f32 = 640.;
 const NARROW_TOOLBAR_WIDTH: f32 = 360.;
 const SEARCH_WIDTH: f32 = 160.;
@@ -45,7 +46,7 @@ const PANE_TEXT: &str = "Content starts on the same text edge as the tab strip a
 pub(super) const NAVIGATOR: Item = Item {
     name: "workspace::Navigator",
     source: NAVIGATOR_SOURCE,
-    used_in: "Every Space's leading dock: the Space's name in the header, then workspace::nav_section labels and workspace::NavRow rows for its views, projects, networks or repositories.",
+    used_in: "Every Space's leading dock: the Space's name in the header, then workspace::nav_section labels and workspace::NavRow rows for its views, projects, networks or repositories. Settings › Layout can hide the name: the navigator then starts with its first section, or keeps a strip-height header for a badge or header actions.",
     samples: navigators,
     kit: None,
 };
@@ -115,7 +116,47 @@ pub(in crate::samples) fn navigators(
                 networks,
             ),
         ),
+        sample(
+            "Title hidden in Settings › Layout: the first section starts the navigator",
+            scoped(
+                "gallery-sample:navigator-title-hidden",
+                HIDDEN_TITLE_BOX,
+                tokens,
+                navigator_title::preview(hidden_title_navigator(cx), false),
+            ),
+        ),
+        sample(
+            "Title hidden with a badge and a header action: the header strip stays",
+            scoped(
+                "gallery-sample:navigator-title-hidden-header",
+                HIDDEN_TITLE_BOX,
+                tokens,
+                navigator_title::preview(
+                    hidden_title_navigator(cx)
+                        .badge("Alpha")
+                        .action(new_issue_button("gallery-sample:navigator-hidden-new")),
+                    false,
+                ),
+            ),
+        ),
     ]
+}
+
+/// A short navigator for the hidden-title samples.
+fn hidden_title_navigator(cx: &App) -> Navigator {
+    Navigator::new("Issues")
+        .child(workspace::nav_section("Views", cx))
+        .child(
+            row("gallery-sample:navrow-hidden-mine", "My issues")
+                .icon(IconName::User)
+                .selected(true),
+        )
+        .child(row("gallery-sample:navrow-hidden-active", "Active").icon(IconName::CircleDot))
+}
+
+/// The navigator's New issue header action.
+fn new_issue_button(id: &'static str) -> IconButton {
+    action::icon_button(id, Intent::Quiet, IconName::Plus, "New issue").on_click(ignore_click)
 }
 
 /// A fixed-size box with its own element id. A navigator names its own
@@ -150,13 +191,7 @@ fn channel_menu(_: &mut Window, _: &mut App) -> GroupedMenu {
 }
 
 fn views_navigator(cx: &App) -> Navigator {
-    let new_issue = action::icon_button(
-        "gallery-sample:navigator-new",
-        Intent::Quiet,
-        IconName::Plus,
-        "New issue",
-    )
-    .on_click(ignore_click);
+    let new_issue = new_issue_button("gallery-sample:navigator-new");
     Navigator::new("Issues")
         .badge("Alpha")
         .action(new_issue)
