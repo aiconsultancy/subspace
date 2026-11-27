@@ -26,8 +26,9 @@ import { createSampleDiffClient } from "../src/sample-diff.js";
 import { createSampleSource } from "../src/sample-source.js";
 import { sampleResolve } from "../src/sample.js";
 import { loadedState, NOW } from "./fixtures.js";
-import { fakeActivityClient, fakeDoc, fakeTimers, settle } from "./activity-helpers.js";
-import { activitySnapshot } from "./activity-fixtures.js";
+import { clickOn, fakeActivityClient, fakeDoc, fakeTimers, officer, pagedWith, settle } from "./activity-helpers.js";
+import { activityEvent, activitySnapshot, textItem } from "./activity-fixtures.js";
+import { createActivityPanel } from "../src/activity-view.js";
 import { createActivityWatcher, INLINE_KEY } from "../src/activity.js";
 import { createBudget } from "../src/budget.js";
 
@@ -938,4 +939,68 @@ test("diff budget: an Activity view on the console's budget gives back only its 
   assert.equal(budget.used, 1000 + inline, "to the shared budget");
   watcher.stop();
   assert.equal(budget.used, 1000, "the diff view's entry stays");
+});
+
+test("diff budget: wouldFree on a view's scope names only that view's keys, in the order reserve frees them, one that yields first", () => {
+  const budget = createBudget(100);
+  const activity = budget.scope("activity\u0000");
+  const diff = budget.scope("diff\u0000");
+  activity.reserve("old", 20, null);
+  diff.reserve("patch", 20, null);
+  activity.reserve("mid", 20, null);
+  diff.reserve("image", 20, null, { makeRoom: false, yields: true });
+  activity.reserve("new", 10, null);
+  assert.deepEqual(budget.wouldFree("activity\u0000grow", 60), ["diff\u0000image", "activity\u0000old", "diff\u0000patch"]);
+  assert.deepEqual(activity.wouldFree("grow", 60), ["old"], "the diff view's keys are left to the diff view");
+  assert.deepEqual(diff.wouldFree("grow", 60), ["image", "patch"]);
+  assert.deepEqual(activity.wouldFree("grow", 10), [], "nothing while it fits");
+  assert.equal(budget.used, 90, "a question frees nothing");
+  activity.request("grow");
+  activity.reserve("grow", 60, null);
+  assert.deepEqual(
+    ["old", "mid", "new"].filter((key) => activity.has(key)),
+    ["mid", "new"],
+    "reserve frees what wouldFree named, across both views",
+  );
+  assert.equal(diff.has("image") || diff.has("patch"), false);
+});
+
+test("diff budget: on the console's budget, inline growth refits the Activity view's displayed whole, which makes the room before the diff view's older part is freed", async () => {
+  const a = pagedWith("a".repeat(600 * 1024), "ia");
+  const b = pagedWith("b".repeat(70 * 1024), "ib");
+  a.snapshot.turns[1].items.push(b.snapshot.turns[1].items[0]);
+  const probe = createActivityWatcher({ client: fakeActivityClient([a.snapshot]), agent: "example-captain", awaitStream: false });
+  probe.start();
+  await settle();
+  const inline = probe.view.budget.bytes(INLINE_KEY);
+  probe.stop();
+  const patchBytes = 50_000;
+  const budget = createBudget(inline + 2 * a.pages[0].bytes + 2 * b.pages[0].bytes + 20_000 + patchBytes);
+  const evicted = [];
+  budget.scope("diff\u0000").reserve("patch", patchBytes, (key) => evicted.push(key));
+  const client = fakeActivityClient([a.snapshot]);
+  client.activityItemPage = async (agent, turn, id, page) => (id === "ia" ? a.pages : b.pages)[page];
+  const watcher = createActivityWatcher({ client, agent: "example-captain", awaitStream: false, budget: budget.scope("activity\u0000") });
+  watcher.start();
+  await settle();
+  const panel = createActivityPanel({ doc: fakeDoc });
+  await watcher.loadItem("turn-b", "ia");
+  panel.update(watcher.view, officer);
+  const last = panel.root.findAll((node) => node.attributes["data-activity-window"] === "last" && node.attributes["data-activity-item"] === "ia")[0];
+  clickOn(panel, last);
+  await watcher.loadItem("turn-b", "ib");
+  panel.update(watcher.view, officer);
+  assert.equal(watcher.view.full("turn-b", "ia").mode, "whole");
+  watcher.event(activityEvent(10, { type: "item", item: textItem("grown-10", 10, "g".repeat(100 * 1024)) }));
+  await settle();
+  await settle();
+  const shown = watcher.view.full("turn-b", "ia");
+  assert.ok(shown, "the displayed whole is not freed");
+  assert.equal(shown.mode, "parts", "it is handed over to parts");
+  assert.equal(shown.state, "ready");
+  assert.equal(watcher.view.full("turn-b", "ib").mode, "whole", "the latest request stays whole");
+  assert.deepEqual(evicted, [], "the refit made the room, so the diff view's older part, first in line, is not freed");
+  assert.equal(budget.scope("diff\u0000").bytes("patch"), patchBytes);
+  assert.ok(budget.used <= budget.limit, `within the console's budget (${budget.used} of ${budget.limit})`);
+  watcher.stop();
 });
