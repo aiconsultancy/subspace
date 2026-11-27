@@ -2505,6 +2505,26 @@ class RepositoryAccessTests(unittest.TestCase):
             runtime.require_officer_tool_sources({"members": [{"githubApp": {"botLogin": "fixture[bot]"}}]})
         git.assert_not_called()
 
+    def test_explicit_http_previews_require_the_http_publisher_contract(self):
+        cfg = {"mockupPreviews": {"enabled": True},
+               "stargate": {"repo": "https://example.test/stargate.git", "ref": "a" * 40}}
+        with patch.object(runtime, "APP", self.work / "app"):
+            source = runtime.stargate_entry(cfg).parents[1]
+            (source / "scripts").mkdir(parents=True)
+            for path in runtime.mockups.SCRIPTS:
+                (source / path).touch()
+            contract = source / "scripts/officer-tools-contract.json"
+            contract.write_text(json.dumps({"mockupPreviews": 1}))
+            runtime.require_officer_tool_sources(cfg, installed_only=True)
+            cfg["mockupPreviews"]["url"] = "https://previews.example.com"
+            runtime.require_officer_tool_sources(cfg, installed_only=True)
+            for origin in ("http://previews.example.com", "HTTP://PREVIEWS.EXAMPLE.COM"):
+                cfg["mockupPreviews"]["url"] = origin
+                with self.subTest(origin=origin), self.assertRaisesRegex(Invalid, "HTTPS origin or --preview-url tunnel"):
+                    runtime.require_officer_tool_sources(cfg, installed_only=True)
+            contract.write_text(json.dumps({"mockupPreviews": 1, "mockupPreviewsHttp": 1}))
+            runtime.require_officer_tool_sources(cfg, installed_only=True)
+
     def test_enabled_teams_file_hosts_require_the_selected_gateway_capability(self):
         teams = {"attachmentFileHosts": ["contoso-my.sharepoint.com"]}
         cfg = {"integrations": {"teams": teams},

@@ -455,6 +455,11 @@ class InstalledFleet(unittest.TestCase):
         self.assertIn("https://previews.example.com/", (self.systemd / broker_unit).read_text())
         self.assertNotIn("impeccable", (self.etc / "opencode-orion.json").read_text())
 
+        config["mockupPreviews"]["url"] = "HTTP://PREVIEWS.EXAMPLE.COM:8080/"
+        self.render(config, secrets)
+        self.assertIn("http://previews.example.com:8080/", (self.systemd / broker_unit).read_text())
+        self.assertIn("bind 127.0.0.1", (self.etc / "preview.Caddyfile").read_text())
+
         config["mockupPreviews"]["enabled"] = False
         config["impeccable"] = True
         self.render(config, secrets)

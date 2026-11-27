@@ -104,7 +104,7 @@ class UsageGuardAnswersTests(unittest.TestCase):
         selected = fleet_setup.parse_args([
             "--non-interactive", "--operator", "operator", "--name", "Example Fleet",
             "--rear-admiral", "Atlas", "--captains", "Orion", *CREW, "--preview-url",
-            "https://previews.example.com/", "--no-impeccable",
+            "http://previews.example.com:8080/", "--no-impeccable",
         ])
         rerun = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
         loopback = fleet_setup.parse_args([
@@ -113,12 +113,19 @@ class UsageGuardAnswersTests(unittest.TestCase):
         ])
         with patch.object(fleet_setup.pwd, "getpwnam"):
             saved = fleet_setup.gather(selected, {})
-            self.assertEqual(saved["mockupPreviews"]["url"], "https://previews.example.com")
+            self.assertEqual(saved["mockupPreviews"]["url"], "http://previews.example.com:8080")
             self.assertFalse(saved["impeccable"])
             self.assertEqual(fleet_setup.gather(rerun, saved)["mockupPreviews"], saved["mockupPreviews"])
             changed = fleet_setup.gather(loopback, saved)
         self.assertEqual(changed["mockupPreviews"], {"url": None, "enabled": False})
         self.assertTrue(changed["impeccable"])
+
+    def test_preview_origin_refuses_credentials_query_fragment_and_paths(self):
+        for origin in ("https://user:pass@previews.example.com", "http://previews.example.com?viewer=1",
+                       "http://previews.example.com#visit", "http://previews.example.com/p/site",
+                       "ftp://previews.example.com", "http://previews.example.com:65536"):
+            with self.subTest(origin=origin), self.assertRaisesRegex(ValueError, r"[Pp]review URL"):
+                fleet_setup.mockups.origin(origin)
 
     def test_an_incompatible_pin_without_a_local_api_is_refused_before_saving(self):
         with tempfile.TemporaryDirectory() as root:

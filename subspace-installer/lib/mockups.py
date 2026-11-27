@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fleet_records import Refused, fleet_api_url
+from fleet_records import normalize_web_address, require
 
 PORT = 8090
 USER = "ss-fleet-preview"
@@ -17,11 +17,12 @@ SCRIPT = "officer-previews.ts"
 SCRIPTS = tuple(f"scripts/{name}" for name in (SCRIPT, "preview-bundle.ts", "preview-store.ts", "officer-stdio.ts"))
 
 
-def https_origin(value):
-    """Only a dedicated HTTPS origin, with the operator's access policy in front."""
-    address = fleet_api_url(value, "preview URL")
-    if not address.startswith("https://") or "/" in address[len("https://"):]:
-        raise Refused("The preview URL must be a dedicated HTTPS origin, without a path.")
+def origin(value):
+    """A dedicated web origin on the operator's private network."""
+    problem = ("The preview URL must be a dedicated HTTP or HTTPS origin, "
+               "without credentials, a path, a query or a fragment.")
+    address = normalize_web_address(value, problem, allow_non_loopback_http=True)
+    require("/" not in address.split("://", 1)[1], problem)
     return address
 
 

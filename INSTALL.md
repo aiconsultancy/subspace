@@ -127,8 +127,9 @@ tunnel for previews. Start or restart the tunnel on the operator's workstation
 so captain links work there.
 
 If the team needs shared links, ask the operator for its private preview
-hostname and who can view it. Set up and test the dedicated HTTPS route using
-the operator's private gateway, then pass its origin to `--preview-url`. The
+hostname and who can view it. Set up and test a dedicated web origin on the
+operator's private gateway, then pass it to `--preview-url`. Use HTTPS for
+TLS or HTTP when the private network already protects the connection. The
 usual SSH path is available while the shared route is being set up. Offer the
 independent `--no-mockup-previews` and `--no-impeccable` switches if the operator
 wants to disable either feature.

@@ -311,7 +311,8 @@ def parse_args(argv):
                         help="install Caddy and the captain preview tool (default on; keeps the saved choice)")
     parser.add_argument("--impeccable", action=argparse.BooleanOptionalAction, default=None,
                         help="install the Impeccable skill for captains (default on; keeps the saved choice)")
-    parser.add_argument("--preview-url", help="dedicated private HTTPS preview origin; 'tunnel' restores the SSH default")
+    parser.add_argument("--preview-url", help="dedicated private HTTP or HTTPS preview origin; "
+                                             "'tunnel' restores the SSH default")
     parser.add_argument("--preview-proxy-user", help="Linux account of the local private gateway, allowed to reach Caddy")
     parser.add_argument("--fleet-api-url", help="the HTTPS address at which a desktop reaches Stargate's Fleet API, "
                         "such as a Tailscale or Cloudflare name, recorded in the Subspace API; 'tunnel' (the default) "
@@ -657,7 +658,7 @@ def gather(args, saved):
         preview["url"] = None
     elif args.preview_url is not None:
         try:
-            preview["url"] = mockups.https_origin(args.preview_url)
+            preview["url"] = mockups.origin(args.preview_url)
         except fleet_records.Refused as error:
             raise SetupError(str(error)) from None
     if args.preview_proxy_user is not None:

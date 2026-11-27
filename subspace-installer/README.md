@@ -732,11 +732,13 @@ upgrade to pick up the new forward. On a fleet installed directly on the VM,
 forward its preview port over your authorised SSH connection.
 
 For links that work across an authorised team, ask the operator which private
-hostname and viewer access policy to use. Set up a dedicated HTTPS origin on
-the team's private access gateway and proxy it to the loopback Caddy listener.
-Pass `--preview-url https://previews.example.com` to publish that address, or
-`--preview-url tunnel` to switch back. The private gateway authenticates
-viewers. When the proxy runs on the fleet VM, pass
+hostname and viewer access policy to use. Set up a dedicated web origin on the
+team's private access gateway and proxy it to the loopback Caddy listener.
+Pass `--preview-url https://previews.example.com` for HTTPS, or
+`--preview-url http://previews.example.com:8080` when the private network
+protects the HTTP connection and controls who can reach it. Use
+`--preview-url tunnel` to switch back to the SSH default. When the proxy runs
+on the fleet VM, pass
 `--preview-proxy-user www-data` (or the actual service account) to permit access
 to Caddy's port.
 
@@ -750,9 +752,10 @@ skill without automatic hooks. OpenCode keeps an existing operator-provided skil
 
 For hand-written `fleet.json`, use `"mockupPreviews": {"enabled": false}` and
 `"impeccable": false`. `mockupPreviews.port` overrides the default loopback
-port, `mockupPreviews.url` sets the private HTTPS origin, and
+port, `mockupPreviews.url` sets a private HTTP or HTTPS origin, and
 `mockupPreviews.proxyUser` grants a local proxy account access. The preview
 service requires a Stargate revision with the mockup publishing contract.
+An explicit HTTP origin requires the additional `mockupPreviewsHttp` capability.
 Use `--no-mockup-previews` when keeping an older, incompatible Stargate pin.
 
 ### Screenshots

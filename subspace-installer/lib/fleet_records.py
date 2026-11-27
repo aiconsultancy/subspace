@@ -75,6 +75,11 @@ def fleet_api_url(value, label="Fleet API address"):
     """
     problem = (f"Invalid {label}: use https://<host>[:port][/path], or http only on localhost, 127.0.0.1 or "
                "[::1] (such as the SSH tunnel's end), without credentials, a query or a fragment.")
+    return normalize_web_address(value, problem)
+
+
+def normalize_web_address(value, problem, *, allow_non_loopback_http=False):
+    """Validate and normalize an HTTP or HTTPS address without credentials, a query or a fragment."""
     match = FLEET_API_URL.fullmatch(value) if isinstance(value, str) and len(value) <= FLEET_API_URL_LIMIT else None
     require(match, problem)
     scheme, host, port, path = (match["scheme"].lower(), match["host"].lower(), match["port"], match["path"])
@@ -91,7 +96,7 @@ def fleet_api_url(value, label="Fleet API address"):
     else:
         labels = host.split(".")
         require(all(HOST_LABEL.fullmatch(label) for label in labels) and not labels[-1].isdigit(), problem)
-    require(scheme == "https" or host in LOOPBACK_HOSTS, problem)
+    require(scheme == "https" or host in LOOPBACK_HOSTS or allow_non_loopback_http, problem)
     if port is not None:
         require(1 <= int(port) <= 65535, problem)
         port = None if int(port) == {"https": 443, "http": 80}[scheme] else str(int(port))

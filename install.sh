@@ -78,7 +78,7 @@
 #   --assignment-requests | --no-assignment-requests (default on with agent dispatch)
 #   --ready-for-agents-offers | --no-ready-for-agents-offers (default on with agent dispatch)
 #   --mockup-previews | --no-mockup-previews (default on)
-#   --impeccable | --no-impeccable (default on); --preview-url HTTPS_ORIGIN|tunnel
+#   --impeccable | --no-impeccable (default on); --preview-url HTTP_OR_HTTPS_ORIGIN|tunnel
 #   --preview-proxy-user ACCOUNT (for a local private gateway)
 #   --usage-guard | --no-usage-guard (default on)
 #   --usage-guard-warning | --usage-guard-cutoff [PROVIDER=]PERCENT

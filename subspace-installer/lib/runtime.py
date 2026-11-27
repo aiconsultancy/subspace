@@ -1114,8 +1114,12 @@ def require_officer_tool_sources(cfg, installed_only=False):
                      ("officer", "operations", "review", "wire", "local-app", "officer-mcp"))
         paths.append("scripts/officer-stdio.ts")
     teams = cfg.get("integrations", {}).get("teams") or {}
-    if cfg.get("mockupPreviews", {}).get("enabled"):
+    previews = cfg.get("mockupPreviews", {})
+    if previews.get("enabled"):
         capabilities["mockupPreviews"] = 1
+        origin = previews.get("url")
+        if isinstance(origin, str) and origin.lower().startswith("http://"):
+            capabilities["mockupPreviewsHttp"] = 1
         paths.extend(mockups.SCRIPTS)
     if teams.get("attachmentFileHosts"):
         capabilities["teamsAttachmentFiles"] = 1
@@ -1133,8 +1137,10 @@ def require_officer_tool_sources(cfg, installed_only=False):
         return isinstance(version, dict) and all(version.get(key) == value for key, value in capabilities.items())
 
     def contracts(raw):
+        hint = (" Use an HTTPS origin or --preview-url tunnel to keep an older pin."
+                if "mockupPreviewsHttp" in capabilities else "")
         require(compatible(raw), f"Stargate {ref[:12]} has incompatible officer tool interfaces. "
-                                 "Select a compatible --stargate-ref.")
+                                 f"Select a compatible --stargate-ref.{hint}")
 
     present = {path for path in paths if (source / path).is_file()}
     raw = (source / manifest).read_text() if manifest in present else None
@@ -1375,7 +1381,7 @@ def validate(config, credentials, check_files=True):
                 "port": port(previews.get("port", mockups.PORT))}
     if "url" in previews:
         try:
-            previews["url"] = mockups.https_origin(previews["url"])
+            previews["url"] = mockups.origin(previews["url"])
         except fleet_records.Refused as error:
             raise Invalid(str(error)) from None
     if "proxyUser" in previews:
