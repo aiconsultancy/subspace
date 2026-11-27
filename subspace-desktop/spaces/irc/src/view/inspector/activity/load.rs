@@ -42,7 +42,7 @@ use subspace_client_fleet::{Error, FleetApi, FleetClient};
 use super::Selection;
 use super::draw::{Key, Pieced};
 use super::ledger::{
-    arrival_room, fits_before_newer, fits_beside, make_room, room, spare, stamp, swap_allowance,
+    arrival_room, fits_before_newer, make_room, room, spare, stamp, swap_allowance,
     window_allowance,
 };
 use super::parts::PART;
@@ -126,6 +126,16 @@ impl Loaded {
             _ => self.raw.saturating_add(self.window.charge()),
         };
         steady.saturating_add(self.incoming)
+    }
+
+    /// What it shows counts, its steady charge, while a newer read
+    /// replaces it; nothing when it shows nothing.
+    fn shown(&self) -> u64 {
+        if self.shows() {
+            self.raw.saturating_add(self.window.charge())
+        } else {
+            0
+        }
     }
 
     /// Whether it shows what was read: kept, shown and charged while a
@@ -334,28 +344,31 @@ fn read_item(
 /// for beside it, the whole item only when both fit the room, otherwise a
 /// page (SUB decision `084f5236` item 2).
 fn admit(selection: &mut Selection, key: &Key, bytes: u64) -> (u64, u64) {
-    let shown = selection.loaded.contains_key(key);
-    if let Some((wanted, granted)) = whole_read(selection, (key, shown), bytes) {
+    if let Some((wanted, granted)) = whole_read(selection, key, bytes) {
         make_room(selection, wanted, Some(key));
         return granted;
     }
+    let shown = selection.loaded.contains_key(key);
     make_room(selection, if shown { PAGE } else { PAGE_READ }, Some(key));
     part_read(selection, key)
 }
 
 /// What a whole read of `key` of declared size `bytes` counts at once,
 /// and what it reserves and is granted in all, when the item and its
-/// drawn copy fit the room: all of it for a first read, only its reserve
-/// beside what is `shown`, and then only when both fit.
-fn whole_read(
-    selection: &Selection,
-    (key, shown): (&Key, bool),
-    bytes: u64,
-) -> Option<(u64, (u64, u64))> {
+/// drawn copy fit the room, and what it holds fits one ledger beside
+/// every request newer than its own ([`fits_before_newer`]): all of it
+/// for a first read; beside what is shown, only its reserve, when what is
+/// shown and that reserve fit while it is read, and the item once it
+/// arrives (SUB decisions `084f5236` items 2 and 4, and `a884e4c6`).
+fn whole_read(selection: &Selection, key: &Key, bytes: u64) -> Option<(u64, (u64, u64))> {
     let reserve = whole_reserve(room(selection), bytes);
     let allowance = reserve.saturating_add(bytes);
-    let wanted = if shown { reserve } else { allowance };
-    (fits_whole(selection, bytes) && (!shown || fits_beside(selection, key, wanted)))
+    let shown = selection.loaded.get(key).map(Loaded::shown);
+    let wanted = if shown.is_some() { reserve } else { allowance };
+    let held = shown.map_or(allowance, |shown| {
+        shown.saturating_add(reserve).max(allowance)
+    });
+    (fits_whole(selection, bytes) && fits_before_newer(selection, key, held))
         .then_some((wanted, (reserve, allowance)))
 }
 
@@ -485,18 +498,19 @@ fn restamp(selection: &mut Selection, key: &(String, String)) {
 }
 
 /// The item read `read` of `key`, still wanted, came back larger than
-/// the room made for it, may be read again, and fits the budget, with
-/// its drawn copy, at the size its page 0 claimed, beside every request
-/// made since: the read again is no request, so it never lets go of a
-/// newer one, and otherwise its page 0 is shown in parts (SUB decision
-/// `084f5236` item 4).
+/// the room made for it, may be read again, and would be admitted whole
+/// at the size its page 0 claimed ([`whole_read`]): with its drawn copy,
+/// and beside what it replaces while it is read, within one ledger with
+/// every request made since. The read again is no request, so it never
+/// lets go of a newer one, and otherwise its page 0 is shown in parts
+/// (SUB decisions `084f5236` item 4 and `a884e4c6`).
 fn grew(board: &mut Irc, (key, read): (&(String, String), u64), bytes: u64) -> bool {
     let regrow = current(board, (key, read)).is_some_and(|loaded| loaded.regrow);
     regrow
-        && board.inspector_activity.as_ref().is_some_and(|selection| {
-            let whole = whole_reserve(room(selection), bytes).saturating_add(bytes);
-            fits_whole(selection, bytes) && fits_before_newer(selection, key, whole)
-        })
+        && board
+            .inspector_activity
+            .as_ref()
+            .is_some_and(|selection| whole_read(selection, key, bytes).is_some())
 }
 
 /// The read under way or last made of the item `key`.

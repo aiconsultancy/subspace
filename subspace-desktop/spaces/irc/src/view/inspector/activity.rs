@@ -459,6 +459,17 @@ pub(crate) fn ask_for(selection: &mut Selection, turn: &str, item: &str) {
     draw::ask(selection, &(turn.to_owned(), item.to_owned()));
 }
 
+/// Reads item `item` of turn `turn`, declared `bytes`, as its load action
+/// does when a person clicks it, wherever its card is scrolled to.
+#[cfg(test)]
+pub(crate) fn load_item(
+    board: &mut Irc,
+    (turn, item, bytes): (&str, &str, u64),
+    cx: &mut Context<Irc>,
+) {
+    load(board, turn, item, bytes, cx);
+}
+
 /// The latest request: the item or body last asked for.
 #[cfg(test)]
 pub(crate) fn latest_request(selection: &Selection) -> Option<(String, String)> {

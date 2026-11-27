@@ -9,7 +9,8 @@
 //! read. Each body asked for counts what it draws. Room is made by letting
 //! go of the lowest priority first, items read and bodies asked for alike,
 //! never the request being made, and never for a read continuing on its
-//! own a request newer than its own (SUB decision `084f5236` item 4).
+//! own or arriving a request newer than its own (SUB decisions `084f5236`
+//! item 4 and `a884e4c6`).
 //!
 //! The floor (SUB decision `8357ec55` §2) belongs to the latest request,
 //! whatever it is. When what is left beside everything else does not hold
@@ -73,14 +74,18 @@ fn asked_bodies(selection: &Selection, keep: Option<&Key>) -> HashMap<Key, u64> 
 }
 
 /// The lowest priority other than `keep`: of the items read and the bodies
-/// asked for (`asked`), the least recently asked for.
+/// asked for (`asked`), the least recently asked for, and never one asked
+/// for since `keep` was. A request being made is the newest, so this binds
+/// only room made for no one's request, a read arriving or read again,
+/// which never displaces a newer request (SUB decision `a884e4c6`).
 fn lowest(selection: &Selection, asked: &HashMap<Key, u64>, keep: Option<&Key>) -> Option<Key> {
     let priority = |key: &Key| selection.asked.get(key).copied().unwrap_or(0);
+    let ceiling = keep.map_or(u64::MAX, priority);
     selection
         .loaded
         .keys()
         .chain(asked.keys())
-        .filter(|key| Some(*key) != keep)
+        .filter(|key| Some(*key) != keep && priority(key) <= ceiling)
         .min_by_key(|key| (priority(key), (*key).clone()))
         .cloned()
 }
@@ -181,17 +186,11 @@ pub(super) fn spare(selection: &Selection, keep: &Key) -> u64 {
     left(selection, keep).saturating_sub(kept(selection, Some(keep)))
 }
 
-/// Whether `wanted` more fits the room beside what `keep`'s read counts
-/// now and its own body, once everything else is let go.
-pub(super) fn fits_beside(selection: &Selection, keep: &Key, wanted: u64) -> bool {
-    let kept = kept(selection, Some(keep)).saturating_add(body(selection, Some(keep)));
-    kept.saturating_add(wanted) <= room(selection)
-}
-
 /// The room `key` may take beside every request newer than its own, the
-/// items read and bodies asked for since, and its own body: room it could
-/// take letting go of nothing newer. A read that continues on its own, or
-/// arrives, is no request, so it never displaces a newer one (SUB
+/// items read and bodies asked for since, counted as making room counts
+/// them, a read's placeholder beside the read, and its own body: room it
+/// could take letting go of nothing newer. A read that continues on its
+/// own, or arrives, is no request, so it never displaces a newer one (SUB
 /// decisions `084f5236` item 4 and `a884e4c6`).
 pub(super) fn room_before_newer(selection: &Selection, key: &Key) -> u64 {
     let priority = |other: &Key| selection.asked.get(other).copied().unwrap_or(0);
@@ -205,7 +204,7 @@ pub(super) fn room_before_newer(selection: &Selection, key: &Key) -> u64 {
         .sum();
     let bodies: u64 = asked_bodies(selection, Some(key))
         .iter()
-        .filter(|(other, _)| newer(other) && !selection.loaded.contains_key(*other))
+        .filter(|(other, _)| newer(other))
         .map(|(_, bytes)| bytes)
         .sum();
     room(selection)

@@ -60,12 +60,15 @@ item too large to send inline is paged and loads on demand, never hidden.
   budget holds during the read as after it: a read never holds more than
   its room. An item whose page 0 claims more is read again once with room
   made for that claimed size and its drawn copy when they fit the budget
-  beside every request made since, and in parts otherwise: reading it
-  again is no request, so it never lets go of a newer one (SUB decision
-  `084f5236` item 4). Room is made from the lowest priority up, items
-  read and bodies asked for alike, the least recently asked for first (an
-  item let go shows its load action again); only a person's request
-  changes priority, never a read completing. Items go when
+  beside every request made since, a read's placeholder counted beside
+  the read, and beside what it replaces while it is read; in parts
+  otherwise: reading it again is no request, so it never lets go of a
+  newer one (SUB decisions `084f5236` item 4 and `a884e4c6`). Room is
+  made from the lowest priority up, items read and bodies asked for
+  alike, the least recently asked for first (an item let go shows its
+  load action again), and room made for no one's request, a read
+  arriving or read again, never lets go of a request made since; only a
+  person's request changes priority, never a read completing. Items go when
   their turn leaves the snapshot. A reply that arrives after its item was
   let go, or after it was read again, is dropped.
 - **What is drawn counts too** (SUB decisions `ed71a299` and `0c13b784`).
