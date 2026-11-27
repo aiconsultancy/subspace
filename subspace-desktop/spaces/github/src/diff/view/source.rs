@@ -43,6 +43,7 @@ pub(super) struct FleetState {
     pub busy_pages: HashMap<usize, super::pages::PageBusy>,
     pub unavailable: bool,
     pub stale_page: bool,
+    pub stale_revision: u64,
     pub loading: HashSet<usize>,
     pub generation: u64,
     pub list_read: DiffRead,

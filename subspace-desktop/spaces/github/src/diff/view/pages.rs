@@ -114,6 +114,7 @@ impl DiffView {
 
     pub(super) fn mark_crew_stale(&mut self) {
         self.fleet.stale_page = true;
+        self.fleet.stale_revision += 1;
         self.invalidate_pages();
     }
 

@@ -11,6 +11,11 @@ use super::read_executor::{LoadError, ReadExecutor, ReadResult, diff_error, read
 use super::source::{Loaded, fleet_file, github_file};
 use super::{DiffSource, DiffView, Text, code_row_height};
 
+struct RefreshBaseline {
+    live: u64,
+    stale: u64,
+}
+
 impl DiffView {
     pub(crate) fn close(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         self.cancel_list();
@@ -51,7 +56,10 @@ impl DiffView {
         self.cancel_list();
         self.fleet.list_read = DiffRead::default();
         let generation = self.fleet.generation;
-        let baseline = self.fleet.live_revision;
+        let baseline = RefreshBaseline {
+            live: self.fleet.live_revision,
+            stale: self.fleet.stale_revision,
+        };
         let read = self.fleet.list_read.clone();
         self.error = None;
         let worker = ReadExecutor::start(
@@ -113,7 +121,12 @@ impl DiffView {
         true
     }
 
-    fn finish_load(&mut self, result: ReadResult, baseline: u64, cx: &mut Context<Self>) {
+    fn finish_load(
+        &mut self,
+        result: ReadResult,
+        baseline: RefreshBaseline,
+        cx: &mut Context<Self>,
+    ) {
         match result {
             Ok(diff) => self.set_diff(diff, baseline, cx),
             Err(LoadError::Message(message)) => self.error = Some(message),
@@ -158,7 +171,7 @@ impl DiffView {
         self.tree_scroll = gpui_kit::UniformListScrollHandle::new();
     }
 
-    fn set_diff(&mut self, diff: Loaded, baseline: u64, cx: &mut Context<Self>) {
+    fn set_diff(&mut self, diff: Loaded, baseline: RefreshBaseline, cx: &mut Context<Self>) {
         match diff {
             Loaded::GitHub(diff) => {
                 if self.loaded && diff.head_sha == self.head_sha && diff.base_sha == self.base_sha {
@@ -172,10 +185,15 @@ impl DiffView {
             Loaded::Fleet(diff) => {
                 let unchanged =
                     self.loaded && self.fleet.fingerprint.as_ref() == Some(&diff.fingerprint);
-                self.fleet.stale_page = false;
+                // An unchanged list cannot settle a page conflict that arrived
+                // after this refresh started.
+                if !unchanged || self.fleet.stale_revision == baseline.stale {
+                    self.fleet.stale_page = false;
+                }
                 self.fleet.unavailable = false;
                 self.binary_holds.pin_to(self.fleet.mode, &diff.fingerprint);
-                self.fleet.accept_fingerprint(diff.fingerprint, baseline);
+                self.fleet
+                    .accept_fingerprint(diff.fingerprint, baseline.live);
                 self.fleet.unstable = diff.unstable;
                 if unchanged {
                     return;
