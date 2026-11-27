@@ -1,6 +1,6 @@
-//! The actions of the pane's toolbar: find in the conversation, and the
-//! More menu, which connects or disconnects the selected network, joins a
-//! channel, and leaves or closes the selected buffer. While the navigator is
+//! The actions of the pane's toolbar: find in the conversation, the More
+//! menu, which connects or disconnects the selected network, joins a
+//! channel, and leaves or closes the selected buffer, then Refresh. While the navigator is
 //! hidden they act on the conversation the toolbar names instead. The
 //! navigator's header repeats Join, and the command palette offers Join,
 //! Connect and Disconnect too. The workspace's own switch shows and hides
@@ -9,6 +9,7 @@
 use gpui_kit::component::{Disableable as _, menu::PopupMenuItem};
 use gpui_kit::{App, Context, Entity, IntoElement as _, Window};
 use subspace_client_irc::{BufferKey, Command, ConnectionStatus, NetworkId};
+use subspace_framework::dashboard::Dashboard as _;
 use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::anchored;
 use subspace_framework::dashboard::find_in_page;
@@ -51,7 +52,7 @@ pub(crate) fn render(board: &mut Irc, cx: &mut Context<Irc>) -> Option<Entity<Ov
         connection(board, network, status.is_some_and(is_online)),
         join(board, join_unavailable(status)),
     ];
-    let units = vec![find(), more(board, network_items, cx)];
+    let units = vec![find(), more(board, network_items, cx), refresh(board)];
     Some(OverflowToolbar::sync(&mut board.toolbar, units, cx))
 }
 
@@ -100,6 +101,14 @@ fn find() -> OverflowUnit {
         },
         vec![popup],
     )
+}
+
+/// Refresh, at the right edge: it reads the networks and initiatives again.
+fn refresh(board: &Irc) -> OverflowUnit {
+    let owner = board.me.clone();
+    OverflowUnit::refresh("irc-refresh", move |window, cx| {
+        _ = owner.update(cx, |board, cx| board.reload(window, cx));
+    })
 }
 
 fn connection(board: &Irc, network: Option<NetworkId>, online: bool) -> Control {

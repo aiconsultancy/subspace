@@ -7,15 +7,19 @@ mod view;
 
 use std::rc::Rc;
 
+use crate::action::Intent;
 use crate::anchored::Anchor;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{
     AnyElement, App, AppContext as _, Bounds, Context, Entity, IntoElement, Pixels, SharedString,
     WeakEntity, Window,
 };
+use subspace_lucide::IconName;
 
 const DEFAULT_GAP: f32 = 4.;
 const DEFAULT_CHEVRON_WIDTH: f32 = 28.;
+/// A measured row this wide, or narrower, has room for no unit.
+const NO_WIDTH: f32 = 0.;
 
 /// Builds presentation only. Called for layout measurement as well as visible rendering.
 pub type InlineBuilder = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
@@ -98,7 +102,36 @@ impl OverflowUnit {
             popup_entries,
         )
     }
+
+    /// A Space's Refresh, at the end of its toolbar: a quiet glyph button
+    /// named `id` while it fits, else a Refresh entry in the overflow menu.
+    /// Both run `reload`.
+    pub fn refresh(id: &'static str, reload: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        let reload: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new(reload);
+        let menu_reload = reload.clone();
+        let entry = PopupEntry::new(move || {
+            let reload = menu_reload.clone();
+            PopupMenuItem::new(REFRESH)
+                .icon(IconName::RefreshCw)
+                .on_click(move |_, window, cx| reload(window, cx))
+        });
+        Self::inline(
+            id,
+            UNMEASURED_WIDTH,
+            move |_, _| {
+                let reload = reload.clone();
+                crate::action::icon_button(id, Intent::Quiet, IconName::RefreshCw, REFRESH)
+                    .on_click(move |_, window, cx| reload(window, cx))
+            },
+            vec![entry],
+        )
+    }
 }
+
+/// Refresh's label, on its button and in the overflow menu.
+const REFRESH: &str = "Refresh";
+/// A unit is measured when it first draws.
+const UNMEASURED_WIDTH: f32 = 0.;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct OverflowPlan {
@@ -152,7 +185,8 @@ pub fn plan_overflow(available: f32, widths: &[f32], gap: f32, chevron: f32) -> 
 pub struct OverflowToolbar {
     units: Vec<OverflowUnit>,
     widths: Vec<f32>,
-    viewport: f32,
+    /// The row's measured width, or `None` before its first measurement.
+    viewport: Option<f32>,
     gap: f32,
     chevron_width: f32,
     trigger_bounds: Bounds<Pixels>,
@@ -179,7 +213,7 @@ impl OverflowToolbar {
         Self {
             units,
             widths,
-            viewport: 0.,
+            viewport: None,
             gap: DEFAULT_GAP,
             chevron_width: DEFAULT_CHEVRON_WIDTH,
             trigger_bounds: Bounds::default(),
@@ -225,8 +259,25 @@ impl OverflowToolbar {
         }
     }
 
+    /// Which units show. Before the first measurement every unit does, so
+    /// GPUI can size them. Once measured, a row given no width shows none:
+    /// every unit is in the menu, not drawn where it cannot be seen.
+    fn plan(&self) -> OverflowPlan {
+        match self.viewport {
+            None => OverflowPlan {
+                visible: self.widths.len(),
+                hidden: 0,
+            },
+            Some(width) if width <= NO_WIDTH => OverflowPlan {
+                visible: 0,
+                hidden: self.widths.len(),
+            },
+            Some(width) => plan_overflow(width, &self.widths, self.gap, self.chevron_width),
+        }
+    }
+
     pub(crate) fn anchor_for(&self, key: &str) -> Option<Entity<Anchor>> {
-        let plan = plan_overflow(self.viewport, &self.widths, self.gap, self.chevron_width);
+        let plan = self.plan();
         self.units
             .iter()
             .position(|unit| unit.key.as_ref() == key)

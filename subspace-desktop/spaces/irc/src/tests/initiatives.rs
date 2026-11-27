@@ -7,6 +7,7 @@ mod fleet;
 mod folding;
 mod header;
 mod live;
+mod narrow;
 mod navigator;
 mod notice;
 mod private_reactions;

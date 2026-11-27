@@ -53,7 +53,7 @@ pub(super) const NAVIGATOR: Item = Item {
 pub(super) const TOOLBAR: Item = Item {
     name: "workspace::Toolbar",
     source: PANE_SOURCE,
-    used_in: "Every Space's pane toolbar: search and filters on the leading side, actions on the trailing side.",
+    used_in: "Every Space's pane toolbar: search and filters on the leading side, actions on the trailing side. Toolbar::strip makes it the pane's strip where there is no tab strip, as in Projects and Channels.",
     samples: toolbars,
     kit: None,
 };
@@ -230,6 +230,10 @@ pub(in crate::samples) fn toolbars(
             "Narrow: leading items wrap, trailing items stay on the first line",
             sized(NARROW_TOOLBAR_WIDTH, narrow_toolbar()),
         ),
+        sample(
+            "Toolbar::strip: heads a pane with no tab strip, exactly the strip height",
+            sized(TOOLBAR_WIDTH, strip_toolbar()),
+        ),
     ]
 }
 
@@ -288,6 +292,14 @@ fn grouping(cx: &App) -> impl IntoElement + use<> {
 fn navigator_hidden_toolbar() -> Toolbar {
     Toolbar::new("gallery-sample:toolbar-hidden")
         .leading(view_menu())
+        .leading(filter("gallery-sample:toolbar-status", "Status"))
+        .trailing(new_issue())
+}
+
+/// A pane with no tab strip, such as Channels', heads it with its toolbar.
+fn strip_toolbar() -> Toolbar {
+    Toolbar::new("gallery-sample:toolbar-strip")
+        .strip()
         .leading(filter("gallery-sample:toolbar-status", "Status"))
         .trailing(new_issue())
 }

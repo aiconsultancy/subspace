@@ -22,6 +22,7 @@ use subspace_framework::dashboard::{
     Dashboard, DashboardEvent, Modal, ReturnLocation,
     contracts::BoardContracts,
     menu::{Menu, MenuAnchors},
+    overflow_toolbar::OverflowToolbar,
     settings::BoardSettings,
 };
 use subspace_framework::lucide::IconName;
@@ -56,6 +57,10 @@ pub struct Projects {
     initiative_hidden: bool,
     initiative_menu: Option<Entity<Menu>>,
     menu_anchors: MenuAnchors,
+    /// The toolbar's leading controls, which overflow into a menu.
+    leading: Option<Entity<OverflowToolbar>>,
+    /// The toolbar's trailing actions, which overflow into a menu too.
+    trailing: Option<Entity<OverflowToolbar>>,
     projects: Result<Vec<PlanningProject>, Error>,
     selected: Option<String>,
     record: Option<Result<Record, Error>>,
@@ -109,6 +114,8 @@ impl Dashboard for Projects {
             initiative_hidden,
             initiative_menu: None,
             menu_anchors: MenuAnchors::default(),
+            leading: None,
+            trailing: None,
             projects: Ok(Vec::new()),
             selected: None,
             record: None,
@@ -143,8 +150,7 @@ impl Dashboard for Projects {
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active = false;
         self.milestone_pages.preview = None;
-        self.menu_anchors.dismiss(window, cx);
-        self.initiative_menu = None;
+        self.close_menus(window, cx);
     }
 
     fn contracts() -> BoardContracts {
@@ -193,14 +199,23 @@ impl Dashboard for Projects {
     }
 
     fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.menu_anchors.dismiss(window, cx);
-        self.initiative_menu = None;
+        self.close_menus(window, cx);
         self.dismiss_editor(window, cx);
     }
 }
 
 // qual:allow(coupling, oi) reason: "The Space controls its own account, selection and request lifetimes."
 impl Projects {
+    /// Closes the initiative chooser and both toolbars' overflow menus: the
+    /// leading one through its anchors, the trailing one directly.
+    fn close_menus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_anchors.dismiss(window, cx);
+        self.initiative_menu = None;
+        if let Some(trailing) = &self.trailing {
+            trailing.update(cx, |trailing, cx| trailing.dismiss(window, cx));
+        }
+    }
+
     fn follow_initiative(&mut self, cx: &mut Context<Self>) {
         let (id, hidden) = initiative::scope(self.initiatives.read(cx));
         if self.initiative_id != id || self.initiative_hidden != hidden {
@@ -235,8 +250,14 @@ impl Projects {
         cx.notify();
     }
 
+    /// Whether an editor is open or a write is under way, which holds the
+    /// selection, refreshes and the initiative choice.
+    pub(crate) fn editing_held(&self) -> bool {
+        self.editor.is_some() || self.write_task.is_some()
+    }
+
     fn reconcile_selection(&mut self, cx: &mut Context<Self>) {
-        if self.editor.is_some() || self.write_task.is_some() {
+        if self.editing_held() {
             return;
         }
         let mut rows = self.visible_projects();

@@ -9988,6 +9988,7 @@ version = "0.12.1"
 dependencies = [
  "chrono",
  "gpui-kit",
+ "serde_json",
  "subspace-api-client",
  "subspace-framework",
 ]

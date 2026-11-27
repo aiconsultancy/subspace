@@ -1,7 +1,7 @@
 use gpui_kit::px;
 
 use super::header::capitals;
-use super::{SpaceDock, SpaceDocks, inspector_width, navigator_width, text_edge};
+use super::{SpaceDock, SpaceDocks, fit_strip, inspector_width, navigator_width, text_edge};
 use crate::tokens::Tokens;
 
 #[test]
@@ -61,4 +61,16 @@ fn text_starts_at_the_content_inset_plus_the_row_inset() {
     tokens.pad_x = px(12.);
     tokens.row_inset = px(8.);
     assert_eq!(text_edge(&tokens), px(20.));
+}
+
+#[test]
+fn a_strip_grows_only_to_hold_its_tallest_button_with_its_focus_ring() {
+    let small = [px(24.), px(22.), px(20.)];
+    assert_eq!(fit_strip(px(34.), &small), px(34.), "Small fits");
+    let tall_action = [px(24.), px(40.), px(20.)];
+    assert_eq!(
+        fit_strip(px(34.), &tall_action),
+        px(47.),
+        "a 40 px action button, 3 px of ring above and below, then the hairline"
+    );
 }

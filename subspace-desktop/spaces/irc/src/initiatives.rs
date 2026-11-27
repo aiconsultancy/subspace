@@ -18,7 +18,7 @@ mod endpoint;
 mod picker;
 pub(crate) use channels::{channel_names, focus_channel, initiative_channels};
 pub(crate) use endpoint::{Endpoint, comparable_host};
-pub(crate) use picker::{Picker, button, command, dismiss_stale_picker, hint};
+pub(crate) use picker::{Picker, command, dismiss_stale_picker, hint, set_toolbar, unit};
 
 /// The longest the networks wait at start for the first read of the
 /// memberships: long enough for an API that is waking up, as Issues allows.

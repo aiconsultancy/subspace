@@ -2,8 +2,9 @@
 //! hidden, so every network's buffers stay one click away.
 
 use gpui_kit::component::menu::PopupMenuItem;
-use gpui_kit::{AnyElement, IntoElement as _, SharedString};
+use gpui_kit::{AnyElement, IntoElement as _, SharedString, WeakEntity, div};
 use subspace_framework::dashboard::action::menu_button;
+use subspace_framework::dashboard::overflow_toolbar::{OverflowUnit, PopupEntry};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Dashboard as _, Group, anchored};
 
@@ -12,6 +13,9 @@ use crate::{Irc, rows};
 
 /// What the button says while no conversation is open.
 const NONE_OPEN: &str = "Conversations";
+const BUTTON_ID: &str = "irc-conversation-menu";
+/// Units are measured when they first draw.
+const UNMEASURED_WIDTH: f32 = 0.;
 
 /// One line of the menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,35 +51,72 @@ fn entries(
     lines
 }
 
+/// The lines of the menu for `board`, the conversation in front checked.
+fn lines(board: &Irc) -> Vec<Entry> {
+    let current = board.dock.focused.as_ref().map(rows::row_key);
+    let held = |key: &SharedString| board.buffers.contains_key(key);
+    entries(board.list.groups(), held, current.as_ref())
+}
+
+/// One line as a menu item: a network's name, or a conversation that shows
+/// when chosen, as a search result does.
+fn item(line: &Entry, owner: &WeakEntity<Irc>) -> PopupMenuItem {
+    match line {
+        Entry::Network(name) => PopupMenuItem::label(name.clone()),
+        Entry::Conversation {
+            key,
+            title,
+            current,
+        } => {
+            let (owner, key) = (owner.clone(), key.clone());
+            PopupMenuItem::new(title.clone())
+                .checked(*current)
+                .on_click(move |_, window, cx| {
+                    _ = owner.update(cx, |board, cx| board.open_search_result(&key, window, cx));
+                })
+        }
+    }
+}
+
 /// The menu's button: it names the conversation in front and lists every
-/// network's conversations. Choosing one shows it, as a search result does.
-pub(super) fn button(board: &Irc) -> AnyElement {
+/// network's conversations.
+fn button(board: &Irc) -> AnyElement {
     let focused = board.dock.focused.as_ref();
     let label = focused.map_or_else(|| NONE_OPEN.into(), |buffer| board.buffer_name(buffer));
     let icon = focused.map_or(IconName::Hash, |buffer| kind_icon(&buffer.target));
-    let current = focused.map(rows::row_key);
-    let held = |key: &SharedString| board.buffers.contains_key(key);
-    let lines = entries(board.list.groups(), held, current.as_ref());
+    let lines = lines(board);
     let owner = board.me.clone();
-    let button = menu_button("irc-conversation-menu", icon, label.clone(), false)
+    let button = menu_button(BUTTON_ID, icon, label.clone(), false)
         .accessibility_label(format!("Conversation: {label}"));
     anchored::dropdown_menu(button, move |menu, _, _| {
-        lines.iter().fold(menu, |menu, line| match line {
-            Entry::Network(name) => menu.label(name.clone()),
-            Entry::Conversation {
-                key,
-                title,
-                current,
-            } => {
-                let (owner, key) = (owner.clone(), key.clone());
-                let item = PopupMenuItem::new(title.clone()).checked(*current);
-                menu.item(item.on_click(move |_, window, cx| {
-                    _ = owner.update(cx, |board, cx| board.open_search_result(&key, window, cx));
-                }))
-            }
-        })
+        lines
+            .iter()
+            .fold(menu, |menu, line| menu.item(item(line, &owner)))
     })
     .into_any_element()
+}
+
+/// The menu as a unit of the toolbar's leading overflow: the button while
+/// it fits, else its lines in the overflow menu.
+pub(super) fn unit(board: &Irc) -> OverflowUnit {
+    let owner = board.me.clone();
+    let entries = lines(board)
+        .into_iter()
+        .map(|line| {
+            let owner = owner.clone();
+            PopupEntry::new(move || item(&line, &owner))
+        })
+        .collect();
+    OverflowUnit::inline(
+        BUTTON_ID,
+        UNMEASURED_WIDTH,
+        move |_, cx| {
+            owner
+                .upgrade()
+                .map_or_else(|| div().into_any_element(), |board| button(board.read(cx)))
+        },
+        entries,
+    )
 }
 
 #[cfg(test)]

@@ -33,13 +33,18 @@ app imports it as `subspace_framework::dashboard::workspace`.
 | Tab strip, the top of the pane | What is open: the list or view on show, and an opened item beside it. | The Space's views; those are navigator rows. | `--strip-h` high |
 | Toolbar, under the tab strip | Search and filters on the leading side, actions for what is open on the trailing side. | A Space title, a line of context, selection actions outside the [Decisions exception](#contextual-action-in-decisions), the dock switches. | at least `--toolbar-h` high |
 | Content | The list, the page, the conversation or the graph. | A heading for the Space, its own outer padding. | the rest of the pane |
-| Inspector or detail panel, the trailing dock | The detail of the selection, with the actions that act on it in its footer. Tabs only under [Inspector tabs](#inspector-tabs). | Views, filters, the Space's own state. | `--inspector-w` wide, or the detail panel's own width; header `--strip-h` high |
+| Inspector or detail panel, the trailing dock | The detail of the selection, with the actions that act on it in its footer. Tabs only under [Inspector tabs](#inspector-tabs). | Views, filters, the Space's own state. | `--inspector-w` wide, or the detail panel's own width; header exactly the strip height |
 | Status bar, the shell's | Account, connection, counts and sync time, from `Dashboard::status`; the navigator's switch at its leading end and the inspector's at its trailing end, from `Dashboard::docks`. | Any other control of the Space's. Besides the dock switches, it holds only the shell's own commands, such as About and Help. | the shell's |
 
 Inside every panel, text starts at `--pad-x` plus `--row-inset`. The defaults
 are a 240 px navigator, a 320 px inspector and a 34 px strip; the theme sets
 the rest. The [appearance](appearance.md) page and the theme designer's
-Window group hold the values.
+Window group hold the values. The strip height is
+`workspace::strip_height(window, cx)`: `--strip-h`, or the tallest button a
+strip holds (a toolbar button, a labelled action button or a compact
+segment), with room for its focus ring above and below and the hairline
+under it, when the theme or the icon-button size makes that taller. It is
+the same for every strip.
 
 Above the Space, the title bar's Space tabs end with a plus, **Add a Space**
 (at the end of the navigation rail when that layout is on). Its menu lists
@@ -63,32 +68,65 @@ nothing to this control.
    rows, the toolbar, list rows and the content. A Space has no side inset
    of its own. A shared list Space returns the text edge from
    `ListDashboard::list_side_inset`.
-3. **Strips line up.** Dock headers and the tab strip share `--strip-h`, so
-   the hairlines under them run across the window as one line.
-4. **Lists run full width; reading is capped.** A list uses the pane's whole
+3. **Strips line up, exactly.** The navigator's header, the pane's top
+   strip and the inspector's or detail panel's header are each exactly
+   `workspace::strip_height` high, hairline included, so the hairlines under
+   them are one line across the window. The pane's top strip is its tab
+   strip; a pane with no tab strip beside a dock heads it with
+   `Toolbar::strip`, never with a plain toolbar, which is taller. Controls
+   in a strip fit inside it: the strip height allows for toolbar and action
+   buttons, compact segments and tabs, with their focus rings, but a strip
+   never grows to fit anything else, so it holds no dialog buttons, fields
+   that wrap or a second line. A strip is one line, so controls on either
+   side that may not fit a narrow pane or a large icon-button size go in an
+   `overflow_toolbar::OverflowToolbar`, which moves the last of them into
+   its menu; never let a control be cut off. The leading side keeps room
+   for its menu's button, and the trailing side yields the rest of the
+   line. Two
+   horizontal lines within 5 px of each other across neighbouring panels
+   are a defect: make them one line.
+4. **One line per edge.** Where two surfaces meet, exactly one of them
+   draws the hairline. Never butt two borders together, beside each other or
+   one on top of the other. The owner of an edge:
+   - A dock owns its inner edge: the navigator's trailing line and the
+     inspector's or detail panel's leading line. What sits in the pane beside
+     it draws no line there. The first tab of a `tabs::pane_tab_bar` leaves
+     its leading line to the dock or the window edge.
+   - A strip or toolbar owns the line under it. What starts below it, such
+     as a list's first group header or a banner, draws no line on its top.
+   - In a run of rows, each row owns one edge, the same one for every row.
+     A banded group header is told apart by its fill and the line under it,
+     not by a second line above it.
+   - Between tabs, the tabs' own hairline is the only line.
+   - A panel nested in another draws no border on an edge it shares with
+     its parent's border; use the parent's line, or inset the panel.
+5. **Lists run full width; reading is capped.** A list uses the pane's whole
    width. Reading content, such as an issue's body or a conversation, is no
    wider than `workspace::READING_WIDTH_PX` (760 px).
-5. **Views live in the navigator.** A Space's views are `NavRow`s. The tab
+6. **Views live in the navigator.** A Space's views are `NavRow`s. The tab
    strip is for what is open, never for switching views.
-6. **State goes to the status bar.** Account, connection, counts and sync
+7. **State goes to the status bar.** Account, connection, counts and sync
    time go through `Dashboard::status`. There is no large Space heading and
    no line of context above the content; the Space's name is the
    navigator's title.
-7. **Selection shows through surface and text.** A selected row shows it
+8. **Selection shows through surface and text.** A selected row shows it
    through its own fill; a selected tab takes the surface it adjoins, with
    the stronger text colour at medium weight. Never an accent line on one
    edge: no leading bars, underlines or coloured edges, on rows, tabs or
    blocks. Functional marks stay: focus rings, a drag's insertion mark and
    full dividers between regions.
-8. **One primary action per toolbar.** A pane toolbar has at most one
+9. **One primary action per toolbar.** A pane toolbar has at most one
    primary action: the Space's main one, at the trailing end, such as
    **New issue…**, **Trigger…** or **New project**, built with
+   `action::main_action`. Every other toolbar action is neutral or quiet. In
+   a dialog or a footer, `Intent::Primary` marks the action that completes a
+   decision, such as Save.
+10. **Shared components and tokens only.** No literal colours or sizes, no
+    one-off styled controls. Read sizes from `Tokens::current(cx)`.
    `action::main_action`. Every other toolbar action is neutral or quiet.
    [Decisions](#contextual-action-in-decisions) can replace its usual primary
    action with Accept for an eligible selection. In a dialog or a footer,
    `Intent::Primary` marks the action that completes a decision, such as Save.
-9. **Shared components and tokens only.** No literal colours or sizes, no
-   one-off styled controls. Read sizes from `Tokens::current(cx)`.
 
 ### Inspector tabs
 
@@ -443,7 +481,15 @@ A reviewer ticks:
 - [ ] Nothing is padded off the window's edge; panels meet the window and
       each other.
 - [ ] Text starts on one edge in every panel.
-- [ ] The dock headers and the tab strip line up, and their hairlines meet.
+- [ ] The dock headers and the pane's top strip (its tab strip, or a
+      `Toolbar::strip` where there is none) are the same height, and the
+      hairlines under them are one line: no two horizontal lines within 5 px
+      of each other across neighbouring panels.
+- [ ] Every control in a strip fits inside it, at every icon-button size,
+      and in a narrow pane each one shows or is in the overflow menu.
+- [ ] Each edge has one line: no two borders butt together, such as a
+      tab's line beside a dock's, a toolbar's line over a list's top line,
+      or a nested panel's border on its parent's.
 - [ ] Views are in the navigator; the tab strip shows only what is open.
 - [ ] Account, connection, counts and sync time are in the status bar.
 - [ ] There is no large Space heading or line of context.

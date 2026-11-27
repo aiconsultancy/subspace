@@ -14,6 +14,8 @@ subspace-framework.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
+subspace-api-client = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

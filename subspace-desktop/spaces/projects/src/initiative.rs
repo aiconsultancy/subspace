@@ -8,7 +8,7 @@ use subspace_framework::dashboard::menu::MenuEvent;
 
 use crate::Projects;
 
-const ANCHOR: &str = "projects-initiative";
+pub(crate) const ANCHOR: &str = "projects-initiative";
 
 pub(super) fn scope(catalog: &Catalog) -> (Option<String>, bool) {
     let selected = catalog.selected().map(|initiative| initiative.id.clone());
@@ -26,12 +26,12 @@ pub(super) fn button(this: &Projects, cx: &mut Context<Projects>) -> Option<AnyE
     }
     let button = catalog
         .button("projects-initiative-button")
-        .disabled(this.editor.is_some() || this.write_task.is_some())
+        .disabled(this.editing_held())
         .on_click(cx.listener(|this, _, window, cx| open(this, window, cx)));
     Some(this.menu_anchors.trigger(ANCHOR, button, cx))
 }
 
-fn open(this: &mut Projects, window: &mut Window, cx: &mut Context<Projects>) {
+pub(crate) fn open(this: &mut Projects, window: &mut Window, cx: &mut Context<Projects>) {
     let Some((menu, revision)) =
         Catalog::open_picker(&this.initiatives, &this.menu_anchors, ANCHOR, window, cx)
     else {

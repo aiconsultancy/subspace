@@ -85,7 +85,9 @@ fn xl_panel_header_keeps_close_and_body_visible_with_single_row_overflow_actions
         let toolbar = window.find("panel-toolbar").bounds();
         let close = window.find("panel-close").bounds();
         let trigger = window.find("overflow-toolbar-button").bounds();
-        assert!(toolbar.size.height <= px(73.));
+        // One line: the 72 px button, its 3 px focus ring above and below,
+        // and the hairline.
+        assert!(toolbar.size.height <= px(79.));
         assert_eq!(close.size.height, px(72.));
         assert_eq!(close.center().y, trigger.center().y);
         // Close is the last control and never moves into overflow.

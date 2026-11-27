@@ -3,17 +3,15 @@
 //! content fills the rest.
 
 use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement,
+    AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement, Pixels,
     RenderOnce, Stateful, Styled as _, TestSupportExt as _, Window, div, px,
 };
 
-use super::text_edge;
+use super::{FOCUS_RING_PX, HAIRLINE_PX, strip_height, text_edge};
 use crate::icon_button::Metrics;
 use crate::tokens::Tokens;
-
-/// The tab strip's bottom hairline.
-const HAIRLINE_PX: f32 = 1.;
 
 /// The work area: an optional tab strip, an optional [`Toolbar`], then the
 /// content, added with `child` or `children`. The content owns its scrolling.
@@ -80,40 +78,50 @@ impl RenderOnce for Pane {
 
 /// A pane's tab strip and toolbar on their own, for a view that draws its
 /// own content column, such as a shared list that keeps its detail panel
-/// beside it (`list::render_under`). Either may be left out.
-pub fn pane_head(tabs: Option<AnyElement>, toolbar: Option<AnyElement>, cx: &App) -> Div {
-    let tokens = Tokens::current(cx);
+/// beside it (`list::render_under`). Either may be left out; a pane beside a
+/// dock that has no tab strip makes its toolbar a [`Toolbar::strip`].
+pub fn pane_head(tabs: Option<AnyElement>, toolbar: Option<AnyElement>, _cx: &App) -> Div {
     v_flex()
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .children(tabs.map(|tabs| tab_strip(tabs, &tokens).test_support()))
+        .children(tabs.map(|tabs| TabStrip { tabs }))
         .children(toolbar)
 }
 
-/// The strip is as tall as a dock's header, and shares the docks' surface so
-/// the open tab reads as part of the content below it. Its bottom hairline
-/// lies behind the tabs, which fill the strip (`tabs::pane_tab_bar`), so the
-/// open tab's fill covers it and joins the content.
-fn tab_strip(tabs: AnyElement, tokens: &Tokens) -> Stateful<Div> {
-    h_flex()
-        .id("workspace-tab-strip")
-        .relative()
-        .w_full()
-        .min_w_0()
-        .flex_shrink_0()
-        .min_h(tokens.strip_height)
-        .bg(tokens.sidebar)
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .bottom_0()
-                .w_full()
-                .h(px(HAIRLINE_PX))
-                .bg(tokens.line),
-        )
-        .child(tabs)
+/// The strip is exactly as tall as a dock's header ([`strip_height`]), and
+/// shares the docks' surface so the open tab reads as part of the content
+/// below it. Its bottom hairline lies behind the tabs, which fill the strip
+/// (`tabs::pane_tab_bar`), so the open tab's fill covers it and joins the
+/// content.
+#[derive(IntoElement)]
+struct TabStrip {
+    tabs: AnyElement,
+}
+
+impl RenderOnce for TabStrip {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let tokens = Tokens::current(cx);
+        h_flex()
+            .id("workspace-tab-strip")
+            .relative()
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .h(strip_height(window, cx))
+            .bg(tokens.sidebar)
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .bottom_0()
+                    .w_full()
+                    .h(px(HAIRLINE_PX))
+                    .bg(tokens.line),
+            )
+            .child(self.tabs)
+            .test_support()
+    }
 }
 
 /// The pane's toolbar: search and filters on the leading side, actions on
@@ -125,6 +133,7 @@ pub struct Toolbar {
     id: ElementId,
     leading: Vec<AnyElement>,
     trailing: Vec<AnyElement>,
+    strip: bool,
 }
 
 impl Toolbar {
@@ -133,6 +142,7 @@ impl Toolbar {
             id: id.into(),
             leading: Vec::new(),
             trailing: Vec::new(),
+            strip: false,
         }
     }
 
@@ -148,43 +158,108 @@ impl Toolbar {
         self.trailing.push(item.into_any_element());
         self
     }
+
+    /// The toolbar heads a pane that has no tab strip, beside a dock. It is
+    /// then the pane's strip: exactly [`strip_height`] high, as the dock
+    /// headers are, so the hairlines under them are one line. Its items
+    /// keep to that one line and centre on it. Controls that may not fit, in
+    /// a narrow pane or at a large icon-button size, go in an
+    /// `overflow_toolbar::OverflowToolbar` on either side, which moves the
+    /// last of them into its menu. The leading side always keeps room for
+    /// that menu's button; the trailing side yields the rest of the line,
+    /// so its own overflow toolbar collapses rather than pushing the
+    /// leading side out. The strip clips anything else that runs past it.
+    pub fn strip(mut self) -> Self {
+        self.strip = true;
+        self
+    }
+}
+
+/// How a toolbar lays out its line: as the pane's strip, exactly `height`
+/// high, its leading side never narrower than `reserve` (room for an
+/// overflow menu's button) while it holds anything; or at least this high
+/// with its leading items wrapping.
+enum Line {
+    Strip { height: Pixels, reserve: Pixels },
+    Wrapping(Pixels),
+}
+
+impl Line {
+    fn frame(&self, frame: Stateful<Div>) -> Stateful<Div> {
+        match *self {
+            Self::Strip { height, .. } => frame.items_center().h(height),
+            Self::Wrapping(least) => frame.items_start().min_h(least).py_1(),
+        }
+    }
+
+    /// The leading side, holding anything when `occupied`.
+    fn leading(&self, leading: Stateful<Div>, occupied: bool) -> Stateful<Div> {
+        match *self {
+            Self::Strip { reserve, .. } => ring_clip(leading).when(occupied, |leading| {
+                leading.min_w(reserve + px(FOCUS_RING_PX + FOCUS_RING_PX))
+            }),
+            Self::Wrapping(_) => leading.flex_wrap(),
+        }
+    }
+
+    fn trailing(&self, trailing: Stateful<Div>) -> Stateful<Div> {
+        match self {
+            Self::Strip { .. } => ring_clip(trailing).min_w_0(),
+            Self::Wrapping(_) => trailing.flex_shrink_0(),
+        }
+    }
+}
+
+/// A strip side's clip. It spans the strip's height, which holds a focus
+/// ring above and below a control (`strip_height`), and reaches a ring's
+/// width past the side's edges, so the rings of its first and last controls
+/// show.
+fn ring_clip(side: Stateful<Div>) -> Stateful<Div> {
+    side.h_full()
+        .items_center()
+        .mx(-px(FOCUS_RING_PX))
+        .px(px(FOCUS_RING_PX))
+        .overflow_hidden()
 }
 
 impl RenderOnce for Toolbar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = Tokens::current(cx);
         let gap = Metrics::current(cx).gap();
-        h_flex()
+        let line = if self.strip {
+            Line::Strip {
+                height: strip_height(window, cx),
+                reserve: Metrics::current(cx)
+                    .overflow_width()
+                    .to_pixels(window.rem_size()),
+            }
+        } else {
+            Line::Wrapping(tokens.toolbar_height)
+        };
+        let frame = h_flex()
             .id(self.id)
-            .test_support()
             .w_full()
             .min_w_0()
             .flex_shrink_0()
-            .items_start()
-            .min_h(tokens.toolbar_height)
             .gap(gap)
             .px(text_edge(&tokens))
-            .py_1()
             .bg(tokens.bg)
             .border_b_1()
-            .border_color(tokens.line)
-            .child(
-                h_flex()
-                    .id("workspace-toolbar-leading")
-                    .test_support()
-                    .flex_1()
-                    .min_w_0()
-                    .flex_wrap()
-                    .gap(gap)
-                    .children(self.leading),
-            )
-            .child(
-                h_flex()
-                    .id("workspace-toolbar-trailing")
-                    .test_support()
-                    .flex_shrink_0()
-                    .gap(gap)
-                    .children(self.trailing),
-            )
+            .border_color(tokens.line);
+        let occupied = !self.leading.is_empty();
+        let leading = h_flex()
+            .id("workspace-toolbar-leading")
+            .flex_1()
+            .min_w_0()
+            .gap(gap)
+            .children(self.leading);
+        let trailing = h_flex()
+            .id("workspace-toolbar-trailing")
+            .gap(gap)
+            .children(self.trailing);
+        line.frame(frame)
+            .child(line.leading(leading, occupied).test_support())
+            .child(line.trailing(trailing).test_support())
+            .test_support()
     }
 }

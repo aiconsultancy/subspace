@@ -68,6 +68,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         join: None,
         initiative_menu: Default::default(),
         toolbar: None,
+        leading: None,
         reveal: None,
         search: std::rc::Rc::new(subspace_framework::dashboard::ItemSearch::new([])),
         available_height: subspace_framework::dashboard::measure::unmeasured(cx),
@@ -347,7 +348,7 @@ impl ListDashboard for Irc {
     }
 
     fn can_navigate(&self, _cx: &App) -> bool {
-        self.join.is_none() && self.initiative_menu.host().is_none()
+        self.join.is_none() && !self.initiative_menu.is_open()
     }
 }
 

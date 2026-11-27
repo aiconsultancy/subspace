@@ -8,6 +8,7 @@ use gpui_kit::{
     AnyElement, App, Context, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
     Render, Styled as _, Window, div,
 };
+use subspace_framework::dashboard::overflow_toolbar::{OverflowToolbar, OverflowUnit};
 use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{
     DASHBOARD_CONTEXT, Dashboard as _, Tokens, list, measure, workspace,
@@ -154,28 +155,63 @@ fn pane(board: &mut Irc, configured: bool, cx: &mut Context<Irc>) -> workspace::
 /// hidden a menu of the conversations leads it, and names the one in front.
 fn pane_toolbar(board: &mut Irc, cx: &mut Context<Irc>) -> workspace::Toolbar {
     let navigator_open = board.dock.buffers_open();
-    let mut bar = workspace::Toolbar::new("irc-toolbar");
-    if !navigator_open {
-        bar = bar.leading(conversations::button(board));
-    }
-    if let Some(picker) = initiatives::button(board, cx) {
-        bar = bar.leading(picker);
+    // The conversations' tabs are the dock area's, under the toolbar, so the
+    // toolbar is the pane's strip, level with the docks' headers.
+    // The pickers keep to that one line: in a narrow pane the last of them
+    // move into an overflow menu, after the heading has truncated.
+    let mut bar = workspace::Toolbar::new("irc-toolbar").strip();
+    if let Some(pickers) = leading_pickers(board, navigator_open, cx) {
+        bar = bar.leading(pickers);
     }
     if let Some(heading) = heading(board, navigator_open, cx) {
         bar = bar.leading(heading);
     }
-    if let Some(actions) = toolbar::render(board, cx) {
-        bar = bar.trailing(actions);
+    match toolbar::render(board, cx) {
+        Some(actions) => bar.trailing(actions),
+        None => bar,
     }
-    bar.trailing(
-        subspace_framework::dashboard::action::icon_button(
-            "irc-refresh",
-            subspace_framework::dashboard::action::Intent::Quiet,
-            subspace_framework::lucide::IconName::RefreshCw,
-            "Refresh",
-        )
-        .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
-    )
+}
+
+/// The conversation menu while the navigator is hidden, then the initiative
+/// picker, as units of one overflowing row; none without either, so the
+/// heading keeps the text edge.
+fn leading_pickers(
+    board: &mut Irc,
+    navigator_open: bool,
+    cx: &mut Context<Irc>,
+) -> Option<AnyElement> {
+    let conversations = (!navigator_open).then(|| conversations::unit(board));
+    let units: Vec<_> = conversations
+        .into_iter()
+        .chain(initiatives::unit(board, cx))
+        .collect();
+    if units.is_empty() {
+        drop_pickers(board, cx);
+        return None;
+    }
+    Some(pickers_row(board, units, cx))
+}
+
+/// The pickers' overflowing row, whose chevron a hidden initiative picker
+/// opens from.
+fn pickers_row(board: &mut Irc, units: Vec<OverflowUnit>, cx: &mut Context<Irc>) -> AnyElement {
+    let leading = OverflowToolbar::sync(&mut board.leading, units, cx);
+    initiatives::set_toolbar(board, &leading);
+    div()
+        .min_w_0()
+        .max_w_full()
+        .child(leading)
+        .into_any_element()
+}
+
+/// Forgets the pickers' row once it has nothing to show, closing its
+/// overflow menu if one is open.
+fn drop_pickers(board: &mut Irc, cx: &mut Context<Irc>) {
+    if let Some(leading) = board.leading.take() {
+        crate::dock::with_window(board, cx, move |_, window, cx| {
+            leading.update(cx, |leading, cx| leading.dismiss(window, cx));
+        });
+    }
 }
 
 /// The conversation in front as the toolbar's heading: its name, unless a

@@ -3,7 +3,7 @@
 
 use gpui_kit::component::h_flex;
 use gpui_kit::{
-    Div, FontWeight, Hsla, InteractiveElement as _, ParentElement as _, Role, SharedString,
+    Div, FontWeight, Hsla, InteractiveElement as _, ParentElement as _, Pixels, Role, SharedString,
     Stateful, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
@@ -14,14 +14,21 @@ use crate::tokens::Tokens;
 const TRAILING_PX: f32 = 8.;
 
 /// The strip itself: the text edge on the leading side and a hairline below.
-pub(super) fn strip(id: &'static str, line: Hsla, tokens: &Tokens) -> Stateful<Div> {
+/// It is exactly [`strip_height`](super::strip_height) high, hairline
+/// included, as the pane's tab strip is, so a dock's header never grows past
+/// its neighbours.
+pub(super) fn strip(
+    id: &'static str,
+    line: Hsla,
+    height: Pixels,
+    tokens: &Tokens,
+) -> Stateful<Div> {
     h_flex()
         .id(id)
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        // At least the strip height: larger icon buttons may grow it.
-        .min_h(tokens.strip_height)
+        .h(height)
         .gap_1()
         .pl(text_edge(tokens))
         .pr(px(TRAILING_PX))

@@ -103,7 +103,8 @@ fn bare_toolbar(
     if shown.navigator {
         return None;
     }
-    organisation().map(|menu| Toolbar::new("issues-toolbar").leading(menu))
+    // Without a tab strip the toolbar is the pane's strip.
+    organisation().map(|menu| Toolbar::new("issues-toolbar").strip().leading(menu))
 }
 
 /// Search and filters on the leading side; how the list is grouped, the

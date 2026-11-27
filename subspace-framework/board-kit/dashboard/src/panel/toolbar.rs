@@ -9,7 +9,7 @@ use crate::{
     overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry},
     truncated,
     typography::heading_font,
-    workspace::text_edge,
+    workspace::{strip_height, text_edge},
 };
 use gpui_kit::component::{h_flex, menu::PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -40,15 +40,17 @@ pub(super) fn render(
     let units = units(&header, &actions);
     toolbar.update(cx, |toolbar, cx| toolbar.set_units(units, cx));
     let close = actions.close.clone();
-    // The bar is a workspace dock header: as tall as the pane's tab strip,
-    // its title on the shared text edge, and Close last, outside overflow.
+    let height = strip_height(window, cx);
+    // The bar is a workspace dock header: exactly as tall as the pane's tab
+    // strip, its title on the shared text edge, and Close last, outside
+    // overflow.
     h_flex()
         .id("panel-toolbar")
         .test_support()
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .min_h(tokens.strip_height)
+        .h(height)
         .gap(Metrics::current(cx).gap())
         .pl(text_edge(tokens))
         .pr(px(BAR_PADDING_X_PX))

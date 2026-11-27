@@ -10,6 +10,8 @@
 //! docks to the shell through `Dashboard::docks` ([`SpaceDocks`]), and the
 //! shell's status bar draws a switch for each ([`dock_switch`]).
 
+#[cfg(test)]
+mod crowded_strip_tests;
 mod docks;
 mod header;
 mod inspector;
@@ -22,6 +24,8 @@ mod pane;
 mod resize;
 mod row_order;
 mod row_parts;
+#[cfg(test)]
+mod strip_tests;
 #[cfg(test)]
 mod tests;
 
@@ -37,6 +41,8 @@ pub use navigator::{NavRow, Navigator, nav_section};
 pub use pane::{Pane, Toolbar, pane_head};
 pub use resize::{InspectorResize, NavigatorResize, inspector_width, navigator_width};
 
+use crate::icon_button::role_target;
+use crate::tokens::ButtonRole;
 use crate::tokens::Tokens;
 
 /// Reading content, such as an issue's body or a conversation, is no wider
@@ -55,6 +61,40 @@ const FULL_WORKSPACE_WIDTH: f32 = 1.;
 pub fn text_edge(tokens: &Tokens) -> Pixels {
     tokens.pad_x + tokens.row_inset
 }
+
+/// The height of every strip along the top of the workspace: the dock
+/// headers, the pane's tab strip, a toolbar standing in for it
+/// ([`Toolbar::strip`]) and the detail panel's bar. It is `--strip-h`, or
+/// the tallest button a strip holds, with room for its focus ring above and
+/// below and the hairline under it, when the theme or the icon-button size
+/// makes that taller. A strip holds toolbar buttons, labelled action buttons
+/// and compact segments such as the inspector's tabs, so a control in a
+/// strip always fits and the hairlines under the strips stay one line.
+pub fn strip_height(window: &Window, cx: &App) -> Pixels {
+    let rem = window.rem_size();
+    let targets = STRIP_ROLES.map(|role| role_target(role, cx).to_pixels(rem));
+    fit_strip(Tokens::current(cx).strip_height, &targets)
+}
+
+/// The button roles a strip holds.
+const STRIP_ROLES: [ButtonRole; 3] = [ButtonRole::Toolbar, ButtonRole::Action, ButtonRole::Compact];
+
+/// The strip height that holds buttons `targets` high, each with its focus
+/// ring above and below, over the strip's hairline.
+fn fit_strip(strip: Pixels, targets: &[Pixels]) -> Pixels {
+    let room = px(FOCUS_RING_PX + FOCUS_RING_PX + HAIRLINE_PX);
+    targets
+        .iter()
+        .fold(strip, |height, target| height.max(*target + room))
+}
+
+/// GPUI Kit draws a focus ring this far outside a control
+/// (`FOCUS_RING_WIDTH`, private to Kit). Whatever clips a row of controls
+/// leaves this much room around them.
+pub(crate) const FOCUS_RING_PX: f32 = 3.;
+
+/// The hairline between the workspace's panels and under each strip.
+pub(crate) const HAIRLINE_PX: f32 = 1.;
 
 /// A Space's workspace: an optional navigator, the pane, and an optional
 /// inspector, filling the Space's area.

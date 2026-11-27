@@ -105,6 +105,34 @@ fn closing_the_inspector_hides_the_peek_until_its_switch_brings_it_back(cx: &mut
     assert_eq!(saved(cx, "issues.inspector").as_deref(), Some("shown"));
 }
 
+/// The bottom edge of the element `id`.
+fn bottom(cx: &mut VisualTestContext, id: &'static str) -> gpui_kit::Pixels {
+    cx.update(|window, _| window.find(id).bounds().bottom())
+}
+
+#[gpui_kit::test]
+fn the_strips_line_up_and_the_first_tab_leaves_the_dock_edge_to_the_navigator(
+    cx: &mut TestAppContext,
+) {
+    let (_board, cx) = listed(cx);
+    let line = bottom(cx, "workspace-navigator-header");
+    for id in ["workspace-tab-strip", "workspace-inspector-header"] {
+        assert!((bottom(cx, id) - line).abs() < gpui_kit::px(0.5), "{id}");
+    }
+    cx.update(|window, _| {
+        let pane = window.find("workspace-pane").bounds();
+        let fill = window
+            .within("issues-tab-bar")
+            .within(0usize)
+            .find("tab-layers")
+            .bounds();
+        assert!(
+            (fill.left() - pane.left()).abs() < gpui_kit::px(0.5),
+            "the Backlog tab draws no line beside the navigator's"
+        );
+    });
+}
+
 #[gpui_kit::test]
 fn a_narrow_window_holds_the_inspector_back_without_changing_the_choice(cx: &mut TestAppContext) {
     let (board, cx) = listed_at(cx, 900.);

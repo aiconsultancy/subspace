@@ -13,6 +13,18 @@ pub use size::{IconButtonSize, Metrics};
 
 pub const PREFERENCE_KEY: &str = "app.icon-button-size";
 
+/// How tall a button with `role` is at the current icon-button size. The
+/// compact role is a fixed preset; the others follow the size.
+pub(crate) fn role_target(role: ButtonRole, cx: &App) -> Rems {
+    let tokens = Tokens::current(cx);
+    let geometry = Geometry::resolve(
+        role,
+        tokens.controls.button(role),
+        IconButtonSize::current(cx),
+    );
+    geometry.target
+}
+
 /// The compact role's glyph and gap, for a mark that sits beside compact
 /// buttons, such as the status bar's chat engine.
 pub fn compact_glyph(tokens: &Tokens) -> (Rems, Rems) {

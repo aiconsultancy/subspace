@@ -19,6 +19,7 @@ Identity and registration
 Layout and UI
 - [ ] Workspace layout (`workspace::Workspace`): views in the navigator, what is open in the tab strip, search, filters and actions in the toolbar, the selection's detail in the inspector; no Space heading or context line
 - [ ] One text edge from `workspace::text_edge`; reading content no wider than `workspace::READING_WIDTH_PX`
+- [ ] Strips line up: the pane starts with a tab strip, or with `Toolbar::strip` where it has none, so its hairline is one line with the dock headers; one line per edge, no two borders butting together
 - [ ] Navigator and inspector choices stored and reported through `Dashboard::docks` and `Dashboard::toggle_dock` for the status bar's switches; a view menu in the toolbar while the navigator is hidden
 - [ ] Follows the design guide (docs/design-guide.md); its screenshots match the shell anatomy image
 - [ ] List board hooks (`ListDashboard`), or the reason for a custom layout

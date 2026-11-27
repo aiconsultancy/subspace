@@ -1,5 +1,6 @@
-use super::{OverflowAnchor, OverflowToolbar, OverflowUnit, plan_overflow};
+use super::{OverflowAnchor, OverflowToolbar, OverflowUnit};
 use crate::icon_button::{IconButton, Metrics};
+use crate::workspace::FOCUS_RING_PX;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::{Sizable as _, button::ButtonVariants as _, h_flex};
 use gpui_kit::{
@@ -28,7 +29,7 @@ impl OverflowToolbar {
     }
 
     fn hidden_units(&self) -> Vec<OverflowUnit> {
-        let plan = plan_overflow(self.viewport, &self.widths, self.gap, self.chevron_width);
+        let plan = self.plan();
         self.units[plan.visible..].to_vec()
     }
 
@@ -149,26 +150,37 @@ impl Render for OverflowToolbar {
             .get_or_insert_with(|| cx.new(crate::anchored::Anchor::new))
             .clone();
         self.refresh_popup(&anchor, window, cx);
-        let plan = plan_overflow(self.viewport, &self.widths, self.gap, self.chevron_width);
+        let plan = self.plan();
         let mut children = inline_units(&self.units[..plan.visible], window, cx);
         if plan.has_overflow() {
             children.push(self.more_button(anchor, cx).into_any_element());
+        } else {
+            // The chevron renders the popup; once everything fits it is gone,
+            // so a menu left open would stay open unseen.
+            self.dismiss(window, cx);
         }
         let entity = cx.weak_entity();
-        h_flex()
+        // The clip is on a frame a focus ring's width larger than the row on
+        // every side, which its negative margin keeps out of the layout, so a
+        // focused unit's ring shows. The row itself keeps the width it plans
+        // with: its bounds are the units' allocation.
+        let ring = px(FOCUS_RING_PX);
+        let row = h_flex()
             .id("overflow-toolbar-row")
             .test_support()
             .flex_nowrap()
             .w(px(self.content_width()))
             .max_w_full()
             .min_w_0()
-            .overflow_hidden()
             .gap_x(px(self.gap))
             .on_prepaint(move |bounds, window, cx| {
                 _ = entity.update(cx, |toolbar, cx| {
                     let width = f32::from(bounds.size.width);
-                    if crate::measure::changed(toolbar.viewport, width) {
-                        toolbar.viewport = width;
+                    let changed = toolbar
+                        .viewport
+                        .is_none_or(|viewport| crate::measure::changed(viewport, width));
+                    if changed {
+                        toolbar.viewport = Some(width);
                         toolbar.popup_dirty = true;
                         cx.notify();
                         // Native accessibility actions can finish on this first measured frame.
@@ -176,6 +188,14 @@ impl Render for OverflowToolbar {
                     }
                 });
             })
-            .children(children)
+            .children(children);
+        h_flex()
+            .id("overflow-toolbar-clip")
+            .test_support()
+            .min_w_0()
+            .m(-ring)
+            .p(ring)
+            .overflow_hidden()
+            .child(row)
     }
 }

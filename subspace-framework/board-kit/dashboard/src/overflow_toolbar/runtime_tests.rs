@@ -190,3 +190,99 @@ fn measuring_a_new_viewport_requests_a_follow_up_native_frame(cx: &mut TestAppCo
         "an unchanged viewport must not keep scheduling frames"
     );
 }
+
+#[gpui_kit::test]
+fn the_clip_leaves_a_focus_rings_room_round_the_row(cx: &mut TestAppContext) {
+    let (_, cx) = anchor_window(cx);
+    cx.update(|window, _| {
+        let row = window.find("overflow-toolbar-row").bounds();
+        let clip = window.find("overflow-toolbar-clip").bounds();
+        let ring = px(crate::workspace::FOCUS_RING_PX);
+        assert_eq!(clip.left(), row.left() - ring, "{clip:?} round {row:?}");
+        assert_eq!(clip.right(), row.right() + ring);
+        assert_eq!(clip.top(), row.top() - ring);
+        assert_eq!(clip.bottom(), row.bottom() + ring);
+    });
+}
+
+#[gpui_kit::test]
+fn an_open_overflow_menu_closes_when_everything_fits_again(cx: &mut TestAppContext) {
+    let (probe, cx) = anchor_window(cx);
+    cx.update(|window, cx| window.click("overflow-toolbar-button", cx));
+    settle(cx);
+    cx.update(|window, _| assert!(window.try_find("popup-menu").is_some(), "the menu opened"));
+    probe.root.update(cx, |root, cx| {
+        root.width = 150.;
+        cx.notify();
+    });
+    settle(cx);
+    cx.update(|window, cx| {
+        assert!(window.try_find("overflow-toolbar-more").is_none());
+        assert!(
+            window.try_find("popup-menu").is_none(),
+            "no menu left open unseen"
+        );
+        let toolbar = probe.root.read(cx).toolbar.clone();
+        let anchor = toolbar.read(cx).anchor.clone();
+        assert!(anchor.is_some_and(|anchor| !anchor.read(cx).is_open()));
+    });
+}
+
+#[gpui_kit::test]
+fn a_row_given_no_width_moves_every_unit_to_the_menu(cx: &mut TestAppContext) {
+    let (probe, cx) = anchor_window(cx);
+    probe.root.update(cx, |root, cx| {
+        root.width = 0.;
+        cx.notify();
+    });
+    settle(cx);
+    cx.update(|window, _| {
+        for index in 0..3 {
+            assert!(
+                window
+                    .try_find(format!("overflow-unit:unit-{index}"))
+                    .is_none(),
+                "unit {index} is not drawn where it cannot be seen"
+            );
+        }
+        assert!(window.try_find("overflow-toolbar-more").is_some());
+    });
+}
+
+#[gpui_kit::test]
+fn refresh_runs_from_its_button_and_from_the_overflow_menu(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let runs = Rc::new(std::cell::Cell::new(0));
+    let counted = runs.clone();
+    let mut units = units(Rc::default());
+    units.push(OverflowUnit::refresh("test-refresh", move |_, _| {
+        counted.set(counted.get() + 1);
+    }));
+    let toolbar = cx.new(|_| OverflowToolbar::new(units));
+    let (root, cx) = cx.add_window_view(|_, _| Harness {
+        toolbar,
+        width: 400.,
+        left: 0.,
+    });
+    settle(cx);
+    cx.update(|window, cx| window.click("test-refresh", cx));
+    assert_eq!(runs.get(), 1, "the button runs it");
+    root.update(cx, |root, cx| {
+        root.width = 70.;
+        cx.notify();
+    });
+    settle(cx);
+    cx.update(|window, cx| {
+        assert!(window.try_find("test-refresh").is_none(), "in the menu");
+        window.click("overflow-toolbar-button", cx);
+        let menu = window.within("popup-menu");
+        let index = (0usize..8)
+            .find(|index| {
+                menu.try_find(*index)
+                    .is_some_and(|item| item.label().is_some_and(|label| label == "Refresh"))
+            })
+            .expect("Refresh is in the menu");
+        window.within("popup-menu").click(index, cx);
+    });
+    assert_eq!(runs.get(), 2, "the menu entry runs it");
+}

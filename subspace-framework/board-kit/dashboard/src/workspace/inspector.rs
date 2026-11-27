@@ -12,7 +12,7 @@ use gpui_kit::{
 };
 use subspace_lucide::IconName;
 
-use super::{header, text_edge};
+use super::{header, strip_height, text_edge};
 use crate::action::{Intent, icon_button};
 use crate::tokens::Tokens;
 use crate::typography::heading_font;
@@ -118,7 +118,7 @@ impl ParentElement for Inspector {
 }
 
 impl RenderOnce for Inspector {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = Tokens::current(cx);
         let panel = self.tabs.as_ref().and_then(tabs::panel_label);
         let title = heading(self.title, self.tabs, &tokens, cx);
@@ -131,7 +131,8 @@ impl RenderOnce for Inspector {
             )
             .on_click(move |event, window, cx| on_close(event, window, cx))
         });
-        let head = header::strip("workspace-inspector-header", tokens.line, &tokens)
+        let height = strip_height(window, cx);
+        let head = header::strip("workspace-inspector-header", tokens.line, height, &tokens)
             .child(title)
             .children(self.actions)
             .children(close);
@@ -160,7 +161,7 @@ impl RenderOnce for Inspector {
             .bg(tokens.surface)
             .border_l_1()
             .border_color(tokens.line)
-            .child(head)
+            .child(head.test_support())
             .child(body)
             .children(self.footer.map(|footer| foot(footer, &tokens)))
     }

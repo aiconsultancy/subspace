@@ -205,6 +205,9 @@ the three columns and owns the docks' widths and drag handles. Leave a dock
 out to hide it. A shared list keeps its own detail panel as the trailing
 dock: draw it with `list::render_under`, passing `workspace::pane_head` for
 the tab strip and toolbar, so the panel's header lines up with the tab strip.
+A pane with no tab strip beside a dock heads it with `Toolbar::strip`, so its
+toolbar is as tall as the dock headers and the hairlines under them are one
+line ([Strips line up, exactly](design-guide.md#the-rules)).
 
 - Put service, account and status context in `Dashboard::status`, not in a
   line above the content.

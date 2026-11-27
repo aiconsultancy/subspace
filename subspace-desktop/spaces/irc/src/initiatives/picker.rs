@@ -2,13 +2,18 @@
 //! button leads the pane's toolbar; its hint goes to the status bar.
 
 use crate::Irc;
-use gpui_kit::{AnyElement, App, Context, Entity, Window};
+use gpui_kit::component::menu::PopupMenuItem;
+use gpui_kit::{AnyElement, App, Context, Entity, IntoElement as _, Window, div};
 use subspace_api_client::initiatives::Catalog;
 use subspace_framework::dashboard::PaletteCommand;
 use subspace_framework::dashboard::anchored::Anchor;
 use subspace_framework::dashboard::menu::{Menu, MenuAnchors, MenuEvent};
+use subspace_framework::dashboard::overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry};
+use subspace_framework::dashboard::panel::IconName;
 
 const ANCHOR: &str = "irc-initiative";
+/// Units are measured when they first draw.
+const UNMEASURED_WIDTH: f32 = 0.;
 
 #[derive(Default)]
 pub(crate) struct Picker {
@@ -20,6 +25,12 @@ pub(crate) struct Picker {
 impl Picker {
     pub(crate) fn host(&self) -> Option<Entity<Anchor>> {
         self.anchors.view()
+    }
+
+    /// Whether the chooser is open, from its own button or from the overflow
+    /// menu's chevron.
+    pub(crate) fn is_open(&self) -> bool {
+        self.menu.is_some()
     }
 
     pub(crate) fn dismiss(&mut self, window: &mut Window, cx: &mut App) {
@@ -67,11 +78,47 @@ fn catalog<'a>(board: &'a Irc, cx: &'a App) -> Option<&'a Catalog> {
 }
 
 /// The picker's button, while there is an initiative to choose.
-pub(crate) fn button(board: &Irc, cx: &mut Context<Irc>) -> Option<AnyElement> {
+fn button(board: &Irc, cx: &mut Context<Irc>) -> Option<AnyElement> {
     let button = catalog(board, cx)?
         .button("irc-initiative-button")
         .on_click(cx.listener(|this, _, window, cx| open(this, window, cx)));
     Some(board.initiative_menu.anchors.trigger(ANCHOR, button, cx))
+}
+
+/// The picker as a unit of the toolbar's leading overflow. Its key is the
+/// picker's anchor, so a hidden picker opens from the overflow chevron once
+/// [`set_toolbar`] names the toolbar.
+pub(crate) fn unit(board: &Irc, cx: &App) -> Option<OverflowUnit> {
+    let name = catalog(board, cx)?
+        .selected()
+        .map_or_else(|| "Initiative".to_owned(), |item| item.name.clone());
+    let owner = board.me.clone();
+    let opener = owner.clone();
+    let entry = PopupEntry::new(move || {
+        let opener = opener.clone();
+        PopupMenuItem::new(format!("Initiative: {name}…"))
+            .icon(IconName::Users)
+            .on_click(move |_, window, cx| {
+                _ = opener.update(cx, |board, cx| open(board, window, cx));
+            })
+    });
+    Some(OverflowUnit::inline(
+        ANCHOR,
+        UNMEASURED_WIDTH,
+        move |_, cx| {
+            owner
+                .update(cx, |board, cx| button(board, cx))
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| div().into_any_element())
+        },
+        vec![entry],
+    ))
+}
+
+/// The toolbar the picker's unit sits in.
+pub(crate) fn set_toolbar(board: &Irc, toolbar: &Entity<OverflowToolbar>) {
+    board.initiative_menu.anchors.set_toolbar(toolbar);
 }
 
 pub(crate) fn command(board: &Irc, cx: &App) -> Option<PaletteCommand> {
@@ -129,8 +176,10 @@ pub(crate) fn dismiss_stale_picker(board: &Irc, cx: &mut Context<Irc>) {
     }
 }
 
+/// Whether the chooser is open, wherever it is anchored, on a catalogue that
+/// has changed since.
 fn is_stale(board: &Irc, cx: &App) -> bool {
-    board.initiative_menu.host().is_some()
+    board.initiative_menu.is_open()
         && catalog(board, cx)
             .is_none_or(|catalog| catalog.revision() != board.initiative_menu.revision)
 }

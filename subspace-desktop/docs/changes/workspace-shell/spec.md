@@ -100,7 +100,7 @@ bundled Twilight Two theme [D]:
 - **One primary action.** A pane toolbar has at most one primary action, the
   Space's main one, at its trailing end (`action::main_action`): New issue…
   in Issues, Trigger… in Actions and New project in Board Lab [D]. The
-  design guide's rule 8 says so.
+  design guide's "One primary action per toolbar" rule says so.
 - **Quiet dock switches.** The dock switches sit at the ends of the status
   bar (see section 3) and show their state by a 14 px panel glyph that takes
   the accent while the dock shows, with no fill

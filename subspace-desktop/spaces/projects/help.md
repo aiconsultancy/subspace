@@ -12,6 +12,8 @@ Sign in under **Settings > Account**. Projects uses the same API account and ini
 
 Select a project in the navigator. **Overview** shows its status, health, priority, lead, dates, description, timeline and latest update.
 
+The initiative, **Overview**, **Milestones** and **Back** stay on one line at the top of the pane. In a narrow window, the last of them move into the menu at the end of that line.
+
 Hover over a milestone on the timeline to see a preview of its linked issues and their statuses. Select a milestone to open its details.
 
 ## Toolbar and filters

@@ -67,6 +67,7 @@ pub struct TabBar {
     size: Size,
     suffix: Option<gpui_kit::AnyElement>,
     has_last_empty_space: bool,
+    has_prefix: bool,
     pane: bool,
 }
 
@@ -81,6 +82,7 @@ impl TabBar {
             size: Size::Small,
             suffix: None,
             has_last_empty_space: false,
+            has_prefix: false,
             pane: false,
         }
     }
@@ -124,6 +126,7 @@ impl TabBar {
 
     pub fn prefix(mut self, prefix: impl IntoElement) -> Self {
         self.native = self.native.prefix(prefix);
+        self.has_prefix = true;
         self
     }
 
@@ -159,7 +162,7 @@ impl Styled for TabBar {
 }
 
 impl RenderOnce for TabBar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = crate::Tokens::current(cx);
         // Kit only renders last_empty_space when a suffix or menu exists.
         // Supply an empty suffix only if the caller has not supplied its own.
@@ -172,12 +175,17 @@ impl RenderOnce for TabBar {
             surface: self.surface.unwrap_or(tokens.bg),
             size: self.size,
             pane: self.pane,
+            strip: crate::workspace::strip_height(window, cx),
+            at_edge: false,
             mono: cx.theme().mono_font_family.clone(),
         };
-        native.children(
-            self.tabs.into_iter().enumerate().map(|(ix, tab)| {
-                paint::tab(tab, self.selected == Some(ix), &tokens, dress.clone())
-            }),
-        )
+        let leads_at_edge = self.pane && !self.has_prefix;
+        native.children(self.tabs.into_iter().enumerate().map(|(ix, tab)| {
+            let dress = paint::Dress {
+                at_edge: leads_at_edge && ix == 0,
+                ..dress.clone()
+            };
+            paint::tab(tab, self.selected == Some(ix), &tokens, dress)
+        }))
     }
 }

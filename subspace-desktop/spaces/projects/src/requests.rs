@@ -14,7 +14,7 @@ use crate::{Projects, Record, Write};
 // qual:allow(coupling, oi) reason: "The I/O methods bind background requests to the Space's selected account and project."
 impl Projects {
     pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
-        if self.editor.is_some() || self.write_task.is_some() {
+        if self.editing_held() {
             return;
         }
         self.initiatives.update(cx, Catalog::refresh);

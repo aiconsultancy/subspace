@@ -29,6 +29,10 @@ const XSMALL_HEIGHT: f32 = 20.;
 const LARGE_HEIGHT: f32 = 36.;
 /// Wider than any tab; the tab's own `overflow_hidden` clips the layers.
 const LAYER_REACH: f32 = 4096.;
+/// Kit's `TabVariant::Tab` border, on either side of a tab. A prefix-less
+/// pane bar shifts its first tab by this much to clip that tab's leading
+/// border (see [`Dress::at_edge`]).
+const KIT_TAB_BORDER_PX: f32 = 1.;
 
 #[derive(Debug, PartialEq)]
 pub(super) struct State {
@@ -90,6 +94,19 @@ pub(super) struct Dress {
     /// every bar the selected tab is told apart by its surface and its
     /// stronger, medium-weight text, never by a line on one edge.
     pub(super) pane: bool,
+    /// The workspace's strip height, which a pane's tabs fill.
+    pub(super) strip: Pixels,
+    /// The first tab of a pane's tab strip, which starts at the pane's
+    /// leading edge: the dock beside it, or the window, already draws that
+    /// line, so the tab's own leading border sits just outside the bar,
+    /// where the bar clips it.
+    ///
+    /// A workaround for GPUI Kit 0.9.1: Kit means to drop the first tab's
+    /// leading border when the bar has no prefix, but `tab/tab_bar.rs:514`
+    /// sets `tab_bar_prefix.unwrap_or(true)` for every tab, so it never
+    /// does, and Kit paints borders over the tab's children. Remove this
+    /// when Kit passes `tab_bar_prefix` correctly.
+    pub(super) at_edge: bool,
     /// The monospace family, for an opened item's key.
     pub(super) mono: SharedString,
 }
@@ -100,7 +117,7 @@ pub(super) fn tab(tab: Tab, selected: bool, tokens: &Tokens, dress: Dress) -> Ki
     let hover = state(selected, true, disabled, tokens, dress.surface);
     let glass_hover = tokens.controls.toolbar_look.hover == ButtonFinish::Glass;
     let close_label = tab_label(&tab.spec.label);
-    let height = tab_height(&dress, tokens);
+    let height = tab_height(&dress);
     let fill = div()
         .absolute()
         .top_0()
@@ -118,6 +135,7 @@ pub(super) fn tab(tab: Tab, selected: bool, tokens: &Tokens, dress: Dress) -> Ki
     tab.native
         .group(GROUP)
         .when(dress.pane, |tab| tab.min_h(height))
+        .when(dress.at_edge, |tab| tab.ml(-px(KIT_TAB_BORDER_PX)))
         .prefix(layers(fill, height))
         .child(content)
         .when_some(tab.close, |tab, handler| {
@@ -177,7 +195,7 @@ fn key_mark(key: SharedString, mono: SharedString, tokens: &Tokens) -> Div {
 
 /// The tab's height: Kit's for the bar's size, or the strip's in a pane's
 /// tab strip, which the tab's least height stretches it to.
-fn tab_height(dress: &Dress, tokens: &Tokens) -> Pixels {
+fn tab_height(dress: &Dress) -> Pixels {
     let natural = match dress.size {
         Size::XSmall => XSMALL_HEIGHT,
         Size::Small => SMALL_HEIGHT,
@@ -185,7 +203,7 @@ fn tab_height(dress: &Dress, tokens: &Tokens) -> Pixels {
         _ => DEFAULT_HEIGHT,
     };
     if dress.pane {
-        px(natural.max(f32::from(tokens.strip_height)))
+        px(natural).max(dress.strip)
     } else {
         px(natural)
     }

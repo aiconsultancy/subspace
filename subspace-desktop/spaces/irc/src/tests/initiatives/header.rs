@@ -1,7 +1,7 @@
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt as _;
 use subspace_client_irc::{Command, ConnectionStatus, Event};
-use subspace_framework::dashboard::Dashboard as _;
+use subspace_framework::dashboard::{Dashboard as _, Tokens, workspace};
 
 use super::super::{inject, mount, settings};
 use super::{member_of_the_catalogue, settle};
@@ -77,9 +77,47 @@ fn the_toolbar_leads_with_the_picker_and_trails_with_the_actions(cx: &mut TestAp
             picker.right() <= heading.left() && heading.right() <= more.left(),
             "the picker {picker:?}, the heading {heading:?}, then More {more:?}"
         );
+        // With no tab strip the toolbar is the pane's strip, level with
+        // both docks' headers.
+        let line = window.find("irc-toolbar").bounds().bottom();
+        for id in ["workspace-navigator-header", "workspace-inspector-header"] {
+            let edge = window.find(id).bounds().bottom();
+            assert!(
+                (edge - line).abs() < gpui_kit::px(0.5),
+                "{id} at {edge:?}, the toolbar at {line:?}"
+            );
+        }
         window.click("irc-more", cx);
     });
     crate::tests::remove::settle(cx);
     crate::tests::remove::choose("Join…", cx);
     board.read_with(cx, |board, _| assert!(board.join.is_some()));
+}
+
+#[gpui_kit::test]
+fn without_pickers_the_heading_starts_at_the_text_edge(cx: &mut TestAppContext) {
+    let (_board, hub, cx) = mount(cx, settings());
+    inject(
+        &hub,
+        vec![Event::Status {
+            network: network_id(),
+            status: ConnectionStatus::Connected {
+                nick: "tester".into(),
+            },
+        }],
+        cx,
+    );
+    settle(cx);
+    cx.update(|window, cx| {
+        assert!(window.try_find("workspace-navigator").is_some());
+        assert!(window.try_find("irc-initiative-button").is_none());
+        let toolbar = window.find("irc-toolbar").bounds();
+        let heading = window.find("irc-header").bounds();
+        let edge = toolbar.left() + workspace::text_edge(&Tokens::current(cx));
+        assert!(
+            (heading.left() - edge).abs() < gpui_kit::px(0.5),
+            "the heading starts at {:?}, the text edge at {edge:?}",
+            heading.left()
+        );
+    });
 }

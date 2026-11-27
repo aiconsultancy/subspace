@@ -22,7 +22,7 @@ use subspace_lucide::SvgIcon;
 use super::row_parts::{
     ClickHandler, MenuBuilder, count_mark, fill, row_focus, with_handlers, with_menu,
 };
-use super::{header, row_order, text_edge};
+use super::{header, row_order, strip_height, text_edge};
 use crate::row_menu::GroupedMenu;
 use crate::tokens::Tokens;
 use crate::truncated;
@@ -93,10 +93,16 @@ impl RenderOnce for Navigator {
         )
         .text_color(tokens.accent)
         .test_support();
-        let head = header::strip("workspace-navigator-header", tokens.sidebar_line, &tokens)
-            .child(title)
-            .children(self.badge.map(|badge| badge_mark(badge, &tokens)))
-            .children(self.actions);
+        let height = strip_height(window, cx);
+        let head = header::strip(
+            "workspace-navigator-header",
+            tokens.sidebar_line,
+            height,
+            &tokens,
+        )
+        .child(title)
+        .children(self.badge.map(|badge| badge_mark(badge, &tokens)))
+        .children(self.actions);
         v_flex()
             .id("workspace-navigator")
             .test_support()
@@ -105,7 +111,7 @@ impl RenderOnce for Navigator {
             .bg(tokens.sidebar)
             .border_r_1()
             .border_color(tokens.sidebar_line)
-            .child(head)
+            .child(head.test_support())
             .child(
                 v_flex()
                     .id("workspace-navigator-body")

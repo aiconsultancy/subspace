@@ -1,6 +1,7 @@
 //! The two kinds of line in a list, a group header and an item row, and a
 //! group's note, the quiet line under its last row.
 
+mod band;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -20,6 +21,7 @@ use crate::feedback;
 use crate::tokens::Tokens;
 use crate::truncated;
 use crate::typography;
+use band::band;
 
 /// Shared row frame: height, padding, separator and selection fill. With a
 /// row inset, hover and selection are a rounded fill inside the row and rows
@@ -116,8 +118,9 @@ fn group_indicators(
 }
 
 /// A group header's frame: the shared row, then either the theme's filled
-/// band and top line, or, for a comfortable list, a little space above and
-/// only the row's hairline.
+/// band with a stronger line under it, or, for a comfortable list, a little
+/// space above and only the row's hairline. The band draws no line above
+/// it: the line before it, or the toolbar, already draws that edge.
 fn group_frame<D: ListDashboard>(
     this: &D,
     key: &SharedString,
@@ -131,8 +134,7 @@ fn group_frame<D: ListDashboard>(
         .pl(px(ROW_PADDING_LEFT_PX) + tokens.row_inset)
         .when_some(this.list_side_inset(), |row, inset| row.px(inset))
         .when(comfortable, |row| row.mt_1())
-        .when(!selected && banded, |row| row.bg(tokens.pane))
-        .when(banded, |row| row.border_t_1().border_color(tokens.line))
+        .when(banded, |row| band(row, selected, tokens))
 }
 
 pub(super) fn group_row<D: ListDashboard>(

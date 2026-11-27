@@ -1,40 +1,40 @@
 //! The Projects workspace with shared navigation and project header.
 
+mod actions;
 mod linked_issues;
 mod milestones;
 mod overview;
 #[cfg(test)]
 mod tests;
 mod timeline;
+mod toolbar;
 
 use chrono::NaiveDate;
-use gpui_kit::component::{Disableable as _, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div, px,
 };
 use subspace_api_client::initiatives::{NO_MEMBERSHIPS, not_a_member};
-use subspace_framework::dashboard::Dashboard as _;
 use subspace_framework::dashboard::{
     Tokens,
-    action::{Intent, action_button, icon_button, main_action},
-    feedback,
-    icon_button::IconButton,
-    rich,
+    action::{Intent, action_button},
+    feedback, rich,
     row_menu::MenuChat,
     workspace,
 };
 use subspace_framework::lucide::IconName;
 
-use crate::{Projects, Record, Tab, editor, initiative};
+use crate::{Projects, Record, Tab, editor};
 
 impl Render for Projects {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.follow_account(cx);
         self.restore_milestone_scroll();
         let tokens = Tokens::current(cx);
+        let actions = actions::render(self, cx);
         let pane = workspace::Pane::new("projects-pane")
-            .toolbar(toolbar(self, cx))
+            .toolbar(toolbar::render(self, cx).trailing(actions))
             .child(content(self, &tokens, cx));
         let workspace = workspace::Workspace::new("projects-workspace")
             .navigator(navigator(self, cx))

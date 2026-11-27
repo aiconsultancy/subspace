@@ -171,6 +171,11 @@ pub fn tab_bar(id: impl Into<ElementId>) -> TabBar {
 /// surface over the strip's bottom hairline and the native hairline on its
 /// trailing side, with no accent line along its top, so it reads as part of
 /// the content below.
+///
+/// A pane tab bar without a prefix is assumed to start at the pane's leading
+/// edge, where a dock or the window already draws the line: its first tab
+/// draws no leading line of its own. Give the bar a prefix if something sits
+/// before its first tab.
 pub fn pane_tab_bar(id: impl Into<ElementId>) -> TabBar {
     TabBar::new(id).pane()
 }

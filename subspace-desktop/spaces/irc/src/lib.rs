@@ -115,6 +115,8 @@ pub struct Irc {
     join: Option<join::Dialog>,
     initiative_menu: initiatives::Picker,
     toolbar: Option<Entity<subspace_framework::dashboard::overflow_toolbar::OverflowToolbar>>,
+    /// The pane toolbar's leading pickers, which overflow into a menu.
+    leading: Option<Entity<subspace_framework::dashboard::overflow_toolbar::OverflowToolbar>>,
     /// A search result waiting for its line.
     reveal: Option<reveal::Pending>,
     /// The buffers `/` and the palette search, rebuilt on each sync.
@@ -250,7 +252,7 @@ impl Dashboard for Irc {
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active = false;
         self.initiative_menu.dismiss(window, cx);
-        if let Some(toolbar) = &self.toolbar {
+        for toolbar in [&self.toolbar, &self.leading].into_iter().flatten() {
             toolbar.update(cx, |toolbar, cx| toolbar.dismiss(window, cx));
         }
         join::close(self, window, cx);
@@ -385,7 +387,8 @@ impl Dashboard for Irc {
         if self.join.is_some() || tracker::message::any_open(self, cx) {
             Some(Modal::Dialog)
         } else {
-            self.initiative_menu.host().map(|_| Modal::Menu)
+            // Open from its own button or the overflow menu's chevron.
+            self.initiative_menu.is_open().then_some(Modal::Menu)
         }
     }
 
