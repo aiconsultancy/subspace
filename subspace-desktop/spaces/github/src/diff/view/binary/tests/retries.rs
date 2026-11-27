@@ -9,7 +9,7 @@ use gpui_kit::test::TestWindowExt as _;
 use subspace_client_fleet::{Error, diff::DiffSide};
 use subspace_framework::client_test_support::Mock;
 
-use super::{PATH, assert_page, binary_response, click, mount};
+use super::{PATH, assert_page, binary_read_count, binary_response, click, mount};
 use crate::diff::view::binary::{
     preview::{PreviewError, PreviewRead},
     read::Blob,
@@ -181,7 +181,7 @@ fn closing_during_automatic_backoff_keeps_the_pinned_side_held(cx: &mut TestAppC
     let (view, window) = mount(cx, &mock);
     click(window, ("crew-diff-bytes", 0usize));
     assert_page(&view, window, DiffSide::New, 0);
-    let first = mock.requests().len();
+    let first = binary_read_count(&mock);
     let (busy, waiting) = mpsc::channel();
     let (source, client, mode, read) = view.read_with(window, |view, cx| {
         let DiffSource::Fleet(source) = &view.source else {
@@ -217,7 +217,7 @@ fn closing_during_automatic_backoff_keeps_the_pinned_side_held(cx: &mut TestAppC
     ));
     click(window, ("crew-diff-bytes", 0usize));
     assert_eq!(
-        mock.requests().len() - first,
+        binary_read_count(&mock) - first,
         1,
         "reopening broke the server's backoff"
     );
@@ -227,7 +227,7 @@ fn closing_during_automatic_backoff_keeps_the_pinned_side_held(cx: &mut TestAppC
     window.executor().advance_clock(Duration::from_secs(10));
     click(window, "crew-binary-retry-page");
     assert_page(&view, window, DiffSide::New, 0);
-    assert_eq!(mock.requests().len() - first, 2);
+    assert_eq!(binary_read_count(&mock) - first, 2);
 }
 
 #[gpui_kit::test]
@@ -250,13 +250,7 @@ fn only_the_visible_held_side_ticks(cx: &mut TestAppContext) {
     window.update(|window, _| {
         assert_eq!(window.find("crew-binary-retry-page").disabled(), Some(true));
     });
-    assert_eq!(
-        mock.requests()
-            .iter()
-            .filter(|req| req.path.contains("/diff/file?"))
-            .count(),
-        2
-    );
+    assert_eq!(binary_read_count(&mock), 2);
 
     let ticks = Rc::new(Cell::new(0));
     let count = ticks.clone();

@@ -134,6 +134,14 @@ fn click(window: &mut VisualTestContext, id: impl Into<ElementId>) {
     window.update(|window, cx| window.draw(cx).clear(cx));
 }
 
+fn binary_read_count(mock: &Mock) -> usize {
+    // The Fleet feed also uses this mock, on a separate thread.
+    mock.requests()
+        .iter()
+        .filter(|request| request.path.contains("/diff/file?"))
+        .count()
+}
+
 fn assert_page(
     view: &Entity<DiffView>,
     window: &mut VisualTestContext,

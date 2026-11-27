@@ -13,7 +13,9 @@ use subspace_client_fleet::{
 };
 use subspace_framework::client_test_support::Mock;
 
-use super::{DiffView, PATH, Position, assert_page, binary_response, click, mount};
+use super::{
+    DiffView, PATH, Position, assert_page, binary_read_count, binary_response, click, mount,
+};
 use crate::diff::view::{
     DiffSource, binary::read::Blob, crew_tests::ReadGate, source::FleetSource,
 };
@@ -152,12 +154,16 @@ fn a_late_hold_reaches_the_loaded_replacement_reader(cx: &mut TestAppContext) {
     view.read_with(window, |view, cx| {
         assert_eq!(view.binary_retry_remaining(cx), 10)
     });
-    let before = mock.requests().len();
+    let before = binary_read_count(&mock);
     click(window, "crew-binary-preview");
     window.executor().advance_clock(Duration::from_secs(9));
     window.run_until_parked();
     click(window, "crew-binary-preview");
-    assert_eq!(mock.requests().len(), before, "preview sent before expiry");
+    assert_eq!(
+        binary_read_count(&mock),
+        before,
+        "preview sent before expiry"
+    );
 
     window.executor().advance_clock(Duration::from_secs(1));
     window.run_until_parked();
@@ -171,7 +177,7 @@ fn a_late_hold_reaches_the_loaded_replacement_reader(cx: &mut TestAppContext) {
         assert!(view.binary.as_ref().unwrap().preview.is_some())
     });
     assert_eq!(
-        mock.requests().len() - before,
+        binary_read_count(&mock) - before,
         2,
         "one preview, in two pages"
     );
