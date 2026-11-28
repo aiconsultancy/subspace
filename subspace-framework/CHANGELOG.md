@@ -4,6 +4,13 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.10.1](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.10.0...subspace-framework-v0.10.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **framework:** use invented data in test fixtures ([b1abec3](https://github.com/aiconsultancy/subspace/commit/b1abec30917aafebbba07eebf2775899f5dceb89))
+
 ## [0.10.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.9.0...subspace-framework-v0.10.0) (2026-11-28)
 
 
