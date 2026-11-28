@@ -8,6 +8,8 @@ use crate::{
     model::{DecisionListItem, Page},
 };
 
+use std::collections::HashSet;
+
 const PAGE_SIZE: u32 = 50;
 
 #[cfg(test)]
@@ -20,7 +22,7 @@ pub(super) struct IssueDecisions {
     error: Option<ReadError>,
     unavailable: bool,
     opened: bool,
-    pages: usize,
+    consumed_cursors: HashSet<String>,
     epoch: u64,
     retry: Option<Read>,
 }
@@ -199,10 +201,11 @@ impl IssueDecisions {
 
     fn refresh_intent(&self) -> Read {
         // Carry the requested extra page through replacement, reload and retry.
+        let loaded_depth = self.consumed_cursors.len() + 1;
         Read::Refresh(match self.pending.or(self.retry) {
-            Some(Read::More) => self.pages + 1,
+            Some(Read::More) => loaded_depth + 1,
             Some(Read::Refresh(depth)) => depth,
-            _ => self.pages.max(1),
+            _ => loaded_depth,
         })
     }
 
@@ -246,21 +249,26 @@ impl IssueDecisions {
         })
     }
 
-    fn install(&mut self, read: Read, result: Result<(Page<DecisionListItem>, usize), Error>) {
+    fn install(&mut self, read: Read, result: Result<DecisionPages, Error>) {
         self.pending = None;
         self.unavailable = matches!(result, Err(Error::NotFound | Error::Forbidden));
         match result {
-            Ok((page, pages)) if matches!(read, Read::More) => {
-                merge_page(&mut self.page, page, |row| &row.id);
-                self.pages += pages;
-            }
-            Ok((page, pages)) => {
+            Ok(DecisionPages::Loaded { page, .. }) if read == Read::More => self.append(page),
+            Ok(DecisionPages::Loaded {
+                page,
+                consumed_cursors,
+            }) => {
                 self.page = Some(page);
-                self.pages = pages;
+                self.consumed_cursors = consumed_cursors;
+            }
+            Ok(DecisionPages::RepeatedCursor) => {
+                if let Some(shown) = self.page.as_mut() {
+                    shown.next_cursor = None;
+                }
             }
             Err(_) if self.unavailable => {
                 self.page = None;
-                self.pages = 0;
+                self.consumed_cursors.clear();
             }
             Err(error) => {
                 self.error = Some(error.into());
@@ -268,6 +276,29 @@ impl IssueDecisions {
             }
         }
     }
+
+    fn append(&mut self, page: Page<DecisionListItem>) {
+        let Some(shown) = self.page.as_mut() else {
+            return;
+        };
+        if page.next_cursor.as_ref().is_some_and(|next| {
+            shown.next_cursor.as_ref() == Some(next) || self.consumed_cursors.contains(next)
+        }) {
+            // Keep the valid prefix and retire the continuation that led back into it.
+            shown.next_cursor = None;
+            return;
+        }
+        self.consumed_cursors.extend(shown.next_cursor.take());
+        merge_page(&mut self.page, page, |row| &row.id);
+    }
+}
+
+enum DecisionPages {
+    Loaded {
+        page: Page<DecisionListItem>,
+        consumed_cursors: HashSet<String>,
+    },
+    RepeatedCursor,
 }
 
 pub(super) fn load(shared: &Shared, job: &Job, request: &DecisionsRequest) {
@@ -283,25 +314,20 @@ pub(super) fn load(shared: &Shared, job: &Job, request: &DecisionsRequest) {
 
 /// A refresh follows its own cursor chain to the requested depth.
 /// If any part fails, the existing rows stay intact.
-fn fetch(
-    shared: &Shared,
-    job: &Job,
-    request: &DecisionsRequest,
-) -> Result<(Page<DecisionListItem>, usize), Error> {
+fn fetch(shared: &Shared, job: &Job, request: &DecisionsRequest) -> Result<DecisionPages, Error> {
     let query = DecisionQuery::for_issue(&request.identifier);
     let mut page = shared.client.decisions(&query, &request.page)?;
     let items = std::mem::take(&mut page.items);
     extend_unique(&mut page.items, items, |row| &row.id);
-    let mut cursors = std::collections::HashSet::new();
-    cursors.extend(request.page.cursor.clone());
-    let mut pages = 1;
+    let mut consumed_cursors = HashSet::new();
     while let Some(cursor) = page.next_cursor.as_ref() {
-        if !cursors.insert(cursor.clone()) {
-            return Err(Error::InvalidResponse);
+        if consumed_cursors.contains(cursor) {
+            return Ok(DecisionPages::RepeatedCursor);
         }
-        if pages == request.depth || !job.current(&lock(&shared.state)) {
+        if consumed_cursors.len() + 1 == request.depth || !job.current(&lock(&shared.state)) {
             break;
         }
+        consumed_cursors.insert(cursor.clone());
         let next = PageRequest {
             limit: PAGE_SIZE,
             cursor: Some(cursor.clone()),
@@ -309,7 +335,9 @@ fn fetch(
         let incoming = shared.client.decisions(&query, &next)?;
         extend_unique(&mut page.items, incoming.items, |row| &row.id);
         page.next_cursor = incoming.next_cursor;
-        pages += 1;
     }
-    Ok((page, pages))
+    Ok(DecisionPages::Loaded {
+        page,
+        consumed_cursors,
+    })
 }

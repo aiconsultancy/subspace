@@ -198,6 +198,7 @@ def decision_record(key, title, status, at, decided, project_row, linked_issues,
                project=dict(id=project_row['id'], name=project_row['name'], archived=False),
                supersedesId=None, supersededById=None, supersedes=None, supersededBy=None,
                issues=dict(items=links, count=len(links)), tags=['review', 'workflow'],
+               madeBy=None if agent else decision_maker(maker),
                recordedByUserId=ADA['userId'], version=1, revisionNumber=1, createdAt=at, updatedAt=at,
                **provenance)
     accepted = status in ('accepted', 'superseded')
@@ -221,8 +222,8 @@ def seed_decisions(project_row, tracker, discussion, now):
     def days_ago(days):
         return (instant_now - timedelta(days=days)).date().isoformat()
 
-    # Distinct decided-on dates, so the list order (newest decided first)
-    # differs from both the logging order and the ID order.
+    # The handover note was logged most recently and has the earliest
+    # decided-on date. Pagination follows when records were logged.
     old = decision_record(
         'separate-queues', 'Keep separate review queues', 'superseded', minutes_ago(40), days_ago(9),
         project_row, [tracker], 'Review each part of the fixture workspace in its own queue.')
@@ -230,7 +231,7 @@ def seed_decisions(project_row, tracker, discussion, now):
         'shared-queue', 'Use one review queue', 'accepted', minutes_ago(25), days_ago(4),
         project_row, [tracker, discussion], 'Use one queue for all reviews of the fixture workspace.')
     proposed = decision_record(
-        'handover-note', 'Add a short handover note', 'proposed', minutes_ago(10), days_ago(1),
+        'handover-note', 'Add a short handover note', 'proposed', minutes_ago(10), days_ago(12),
         project_row, [tracker], 'Write a short handover note when a fixture review closes.', maker=AGENT)
     for number, (row, _) in enumerate((old, accepted, proposed), 1):
         row['identifier'] = decision_identifier(row, number)

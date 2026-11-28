@@ -16,7 +16,7 @@ Back to the [change record](intent.md).
 | --- | --- |
 | Identity and registration | Unchanged: board ID, description, icon, product descriptor, registration and retention. |
 | Layout and UI | Uses the existing Activity heading and Kit tab, action, focus trap and panel styling. Loading, empty, unavailable and retryable states have separate text. Status has a text label. No board toolbar or quit warning changes. |
-| Keys, palette and modal | Adds issue-local tab focus and the **Show issue decisions** palette command. The panel isolates focus and pointer input and preserves the existing Escape and Back layering. |
+| Keys, palette and modal | Adds issue-local tab focus and **Show issue decisions**. **Show all issue activity** also focuses its tab when switching from **Decisions**. The panel isolates focus and pointer input and preserves the existing Escape and Back layering. |
 | Settings and configuration | No new setting, connection or flag. Uses the existing Subspace API service. |
 | Caching and refresh | Memory-only and issue-scoped. Worker reads are lazy and generation-fenced; a retryable refresh failure retains the last successful rows. |
 | Search, agent tools, MCP and CLI | No new surface. |

@@ -1,4 +1,4 @@
-//! The issue-associated decision list, in the API's order (newest decided first).
+//! The issue-associated decision list, in the order supplied by the API.
 use super::super::paging::{self, Rows};
 use crate::{Issues, decision::words, requests::Request};
 use gpui_kit::component::{h_flex, v_flex};
@@ -123,7 +123,6 @@ fn row(
     );
     v_flex()
         .id(format!("issue-decision-row:{id}"))
-        .aria_description("Decisions are ordered by decided-on date, newest first.")
         .test_support()
         .min_w_0()
         .border_b_1()

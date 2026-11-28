@@ -194,8 +194,8 @@ Space origins, so a Fleet Console opened in a browser cannot read it.
 ## Decisions fixture
 
 Open **SUB-1** to capture three fictional decisions and their entries in the
-**All** activity timeline. They have different decided-on dates and list
-newest decided first, as Subspace API orders them. **Use one review queue**
+**All** activity timeline. The most recently logged decision appears first,
+even though it has the earliest decided-on date. **Use one review queue**
 links to its superseded decision, **Keep separate review queues**, and to
 issue **SUB-4**. Open **SUB-2** for an issue with no decisions.
 

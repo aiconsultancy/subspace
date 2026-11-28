@@ -159,7 +159,7 @@ fn supersession_back_and_linked_issue_navigation_share_the_panel(cx: &mut TestAp
     settle_detail(&board, cx, NEW);
     assert_eq!(
         label(cx, "issue-decision:Made by").as_deref(),
-        Some("Made by: A person")
+        Some("Made by: Fixture maker")
     );
     assert_eq!(
         label(cx, "decision-superseded-by-stale").as_deref(),

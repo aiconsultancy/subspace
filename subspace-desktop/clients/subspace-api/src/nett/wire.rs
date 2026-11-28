@@ -423,7 +423,10 @@ mod tests {
     fn decisions_keep_human_deciders_and_leave_subspace_fields_empty() {
         let value = decision(&json!({
             "id": "d1", "title": "Use the queue", "status": "accepted", "decidedOn": "2026-11-10",
-            "deciders": [{"userId": "u1", "displayName": "Ada", "available": true}],
+            "deciders": [
+                {"userId": "u1", "displayName": "Ada", "available": true},
+                {"userId": "u2", "displayName": "Grace", "available": true}
+            ],
             "projectId": null, "project": null,
             "issues": {"availability": "available", "items": [{"id": "i1", "identifier": "OPS-1", "title": "T"}], "hasMore": false},
             "version": 2, "revisionNumber": 1, "decision": "We use it.", "context": "", "why": "Speed",
@@ -435,6 +438,13 @@ mod tests {
         assert!(detail.item.tags.is_empty());
         assert_eq!(detail.item.project_key, "");
         assert_eq!(detail.item.made_by_user_id.as_deref(), Some("u1"));
+        let names: Vec<_> = detail
+            .human_makers
+            .people()
+            .iter()
+            .map(|person| person.display_name.as_str())
+            .collect();
+        assert_eq!(names, ["Ada", "Grace"]);
         assert_eq!(detail.recorded_by.display_name, "Ada");
         assert_eq!(detail.why, "Speed");
     }

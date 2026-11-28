@@ -57,8 +57,8 @@ test.skipIf(!testDatabase)(
         await client.query(
           `INSERT INTO project_decisions
             (organisation_id, project_id, recorded_by_id, title, decision, decided_on, created_at, made_by_type, status)
-           VALUES ($1, $2, $3, 'First', 'Do the first thing', '2026-01-03', '2026-01-01', 'human', 'accepted'),
-                  ($1, $2, $3, 'Second', 'Do the second thing', '2026-01-01', '2026-01-02', 'human', 'proposed')
+           VALUES ($1, $2, $3, 'First', 'Do the first thing', '2026-01-03', '2026-01-04', 'human', 'accepted'),
+                  ($1, $2, $3, 'Second', 'Do the second thing', '2026-01-01', '2026-01-05', 'human', 'proposed')
            RETURNING id`,
           [org, project, owner],
         )
@@ -103,6 +103,36 @@ test.skipIf(!testDatabase)(
         expect([response.status, response.status === status ? "" : body]).toEqual([status, ""]);
         return body;
       };
+      const [{ id: issue }] = (
+        await client.query(
+          `WITH state AS (
+             INSERT INTO workflow_states (id, organisation_id, project_id, name, type, position, is_default)
+             SELECT default_state_id, organisation_id, id, 'Todo', 'unstarted', 0, true
+             FROM projects WHERE id = $2
+             RETURNING id
+           )
+           INSERT INTO issues (organisation_id, project_id, number, identifier, title, summary, state_id, created_by_id)
+           SELECT $1, $2, 1, 'EXA-1', 'Example issue', 'Example summary', id, $3 FROM state
+           RETURNING id`,
+          [org, project, owner],
+        )
+      ).rows;
+      await client.query(
+        `INSERT INTO project_decision_issues (organisation_id, decision_id, issue_id)
+         VALUES ($1, $2, $4), ($1, $3, $4)`,
+        [org, first, second, issue],
+      );
+      const linkedPage = "?issue=EXA-1&limit=1";
+      const latest = await call(200, linkedPage);
+      expect(latest.items).toMatchObject([{ id: second, decidedOn: "2026-01-01" }]);
+      expect(latest.nextCursor).toBeString();
+      const earlier = await call(
+        200,
+        `${linkedPage}&cursor=${encodeURIComponent(latest.nextCursor)}`,
+      );
+      expect(earlier.items).toMatchObject([{ id: first, decidedOn: "2026-01-03" }]);
+      expect(earlier.nextCursor).toBeNull();
+
       const payload = {
         projectId: project,
         title: "Replacement",

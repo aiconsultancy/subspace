@@ -456,14 +456,16 @@ route again after deployment. Issue content is not persisted by this board or su
 
 Open an issue and choose **Decisions** under **Activity** to read its linked
 decisions. Choose **Show more** for another page. The list shows all statuses
-in the order the API returns them: Subspace API sorts by decided-on date,
-newest first. The tab has no count or comment composer. Open a decision here or from a **Decision logged** entry
-in **All** to read it in the same side panel. **All** records what happened;
+in API order. Subspace API puts the most recently logged decision first.
+Each row shows its decided-on date and names the maker when available.
+Open a decision here or from a **Decision logged** entry in **All** to read
+it in the same side panel. **All** records what happened;
 use **Decisions** to see which decisions are linked now. Opening another
 issue starts on **Comments**.
 
 Press `m` to focus the selected Activity tab, Left or Right to move between
-tabs, and Enter or Space to select. Tab to a decision and activate it.
+tabs, and Enter or Space to select. The command palette can switch directly
+to **Show all issue activity**. Tab to a decision and activate it.
 The modal panel starts on **Close decision**, keeps Tab and Shift+Tab inside
 and scrolls each control it reaches into view. The arrow keys, Page Up,
 Page Down, Home and End scroll the decision from any control in the panel.
@@ -478,7 +480,8 @@ from one. Opening a linked issue keeps that first destination too.
 
 The hub requests `GET /v1/decisions?issue=<identifier>&limit=50` only after
 the tab is selected. It follows opaque cursors and removes duplicate IDs
-without reordering. Issue refresh starts a fresh cursor chain and reads to
+without reordering. A repeated cursor ends **Show more** and keeps the rows
+already loaded. Issue refresh starts a fresh cursor chain and reads to
 the loaded page depth, plus the page a pending **Show more** asked for. It
 keeps any existing rows until all those pages succeed; retryable failures
 leave the rows in place. A list 403 from
