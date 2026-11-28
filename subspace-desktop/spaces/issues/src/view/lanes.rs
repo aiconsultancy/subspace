@@ -14,6 +14,7 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::{Glyph, Group, Row, Tokens, Tone, feedback, truncated};
 use subspace_framework::lucide::{IconName, SvgIcon};
 
+mod branches;
 mod people;
 
 use super::progress::progress;
@@ -94,6 +95,8 @@ pub(crate) fn leading(issues: &Issues, row: &Row, cx: &App) -> AnyElement {
     let priority = IssuePriority::from_value(fields.priority).look();
     let tracker = fields.kind == "tracker";
     lane.gap_2()
+        .when(row.indent > 0, |lane| lane.relative().self_stretch())
+        .children(branches::guides(issues, row, &tokens))
         .child(mark((priority.icon, priority.tone), &tokens))
         .child(identifier(&fields.identifier, cx))
         .child(mark(

@@ -36,14 +36,14 @@ fn digit_keys_choose_the_tabs_and_read_their_lists(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn shift_s_shows_sub_issues_flat_and_latches_the_switch(cx: &mut TestAppContext) {
+fn shift_s_shows_nested_sub_issues_and_latches_the_switch(cx: &mut TestAppContext) {
     let (board, cx) = listed(cx);
     requests(&board, cx);
     press(cx, "shift-s");
-    cx.update(|_, cx| assert_eq!(board.read(cx).sub_issues, SubIssues::Flat));
+    cx.update(|_, cx| assert_eq!(board.read(cx).sub_issues, SubIssues::Nested));
     assert_eq!(
         requests(&board, cx),
-        [choice(Tab::Active, "", SubIssues::Flat)]
+        [choice(Tab::Active, "", SubIssues::Nested)]
     );
     press(cx, "shift-s");
     cx.update(|_, cx| assert_eq!(board.read(cx).sub_issues, SubIssues::Hidden));
@@ -127,4 +127,21 @@ fn list_keys_do_nothing_while_signed_out(cx: &mut TestAppContext) {
         assert_eq!(board.sub_issues, SubIssues::Hidden);
     });
     assert!(requests(&board, cx).is_empty());
+}
+
+#[gpui_kit::test]
+fn stepping_forward_at_the_end_of_nested_results_requests_the_next_page(cx: &mut TestAppContext) {
+    let (board, cx) = listed(cx);
+    board.update(cx, |board, cx| {
+        board.sub_issues = SubIssues::Nested;
+        board.list.select(crate::lines::issue_key("id-SUB-1141"));
+        board.requests.clear();
+        board.step_issue(true, cx);
+        assert_eq!(
+            board.requests,
+            [crate::requests::Request::More {
+                group: "state-todo".into()
+            }]
+        );
+    });
 }

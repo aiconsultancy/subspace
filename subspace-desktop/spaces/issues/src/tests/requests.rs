@@ -34,7 +34,7 @@ fn each_choice_becomes_the_hubs_list_query() {
             Tab::MyIssues,
             ProjectScope::AllProjects,
             "",
-            SubIssues::Flat
+            SubIssues::Nested
         )
         .query(),
         ListQuery::new(ListTab::MyIssues)

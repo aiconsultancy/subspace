@@ -5,11 +5,12 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
-use subspace_framework::dashboard::Dashboard as _;
+use subspace_framework::dashboard::{Dashboard as _, ListDashboard as _};
 
 use super::offline::{DONE, Offline, board_with_hub, fixture_hub, offline, settle_board, wait_for};
-use super::press;
+use super::{press, render, row_name, row_shown};
 use crate::{Issues, lines, link};
 
 #[gpui_kit::test]
@@ -55,6 +56,31 @@ fn unfolding_during_a_failed_reload_does_not_complete_an_unqueued_page(cx: &mut 
     assert_ne!(more, crate::listing::More::None, "no page completed");
     settle_board(&board, cx, |board| done_rows(board) == Some(1));
     assert_eq!(done_reads(&offline), 1, "the open group can still be read");
+}
+
+#[gpui_kit::test]
+fn nested_view_loads_done_children_under_an_open_parent(cx: &mut TestAppContext) {
+    let offline = offline();
+    offline
+        .switches
+        .nested_done_child
+        .store(true, Ordering::Relaxed);
+    let (board, cx) = board_with_hub(&offline, cx);
+    settle_board(&board, cx, |board| board.listing.content.is_some());
+    assert_eq!(done_reads(&offline), 0);
+    board.update(cx, |board, cx| board.toggle_sub_issues(cx));
+    settle_board(&board, cx, |board| done_rows(board) == Some(1));
+    render(cx);
+    assert!(cx.update(|_, cx| board.read(cx).list().is_folded(&lines::group_key(DONE))));
+    assert!(row_shown(cx, "issue:3"));
+    cx.update(|window, _| {
+        let parent = window.find("issues-lead:issue:1").bounds();
+        let child = window.find("issues-lead:issue:3").bounds();
+        assert!(child.left() > parent.left() && child.top() > parent.top());
+    });
+    assert!(
+        row_name(&board, "issue:3", cx).is_some_and(|label| label.ends_with("sub-issue of SUB-1"))
+    );
 }
 
 /// Observe the failed Reload before letting its waiting page complete.

@@ -5,7 +5,7 @@ use subspace_framework::dashboard::settings::BoardSettingsEditor as _;
 #[gpui_kit::test]
 fn settings_have_no_inputs_or_saved_connection_choices(cx: &mut TestAppContext) {
     let mut settings = IssuesSettings::new();
-    assert!(settings.connection_state().contains("up to a minute"));
+    assert_eq!(settings.connection_state(), "Connecting…");
     settings.access = Access::Ready {
         display_name: "Ada Fixture".into(),
     };

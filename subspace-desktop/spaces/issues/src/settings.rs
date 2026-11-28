@@ -56,10 +56,7 @@ impl IssuesSettings {
     fn connection_state(&self) -> String {
         match &self.access {
             Access::Ready { display_name } => format!("Signed in as {display_name}"),
-            Access::Starting => format!(
-                "Connecting… The first load can take up to a minute while {} wakes.",
-                subspace_api_client::service_name()
-            ),
+            Access::Starting => "Connecting…".into(),
             Access::Failed(crate::listing::Failure::Edge) => {
                 subspace_api_client::sign_in_state().0.into()
             }

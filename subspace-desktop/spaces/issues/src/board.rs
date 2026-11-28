@@ -12,7 +12,7 @@ use subspace_framework::dashboard::{ListState, prefs};
 use crate::Issues;
 use crate::lines::{self, Folds, Line};
 use crate::listing::{Listing, More, Status};
-use crate::model::{IssuePriority, ProjectScope, SubIssues, Tab, chosen_project};
+use crate::model::{ProjectScope, SubIssues, Tab, chosen_project};
 use crate::requests::Request;
 use crate::scope::{self, Access};
 
@@ -60,10 +60,8 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
         search_fallback: SearchFallback::default(),
         listing: Listing::default(),
         index: HashMap::new(),
-        folds: Folds {
-            folded: prefs::get_list(cx, FOLDED_PREF),
-            unfolded: prefs::get_list(cx, UNFOLDED_PREF),
-        },
+        branch_guides: HashMap::new(),
+        folds: saved_folds(cx),
         search_folds: Default::default(),
         search_pages: Default::default(),
         requests: Vec::new(),
@@ -87,6 +85,13 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
         ),
         _search_task: None,
         _subscriptions: vec![typing, initiative_changes],
+    }
+}
+
+fn saved_folds(cx: &gpui_kit::App) -> Folds {
+    Folds {
+        folded: prefs::get_list(cx, FOLDED_PREF),
+        unfolded: prefs::get_list(cx, UNFOLDED_PREF),
     }
 }
 
@@ -217,35 +222,25 @@ impl Issues {
             .get(row)
     }
 
-    /// A row's accessible name: identifier, state, priority and title, so the
-    /// icon-only lanes are never the only way to read them.
-    pub(crate) fn row_label(&self, row: &subspace_framework::dashboard::Row) -> SharedString {
-        match self.issue(&row.key) {
-            Some(item) => format!(
-                "{}, {}, {}, {}",
-                item.fields.identifier,
-                item.fields.state.name,
-                IssuePriority::from_value(item.fields.priority).look().label,
-                item.fields.title
-            )
-            .into(),
-            None => row.title.clone(),
-        }
-    }
-
     /// Redraws the list lines from the listing, keeping folds and selection.
     pub(crate) fn sync_lines(&mut self, cx: &mut Context<Self>) {
         let groups = self
             .listing
             .content
             .as_ref()
-            .map(|content| content.groups.clone())
+            .map(|content| content.groups.as_slice())
             .unwrap_or_default();
-        self.index = row_index(&groups);
-        self.list.set_groups(lines::list_groups(&groups));
-        for group in &groups {
+        self.index = lines::row_index(groups);
+        let folded: Vec<_> = groups
+            .iter()
+            .map(|group| self.group_folded(group))
+            .collect();
+        let projection = lines::list_groups(groups, self.sub_issues, &folded);
+        self.branch_guides = projection.guides;
+        self.list.set_groups(projection.groups);
+        for (group, folded) in groups.iter().zip(folded) {
             let key = lines::group_key(&group.key);
-            if self.list.is_folded(&key) != self.group_folded(group) {
+            if self.list.is_folded(&key) != folded {
                 self.list.toggle(&key);
             }
         }
@@ -295,7 +290,9 @@ impl Issues {
                 self.request(Request::Group { group }, cx);
             }
         }
-        if self.list.is_folded(&key) != folding {
+        if self.sub_issues == SubIssues::Nested {
+            self.sync_lines(cx);
+        } else if self.list.is_folded(&key) != folding {
             self.list.toggle(&key);
         }
     }
@@ -320,7 +317,15 @@ impl Issues {
         selected: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        let Some((group, row)) = selected.and_then(|key| self.index.get(&key).copied()) else {
+        let Some(key) = selected else { return };
+        if self.sub_issues == SubIssues::Nested
+            && let Some(group) =
+                lines::visible_page_near(self.list.groups(), &key, NEAR_END_ROWS).map(str::to_owned)
+        {
+            self.read_more(&group, cx);
+            return;
+        }
+        let Some(&(group, row)) = self.index.get(&key) else {
             return;
         };
         let near = self.listing.content.as_ref().and_then(|content| {
@@ -332,19 +337,4 @@ impl Issues {
             self.read_more(&key, cx);
         }
     }
-}
-
-/// Each issue row's key, with its group and position.
-fn row_index(groups: &[crate::listing::IssueGroup]) -> HashMap<SharedString, (usize, usize)> {
-    groups
-        .iter()
-        .enumerate()
-        .flat_map(|(group, found)| {
-            found
-                .rows
-                .iter()
-                .enumerate()
-                .map(move |(row, item)| (lines::issue_key(&item.fields.id), (group, row)))
-        })
-        .collect()
 }

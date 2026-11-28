@@ -15,13 +15,14 @@ pub(crate) mod reveal_focus;
 mod states;
 
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
+    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
 };
-use subspace_framework::dashboard::{Tokens, feedback, list};
+use subspace_framework::dashboard::{Row, Tokens, feedback, list};
 
 use crate::Issues;
-use crate::model::{SubIssues, Tab};
+use crate::lines;
+use crate::model::{IssuePriority, SubIssues, Tab};
 use crate::scope::Body;
 
 /// How many sub-issues the list hides, while it hides some: the Sub-issues
@@ -32,19 +33,6 @@ pub(crate) fn hidden_subissues(issues: &Issues) -> Option<u32> {
         .listing
         .hidden_subissues_count
         .filter(|count| hiding && *count > 0)
-}
-
-/// The Sub-issues switch's accessible name and tooltip. While sub-issues
-/// are hidden, both say how many the list hides.
-pub(crate) fn sub_issues_words(mode: SubIssues, hidden: Option<u32>) -> (String, String) {
-    match (mode, hidden) {
-        (SubIssues::Flat, _) => ("Sub-issues".into(), "Hide sub-issues".into()),
-        (SubIssues::Hidden, Some(count)) => (
-            format!("Sub-issues, {count} hidden"),
-            format!("Show sub-issues ({count} hidden)"),
-        ),
-        (SubIssues::Hidden, None) => ("Sub-issues".into(), "Show sub-issues".into()),
-    }
 }
 
 fn body_element(
@@ -63,13 +51,10 @@ fn body_element(
             .child(
                 div()
                     .id("issues-loading")
+                    .role(Role::Status)
                     .aria_label("Loading issues")
                     .test_support()
-                    .child(feedback::skeleton(tokens))
-                    .child(format!(
-                        "The first load can take up to a minute while {} wakes.",
-                        subspace_api_client::service_name()
-                    )),
+                    .child(feedback::skeleton(tokens)),
             )
             .into_any_element(),
         Body::Screen { screen, .. } => frame
@@ -96,4 +81,26 @@ pub(crate) fn empty_message(tab: Tab, query: &str, filtered: bool) -> (SharedStr
         tab.spec().empty.into(),
         "Try another project, or reload.".into(),
     )
+}
+
+/// A row's accessible name: identifier, state, priority and title, so the
+/// icon-only lanes are never the only way to read them.
+pub(crate) fn row_label(issues: &Issues, row: &Row) -> SharedString {
+    let Some(item) = issues.issue(&row.key) else {
+        return row.title.clone();
+    };
+    let fields = &item.fields;
+    let mut label = format!(
+        "{}, {}, {}, {}",
+        fields.identifier,
+        fields.state.name,
+        IssuePriority::from_value(fields.priority).look().label,
+        fields.title
+    );
+    let parent = fields.parent_id.as_deref().filter(|_| row.indent > 0);
+    if let Some(parent) = parent.and_then(|id| issues.issue(&lines::issue_key(id))) {
+        label.push_str(", sub-issue of ");
+        label.push_str(&parent.fields.identifier);
+    }
+    label.into()
 }

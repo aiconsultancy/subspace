@@ -5,7 +5,7 @@ use subspace_framework::dashboard::{PaletteCommand, PaletteOption, SubList, link
 
 use crate::Issues;
 use crate::keys;
-use crate::model::{ProjectScope, SubIssues};
+use crate::model::ProjectScope;
 use crate::scope::{self, Body, ScreenAction};
 
 // qual:allow(coupling, oi) reason: "The board owns its palette composition and callbacks; its other state and view concerns remain in their existing modules."
@@ -155,13 +155,10 @@ impl Issues {
     }
 
     fn list_commands(&self) -> Vec<PaletteCommand> {
-        let subissues = match self.sub_issues {
-            SubIssues::Hidden => "Show sub-issues",
-            SubIssues::Flat => "Hide sub-issues",
-        };
         let mut commands = tab_commands().to_vec();
         commands.extend([
-            PaletteCommand::new(subissues, keys::ToggleSubIssues).shortcut("Shift+S"),
+            PaletteCommand::new(self.sub_issues.action(), keys::ToggleSubIssues)
+                .shortcut("Shift+S"),
             PaletteCommand::new("Search issues", keys::FocusSearch).shortcut("/"),
             self.project_command(),
             self.filter_command(crate::filter_menu::FilterMenu::Assignee, "Filter assignee…"),
