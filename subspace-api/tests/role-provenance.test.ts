@@ -181,6 +181,43 @@ describe.skipIf(!testDatabase)("role provenance", () => {
     }
   });
 
+  test("no request of a member binds a provider organisation with the administrator role recorded meanwhile", async () => {
+    const oid = crypto.randomUUID();
+    const person = await signIn(oid);
+    const { key } = await pairDevice(oid);
+    // A WorkOS organisation linked nowhere yet: its first link here binds it, which needs an
+    // administrator.
+    const providerOrganisation = `org_${crypto.randomUUID().replaceAll("-", "")}`;
+    const link = async (bearer: AgentKey | string) =>
+      call(bearer, "/api/v1/me/identities", "POST", {
+        token: await workos.sign(`user_${crypto.randomUUID()}`, providerOrganisation),
+      });
+    const nothingLinked = async () => {
+      const links = await database.client.query(
+        "SELECT id FROM member_identities WHERE external_organisation = $1",
+        [providerOrganisation],
+      );
+      expect(links.rows).toEqual([]);
+      const audits = await database.client.query(
+        "SELECT id FROM audit_logs WHERE action = 'memberIdentityLinked' AND changes->>'memberId' = $1",
+        [person],
+      );
+      expect(audits.rows).toEqual([]);
+    };
+    // Their own Entra token is a member's: linking needs a paired device's signature, so it is
+    // refused before the lock, whatever its role.
+    expect((await link(await entra(oid))).status).toBe(403);
+    await nothingLinked();
+    // Their device, held before its recheck while a sign-in whose token carries the app role
+    // records it: a device acts with the provisioned role, a member's, never the token's.
+    const refused = await across(
+      () => link(key),
+      () => setTokenRole(person, "admin"),
+    );
+    expect(refused.status).toBe(403);
+    await nothingLinked();
+  });
+
   test("a device's and a linked account's request lose the provisioned role a demotion removes meanwhile", async () => {
     const oid = crypto.randomUUID();
     const person = await signIn(oid, true);
