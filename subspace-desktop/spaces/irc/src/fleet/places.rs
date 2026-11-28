@@ -83,8 +83,8 @@ pub(super) fn places(initiatives: &[&MemberInitiative]) -> Vec<FleetPlace> {
                 .get(&fleet.id)
                 .into_iter()
                 .flatten()
+                .filter(|&name| !shared.contains(name))
                 .cloned()
-                .filter(|name| !shared.contains(name))
                 .collect(),
         })
         .collect()
