@@ -992,6 +992,34 @@ docker compose exec -u 0 -T api bun run auth:owner example --name "Tamsin Pryor"
 - The command runs only as root (uid 0), with the API's `DATABASE_URL`. The
   invite appears only in its output; give it only to the owner.
 
+### Provisioning a fleet for setup
+
+Guided setup registers a fleet's officers without an administrator's token.
+On the API host, as root and from the API's directory, it runs one command that
+ensures the pairing organisation and its owner, reconciles the fleet, its ships,
+officers and initiative, and prints a short-lived enrolment grant for
+Stargate. The fleet specification, a JSON object, arrives on standard input:
+
+```sh
+bun run --silent auth:provision-fleet < fleet-spec.json
+```
+
+For an API running in Compose, use standard input rather than `--file`, whose
+path would have to exist inside the container:
+
+```sh
+docker compose exec -u 0 -T api bun run --silent auth:provision-fleet < fleet-spec.json
+```
+
+The command needs the API's `DATABASE_URL`, `AUTH_PROVIDERS` with `pairing`,
+`AGENT_TOKEN_AUDIENCE`, `DEVICE_TOKEN_AUDIENCE` if set, and any
+`RESERVED_USERNAMES`. It mints no owner invite and revokes nothing: run
+`auth:owner` for those. Its output holds the grant, which can enrol any officer
+of the fleet until it is spent or expires after ten minutes, so keep it out of
+logs and pass it to Stargate over a trusted channel. The specification, output
+and rerun rules are in the
+[workstation pairing change record](docs/changes/workstation-pairing/README.md#provision-a-fleet-for-setup).
+
 ### Capability probe
 
 `GET /api/v1/pairing` needs no token and returns nothing secret, so a client can
