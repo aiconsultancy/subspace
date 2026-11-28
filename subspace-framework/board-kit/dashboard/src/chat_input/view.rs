@@ -16,11 +16,13 @@ pub(super) fn group(
     window: &mut Window,
     cx: &mut Context<ChatInput>,
 ) -> InputGroup {
+    let compact = input.compact_label();
+    let label = compact.map_or_else(|| "Chat message".into(), |label| format!("{label} text"));
     let mut group = InputGroup::new("chat-input")
-        .rounded_none()
-        .border_0()
-        .focus_ring(false)
-        .aria_label("Chat message");
+        .aria_label(label.clone())
+        .when(compact.is_none(), |group| {
+            group.rounded_none().border_0().focus_ring(false)
+        });
     group = counter(input, group, cx);
     if input
         .message
@@ -38,6 +40,7 @@ pub(super) fn group(
         let budget = input.attachment_budget;
         group = group.input(
             Textarea::new(&input.state)
+                .aria_label(label)
                 .min_h_0()
                 .disabled(input.disabled)
                 .on_paste(move |item, _, cx| {
@@ -59,13 +62,22 @@ pub(super) fn group(
         );
     }
     group.when_some(input.render_addon(window, cx), |group, addon| {
-        group.addon(
-            InputGroupAddon::new("chat-input-toolbar")
-                .align(InputGroupAddonAlignment::BlockEnd)
-                .py(px(sizing::TOOLBAR_PADDING_PX))
-                .child(div().w_full().min_h(rems(sizing::TOOLBAR_REM)).child(addon)),
-        )
+        group.addon(toolbar(addon, compact.is_some()))
     })
+}
+
+fn toolbar(addon: gpui_kit::AnyElement, compact: bool) -> InputGroupAddon {
+    InputGroupAddon::new("chat-input-toolbar")
+        .align(InputGroupAddonAlignment::BlockEnd)
+        .when(compact, |addon| addon.py_1())
+        .when(!compact, |addon| addon.py(px(sizing::TOOLBAR_PADDING_PX)))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .when(!compact, |row| row.min_h(rems(sizing::TOOLBAR_REM)))
+                .child(addon),
+        )
 }
 
 fn counter(input: &ChatInput, group: InputGroup, cx: &Context<ChatInput>) -> InputGroup {

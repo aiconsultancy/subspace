@@ -11,6 +11,7 @@
 //! stays unchanged.
 
 use gpui_kit::component::input::{InputEvent, RopeExt as _, TextareaState};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _,
     IntoElement, KeyBinding, KeyContext, OperatingSystem, ParentElement as _, Render, SharedString,
@@ -236,7 +237,8 @@ impl ChatInput {
         }
     }
 
-    /// The toolbar rendered in the group's bottom addon.
+    /// The toolbar rendered in the group's bottom addon, or the leading tools
+    /// on a compact message composer.
     pub fn set_addon(&mut self, addon: Option<AnyView>, cx: &mut Context<Self>) {
         self.addon = addon;
         cx.notify();
@@ -286,6 +288,19 @@ impl ChatInput {
     /// The text cursor's byte offset, for completing the word before it.
     pub fn cursor(&self, cx: &App) -> usize {
         self.state.read(cx).cursor()
+    }
+
+    /// The selected byte range, or an empty range at the cursor.
+    // qual:api - Formatting controls replace selected text.
+    pub fn selection(&self, cx: &App) -> std::ops::Range<usize> {
+        self.state.read(cx).selected_range()
+    }
+
+    /// Moves the selection to a byte range in the current draft.
+    // qual:api - An inserted formatting pair can place its caret inside.
+    pub fn set_selection(&mut self, range: std::ops::Range<usize>, cx: &mut Context<Self>) {
+        self.state
+            .update(cx, |state, cx| state.set_selected_range(range, cx));
     }
 
     /// Replaces the bytes in `range` with `text`, leaving the cursor after
@@ -456,8 +471,9 @@ impl Render for ChatInput {
             .w_full()
             .min_w_0()
             .flex_shrink_0()
-            .border_t_1()
-            .border_color(tokens.line)
+            .when(self.compact_label().is_none(), |frame| {
+                frame.border_t_1().border_color(tokens.line)
+            })
             .key_context(self.key_context(cx.platform_info().os))
             .on_action(cx.listener(Self::newline))
             .on_action(|_: &ChatBlockedSubmit, _, _| {})

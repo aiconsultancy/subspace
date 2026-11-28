@@ -419,6 +419,9 @@ close button.
   input ignores it. The message input's hint names the platform's key,
   `Return to send · Shift+Return for a new line` on macOS and `Enter to send ·
   Shift+Enter for a new line` elsewhere.
+  `ChatInput::compact_message` uses the inset Kit frame, a labelled send
+  action and an optional leading tools view. It keeps the same keyboard and
+  draft-sizing behaviour. The existing gallery card includes this state.
   `composer::Composer` remains the Write/Preview Markdown editor.
 - `chat_input::completion::CompletionList` is the completion list above a
   chat input, shown with Kit's `Command` list with search and filtering off.
