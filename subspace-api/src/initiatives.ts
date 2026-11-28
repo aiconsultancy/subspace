@@ -306,10 +306,14 @@ export const getInitiative = (member: Member, id: string) =>
 export function initiativePlacements(
   db: Db,
   organisationId: string,
-  selector: { name: string } | { id: string },
+  selector: { name: string } | { id: string } | { fleetId: string },
 ) {
   const match =
-    "id" in selector ? eq(initiatives.id, selector.id) : eq(initiatives.name, selector.name);
+    "id" in selector
+      ? eq(initiatives.id, selector.id)
+      : "fleetId" in selector
+        ? eq(initiatives.fleetId, selector.fleetId)
+        : eq(initiatives.name, selector.name);
   return db
     .execute<{ id: string; archived: boolean; fleetId: string | null }>(sql`
     with recursive lineage(candidate_id, id, parent_id, fleet_id, archived, depth) as (

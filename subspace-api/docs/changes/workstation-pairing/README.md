@@ -108,10 +108,12 @@ symlink). It has no HTTP route. A request looks like this:
   case. Officers are matched by name; same-fleet, same-rank active officers keep
   their member IDs and key credentials. Omission does not delete a ship or
   deactivate an officer. The command does not create Ergo accounts or keys.
-- Without an `initiative` field, setup finds a non-archived initiative of the
-  fleet's name, preferring one already owned by this fleet over an unassigned
-  one. If none matches, it creates one for the fleet. An ambiguous match needs
-  an explicit `"initiative": {"id": "<UUID>"}`. Keep the returned ID for
+- Without an `initiative` field, setup picks a non-archived initiative: one of
+  the fleet's name owned by this fleet; else the initiative assigned to the
+  fleet itself, whatever its name, so renaming the fleet on a rerun keeps it;
+  else an unassigned one of the fleet's name. If none is found, it creates one
+  for the fleet. An ambiguous choice at any step needs an explicit
+  `"initiative": {"id": "<UUID>"}`. Keep the returned ID for
   reruns. An existing initiative of another fleet is moved only with
   `"initiative": {"id": "<UUID>", "adopt": true}`. That includes ownership
   inherited from an ancestor. An unassigned initiative can be attached without

@@ -187,13 +187,23 @@ function selectInitiative(tx: Db, fleet: Fleet, spec: Spec) {
       name: spec.fleet.name,
     });
     const active = matches.filter((row) => !row.archived);
+    const several = (rows: readonly unknown[], detail: string) =>
+      rows.length > 1
+        ? Effect.fail(new BootstrapRefused(`${detail} Supply the intended initiative ID.`))
+        : Effect.void;
     const assigned = active.filter((row) => row.fleetId === fleet.id);
-    const candidates = assigned.length ? assigned : active.filter((row) => row.fleetId === null);
-    if (candidates.length > 1)
-      return yield* Effect.fail(
-        new BootstrapRefused("Several initiatives match. Supply the intended initiative ID."),
-      );
-    return candidates[0]?.id;
+    yield* several(assigned, "Several initiatives match.");
+    if (assigned.length) return assigned[0]!.id;
+    // None of this name on the fleet: the fleet's own initiative, so a renamed fleet keeps it rather
+    // than gaining a second one, else an unassigned one of this name.
+    const own = (yield* initiativePlacements(tx, fleet.organisationId, {
+      fleetId: fleet.id,
+    })).filter((row) => !row.archived);
+    yield* several(own, "Several initiatives belong to this fleet and none has its name.");
+    if (own.length) return own[0]!.id;
+    const unassigned = active.filter((row) => row.fleetId === null);
+    yield* several(unassigned, "Several initiatives match.");
+    return unassigned[0]?.id;
   });
 }
 

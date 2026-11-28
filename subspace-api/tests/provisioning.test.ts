@@ -458,4 +458,28 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
     await add(input.fleet.name, first.initiativeId);
     await expect(provision(input)).rejects.toThrow("Several initiatives match");
   });
+
+  test("a renamed fleet keeps its own initiative instead of gaining a second one", async () => {
+    const input = spec("initiative-rename", "rename");
+    const first = await provision(input);
+    const renamed = { ...input, fleet: { ...input.fleet, name: "Renamed fleet" } };
+    expect((await provision(renamed)).initiativeId).toBe(first.initiativeId);
+    const count = async () =>
+      (
+        await database.client.query(
+          "SELECT count(*)::int AS n FROM initiatives WHERE organisation_id = $1",
+          [first.organisationId],
+        )
+      ).rows[0].n;
+    expect(await count()).toBe(1);
+    // Two initiatives of its own, neither with the fleet's name: it asks which one.
+    await database.client.query(
+      "INSERT INTO initiatives (organisation_id, owner_id, name, fleet_id) VALUES ($1, $2, 'Other work', $3)",
+      [first.organisationId, first.ownerId, first.fleetId],
+    );
+    await expect(
+      provision({ ...renamed, fleet: { ...renamed.fleet, name: "Renamed again" } }),
+    ).rejects.toThrow("Several initiatives belong to this fleet");
+    expect(await count()).toBe(2);
+  });
 });
