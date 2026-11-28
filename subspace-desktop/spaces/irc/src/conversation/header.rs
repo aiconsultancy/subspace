@@ -132,6 +132,7 @@ pub(crate) fn kind_glyph(kind: &ChannelKind) -> (IconName, Tone, &'static str) {
         ChannelKind::Ship { .. } => (IconName::Navigation, Tone::Blue, "ship channel"),
         ChannelKind::Starbase => (IconName::Orbit, Tone::Accent, "Starbase"),
         ChannelKind::Command => (IconName::RadioTower, Tone::Accent, "fleet command"),
+        ChannelKind::Audit => (IconName::Hash, Tone::Muted, "Fleet Audit"),
     }
 }
 

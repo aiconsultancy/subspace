@@ -24,7 +24,7 @@ impl Entry<'_> {
 /// A network's rows by navigator group.
 pub(super) struct Sections<'a> {
     /// Each fleet's channels, in the roster's fleet order: the Starbase, the
-    /// command channel, the ships, then the rest, each by name.
+    /// command channel, Fleet Audit, the ships, then the rest, each by name.
     pub fleets: Vec<Vec<Entry<'a>>>,
     /// Private conversations with people, on a network that serves a fleet.
     pub people: Vec<Entry<'a>>,
@@ -84,17 +84,19 @@ impl<'a> Sections<'a> {
 enum Place {
     Starbase,
     Command,
+    Audit,
     Ship,
     Other,
 }
 
 /// A fleet channel's place in its group: the Starbase, the command
-/// channel, the ships, then the rest, each by the name the row shows.
+/// channel, Fleet Audit, the ships, then the rest, each by the name the row shows.
 fn fleet_order(key: &BufferKey, fleet: &FleetPlace, roster: &Roster) -> (Place, String) {
     let name = super::title(key);
     let place = match roster.channel(name) {
         Some(ChannelKind::Starbase) => Place::Starbase,
         Some(ChannelKind::Command) => Place::Command,
+        Some(ChannelKind::Audit) => Place::Audit,
         Some(ChannelKind::Ship { .. }) => Place::Ship,
         None => Place::Other,
     };

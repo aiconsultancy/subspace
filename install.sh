@@ -74,6 +74,7 @@
 #   --admin admiral --demo | --no-demo --crew-claude 2 --crew-codex 2
 #   --repositories https://github.com/example/project.git
 #   --agentsview | --no-agentsview (default on)
+#   --fleet-audit | --no-fleet-audit (default on for new local IRC installs)
 #   --agent-dispatch | --no-agent-dispatch (default off)
 #   --assignment-requests | --no-assignment-requests (default on with agent dispatch)
 #   --ready-for-agents-offers | --no-ready-for-agents-offers (default on with agent dispatch)

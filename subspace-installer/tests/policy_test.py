@@ -1346,6 +1346,32 @@ class StandardChannelTests(unittest.TestCase):
         self.assertEqual([entry["channels"][0] for entry in (rear, orion, lyra)],
                          ["#example-fleet-starbase", "#example-fleet-orion", "#example-fleet-lyra"])
 
+    def test_audit_defaults_on_for_managed_local_irc_and_can_be_disabled(self):
+        self.config["irc"] = {"mode": "local", "allowedAccounts": ["operator"],
+                              "compose": {"operator": "ircop", "ref": "0" * 40}}
+        self.secrets["ircOperatorPassword"] = "fixture-operator-password"
+        cfg = validate(self.config, self.secrets)
+        for registration in self.officers(cfg):
+            self.assertEqual(registration["audit"], {"channel": "#example-fleet-audit"})
+            self.assertNotIn("#example-fleet-audit", registration["channels"])
+        previous = {"irc": {"mode": "local"}}
+        legacy = validate(self.config, self.secrets, installed=previous)
+        self.assertIsNone(legacy["irc"]["auditChannel"])
+        previous["irc"]["fleetAudit"] = True
+        with_audit = validate(self.config, self.secrets, installed=previous)
+        self.assertEqual(with_audit["irc"]["auditChannel"], "#example-fleet-audit")
+        self.config["irc"]["fleetAudit"] = False
+        self.assertTrue(all("audit" not in entry for entry in self.officers(validate(self.config, self.secrets))))
+
+    def test_remote_irc_requires_opt_in_and_rejects_a_channel_collision(self):
+        self.assertTrue(all("audit" not in entry for entry in self.officers(validate(self.config, self.secrets))))
+        self.config["irc"]["fleetAudit"] = True
+        self.assertTrue(all(entry["audit"]["channel"] == "#example-fleet-audit"
+                            for entry in self.officers(validate(self.config, self.secrets))))
+        self.config["captains"][0]["id"] = "audit"
+        with self.assertRaisesRegex(Invalid, r"Fleet Audit needs #example-fleet-audit"):
+            validate(self.config, self.secrets)
+
     def test_the_standard_names_may_be_stated(self):
         self.config["irc"].update(starbaseChannel="#example-fleet-starbase",
                                   commandChannel=standard_channels.command("example-fleet"))

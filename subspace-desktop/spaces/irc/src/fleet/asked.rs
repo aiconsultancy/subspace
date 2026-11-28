@@ -34,7 +34,7 @@ impl Roster {
                         .is_some_and(|held| held.eq_ignore_ascii_case(channel))
             }))
             .map(|(nick, _)| nick.as_str()),
-            ChannelKind::Command => None,
+            ChannelKind::Command | ChannelKind::Audit => None,
         }
     }
 

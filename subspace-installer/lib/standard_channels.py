@@ -39,6 +39,10 @@ def command(slug):
     return f"#{slug}-{COMMAND_SUFFIX}"
 
 
+def audit(slug):
+    return f"#{slug}-audit"
+
+
 def ship(slug, captain_id, plain=False):
     return f"#{captain_id}" if plain else f"#{slug}-{captain_id}"
 

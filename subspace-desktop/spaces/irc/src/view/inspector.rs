@@ -80,7 +80,7 @@ impl Subject {
                 captain: captain.clone(),
             }),
             ChannelKind::Starbase => Some(Self::Starbase),
-            ChannelKind::Command => None,
+            ChannelKind::Command | ChannelKind::Audit => None,
         }
     }
 

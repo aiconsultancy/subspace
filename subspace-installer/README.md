@@ -1125,6 +1125,38 @@ rules. [Agent dispatch](#agent-dispatch) addresses one captain at a time.
 Ready for agents offers and legacy assignment notices use fleet command.
 Capacity-aware assignment requests go to the captain's ship channel.
 
+### Fleet Audit
+
+For a new local IRC installation, the installer creates a private `#<slug>-audit` channel by default
+and configures every officer's Stargate registration to mirror incoming and
+outgoing DMs there. It grants channel access to the fleet's officer accounts
+and to the allowlisted people seeded on that IRC server. Join the channel
+with one of those accounts to see the mirror. Channels shows it as **# fleet-audit**
+beside Starbase and Fleet Command when connected to the Subspace API.
+
+On remote IRC, register `#<slug>-audit` as invite-only and secret, and grant
+access to the intended readers and every officer account before running the
+installer with `--fleet-audit`. On Ergo, use `+Cimnst` and
+`ChanServ AMODE #<slug>-audit +v <account>` for each permitted account.
+The installer signs in to query the channel's modes before it enables mirroring.
+Switching to a different remote IRC connection requires opting in again.
+
+For a local IRC installation that predates Fleet Audit, opt in with
+`--fleet-audit` after checking that the name is available. The local seeder
+refuses an existing channel with an unexpected founder, member, persistent
+grant or invite exception. Reconcile its access before enabling the mirror.
+Use `--no-fleet-audit` to disable mirroring. For a manually managed
+`fleet.json`, set `irc.fleetAudit` to `true` or `false`. If a ship or another
+local channel already uses the audit name, it keeps the name and the
+installer leaves the default mirror off. Explicitly enabling it reports the
+conflict. A pinned local IRC checkout needs a channel seeder with
+`privateAccounts` support. A pinned Stargate needs
+[DM audit support](https://github.com/aiconsultancy/stargate/blob/main/docs/irc.md#dm-audit).
+
+Audit messages do not start agent turns. The mirror contains DM text, including
+redirect notices, and Stargate withholds text that resembles credentials.
+Only grant access to people authorised to read the fleet's DMs.
+
 ### Local IRC and TLS
 
 Set `irc.mode` to `local`, omit `irc.host` and `irc.tls`, and set

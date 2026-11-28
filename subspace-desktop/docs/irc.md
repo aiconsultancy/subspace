@@ -7,6 +7,12 @@ stored data keep the `irc` name. The protocol, connections and session state liv
 and sends it commands. The in-app guide is
 [spaces/irc/help.md](../spaces/irc/help.md).
 
+## Fleet Audit
+
+On a network associated with a fleet in the Subspace API, Channels groups
+`#<slug>-audit` beside Starbase and Fleet Command as **# fleet-audit**.
+Join it with an IRC account that has access to see the mirrored officer DMs.
+
 ## Initiative channel sets
 
 The process Hub reads `GET /api/v1/me/initiatives` with the same Subspace API

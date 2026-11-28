@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
+import irc_accounts
 from github_policy import github_repository, officer_github_repositories
 import memory
 import mockups
@@ -473,7 +474,7 @@ def listener(value, label, default_port, allow_bind=False):
 
 
 def irc_config(value, slug, check_files, plain=False):
-    value = fields(value, "irc", "mode host port tls caFile allowedAccounts commandChannel starbaseChannel advertise compose auth", ["mode", "allowedAccounts"])
+    value = fields(value, "irc", "mode host port tls caFile allowedAccounts commandChannel starbaseChannel advertise compose auth fleetAudit", ["mode", "allowedAccounts"])
     mode = pattern(value["mode"], r"local|remote", "IRC mode")
     tls = boolean(value.get("tls", mode == "remote"))
     require(mode == "local" or tls, "Remote IRC requires TLS.")
@@ -1313,7 +1314,7 @@ def usage_guard_settings(cfg, home):
     }
 
 
-def validate(config, credentials, check_files=True):
+def validate(config, credentials, check_files=True, installed=None):
     cfg = fields(config, "fleet", "slug name officerNames rearAdmiral captains harness crew captainTools captainPeerMessages repositories stakeholders usage usageGuard medical irc stargate dashboard proxy agentsview api agentDispatch agentEgress operatorUsers toolchains systemPackages screenshots mockupPreviews impeccable maintenance githubPolicy memory", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     # Fleets written before plain names leave it out, and keep their fleet-prefixed accounts and ship channels.
@@ -1342,7 +1343,17 @@ def validate(config, credentials, check_files=True):
     # Stargate joins at most 20 channels per registration, and the rear admiral joins every standard one.
     require(len(channels) <= 20, f"Use at most 18 captains: the rear admiral joins Starbase, {irc['commandChannel']} "
             "and every ship channel, and Stargate joins at most 20 channels.")
-    irc.update(channels=channels)
+    audit = standard_channels.audit(slug)
+    audit_available = audit not in channels and audit not in irc.get("compose", {}).get("channels", [])
+    previous_irc = (installed or {}).get("irc", {})
+    audit_default = irc["mode"] == "local" and (
+        audit_available if installed is None else
+        previous_irc.get("mode") == "local" and previous_irc.get("fleetAudit") is True
+    )
+    audit_enabled = boolean(cfg["irc"].get("fleetAudit", audit_default))
+    require(not audit_enabled or audit_available,
+            f"Fleet Audit needs {audit}, already used by this fleet. Disable irc.fleetAudit to keep that channel.")
+    irc.update(channels=channels, auditChannel=audit if audit_enabled else None)
     # Each role's default model, then the fleet's harness, then its captain or rearAdmiral block, then the officer's.
     fleet_harness = cfg.get("harness", {})
     require(isinstance(fleet_harness, dict), "harness must be an object.")
@@ -2854,6 +2865,26 @@ def irc_sign_in(cfg, bundles=None, installed=True):
     return lines
 
 
+def check_remote_audit(cfg, bundles):
+    irc = cfg["irc"]
+    officer = cfg["members"][0]
+    endpoint = irc["host"], irc["port"], irc.get("caFile"), irc["auditChannel"]
+    try:
+        if irc["auth"] == "password":
+            account = officer["account"]
+            irc_accounts.require_private_channel(*endpoint, account=(account, cfg["passwords"][account]))
+        else:
+            pem = bundles.get(officer["id"]) or read_irc_bundle(irc_client_pem(officer["id"]))
+            require(pem, "Bind the rear admiral's IRC certificate before enabling Fleet Audit.")
+            with tempfile.NamedTemporaryFile(mode="w") as certificate:
+                certificate.write(pem)
+                certificate.flush()
+                irc_accounts.require_private_channel(*endpoint, client_pem=certificate.name)
+    except (irc_accounts.IrcError, OSError) as error:
+        raise Invalid(f"Cannot verify the remote Fleet Audit channel: {error}. "
+                      "Create the invite-only, secret channel before enabling mirroring.") from None
+
+
 def irc_officer(cfg, person, registration):
     server = {key: cfg["irc"][key] for key in ("host", "port", "tls")}
     if "caFile" in cfg["irc"]:
@@ -2880,6 +2911,7 @@ def irc_officer(cfg, person, registration):
         # Direct messages are for people only: an agent answers one with a notice naming its first
         # channel, Starbase for the rear admiral and its ship for a captain, and starts no turn.
         "dmPolicy": "redirect",
+        **({"audit": {"channel": cfg["irc"]["auditChannel"]}} if cfg["irc"]["auditChannel"] else {}),
         **({"decisionOutcomeSender": decision_sender} if decision_sender else {}),
         # Route by authenticated account in strict mode.
         "features": {"botMode": False},
@@ -3382,7 +3414,13 @@ def render_irc(cfg, extra):
             entries.append({"name": person["account"], "fingerprint": irc_fingerprint(path.read_text(), str(path))})
     write(account_path, json_text(entries), 0o440, ERGO_GID)
     write(operator_path, cfg["operatorPassword"] + "\n", 0o440, ERGO_GID)
-    write(channel_path, json_text([{"name": name} for name in sorted(channels)]), 0o440, ERGO_GID)
+    channel_seeds = [{"name": name} for name in sorted(channels)]
+    if audit := cfg["irc"]["auditChannel"]:
+        officers = {person["account"] for person in cfg["members"]}
+        readers = set(cfg["irc"]["allowedAccounts"]) & passwords.keys()
+        channel_seeds.append({"name": audit, "topic": "Fleet Audit · Mirrored agent DMs",
+                              "privateAccounts": sorted(officers | readers)})
+    write(channel_path, json_text(channel_seeds), 0o440, ERGO_GID)
     environment = {
         "IRC_PLAIN_BIND": LOOPBACK, "IRC_PLAIN_PORT": 6667 if cfg["irc"]["tls"] else cfg["irc"]["port"],
         "IRC_TLS_BIND": f"[{local['tlsBind']}]" if ":" in local["tlsBind"] else local["tlsBind"],
@@ -4089,7 +4127,11 @@ def main(args):
     if verb in {"prepare", "plan", "render"}:
         config, private = read_json(tail[0]), read_json(tail[1], private=True)
         cache = ETC / "extra-secrets.json"
-        cfg = validate(config, private)
+        installed = ETC / "fleet.json"
+        saved_config = read_json(installed, private=True) if os.access(installed, os.R_OK) else None
+        may_be_installed = installed.exists() or (ETC.exists() and not os.access(ETC, os.X_OK))
+        prior = (saved_config or {}) if may_be_installed else None
+        cfg = validate(config, private, installed=prior)
         slug_path = STATE / "slug"
         if slug_path.exists() and os.access(slug_path, os.R_OK):
             require(slug_path.read_text().strip() == cfg["slug"], "Fleet slug is immutable on this VM.")
@@ -4099,9 +4141,8 @@ def main(args):
             rear_pin(cfg)
         # A new captain's crew are named; the installed fleet says which captains are new. A dry run that cannot
         # read it leaves the check to the real run.
-        installed = ETC / "fleet.json"
-        if not installed.exists() or os.access(installed, os.R_OK):
-            check_new_crew_named(cfg, read_json(installed, private=True) if installed.exists() else {})
+        if saved_config is not None or not installed.exists():
+            check_new_crew_named(cfg, saved_config or {})
         prune = tail[-1] == "true"
         require_usage_guard_source(cfg, installed_only=verb == "render")
         require_peer_message_source(cfg, installed_only=verb == "render")
@@ -4117,8 +4158,6 @@ def main(args):
             render(cfg, read_json(cache, private=True), prune)
             return
         directory = Path(tail[-2]) if tail[-2] else None
-        saved = ETC / "fleet.json"
-        saved_config = read_json(saved, private=True) if os.access(saved, os.R_OK) else {}
         previous = read_json(cache, private=True) if os.access(cache, os.R_OK) else {}
         if saved_config and directory is None:
             print("subspace-fleet: no secrets directory supplied. Keeping installed credentials.", file=sys.stderr)
@@ -4133,6 +4172,8 @@ def main(args):
         keys = app_keys(cfg["members"], directory, saved_people)
         extra = extra_snapshot(cfg, directory, previous, prune)
         bundles = irc_bundles(cfg, directory)
+        if cfg["irc"]["mode"] == "remote" and cfg["irc"]["auditChannel"]:
+            check_remote_audit(cfg, bundles)
         for person in cfg["members"]:
             check_sign_in(irc_agent(cfg, person, {})[0], cfg["irc"])
         # The real run would stop before it clones anything, so the dry run stops too, saying how to go on.
@@ -4144,6 +4185,8 @@ def main(args):
         require(not unserved, unserved_message(unserved, accounts))
         if verb == "prepare":
             stage = Path(tail[2])
+            if cfg["irc"]["mode"] == "local":
+                config["irc"].setdefault("fleetAudit", cfg["irc"]["auditChannel"] is not None)
             (stage / "fleet.json").write_text(json_text(config))
             (stage / "secrets.json").write_text(json_text(private))
             (stage / "extra-secrets.json").write_text(json_text(extra))
@@ -4197,6 +4240,11 @@ def main(args):
                                                    "and keeps their topic and modes when they empty. Only a server "
                                                    "that lets operators alone create channels needs them created "
                                                    "first."))
+            if audit := cfg["irc"]["auditChannel"]:
+                print(f"Fleet Audit: on ({audit})." + (" Seeded as a private channel." if cfg["irc"]["mode"] == "local"
+                      else " Register it as private and grant the officer accounts access before applying."))
+            else:
+                print("Fleet Audit: off.")
             if cfg["captainPeerMessages"]:
                 count = sum(bool(person["crew"]) for person in cfg["members"][1:])
                 print(f"Captain peer messages requested for {count} crew-hosting captains. "

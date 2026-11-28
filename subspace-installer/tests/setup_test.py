@@ -2521,6 +2521,28 @@ class FakeIrcServer:
         connection.close()
 
 
+class FleetAuditChannelTests(unittest.TestCase):
+    def test_the_remote_preflight_requires_both_private_modes_without_joining(self):
+        room = "#example-fleet-audit"
+        for command, params, accepted in (
+            ("324", ["operator", room, "+Cimnst"], True),
+            ("324", ["operator", room, "+Cnst"], False),
+            ("403", ["operator", room, "No such channel"], False),
+        ):
+            with self.subTest(command=command, params=params), \
+                    patch.object(irc_accounts, "Connection") as connect, \
+                    patch.object(irc_accounts, "register_client"):
+                client = connect.return_value
+                client.until.return_value = ("irc.example.com", command, params)
+                if accepted:
+                    irc_accounts.require_private_channel("irc.example.com", 6697, None, room)
+                else:
+                    with self.assertRaisesRegex(irc_accounts.IrcError, "invite-only and secret"):
+                        irc_accounts.require_private_channel("irc.example.com", 6697, None, room)
+                client.send.assert_called_once_with(f"MODE {room}")
+                client.close.assert_called_once()
+
+
 class IrcCertificateSetupTests(unittest.TestCase):
     """A remote IRC server: officers sign in by certificate unless told otherwise, and setup can bind them."""
 

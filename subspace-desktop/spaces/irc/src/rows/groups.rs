@@ -173,9 +173,12 @@ fn entry_row(entry: &Entry<'_>, layout: &mut Layout) -> Row {
 fn fleet_row(entry: &Entry<'_>, fleet: &Fleet<'_>, layout: &mut Layout) -> Row {
     let mut row = entry_row(entry, layout);
     let name = title(entry.key());
-    row.title = short_name(fleet.place.slug.as_deref(), name)
-        .to_owned()
-        .into();
+    row.title = match fleet.roster.channel(name) {
+        Some(ChannelKind::Audit) => "fleet-audit".into(),
+        _ => short_name(fleet.place.slug.as_deref(), name)
+            .to_owned()
+            .into(),
+    };
     if let Entry::Buffer(_, buffer) = entry {
         let ship = ship_activity(name, buffer, fleet).map(|ship| (row.key.clone(), ship));
         layout.ships.extend(ship);

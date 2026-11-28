@@ -332,6 +332,9 @@ def parse_args(argv):
                         help="offer unassigned Ready for agents issues (default on with agent dispatch)")
     parser.add_argument("--decision-outcome-dms", action=argparse.BooleanOptionalAction, default=None,
                         help="Send decision outcomes by DM when the local API and Stargate support it.")
+    parser.add_argument("--fleet-audit", action=argparse.BooleanOptionalAction, default=None,
+                        help="mirror officer DMs to the private fleet audit channel (default on for new local IRC installs). "
+                             "On remote IRC, provision the private channel before enabling it.")
     parser.add_argument("--operator", help="Linux login that may SSH in and tunnel (default: the sudo user)")
     parser.add_argument("--access", choices=["ssh", "tailscale", "cloudflare"],
                         help="how you reach the VM; tailscale limits SSH to the tailnet, cloudflare to cloudflared")
@@ -654,6 +657,11 @@ def gather(args, saved):
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
     installed = read_json(INPUTS / "fleet.json", {}) or {}
+    if args.fleet_audit is not None:
+        answers["fleetAudit"] = args.fleet_audit
+    elif answers.get("fleetAudit") is True and answers["irc"] == "remote" and not same_remote_irc(answers, saved, installed):
+        answers.pop("fleetAudit")
+        say("Fleet Audit is off on the new IRC server. Provision its private channel before enabling it.")
     installed_dispatch = installed.get("agentDispatch")
     for key, flag in (("assignmentRequests", args.assignment_requests),
                       ("readyOffers", args.ready_for_agents_offers)):
@@ -1264,6 +1272,8 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         }
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
+    if "fleetAudit" in answers:
+        config["irc"]["fleetAudit"] = answers["fleetAudit"]
     previous = read_json(INPUTS / "fleet.json", {})
     if endpoints := answers.get("agentEgress", previous.get("agentEgress", [])):
         config["agentEgress"] = endpoints
