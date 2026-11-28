@@ -120,7 +120,9 @@ and fingerprint, and a device token with its header and claims, valid only at
   Redemption judges expiry by the database's clock once it holds the
   organisation's lock, never by the API process's, so replicas with skewed
   clocks agree: after one refuses an invite as expired, no later redemption
-  pairs with it.
+  pairs with it. The same clock dates an invite's redemption and its
+  revocation, by an administrator or with its issuer's role, so neither is ever
+  recorded before the invite was issued.
 - **Invite format.** `spair1.` and the unpadded base64url encoding of the row's
   16-byte ID and 32 random bytes, like `senr1.` enrolment tokens. The prefix is the
   version.
@@ -579,7 +581,8 @@ new membership instead.
   outside the walk, the rollback statement, and an issuer's sign-in that
   withdraws their role while a redemption of their invite holds it, an
   administrator by both roles, and the pending list leaving out what redemption
-  refuses.
+  refuses. `tests/invite-clocks.test.ts` covers an invite's revocation and
+  redemption dated by the database's clock while the API process's is behind.
   `tests/irc.test.ts` covers the `sirc2.` format and the hook's credential checks.
 - Not verified: the desktop against these routes, a real WorkOS or Entra tenant,
   and the migration on a copy of a production database.

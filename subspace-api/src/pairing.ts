@@ -215,9 +215,10 @@ const redeem = (policy: PairingPolicy, payload: typeof Redemption.Type) =>
             () => unusable("used"),
           ),
         );
+        // Dated by the database's clock, which judged the invite unexpired above.
         yield* tx
           .update(pairingInvites)
-          .set({ redeemedAt: new Date() })
+          .set({ redeemedAt: sql`clock_timestamp()` })
           .where(eq(pairingInvites.id, invite.id));
         yield* recordAudit(tx, member, {
           action: "deviceCredentialAdded",

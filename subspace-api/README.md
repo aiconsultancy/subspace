@@ -1098,7 +1098,8 @@ keep the pending key and certificate until the outcome is resolved:
   Pair the replacement with a new key, and keep the pending one until its
   outcome is resolved.
 - The API judges an invite's expiry by its database's clock, not by the clock
-  of whichever API process answers, so every replica gives the same answer.
+  of whichever API process answers, so every replica gives the same answer. The
+  same clock dates its redemption and revocation.
 
 ### Device tokens
 
