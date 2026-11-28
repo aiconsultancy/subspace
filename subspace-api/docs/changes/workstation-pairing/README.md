@@ -145,6 +145,13 @@ revoke a device. After setup succeeds, run `auth:owner` separately when an invit
 is needed and deliver it only to the owner. No administrator bearer or human key
 is needed by setup.
 
+The command runs in one transaction that takes the organisation's row
+`FOR UPDATE` first, the mode its initiative writes need, so it never upgrades
+that lock while holding fleet, ship or officer rows. Ordinary fleet and ship
+creation take the same row before inserting, as other writes to an
+organisation's members and agents do. A request that overlaps a run waits for
+it and then commits or gets the usual 409; neither deadlocks.
+
 ## Decisions
 
 - **Reuse the agent key model, not a new credential type.** A device credential is

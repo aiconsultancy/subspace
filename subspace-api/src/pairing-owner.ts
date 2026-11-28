@@ -1,10 +1,11 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
-import { lockOrganisation } from "./agent-credentials";
+import { lockOrganisation } from "./organisation-lock";
 import { type AuditFields } from "./audit";
 import { Database } from "./db";
 import { revokeDevices } from "./device-revocation";
 import { pairedSubjectPrefix } from "./identity";
+import { lockInitiativeWrites } from "./initiatives";
 import {
   databaseNow,
   insertPairedPerson,
@@ -77,8 +78,17 @@ export function deviceChoice(flags: {
   return flags.revokeDevices ? "revoke" : flags.keepDevices ? "keep" : undefined;
 }
 
-/** The pairing organisation's ID, created if it is new, and locked. */
-export const ensureOrganisation = (tx: Db, externalId: string) =>
+/**
+ * The pairing organisation's ID, created if it is new, and locked: `FOR NO KEY UPDATE` by default,
+ * as every write to its members takes it, or `FOR UPDATE` for a transaction that will also write
+ * initiatives (`lockInitiativeWrites`), so that it takes the stronger lock first and never
+ * upgrades it while holding other rows.
+ */
+export const ensureOrganisation = (
+  tx: Db,
+  externalId: string,
+  lock: "no key update" | "update" = "no key update",
+) =>
   Effect.gen(function* () {
     const [created] = yield* tx
       .insert(organisations)
@@ -94,7 +104,7 @@ export const ensureOrganisation = (tx: Db, externalId: string) =>
         .where(
           and(eq(organisations.provider, "pairing"), eq(organisations.externalId, externalId)),
         ))[0]!.id;
-    yield* lockOrganisation(tx, id);
+    yield* lock === "update" ? lockInitiativeWrites(tx, id) : lockOrganisation(tx, id);
     return { id, created: Boolean(created) };
   });
 

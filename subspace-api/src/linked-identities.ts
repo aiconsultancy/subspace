@@ -1,7 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
-import { lockOrganisation } from "./agent-credentials";
+import { lockOrganisation } from "./organisation-lock";
 import { recordAudit } from "./audit";
 import { type VerifiedIdentity } from "./auth";
 import { Database } from "./db";

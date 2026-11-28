@@ -249,7 +249,9 @@ export const provisionFleet = (spec: Spec, reserved: ReadonlySet<string>) =>
     const db = yield* Database;
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {
-        const organisation = yield* ensureOrganisation(tx, spec.organisation);
+        // The organisation's row FOR UPDATE first: initiative writes below need that mode, and taking
+        // it later would upgrade a lock while this transaction holds fleet, ship and officer rows.
+        const organisation = yield* ensureOrganisation(tx, spec.organisation, "update");
         const { owner, registered } = yield* ensureOwner(tx, organisation.id, {
           command: "auth:provision-fleet",
           displayName: spec.owner?.name,

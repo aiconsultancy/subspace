@@ -11,12 +11,7 @@ import {
   HttpApiSecurity,
   OpenApi,
 } from "effect/http-api";
-import {
-  activeCredential,
-  insertCredential,
-  lockOrganisation,
-  readCertificate,
-} from "./agent-credentials";
+import { activeCredential, insertCredential, readCertificate } from "./agent-credentials";
 import { CertificatePem, CredentialScopes } from "./agent-keys";
 import {
   AgentName,
@@ -27,6 +22,7 @@ import {
 } from "./agents";
 import { recordAudit } from "./audit";
 import { Database } from "./db";
+import { lockOrganisation } from "./organisation-lock";
 import { findFleet, FleetRef, ShipName } from "./fleets";
 import { CurrentMember, keyOnlySubject, type Member } from "./identity";
 import { mintOneTimeToken, readOneTimeToken, sameHash } from "./one-time-tokens";

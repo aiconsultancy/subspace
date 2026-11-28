@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { Cause, Effect, Schema } from "effect";
+import { lockOrganisation } from "./organisation-lock";
 import { Database } from "./db";
 import { AgentRank, type Member } from "./identity";
 import { cursorTime, encodeCursor, readCursor } from "./paging";
@@ -349,6 +350,9 @@ export const createFleet = (member: Member, payload: typeof CreateFleet.Type) =>
     const db = yield* Database;
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {
+        // The organisation's row before the insert, as every other write to its fleets, ships and
+        // members takes it: a fleet inserted first holds its slug while waiting for the row.
+        yield* lockOrganisation(tx, member.organisationId);
         const [row] = yield* tx
           .insert(fleets)
           .values({ ...normaliseFields(payload), organisationId: member.organisationId })
@@ -431,18 +435,24 @@ export const createShip = (member: Member, id: string, name: string, channel?: s
     if (channel != null && member.role !== "admin")
       return yield* Effect.fail(problem(403, shipChannelAdminOnly));
     const db = yield* Database;
-    const [fleet] = yield* db
-      .select({ id: fleets.id })
-      .from(fleets)
-      .where(and(eq(fleets.organisationId, member.organisationId), eq(fleets.id, id)));
-    if (!fleet) return yield* Effect.fail(problem(404, "Fleet not found."));
-    const [ship] = yield* db
-      .insert(ships)
-      .values({ organisationId: member.organisationId, fleetId: id, name, channel })
-      .onConflictDoNothing()
-      .returning();
-    if (!ship) return yield* Effect.fail(problem(409, duplicateShip));
-    return shipDto(ship);
+    return yield* db.transaction((tx) =>
+      Effect.gen(function* () {
+        // The organisation's row first, as createFleet: see there.
+        yield* lockOrganisation(tx, member.organisationId);
+        const [fleet] = yield* tx
+          .select({ id: fleets.id })
+          .from(fleets)
+          .where(and(eq(fleets.organisationId, member.organisationId), eq(fleets.id, id)));
+        if (!fleet) return yield* Effect.fail(problem(404, "Fleet not found."));
+        const [ship] = yield* tx
+          .insert(ships)
+          .values({ organisationId: member.organisationId, fleetId: id, name, channel })
+          .onConflictDoNothing()
+          .returning();
+        if (!ship) return yield* Effect.fail(problem(409, duplicateShip));
+        return shipDto(ship);
+      }),
+    );
   });
 
 export const renameShip = (member: Member, id: string, payload: typeof RenameShip.Type) =>

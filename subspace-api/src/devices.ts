@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, type SQL } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
-import { lockOrganisation } from "./agent-credentials";
+import { lockOrganisation } from "./organisation-lock";
 import { CredentialScope, KeyAlgorithm } from "./agent-keys";
 import { type AuditFields, recordAudit } from "./audit";
 import { Database } from "./db";

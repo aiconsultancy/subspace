@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
-import { lockOrganisation } from "./agent-credentials";
+import { lockOrganisation } from "./organisation-lock";
 import { recordAudit } from "./audit";
 import { type PrincipalIdentity, type SignInClaims, type VerifiedIdentity } from "./auth";
 import { type Provider } from "./config";
