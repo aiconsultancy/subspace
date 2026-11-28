@@ -4,8 +4,9 @@
 
 use gpui_kit::component::{Icon, Sizable as _, h_flex};
 use gpui_kit::{
-    AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div, px,
+    AnyElement, App, Div, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
+    div, px,
 };
 use subspace_client_irc::{Member, Target};
 use subspace_framework::dashboard::avatar::AgentRank;
@@ -168,11 +169,21 @@ impl HeaderFacts {
 }
 
 impl Conversation {
-    pub(super) fn standalone_title(&self, cx: &App) -> Option<AnyElement> {
+    pub(super) fn standalone_header(&self, tokens: &Tokens, cx: &App) -> Option<Div> {
         if self.tab.group.is_some() {
             return None;
         }
-        self.heading(true, cx)
+        let title = self.heading(true, cx)?;
+        Some(
+            h_flex()
+                .flex_shrink_0()
+                .min_h(tokens.toolbar_height)
+                .px_3()
+                .gap_2()
+                .border_b_1()
+                .border_color(tokens.line)
+                .child(title),
+        )
     }
 
     /// The heading for a host that shows it outside the conversation, as the

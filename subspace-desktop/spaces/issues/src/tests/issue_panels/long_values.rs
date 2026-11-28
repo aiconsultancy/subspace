@@ -11,6 +11,7 @@ use crate::tests::{mount_at, render};
 
 /// A generated end-to-end label: 68 characters and no break opportunity.
 const LONG_LABEL: &str = "e2e-f0a573fcdfe94c24a3ec9b79afb9f91d-planning-views-regression-suite";
+const LONG_TITLE: &str = "Keep the issue title within the reading column when the Properties inspector uses the right side of a narrow desktop window";
 
 fn long_label_fixture() -> Offline {
     offline_with(|request| {
@@ -19,6 +20,7 @@ fn long_label_fixture() -> Offline {
         }
         let mut detail = crate::tests::offline::api("/api/v1/issues/SUB-1", &Default::default());
         detail["identifier"] = json!("SUB-1");
+        detail["title"] = json!(LONG_TITLE);
         detail["labels"] = json!([
             {"id": "label-short", "name": "Fixture", "color": "#6C8EEF", "state": "active"},
             {"id": "label-long", "name": LONG_LABEL, "color": "#4C7899", "state": "active"},
@@ -88,4 +90,20 @@ fn a_long_label_is_cut_inside_the_narrowest_two_column_page(cx: &mut TestAppCont
 fn a_long_label_is_cut_inside_the_stacked_page(cx: &mut TestAppContext) {
     let (_board, cx) = opened_at(cx, 720.);
     assert_inside_the_panel(cx, 720.);
+}
+
+#[gpui_kit::test]
+fn a_long_issue_title_wraps_before_the_properties_inspector(cx: &mut TestAppContext) {
+    let (_, cx) = opened_at(cx, 1000.);
+    cx.update(|window, _| {
+        let title = window.find("issue-title");
+        let bounds = title.bounds();
+        let properties = window.find("issue-properties").bounds();
+        assert_eq!(title.label(), Some(LONG_TITLE));
+        assert!(
+            bounds.right() <= properties.left(),
+            "{bounds:?} overlaps {properties:?}"
+        );
+        assert!(bounds.size.height > px(35.), "{bounds:?} should wrap");
+    });
 }

@@ -35,6 +35,8 @@ pub(crate) struct ShipLive {
     pub done: Option<u64>,
     /// Each crew member, the working first, once the ship's detail arrived.
     pub members: Vec<CrewLine>,
+    /// The overview lists crew, but the detail has not arrived yet.
+    pub detail_pending: bool,
     /// Why the API could not read the ship's crew, when it could not.
     pub unavailable: Option<String>,
     /// Whether the crew's detail is one Stargate kept after a failed read,
@@ -110,6 +112,8 @@ fn live(ship: &Ship, detail: Option<&ShipDetail>) -> ShipLive {
         .filter(current)
         .map(|detail| detail.crew_members.as_slice());
     let readable = ship.available;
+    let detail_pending =
+        readable && detail.is_none() && ship.crew.is_some_and(|crew| crew.people > 0);
     ShipLive {
         id: ship.id.clone(),
         name: name_or(&ship.name, &ship.id),
@@ -122,10 +126,17 @@ fn live(ship: &Ship, detail: Option<&ShipDetail>) -> ShipLive {
             .filter(|_| readable),
         done: ship.captain.queue.get("done").copied(),
         members: members.map(lines).unwrap_or_default(),
-        unavailable: (!readable).then(|| {
-            present(ship.error.as_deref(), MAX_TASK_CHARS)
-                .unwrap_or_else(|| "Crew status unavailable.".to_owned())
-        }),
+        detail_pending,
+        unavailable: (!readable || detail.is_some_and(|detail| !detail.ship.available)).then(
+            || {
+                let error = ship
+                    .error
+                    .as_deref()
+                    .or_else(|| detail?.ship.error.as_deref());
+                present(error, MAX_TASK_CHARS)
+                    .unwrap_or_else(|| "Crew status unavailable.".to_owned())
+            },
+        ),
         crew_kept: detail
             .is_some_and(|detail| readable && detail.ship.available && detail.detail_stale),
     }

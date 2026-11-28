@@ -16,7 +16,7 @@ use gpui_kit::{
     ParentElement as _, Styled as _, TestSupportExt as _,
 };
 use subspace_client_fleet::FleetState;
-use subspace_client_irc::Target;
+use subspace_client_irc::{BufferKey, Target};
 use subspace_framework::dashboard::workspace::{self, InspectorTab as ShellTab};
 use subspace_framework::dashboard::{Tokens, feedback};
 
@@ -25,6 +25,7 @@ use crate::live::{self, FleetLive};
 use crate::members::MemberList;
 use crate::{Irc, dock};
 
+mod panel;
 mod play;
 mod reason;
 mod ship;
@@ -32,6 +33,7 @@ mod starbase;
 #[cfg(test)]
 mod tests;
 pub(crate) mod thread;
+pub(crate) use panel::ShipPanel;
 
 #[cfg(test)]
 pub(crate) use reason::reason;
@@ -113,6 +115,8 @@ pub(crate) fn tabs(subject: &Subject, people: Option<usize>) -> Vec<ShellTab> {
 struct Front {
     subject: Subject,
     channel: String,
+    buffer: BufferKey,
+    fleet_id: Option<String>,
     roster: std::rc::Rc<Roster>,
     fleet: Option<FleetLive>,
 }
@@ -125,13 +129,22 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
     let hub = board.hub.as_ref()?.read(cx);
     let roster = hub.roster(&buffer.network, cx);
     let subject = Subject::of(roster.channel(channel)?)?;
-    let fleet = live::fleet_of(&hub.fleets, &roster, channel).cloned();
+    let fleet_id = live::fleet_id(&roster, channel);
+    let fleet = fleet_id.and_then(|id| hub.fleets.get(id)).cloned();
     Some(Front {
         subject,
         channel: channel.clone(),
+        buffer: buffer.clone(),
+        fleet_id: fleet_id.map(str::to_owned),
         roster,
         fleet,
     })
+}
+
+/// Records a complete read and schedules feedback if a refresh takes longer.
+pub(crate) fn sync_ship(board: &mut Irc, cx: &mut Context<Irc>) {
+    let ship = front(board, cx).filter(|front| matches!(front.subject, Subject::Ship { .. }));
+    ShipPanel::sync(ship, board, cx);
 }
 
 /// Asks for the answers of what the Ship tab's **In play here** lists.

@@ -161,7 +161,7 @@ async fn follow(
         Ok(events) => events,
         Err(end) => return (end, false),
     };
-    set_link(shared, Link::Live);
+    open_stream(shared);
     let opened = Instant::now();
     loop {
         match events.next().await {
@@ -219,7 +219,7 @@ async fn poll(shared: &Shared, client: &FleetClient, pace: Pace) -> Result<(), L
 }
 
 /// The overview and every ship's detail, read off the runtime's thread.
-/// A ship whose detail cannot be read keeps its last one.
+/// The poll publishes the results together, marking any retained detail stale.
 async fn read_all(client: FleetClient) -> Result<(FleetOverview, Vec<ShipDetail>), Error> {
     tokio::task::spawn_blocking(move || {
         let overview = client.fleet()?;
@@ -263,6 +263,23 @@ fn set_link(shared: &Shared, link: Link) {
     });
 }
 
+/// An open stream sends a fresh detail for each ship after the overview.
+fn open_stream(shared: &Shared) {
+    update(shared, |state| {
+        let mut changed = state.link != Link::Live;
+        state.link = Link::Live;
+        if let Some(overview) = state.overview.as_mut() {
+            changed |= !overview.overview_stale;
+            overview.overview_stale = true;
+        }
+        for detail in state.ships.values_mut() {
+            changed |= !detail.detail_stale;
+            detail.detail_stale = true;
+        }
+        changed
+    });
+}
+
 /// Changes the snapshot with `change`, which says whether it changed it.
 fn update(shared: &Shared, change: impl FnOnce(&mut FleetSnapshot) -> bool) {
     if change(&mut lock(&shared.state)) {
@@ -276,13 +293,25 @@ fn apply(shared: &Shared, event: FleetEvent) {
 
 fn replace(shared: &Shared, overview: FleetOverview, ships: Vec<ShipDetail>) {
     update(shared, |state| {
-        state.link = Link::Polling;
-        state.ships = ships
+        let mut ships: BTreeMap<_, _> = ships
             .into_iter()
             .map(|ship| (ship.ship.id.clone(), ship))
             .collect();
+        for (id, held) in &state.ships {
+            if overview.ship(id).is_some() {
+                ships.entry(id.clone()).or_insert_with(|| ShipDetail {
+                    detail_stale: true,
+                    ..held.clone()
+                });
+            }
+        }
+        let changed = state.link != Link::Polling
+            || state.overview.as_ref() != Some(&overview)
+            || state.ships != ships;
+        state.link = Link::Polling;
+        state.ships = ships;
         state.overview = Some(overview);
-        true
+        changed
     });
 }
 
@@ -325,9 +354,13 @@ pub(crate) fn apply_event(state: &mut FleetSnapshot, event: FleetEvent) -> bool 
 
 #[cfg(test)]
 mod tests {
-    use super::{FleetSnapshot, MAX_ACTIVITY, apply_event};
+    use super::{
+        FleetSnapshot, Link, MAX_ACTIVITY, Shared, apply, apply_event, lock, open_stream, replace,
+        set_link,
+    };
     use crate::events::FleetEvent;
     use crate::model::{ActivityEvent, FleetOverview, ShipDetail};
+    use std::sync::atomic::Ordering;
 
     fn overview(ships: &[&str]) -> FleetOverview {
         serde_json::from_value(serde_json::json!({
@@ -339,6 +372,58 @@ mod tests {
 
     fn detail(id: &str) -> ShipDetail {
         serde_json::from_value(serde_json::json!({"id": id, "name": id})).unwrap()
+    }
+
+    #[test]
+    fn polling_keeps_a_failed_ship_read_as_stale_and_removes_departed_ships() {
+        let shared = Shared::default();
+        replace(
+            &shared,
+            overview(&["a", "b"]),
+            vec![detail("a"), detail("b")],
+        );
+        replace(&shared, overview(&["a"]), Vec::new());
+        {
+            let snapshot = lock(&shared.state);
+            assert_eq!(snapshot.link, Link::Polling);
+            assert_eq!(snapshot.ships.len(), 1);
+            assert!(snapshot.ships["a"].detail_stale);
+        }
+        let revision = shared.revision.load(Ordering::Acquire);
+        replace(&shared, overview(&["a"]), Vec::new());
+        assert_eq!(shared.revision.load(Ordering::Acquire), revision);
+        replace(&shared, overview(&["a"]), vec![detail("a")]);
+        assert!(!lock(&shared.state).ships["a"].detail_stale);
+    }
+
+    #[test]
+    fn a_reopened_stream_keeps_cached_details_stale_until_each_ship_arrives() {
+        let shared = Shared::default();
+        replace(
+            &shared,
+            overview(&["a", "b"]),
+            vec![detail("a"), detail("b")],
+        );
+        set_link(&shared, Link::Reconnecting);
+        open_stream(&shared);
+        {
+            let state = lock(&shared.state);
+            assert_eq!(state.link, Link::Live);
+            assert!(state.overview.as_ref().unwrap().overview_stale);
+            assert!(state.ships.values().all(|ship| ship.detail_stale));
+        }
+
+        apply(&shared, FleetEvent::Fleet(Box::new(overview(&["a", "b"]))));
+        {
+            let state = lock(&shared.state);
+            assert!(!state.overview.as_ref().unwrap().overview_stale);
+            assert!(state.ships.values().all(|ship| ship.detail_stale));
+        }
+
+        apply(&shared, FleetEvent::Ship(Box::new(detail("a"))));
+        let state = lock(&shared.state);
+        assert!(!state.ships["a"].detail_stale);
+        assert!(state.ships["b"].detail_stale);
     }
 
     #[test]

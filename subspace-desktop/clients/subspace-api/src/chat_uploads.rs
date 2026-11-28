@@ -66,7 +66,9 @@ pub enum UploadError {
     Missing,
     #[error("You do not have permission to access this upload.")]
     Forbidden,
-    #[error("Choose text, an image, ZIP, PDF, DOCX or XLSX, up to 25 MB.")]
+    #[error(
+        "Choose text or web source, PNG, JPEG, GIF, WebP, ZIP, PDF, DOCX, XLSX or PPTX, up to 25 MB."
+    )]
     Invalid,
     #[error(
         "Use a valid PNG, JPEG, GIF or WebP, at most 4096 pixels on either edge and 16 megapixels in total."
@@ -158,12 +160,16 @@ pub fn supported(mime: &str) -> bool {
             | "application/pdf"
             | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     )
 }
 pub fn mime_for_extension(extension: &str) -> Option<&'static str> {
     let mime = match extension.to_ascii_lowercase().as_str() {
         "markdown" => Some("text/markdown"),
-        "text" => Some("text/plain"),
+        // Web source is shared as inert UTF-8 text, keeping its original name.
+        "text" | "html" | "htm" | "css" | "js" | "mjs" | "cjs" | "ts" | "jsx" | "tsx" | "json"
+        | "jsonl" | "xml" | "svg" | "csv" | "tsv" | "yaml" | "yml" | "toml" | "log" | "diff"
+        | "patch" => Some("text/plain"),
         "zip" => Some("application/zip"),
         _ => crate::uploads::file_mime(std::path::Path::new(&format!("file.{extension}"))),
     };
