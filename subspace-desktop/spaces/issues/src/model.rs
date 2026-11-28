@@ -77,32 +77,39 @@ impl Tab {
     }
 }
 
-/// Include sub-issues in their state groups, or hide them in the list.
+/// Show sub-issues beneath their parents, or hide them in the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum SubIssues {
     #[default]
     Hidden,
-    Flat,
+    Nested,
 }
 
 impl SubIssues {
     pub(crate) fn toggled(self) -> SubIssues {
         match self {
-            SubIssues::Hidden => SubIssues::Flat,
-            SubIssues::Flat => SubIssues::Hidden,
+            SubIssues::Hidden => SubIssues::Nested,
+            SubIssues::Nested => SubIssues::Hidden,
+        }
+    }
+
+    pub(crate) fn action(self) -> &'static str {
+        match self {
+            SubIssues::Hidden => "Show sub-issues",
+            SubIssues::Nested => "Hide sub-issues",
         }
     }
 
     pub(crate) fn key(self) -> &'static str {
         match self {
             SubIssues::Hidden => "hidden",
-            SubIssues::Flat => "flat",
+            SubIssues::Nested => "nested",
         }
     }
 
     pub(crate) fn from_key(key: &str) -> SubIssues {
         match key {
-            "flat" => SubIssues::Flat,
+            "flat" | "nested" => SubIssues::Nested,
             _ => SubIssues::Hidden,
         }
     }

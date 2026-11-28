@@ -17,7 +17,7 @@ shared change record. No git state was changed.
 - [x] Palette keeps list/filter/navigation actions and exposes relation paging and discussion focus/view changes.
 - [x] Board keys remain scoped; profile and image-viewer keys were removed; help matches the remaining commands.
 - [x] Anchored menus report `Modal::Menu` and dismiss through the existing shared owner. Sign-in/editor/viewer dialogs were deleted.
-- [x] Loading, empty, edge-access and network states offer the appropriate retry. First-load copy allows a minute for wake-up.
+- [x] Loading, empty, edge-access and network states offer the appropriate retry.
 - [x] Quit warns about unsent or unconfirmed text drafts.
 
 ## Settings and configuration

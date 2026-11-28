@@ -1,5 +1,5 @@
 //! The counts beside the list: My issues on its navigator row, and hidden
-//! sub-issues on their switch and in the status bar.
+//! sub-issues in the status bar, beside the toolbar’s action.
 
 use std::sync::atomic::Ordering;
 
@@ -37,8 +37,8 @@ fn real_hub_counts_show_in_the_navigator_the_switch_and_the_status_bar(cx: &mut 
     render(cx);
     assert_eq!(
         label(cx, "issues-sub-issues").as_deref(),
-        Some("Sub-issues, 12 hidden"),
-        "the switch says how many sub-issues are hidden"
+        Some("Show sub-issues"),
+        "the switch names the action while the status bar gives the count"
     );
     assert!(status(&board, cx).ends_with(" · 12 sub-issues hidden"));
     assert!(has(cx, "issues-nav-view:my-issues"));
@@ -46,11 +46,11 @@ fn real_hub_counts_show_in_the_navigator_the_switch_and_the_status_bar(cx: &mut 
     click(cx, "issues-sub-issues");
     assert_eq!(
         cx.update(|_, cx| board.read(cx).sub_issues),
-        crate::model::SubIssues::Flat
+        crate::model::SubIssues::Nested
     );
     assert_eq!(
         label(cx, "issues-sub-issues").as_deref(),
-        Some("Sub-issues")
+        Some("Hide sub-issues")
     );
     assert!(!status(&board, cx).contains("sub-issues hidden"));
 }
@@ -76,7 +76,7 @@ fn failed_counts_are_omitted_without_hiding_the_list(cx: &mut TestAppContext) {
     assert_eq!(my_issues_count(&board, cx), None, "no count to show");
     assert_eq!(
         label(cx, "issues-sub-issues").as_deref(),
-        Some("Sub-issues")
+        Some("Show sub-issues")
     );
     assert!(!status(&board, cx).contains("sub-issues hidden"));
 }
@@ -94,7 +94,7 @@ fn changing_the_list_clears_old_counts_and_status_filters(cx: &mut TestAppContex
     assert!(labelled(cx, "My issues"));
     assert_eq!(
         label(cx, "issues-sub-issues").as_deref(),
-        Some("Sub-issues")
+        Some("Show sub-issues")
     );
     assert!(!parameters(&board, cx).iter().any(|(key, _)| key == "state"));
 }

@@ -104,6 +104,7 @@ pub struct Issues {
     listing: Listing,
     /// Each issue row's group and position in the listing.
     index: HashMap<SharedString, (usize, usize)>,
+    branch_guides: HashMap<SharedString, u8>,
     folds: Folds,
     search_folds: HashMap<String, bool>,
     search_pages: HashMap<String, usize>,
@@ -431,7 +432,7 @@ impl ListDashboard for Issues {
         if self.activity.visible {
             return self.activity.label(row);
         }
-        self.row_label(row)
+        view::row_label(self, row)
     }
 
     /// The row menu opens the same page as a click or Enter.
