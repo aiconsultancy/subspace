@@ -60,7 +60,7 @@ pub struct Decisions {
     list: ListState,
     choice: model::Choice,
     search: Entity<InputState>,
-    /// The search text the list was read with.
+    /// The search text the user has requested.
     query: String,
     docks: docks::Docks,
     session: state::Session,
@@ -179,7 +179,7 @@ impl Dashboard for Decisions {
     }
 
     fn busy(&self, _cx: &App) -> bool {
-        self.listing.loading() || self.page_loading()
+        self.listing.loading() || self.search_pending() || self.page_loading()
     }
 
     /// Decision content stays out of the chat, as issue content does.
@@ -292,7 +292,7 @@ impl ListDashboard for Decisions {
     }
 
     fn empty_message(&self) -> (SharedString, SharedString) {
-        let (title, hint) = words::empty(&self.choice, &self.query);
+        let (title, hint) = words::empty(&self.choice, &self.listing.query);
         (title.into(), hint.into())
     }
 

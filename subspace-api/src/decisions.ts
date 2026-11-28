@@ -40,9 +40,8 @@ import {
 
 const decisionNotFound =
   "Decision was not found. Use an identifier or ID returned by list decisions.";
-const DecisionIdentifier = Schema.String.check(
-  Schema.isPattern(/^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$/u),
-);
+const decisionIdentifierPattern = /^[Dd]-[0-9]{5,10}-[A-Za-z][A-Za-z0-9]{1,9}$/u;
+const DecisionIdentifier = Schema.String.check(Schema.isPattern(decisionIdentifierPattern));
 export const DecisionRef = Schema.Union([Uuid, DecisionIdentifier]);
 const Status = Schema.Literals(decisionStatuses);
 const Maker = Schema.Literals(["human", "agent"]);
@@ -360,6 +359,29 @@ export function getDecision(db: Db, member: Member, reference: string) {
   });
 }
 
+function decisionSearch(search: string) {
+  const reference = search.toUpperCase();
+  if (decisionIdentifierPattern.test(reference)) return eq(decisions.identifier, reference);
+  if (/^D-[0-9]{0,10}$/u.test(reference)) {
+    // Five or more digits name a short reference. The delimiter keeps it
+    // distinct from a longer number and matches the same number in any project.
+    const prefix = reference.length >= 7 ? `${reference}-` : reference;
+    return sql`starts_with(${decisions.identifier}, ${prefix})`;
+  }
+  if (/^D-[0-9]{5,10}-(?:[A-Z])?$/u.test(reference))
+    return sql`starts_with(${decisions.identifier}, ${reference})`;
+  return or(
+    ...[
+      decisions.title,
+      decisions.decision,
+      decisions.context,
+      decisions.why,
+      decisions.implications,
+      decisions.alternatives,
+    ].map((column) => sql`strpos(lower(${column}), ${search}) > 0`),
+  );
+}
+
 function decisionFilters(db: Db, member: Member, filters: typeof CountQuery.Type) {
   const { project, issue, q, tag, madeByType } = filters;
   if (issue !== undefined && !isUuid(issue) && !/^.+-[1-9][0-9]*$/u.test(issue))
@@ -396,19 +418,7 @@ function decisionFilters(db: Db, member: Member, filters: typeof CountQuery.Type
               ),
           )
         : undefined,
-      search
-        ? or(
-            eq(decisions.identifier, search.toUpperCase()),
-            ...[
-              decisions.title,
-              decisions.decision,
-              decisions.context,
-              decisions.why,
-              decisions.implications,
-              decisions.alternatives,
-            ].map((column) => sql`strpos(lower(${column}), ${search}) > 0`),
-          )
-        : undefined,
+      search ? decisionSearch(search) : undefined,
     ),
   );
 }

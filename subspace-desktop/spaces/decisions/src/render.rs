@@ -2,19 +2,20 @@
 //! content, and the inspector. The content is the shared list, or the open
 //! decision's page, or why nothing could be read.
 
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, ClickEvent, Context, InteractiveElement as _, IntoElement, KeyContext,
     ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
     Window, div,
 };
-use subspace_framework::dashboard::action::Intent;
+use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::feedback::{self, Words};
 use subspace_framework::dashboard::row_menu::MenuChat;
 use subspace_framework::dashboard::{DASHBOARD_CONTEXT, Dashboard as _, Tokens, list, workspace};
 use subspace_framework::lucide::IconName;
 
 use crate::load::Failure;
+use crate::state::Turn;
 use crate::{Decisions, inspector, keys, navigator, page, toolbar};
 
 impl Render for Decisions {
@@ -77,7 +78,56 @@ fn content(this: &Decisions, window: &mut Window, cx: &mut Context<Decisions>) -
     if let Some(failure) = this.listing.blocked() {
         return blocked(failure, &tokens, cx);
     }
-    list::render(this, window, cx).into_any_element()
+    v_flex()
+        .size_full()
+        .child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(list::render(this, window, cx)),
+        )
+        .children(
+            (this.listing.more() || this.listing.pages.index() > 1)
+                .then(|| paging(this, &tokens, cx)),
+        )
+        .into_any_element()
+}
+
+fn paging(this: &Decisions, tokens: &Tokens, cx: &mut Context<Decisions>) -> impl IntoElement {
+    h_flex()
+        .flex_shrink_0()
+        .justify_end()
+        .gap_2()
+        .border_t_1()
+        .border_color(tokens.line)
+        .px_4()
+        .py_2()
+        .child(page_button(
+            this,
+            Turn::Previous,
+            "decisions-previous",
+            "Previous",
+            cx,
+        ))
+        .child(
+            div()
+                .text_color(tokens.muted)
+                .child(format!("Page {}", this.listing.pages.index())),
+        )
+        .child(page_button(this, Turn::Next, "decisions-next", "Next", cx))
+}
+
+fn page_button(
+    this: &Decisions,
+    turn: Turn,
+    id: &'static str,
+    label: &'static str,
+    cx: &Context<Decisions>,
+) -> impl IntoElement {
+    action_button(id, Intent::Neutral, None, label)
+        .aria_label(format!("{label} decisions page"))
+        .disabled(!this.can_turn_page(turn))
+        .on_click(cx.listener(move |this, _, _, cx| this.turn_page(turn, cx)))
 }
 
 /// Nothing could be read: why, and Retry. Signing in is under Settings ›

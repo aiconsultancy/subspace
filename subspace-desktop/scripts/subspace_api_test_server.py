@@ -25,7 +25,7 @@ STATE_TYPES = ('triage', 'backlog', 'unstarted', 'started', 'completed', 'cancel
 TERMINAL = ('completed', 'canceled', 'duplicate')
 STATE_NAMES = ('Triage', 'Backlog', 'Todo', 'In progress', 'Done', 'Cancelled', 'Duplicate')
 DECISIONS_PATH = '/api/v1/decisions'
-DECISION_SCENARIOS = ('normal', 'missing', 'forbidden', 'unavailable', 'conflict')
+DECISION_SCENARIOS = ('normal', 'missing', 'forbidden', 'unavailable', 'conflict', 'paging')
 DECISION_TEXT = ('decision', 'context', 'why', 'implications', 'alternatives')
 
 
@@ -238,6 +238,19 @@ def seed_decisions(project_row, tracker, discussion, now):
                   updatedAt=accepted[0]['createdAt'], revisionNumber=2, version=2)
     accepted[0].update(supersedesId=old[0]['id'], supersedes=decision_summary(old[0]))
     return {row['id']: (row, detail) for row, detail in (old, accepted, proposed)}
+
+
+def seed_decision_pages(fixture):
+    project = fixture.projects[0]
+    seed = next_decision_number(fixture.decisions, project['key'])
+    for offset in range(104):
+        number = seed + offset
+        slug = f'review-check-{number}'
+        at = (datetime(2025, 5, 1, tzinfo=timezone.utc) - timedelta(minutes=offset)).isoformat()
+        row, detail = decision_record(slug, f'Review checkpoint {number}', 'accepted', at,
+                                      '2025-05-01', project, [], 'Record this fixture checkpoint.')
+        row['identifier'] = decision_identifier(row, number)
+        fixture.decisions[row['id']] = (row, detail)
 
 
 def decision_references(records, events):
@@ -1315,6 +1328,20 @@ def decision_uuid(value):
         return None
 
 
+def decision_matches(row, detail, search):
+    if not search:
+        return True
+    reference = row['identifier'].lower()
+    if re.fullmatch(r'd-[0-9]{5,10}-[a-z][a-z0-9]{1,9}', search):
+        return search == reference
+    if re.fullmatch(r'd-[0-9]{0,10}', search):
+        return reference.startswith(search + '-' if len(search) >= 7 else search)
+    if re.fullmatch(r'd-[0-9]{5,10}-[a-z]?', search):
+        return reference.startswith(search)
+    return any(search in text.casefold() for text in (
+        row['title'], *(detail[key] for key in ('decision', 'context', 'why', 'implications', 'alternatives'))))
+
+
 def decision_list(fixture, query):
     def value(key):
         return query.get(key, [''])[0].strip()
@@ -1341,13 +1368,11 @@ def decision_list(fixture, query):
             continue
         if tag and tag not in row['tags']:
             continue
-        if search and search != row['identifier'].casefold() and not any(search in text.casefold() for text in (
-                row['title'], *(detail[key] for key in ('decision', 'context', 'why', 'implications', 'alternatives')))):
+        if not decision_matches(row, detail, search):
             continue
         rows.append(row)
-    # Subspace API's order: newest decided-on date first, then ID.
-    rows.sort(key=lambda row: row['id'])
-    rows.sort(key=lambda row: row['decidedOn'], reverse=True)
+    # Subspace API orders by record creation time, then ID, newest first.
+    rows.sort(key=lambda row: (parse_instant(row['createdAt']), row['id']), reverse=True)
     return page(rows, query, 'decisions', maximum=100)
 
 
@@ -1475,6 +1500,8 @@ class FixtureServer(ThreadingHTTPServer):
         self.updates = UpdateFeed(updates_stream)
         self.change_after = change_after
         self.decision_scenario = decision_scenario
+        if decision_scenario == 'paging':
+            seed_decision_pages(self.fixture)
         self.fixture.decision_revisions = {}
         self.fixture.decision_conflicts = set()
         for row, detail in self.fixture.decisions.values():
@@ -1693,6 +1720,8 @@ class Handler(BaseHTTPRequestHandler):
             if method == 'POST':
                 return 201, log_decision(fixture, self.read_json())
             if method == 'GET':
+                if scenario == 'paging' and query.get('q'):
+                    time.sleep(0.65)
                 return 200, decision_list(fixture, query)
             raise Problem(404, 'Route not found.')
         ref, _, suffix = path.removeprefix(DECISIONS_PATH + '/').partition('/')

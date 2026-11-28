@@ -302,7 +302,7 @@ fn answer(plan: &Plan) -> Answer {
         .collect();
     Answer {
         directory: plan.directory.then(|| Ok(directory())),
-        found: Ok(Found { items, more: false }),
+        found: Ok(Found { items, next: None }),
     }
 }
 

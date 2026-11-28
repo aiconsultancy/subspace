@@ -12,7 +12,7 @@ use subspace_framework::dashboard::{ListState, Row, Tokens, list, prefs, workspa
 
 use crate::load::{self, Answer, Directory, Failure, Found, Leased, Plan, Stop};
 use crate::model::{self, Choice, Maker, ProjectChoice, View};
-use crate::state::{self, Listing, Session, Status};
+use crate::state::{self, Listing, Session, Status, Turn};
 use crate::{Decisions, listing, search, words};
 
 const VIEW_PREF: &str = "decisions.view";
@@ -93,34 +93,82 @@ impl Decisions {
     /// the account, its projects and its people first, as a read does
     /// anyway while no account is known.
     pub(crate) fn read(&mut self, directory: bool, cx: &mut Context<Self>) {
+        self.start_read(directory, Turn::First, cx);
+    }
+
+    pub(crate) fn search_pending(&self) -> bool {
+        self._search_task.is_some()
+    }
+
+    pub(crate) fn can_turn_page(&self, turn: Turn) -> bool {
+        self.listing.pages.can_turn(turn)
+            && !self.listing.loading()
+            && !self.search_pending()
+            && self.listing.query == self.query
+    }
+
+    pub(crate) fn turn_page(&mut self, turn: Turn, cx: &mut Context<Self>) {
+        if !self.follow_account(cx) && self.can_turn_page(turn) {
+            self.start_read(false, turn, cx);
+        }
+    }
+
+    pub(crate) fn capture_query(&mut self, cx: &mut Context<Self>) -> bool {
+        let text = model::search_text(&self.search.read(cx).value());
+        if self.query == text {
+            return false;
+        }
+        self.query = text;
+        self.cancel_read();
+        true
+    }
+
+    pub(crate) fn cancel_read(&mut self) {
         self.reads = self.reads.wrapping_add(1);
-        let number = self.reads;
-        // The read this one supersedes stops before its next page.
         std::mem::take(&mut self.stop).stop();
+        self._read = None;
+    }
+
+    fn start_read(&mut self, directory: bool, turn: Turn, cx: &mut Context<Self>) {
+        self._search_task = None;
+        self.cancel_read();
+        let number = self.reads;
         let plan = Plan {
             query: model::query(&self.choice, &self.query),
             directory: directory || self.session.account.is_none(),
             stop: self.stop.clone(),
             initiative: self.initiative_id.clone(),
             projects: std::sync::Arc::clone(&self.session.projects),
+            next: self.listing.pages.cursor(turn),
         };
         let reader = self.reader.list.clone();
-        self.listing.status = Status::Loading;
+        self.listing.status = if turn == Turn::First {
+            Status::Loading
+        } else {
+            Status::LoadingPage
+        };
         let read = cx.background_spawn(async move { reader(&plan) });
         self._read = Some(cx.spawn(async move |this, cx| {
             let answer = read.await;
-            _ = this.update(cx, |this, cx| this.finish_read(number, answer, cx));
+            _ = this.update(cx, |this, cx| this.finish_read(number, turn, answer, cx));
         }));
-        self.sync_lines(cx);
+        self.list.set_status(state::list_status(&self.listing));
+        cx.notify();
     }
 
-    fn finish_read(&mut self, number: u64, answer: Leased<Answer>, cx: &mut Context<Self>) {
+    fn finish_read(
+        &mut self,
+        number: u64,
+        turn: Turn,
+        answer: Leased<Answer>,
+        cx: &mut Context<Self>,
+    ) {
         let (lease, answer) = answer.split(|error| Answer {
             directory: None,
             found: Err(error),
         });
         if self.landed(number == self.reads, lease.as_ref(), cx) {
-            self.apply(answer, Instant::now(), cx);
+            self.apply(answer, turn, Instant::now(), cx);
         }
     }
 
@@ -130,18 +178,18 @@ impl Decisions {
             .listing
             .read_at
             .is_some_and(|read_at| read_at.elapsed() < STALE_AFTER);
-        if !fresh && !self.listing.loading() {
+        if !fresh && !self.listing.loading() && !self.search_pending() {
             self.read(true, cx);
         }
     }
 
     /// The Space follows one answer: the account first, then the list.
-    pub(crate) fn apply(&mut self, answer: Answer, now: Instant, cx: &mut Context<Self>) {
+    fn apply(&mut self, answer: Answer, turn: Turn, now: Instant, cx: &mut Context<Self>) {
         if let Some(directory) = answer.directory {
             self.apply_directory(directory);
         }
         match answer.found {
-            Ok(found) => self.apply_found(found, now),
+            Ok(found) => self.apply_found(found, turn, now),
             Err(error) => self.apply_failure(load::failure(error)),
         }
         self.sync_lines(cx);
@@ -174,34 +222,39 @@ impl Decisions {
     pub(crate) fn rescope_initiative(&mut self, cx: &mut Context<Self>) {
         self.keep_project_in_initiative();
         self.listing = Listing::default();
+        self.sync_lines(cx);
         if self.active {
             self.read(true, cx);
         } else {
-            self.reads = self.reads.wrapping_add(1);
-            std::mem::take(&mut self.stop).stop();
-            self._read = None;
+            self.cancel_read();
         }
     }
 
-    fn apply_found(&mut self, found: Found, now: Instant) {
+    fn apply_found(&mut self, found: Found, turn: Turn, now: Instant) {
         let tags = found
             .items
             .iter()
             .flat_map(|item| item.tags.iter().cloned());
         self.session.tags.extend(tags);
-        self.listing = Listing {
-            items: Some(found.items),
-            more: found.more,
-            read_at: Some(now),
-            status: Status::Idle,
-        };
+        if turn != Turn::First || self.listing.query != self.query || self.listing.pages.index() > 1
+        {
+            self.list.scroll_handle().set_offset(Default::default());
+        }
+        if self.listing.query != self.query {
+            self.folds = Folds::default();
+        }
+        self.listing.query.clone_from(&self.query);
+        self.listing.items = Some(found.items);
+        self.listing.pages.landed(turn, found.next);
+        self.listing.read_at = Some(now);
+        self.listing.status = Status::Idle;
     }
 
     /// An account-level failure keeps nothing read with that account.
     fn apply_failure(&mut self, failure: Failure) {
         if failure.account_level() {
             self.session = Session::default();
-            self.listing.items = None;
+            self.listing = Listing::default();
             self.page = None;
             self.showing_page = false;
         }
@@ -225,7 +278,7 @@ impl Decisions {
 
     /// Gives each group its first fold once per view and search.
     fn fold_new_groups(&mut self) {
-        let key = (self.choice.view, !self.query.is_empty());
+        let key = (self.choice.view, !self.listing.query.is_empty());
         if self.folds.key != Some(key) {
             self.folds.key = Some(key);
             self.folds.seen.clear();
@@ -279,7 +332,8 @@ impl Decisions {
 
     /// A new choice starts from nothing, so no other list shows under it.
     fn choice_changed(&mut self, cx: &mut Context<Self>) {
-        self.listing.items = None;
+        self.listing = Listing::default();
+        self.sync_lines(cx);
         self.read(false, cx);
     }
 
