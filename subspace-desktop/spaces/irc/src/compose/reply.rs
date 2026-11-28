@@ -140,6 +140,7 @@ impl ReplyDraft {
                     input.clear(window, cx);
                     input.focus(window, cx);
                 });
+                self.update_draft_presence(false, cx);
             }
             Err(reason) => self.error(reason, cx),
         }
@@ -179,7 +180,10 @@ impl ReplyDraft {
             .then(|| suggest(&text, cursor, &self.facts(cx)))
             .flatten();
         self.show(offer, cx);
-        let draft_present = !text.is_empty();
+        self.update_draft_presence(!text.is_empty(), cx);
+    }
+
+    fn update_draft_presence(&mut self, draft_present: bool, cx: &mut Context<Self>) {
         if draft_present != self.draft_present {
             self.draft_present = draft_present;
             cx.notify();
@@ -236,6 +240,7 @@ impl ReplyDraft {
                 .update(cx, |list, cx| list.step(if older { -1 } else { 1 }, cx));
         } else if recall::replace(&mut self.recall, &self.input, older, window, cx).is_some() {
             self.revalidate(cx);
+            self.update_draft_presence(self.has_text(cx), cx);
         }
     }
 }
