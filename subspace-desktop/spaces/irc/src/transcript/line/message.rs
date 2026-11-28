@@ -114,11 +114,11 @@ fn shown_now(original: &Entry, context: &RowContext, cx: &App) -> Option<Entry> 
 
 /// A message as the inspector's Thread tab shows it: its sender, rank and
 /// time unless it `continues` their group, then its text with its
-/// references, as the transcript draws them. No avatar, tiles, thread facts
-/// or attachments: the transcript keeps those.
+/// references, as the transcript draws them. Replies that are hidden from the
+/// channel also show their attachments, request status and reaction controls.
 pub(crate) fn thread_message(
     original: &Entry,
-    continues: bool,
+    (continues, show_status): (bool, bool),
     context: &RowContext,
     cx: &App,
 ) -> AnyElement {
@@ -130,6 +130,7 @@ pub(crate) fn thread_message(
     let rank = context
         .roster
         .verified(&nick, entry.line.account.as_deref());
+    let thread_only = context.threads && entry.line.reply_to.is_some();
     v_flex()
         .id(SharedString::from(format!("irc-thread-line:{}", entry.seq)))
         .role(Role::Group)
@@ -144,7 +145,14 @@ pub(crate) fn thread_message(
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
-        .children(if entry.line.reply_to.is_some() && context.threads {
+        .when(thread_only, |column| {
+            column
+                .children(attachments(original, context, &tokens, cx))
+                .when(show_status, |column| {
+                    column.children(thread_facts(entry, context, &tokens, cx))
+                })
+        })
+        .children(if thread_only {
             crate::transcript::reactions::thread_reply(entry, context)
         } else {
             crate::transcript::reactions::read_only(entry, context)

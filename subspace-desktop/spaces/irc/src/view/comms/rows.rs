@@ -61,7 +61,7 @@ fn summary(row: &Summary, selected: bool, owner: &WeakEntity<Irc>, cx: &App) -> 
         .into_any_element()
 }
 
-fn content(row: &Summary, channel: &str, tokens: &Tokens) -> impl IntoElement {
+fn content(row: &Summary, channel: &str, tokens: &Tokens) -> impl gpui_kit::IntoElement {
     let unread = row.unread();
     let at = row.time.with_timezone(&Local);
     let when = if at.date_naive() == Local::now().date_naive() {

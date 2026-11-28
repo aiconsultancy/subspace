@@ -1,6 +1,6 @@
 //! Summaries of loaded replies, built once when a conversation synchronises.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use chrono::{DateTime, Local, Utc};
@@ -40,42 +40,56 @@ pub(super) fn placement(
     held: &Buffer,
     buffer: &BufferKey,
     threads: bool,
-) -> (HashSet<i64>, HashSet<usize>) {
+) -> (HashSet<i64>, HashSet<usize>, Option<usize>) {
     let mut hidden = held.folded.clone();
     let mut earlier = HashSet::new();
     if !threads {
-        return (hidden, earlier);
+        return (hidden, earlier, None);
     }
     let (roots, loaded) = thread_index(held, buffer);
-    let mut anchors = HashSet::new();
+    let mut anchors: HashMap<&str, usize> = loaded;
+    let mut unread_roots = HashSet::new();
     for (at, entry) in held.entries.iter().enumerate() {
         let Some(root) = reply_root(entry, &roots, &held.folded) else {
             continue;
         };
-        if !loaded.contains(root) && entry.line.id.is_some() && anchors.insert(root) {
+        if let std::collections::hash_map::Entry::Vacant(anchor) = anchors.entry(root)
+            && entry.line.id.is_some()
+        {
+            anchor.insert(at);
             earlier.insert(at);
         } else {
             hidden.insert(entry.seq);
+            if held.shown_unread().contains(&entry.seq) {
+                unread_roots.insert(root);
+            }
         }
     }
-    (hidden, earlier)
+    let unread_thread = unread_roots
+        .into_iter()
+        .filter_map(|root| anchors.get(root).copied())
+        .min();
+    (hidden, earlier, unread_thread)
 }
 
 fn thread_index<'a>(
     held: &'a Buffer,
     buffer: &'a BufferKey,
-) -> (ThreadRoots<'a>, HashSet<&'a str>) {
+) -> (ThreadRoots<'a>, HashMap<&'a str, usize>) {
     let messages = held
         .entries
         .iter()
-        .map(|entry| &entry.line)
-        .filter(|line| line.buffer == *buffer && is_message(line.kind));
+        .enumerate()
+        .filter(|(_, entry)| entry.line.buffer == *buffer && is_message(entry.line.kind));
     let loaded = messages
         .clone()
-        .filter(|line| line.reply_to.is_none())
-        .filter_map(|line| line.id.as_deref())
+        .filter(|(_, entry)| entry.line.reply_to.is_none())
+        .filter_map(|(at, entry)| Some((entry.line.id.as_deref()?, at)))
         .collect();
-    (ThreadRoots::new(buffer, messages), loaded)
+    (
+        ThreadRoots::new(buffer, messages.map(|(_, entry)| &entry.line)),
+        loaded,
+    )
 }
 
 fn reply_root<'a>(

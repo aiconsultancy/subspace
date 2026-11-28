@@ -22,7 +22,7 @@ const NAME: &str = "Comms";
 #[derive(Default)]
 pub(crate) struct Comms {
     pub active: bool,
-    selected: Option<Key>,
+    pub(crate) selected: Option<Key>,
     filter: usize,
     unread_only: bool,
     scroll: UniformListScrollHandle,
@@ -195,7 +195,6 @@ fn open(board: &mut Irc, key: &Key, window: &mut Window, cx: &mut Context<Irc>) 
     let Target::Channel(channel) = &key.buffer.target else {
         return;
     };
-    board.comms.selected = Some(key.clone());
     if let Some(hub) = board.hub.clone() {
         hub.update(cx, |hub, cx| {
             hub.comms.read(Some(key));
@@ -210,9 +209,13 @@ pub(super) fn inspector(board: &Irc, cx: &mut Context<Irc>) -> workspace::Inspec
     let ready = board.comms.selected.as_ref().is_some_and(|selected| {
         board.dock.focused.as_ref() == Some(&selected.buffer)
             && board
-                .threads
-                .shown(&selected.buffer)
-                .is_some_and(|shown| shown.root_id == selected.root)
+                .hub
+                .as_ref()
+                .is_some_and(|hub| hub.read(cx).state.buffer(&selected.buffer).is_some())
+            && board.threads.shown(&selected.buffer).is_some_and(|shown| {
+                shown.root_id == selected.root
+                    || shown.root.line.id.as_ref() == Some(&selected.root)
+            })
     });
     let inspector = workspace::Inspector::new("irc-comms-inspector", "Thread").on_close(
         "Close inspector",

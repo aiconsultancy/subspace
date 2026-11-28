@@ -1,13 +1,13 @@
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt as _;
-use subspace_client_irc::Event;
+use subspace_client_irc::{Command, ConnectionStatus, Event};
 
 use super::{inject, mount, settings};
 use crate::fixtures::{channel, message};
 
 #[gpui_kit::test]
 fn selecting_comms_opens_a_thread_without_reading_the_channel(cx: &mut TestAppContext) {
-    let (_, hub, cx) = mount(cx, settings());
+    let (board, hub, cx) = mount(cx, settings());
     let room = channel("#example-ship");
     let mut root = message(&room, "subspace", "Check the build", 1);
     root.id = Some("request".into());
@@ -22,6 +22,12 @@ fn selecting_comms_opens_a_thread_without_reading_the_channel(cx: &mut TestAppCo
     inject(
         &hub,
         vec![
+            Event::Status {
+                network: room.network.clone(),
+                status: ConnectionStatus::Connected {
+                    nick: "subspace".into(),
+                },
+            },
             Event::Joined {
                 buffer: room.clone(),
             },
@@ -53,5 +59,57 @@ fn selecting_comms_opens_a_thread_without_reading_the_channel(cx: &mut TestAppCo
     hub.read_with(cx, |hub, _| {
         assert_eq!(hub.comms.unread(), (0, false));
         assert_eq!(hub.state.buffer(&room).unwrap().unread, 2);
+    });
+
+    let destination = channel("#example-command");
+    board.update_in(cx, |board, window, cx| {
+        crate::reveal::open_thread(
+            board,
+            (&destination.network, "#example-command"),
+            "decision",
+            window,
+            cx,
+        );
+    });
+    hub.read_with(cx, |hub, _| {
+        assert!(hub.sent().iter().any(|command| matches!(
+            command, Command::LoadAround { buffer, id: Some(id), .. }
+                if buffer == &destination && id == "decision"
+        )));
+    });
+    let mut linked = message(&destination, "admiral", "Decision recorded", 4);
+    linked.id = Some("decision".into());
+    inject(
+        &hub,
+        vec![Event::Backfill {
+            buffer: destination.clone(),
+            lines: vec![linked],
+        }],
+        cx,
+    );
+    board.read_with(cx, |board, _| {
+        assert!(board.comms.active);
+        assert_eq!(board.threads.chosen(&destination), Some("decision"));
+    });
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("irc-thread").visible());
+    });
+}
+
+#[gpui_kit::test]
+fn removing_the_network_clears_comms_without_waiting_for_irc(cx: &mut TestAppContext) {
+    let (_, hub, cx) = mount(cx, settings());
+    let room = channel("#example-ship");
+    let mut mention = message(&room, "captain", "@subspace See this", 1);
+    mention.id = Some("mention".into());
+    mention.highlight = true;
+    inject(&hub, vec![Event::Line(mention)], cx);
+    hub.read_with(cx, |hub, _| assert_eq!(hub.comms.unread(), (1, true)));
+
+    hub.update(cx, |hub, cx| hub.follow(Default::default(), cx));
+    hub.read_with(cx, |hub, _| {
+        assert!(hub.comms.summaries().is_empty());
+        assert_eq!(hub.comms.unread(), (0, false));
     });
 }

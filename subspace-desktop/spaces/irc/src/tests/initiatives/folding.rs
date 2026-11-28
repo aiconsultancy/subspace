@@ -206,7 +206,7 @@ fn a_folded_fleet_says_it_hides_a_mention(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn other_starts_collapsed_and_can_be_opened(cx: &mut TestAppContext) {
-    let (board, cx) = super::navigator::populated(cx);
+    let (board, _, cx) = super::fleet::ship(cx);
     let group = rows::other_group_key(&network_id());
     let server = rows::row_key(&crate::state::server_key(&network_id()));
     board.read_with(cx, |board, _| {

@@ -136,4 +136,28 @@ pub(crate) fn refresh(board: &mut Irc, cx: &mut Context<Irc>) {
     if let Some(hub) = &board.hub {
         board.threads.refresh(&hub.read(cx).state);
     }
+    visible_attachments(board, cx);
+}
+
+pub(crate) fn visible_attachments(board: &Irc, cx: &mut Context<Irc>) {
+    let Some(buffer) = board.dock.focused.as_ref() else {
+        return;
+    };
+    let Some(thread) = board.threads.shown(buffer) else {
+        return;
+    };
+    let count = board.threads.visible_replies(buffer);
+    let uploads: Vec<_> = thread
+        .replies
+        .iter()
+        .rev()
+        .take(count)
+        .chain(std::iter::once(&thread.root))
+        .flat_map(|entry| subspace_api_client::chat_uploads::references(&entry.line.text))
+        .collect();
+    if !uploads.is_empty()
+        && let Some(hub) = &board.hub
+    {
+        hub.update(cx, |hub, cx| crate::uploads::cache::want(hub, uploads, cx));
+    }
 }

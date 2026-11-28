@@ -15,6 +15,10 @@ pub(super) enum Entry<'a> {
 }
 
 impl Entry<'_> {
+    fn joined(&self) -> bool {
+        matches!(self, Self::Buffer(_, buffer) if buffer.joined)
+    }
+
     pub(super) fn key(&self) -> &BufferKey {
         match self {
             Self::Buffer(key, _) => key,
@@ -52,25 +56,32 @@ impl<'a> Sections<'a> {
         let listed = super::unjoined(state, &network.id);
         let available: HashSet<_> = held
             .iter()
-            .filter_map(|(key, _)| match &key.target {
-                Target::Channel(name) => Some(name.to_ascii_lowercase()),
-                _ => None,
-            })
+            .filter_map(|(key, _)| channel_name(key))
             .chain(
                 listed
                     .iter()
                     .map(|channel| channel.name.to_ascii_lowercase()),
             )
             .collect();
+        let joined: HashSet<_> = held
+            .iter()
+            .filter(|(_, buffer)| buffer.joined)
+            .filter_map(|(key, _)| channel_name(key))
+            .collect();
+        let joined_aliases: HashSet<_> = joined
+            .iter()
+            .filter_map(|name| legacy_owner(roster, name).map(|(_, canonical)| canonical))
+            .collect();
+        let channels = (&available, &joined, &joined_aliases);
         for (key, buffer) in held {
-            sections.place(Entry::Buffer(key, buffer), roster, &available);
+            sections.place(Entry::Buffer(key, buffer), roster, channels);
         }
         for channel in listed {
             let key = BufferKey {
                 network: network.id.clone(),
                 target: Target::Channel(channel.name.clone()),
             };
-            sections.place(Entry::Listed(key, channel.users), roster, &available);
+            sections.place(Entry::Listed(key, channel.users), roster, channels);
         }
         for (fleet, rows) in roster.fleets().iter().zip(&mut sections.fleets) {
             rows.sort_by_cached_key(|entry| fleet_order(entry.key(), fleet, roster));
@@ -78,21 +89,29 @@ impl<'a> Sections<'a> {
         sections
     }
 
-    fn place(&mut self, entry: Entry<'a>, roster: &Roster, available: &HashSet<String>) {
+    fn place(
+        &mut self,
+        entry: Entry<'a>,
+        roster: &Roster,
+        (available, joined, joined_aliases): (&HashSet<String>, &HashSet<String>, &HashSet<&str>),
+    ) {
         let fleets = roster.fleets();
         let section = match &entry.key().target {
             Target::Channel(name) => {
                 let owner = fleets.iter().position(|fleet| fleet.holds(name));
-                let legacy = || {
-                    let mut matches = fleets.iter().enumerate().filter_map(|(index, fleet)| {
-                        let canonical = fleet.canonical(name)?;
-                        fleet.holds(canonical).then_some((index, canonical))
-                    });
-                    let owner = matches.next()?;
-                    matches.next().is_none().then_some(owner)
-                };
-                let owner = match (owner, legacy()) {
-                    (None, Some((_, canonical))) if available.contains(canonical) => return,
+                let owner = match (owner, legacy_owner(roster, name)) {
+                    (Some(_), _)
+                        if !entry.joined()
+                            && joined_aliases.contains(name.to_ascii_lowercase().as_str()) =>
+                    {
+                        return;
+                    }
+                    (None, Some((_, canonical)))
+                        if joined.contains(canonical)
+                            || (!entry.joined() && available.contains(canonical)) =>
+                    {
+                        return;
+                    }
                     (None, Some((index, _))) => Some(index),
                     (owner, _) => owner,
                 };
@@ -105,6 +124,26 @@ impl<'a> Sections<'a> {
         };
         section.unwrap_or(&mut self.rest).push(entry);
     }
+}
+
+fn channel_name(key: &BufferKey) -> Option<String> {
+    match &key.target {
+        Target::Channel(name) => Some(name.to_ascii_lowercase()),
+        _ => None,
+    }
+}
+
+fn legacy_owner<'a>(roster: &'a Roster, name: &str) -> Option<(usize, &'a str)> {
+    let mut matches = roster
+        .fleets()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, fleet)| {
+            let canonical = fleet.canonical(name)?;
+            fleet.holds(canonical).then_some((index, canonical))
+        });
+    let owner = matches.next()?;
+    matches.next().is_none().then_some(owner)
 }
 
 /// Where a fleet channel sorts in its group.

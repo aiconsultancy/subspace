@@ -196,12 +196,12 @@ def late_lines(sock, socks, nick, delay, late):
     """Waits for `nick` to join the ship channel on `sock`, then, after
     `delay` seconds, posts the late lines there. Lines an earlier reader
     left unread on `sock` are seen first."""
-    joined = f' JOIN {CHANNEL}'.encode()
+    channel = CHANNEL.encode()
 
     def handle(line):
         if line.startswith(b'PING'):
             sock.sendall(b'PONG' + line[4:] + b'\r\n')
-        elif line.startswith(f':{nick}!'.encode()) and line.endswith(joined):
+        elif joined_channel(line, nick, channel):
             time.sleep(delay)
             for speaker, text in late:
                 socks[speaker].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
@@ -220,6 +220,15 @@ def late_lines(sock, socks, nick, delay, late):
                 handle(line)
     except OSError:
         pass
+
+
+def joined_channel(line, nick, channel):
+    """Match JOIN in either the ordinary or extended IRC form."""
+    if line.startswith(b'@'):
+        line = line.partition(b' ')[2]
+    prefix, separator, params = line.partition(b' JOIN ')
+    return (separator and prefix.startswith(f':{nick}!'.encode())
+            and params.split(b' ', 1)[0].removeprefix(b':') == channel)
 
 
 def await_msgid(sock, text):

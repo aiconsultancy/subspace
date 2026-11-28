@@ -698,7 +698,8 @@ activity, and **@** marks unread mentions. Use **Mentions**, **Replies**, or
 
 Choose a row to read and reply in the **Thread** inspector. **Jump to
 message** opens the original in its channel. Choose **Mark all read** to
-clear the Comms count for the current session.
+clear the Comms count for the current session. Comms uses IRC message IDs
+to group activity and open threads.
 
 ### Follow a thread
 

@@ -107,6 +107,7 @@ impl Hub {
         self.run(networks);
         self.state
             .reconfigure(&settings.networks, settings.highlights.clone());
+        self.comms.refresh(&self.state);
         if self.applied.captain_notifications != settings.captain_notifications {
             self.captain_notifications.pause();
         }

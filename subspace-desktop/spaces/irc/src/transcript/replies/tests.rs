@@ -149,3 +149,21 @@ fn one_row_per_unloaded_thread_and_no_inline_replies_when_the_root_is_loaded() {
     );
     assert!(crate::transcript::row_of(&rows, 3).is_none());
 }
+
+#[test]
+fn unread_replies_anchor_the_divider_to_the_visible_thread() {
+    use crate::transcript::Row;
+    let room = channel("#threads");
+    for older in [false, true] {
+        let mut held = Buffer::default();
+        held.entries = [
+            entry(&room, 0, "root", older.then_some("unloaded")),
+            entry(&room, 1, "reply", Some("root")),
+        ]
+        .into();
+        held.unread_entries.insert(1);
+        let rows = crate::transcript::rows(&held, &room, &chrono::Utc, true);
+        assert!(rows.contains(&Row::UnreadDivider(0)));
+        assert!(!rows.contains(&Row::UnreadDivider(1)));
+    }
+}

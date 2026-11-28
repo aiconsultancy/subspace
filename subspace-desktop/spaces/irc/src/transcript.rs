@@ -53,11 +53,15 @@ pub(crate) fn rows<Tz: TimeZone>(
     threads: bool,
 ) -> Vec<Row> {
     let conversation = key.target != Target::Server;
-    let (hidden, earlier) = replies::placement(buffer, key, threads);
+    let (hidden, earlier, unread_thread) = replies::placement(buffer, key, threads);
     let history = conversation && buffer.history.state != HistoryState::Complete;
-    let first_unread = buffer.entries.iter().position(|entry| {
-        !hidden.contains(&entry.seq) && buffer.shown_unread().contains(&entry.seq)
-    });
+    let first_unread = buffer
+        .entries
+        .iter()
+        .position(|entry| {
+            !hidden.contains(&entry.seq) && buffer.shown_unread().contains(&entry.seq)
+        })
+        .or(unread_thread);
     history
         .then_some(Row::History)
         .into_iter()

@@ -90,14 +90,7 @@ fn search_finds_a_channel_by_its_network_and_by_its_fleet_in_one_group() {
 
 #[test]
 fn api_ship_and_audit_rows_replace_legacy_navigator_entries() {
-    let rosters = rosters(json!([{
-        "id": "nav", "name": "Navigation", "channels": "#aurora-nav",
-        "fleet": {
-            "id": "aurora", "slug": "aurora", "name": "Aurora",
-            "agents": [{"userId": "captain", "name": "shipmate", "ircNick": "shipmate",
-                        "rank": "captain", "available": true}]
-        }
-    }]));
+    let rosters = short_ship_roster();
     let state = joined([
         channel("#aurora-command"),
         channel("#aurora-audit"),
@@ -113,5 +106,40 @@ fn api_ship_and_audit_rows_replace_legacy_navigator_entries() {
             ("Aurora", &["command", "fleet-audit", "shipmate"]),
             ("Other", &["#lounge", "Server"]),
         ])
+    );
+}
+
+fn short_ship_roster() -> super::super::Rosters {
+    rosters(json!([{
+        "id": "nav", "name": "Navigation", "channels": "#aurora-nav",
+        "fleet": {
+            "id": "aurora", "slug": "aurora", "name": "Aurora",
+            "agents": [{"userId": "captain", "name": "shipmate", "ircNick": "shipmate",
+                        "rank": "captain", "available": true}]
+        }
+    }]))
+}
+
+#[test]
+fn a_listed_replacement_keeps_the_joined_legacy_channel_available() {
+    let legacy = channel("#aurora-shipmate");
+    let mut state = joined([legacy.clone()]);
+    state.apply(
+        Event::ChannelList {
+            network: network_id(),
+            channels: vec![subspace_client_irc::ListedChannel {
+                name: "#shipmate".into(),
+                users: 3,
+                topic: String::new(),
+            }],
+        },
+        at(0),
+    );
+    let layout = layout(&state, &short_ship_roster(), &Default::default());
+    assert!(layout.buffers.values().any(|buffer| buffer == &legacy));
+    assert!(layout.listed.is_empty());
+    assert_eq!(
+        outline(&layout),
+        owned(&[("Aurora", &["shipmate"]), ("Other", &["Server"])])
     );
 }

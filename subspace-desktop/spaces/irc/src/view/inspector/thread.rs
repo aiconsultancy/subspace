@@ -88,7 +88,7 @@ fn content(
                 .min_w_0()
                 .gap_2()
                 .child(origin(thread, (board, buffer), conversation, cx))
-                .child(thread_message(&thread.root, false, &context, cx)),
+                .child(thread_message(&thread.root, (false, false), &context, cx)),
         )
         .children(
             thread
@@ -240,12 +240,9 @@ fn replies(
                 .border_l_1()
                 .border_color(tokens.line)
                 .pl_3()
-                .children(
-                    shown
-                        .iter()
-                        .zip(continues)
-                        .map(|(entry, continues)| thread_message(entry, continues, context, cx)),
-                ),
+                .children(shown.iter().zip(continues).map(|(entry, continues)| {
+                    thread_message(entry, (continues, true), context, cx)
+                })),
         )
         .into_any_element()
 }
@@ -266,6 +263,7 @@ fn show_earlier(board: &Irc, buffer: &BufferKey, skipped: usize) -> impl IntoEle
     .on_click(move |_, _, cx| {
         _ = owner.update(cx, |board, cx| {
             board.threads.show_earlier(&buffer);
+            crate::thread::visible_attachments(board, cx);
             cx.notify();
         });
     })
