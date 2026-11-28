@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, TestSupportExt as _, div,
+    Role, SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
 use subspace_client_fleet::model::Activity;
 use subspace_framework::dashboard::avatar::{self, AgentIcons, AgentRank};
@@ -28,7 +28,11 @@ const HERE_AVATARS: usize = 2;
 /// The Ship tab's body for the ship of `captain`, the roster's captain of
 /// the channel in front.
 pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &App) -> AnyElement {
-    let ship = front.fleet.as_ref().and_then(|fleet| fleet.ship(captain));
+    let ship = front.ship();
+    let content = board.ship_panel.content(front, ship.as_ref());
+    if content.loading {
+        return reason::view("Loading ship details…", reason::WAITING.to_owned(), cx);
+    }
     let hub = board.hub.as_ref().map(|hub| hub.read(cx));
     let now = hub.map_or_else(Utc::now, |hub| hub.now);
     let here = hub.map(|hub| here_now(board, hub)).unwrap_or_default();
@@ -36,7 +40,17 @@ pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &App) -> AnyEl
         .w_full()
         .min_w_0()
         .gap_4()
-        .child(fleet_part(ship.as_ref(), front, captain, now, cx))
+        .child(fleet_part(content.ship, front, captain, now, cx))
+        .children(content.last_known.then(|| {
+            feedback::empty_line(
+                &Tokens::current(cx),
+                "irc-inspector-last-known-text",
+                "Showing the last known ship status.",
+            )
+            .id("irc-inspector-last-known")
+            .role(Role::Status)
+            .test_support()
+        }))
         .children(play::section(board, cx))
         .children(here_section(&here, cx))
         .into_any_element()
@@ -186,6 +200,7 @@ fn crew_section(ship: &ShipLive, now: DateTime<Utc>, cx: &App) -> AnyElement {
 /// current; it has not arrived; or the ship has no crew.
 pub(crate) fn crew_note(ship: &ShipLive) -> &'static str {
     match ship.crew {
+        _ if ship.unavailable.is_some() => "Crew status unavailable.",
         Some((_, people)) if people > 0 && ship.crew_kept => {
             "The crew's detail is kept from an earlier read and not current, so it is not shown."
         }
