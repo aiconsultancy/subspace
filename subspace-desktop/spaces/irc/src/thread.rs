@@ -103,6 +103,8 @@ pub(crate) fn open(
         });
     }
     board.inspector_tab = crate::view::InspectorTab::Thread;
+    // The Ship tab's turns are no longer on show.
+    board.inspector_activity = None;
     if !board.dock.members_open() {
         crate::dock::toggle_members(board, cx);
     }

@@ -96,6 +96,7 @@ impl FleetApi {
                 .entry(fleet)
                 .or_insert_with(|| Followed::start(client));
         }
+        self.sync_agents();
         self.keep_ticking(cx);
     }
 
@@ -124,6 +125,7 @@ impl FleetApi {
             .retain(|_, holder| Arc::strong_count(holder) > 1);
         self.feeds
             .retain(|fleet, _| self.interest.contains_key(fleet));
+        self.sync_agents();
         let mut news = self.interest.len() != interested;
         for followed in self.feeds.values_mut() {
             let revision = followed.feed.revision();

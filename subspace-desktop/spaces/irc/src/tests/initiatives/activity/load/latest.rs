@@ -1,0 +1,284 @@
+//! **Load the latest** (SUB decision `4311830a` item 2): what was shown
+//! stays shown and charged until the newer version arrives, and stays
+//! beside the error and a retry when it fails; an answer never changes
+//! which request is the latest. Beside what is shown it counts only what
+//! it asks for, a page for a part (SUB decision `084f5236` item 2).
+
+use gpui_kit::test::TestWindowExt as _;
+use gpui_kit::{Entity, SharedString, TestAppContext, VisualTestContext};
+use serde_json::json;
+
+use super::super::super::super::remove::settle;
+use super::{
+    Irc, PAGE, answer, drawn, held_bytes, in_parts_with_room, label, load, on, paged, refresh,
+    running, served, served_json, tool,
+};
+use crate::view::inspector::activity::{ask_for, latest_request, set_room, snapshot_pruned};
+
+/// The caption beside **Load the latest** once moving to another part set
+/// its read aside, under way or failed.
+const WITHDRAWN: &str =
+    "Moving to another part set the latest version aside: load it again to show it.";
+
+/// The caption beside **Load the latest** once the room left no longer held
+/// its read beside what is shown.
+const SQUEEZED: &str =
+    "The latest version no longer fitted beside what is shown: load it again to show it.";
+
+/// The bytes the view holds of the captain's activity.
+fn held(board: &Entity<Irc>, cx: &mut VisualTestContext) -> u64 {
+    board.read_with(cx, |board, _| {
+        held_bytes(board.inspector_activity.as_ref().unwrap())
+    })
+}
+
+/// `i3` read whole with `FIRST-END` last, then named at a newer version
+/// whose output ends `SECOND-END`: the gateway serving it.
+fn newer_named(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Irc>,
+    std::sync::Arc<super::Gateway>,
+    &mut VisualTestContext,
+) {
+    let (board, served, cx) = served(cx, 6, &format!("{}FIRST-END", "x".repeat(20_000)));
+    load(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("FIRST-END"));
+    served.serve(7, tool(7, &format!("{}SECOND-END", "y".repeat(20_000))));
+    let bytes = served.item.lock().unwrap().1.len();
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(7, bytes))), cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+    (board, served, cx)
+}
+
+/// Round 6 thermo (P2 1), SUB decision `4311830a` item 2: while the newer
+/// version is read, the older stays shown and charged beside it; it is
+/// swapped only once the newer arrives.
+#[gpui_kit::test]
+fn load_the_latest_keeps_what_is_shown_until_the_newer_arrives(cx: &mut TestAppContext) {
+    let (board, _served, cx) = newer_named(cx);
+    let shown = held(&board, cx);
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("load")), cx);
+        window.render_frame(cx);
+    });
+    assert!(
+        drawn(&on("out:0"), cx).ends_with("FIRST-END"),
+        "still shown"
+    );
+    assert_eq!(drawn(&on("loading"), cx), "Loading the latest…");
+    assert!(held(&board, cx) > shown, "charged beside the newer read");
+    settle(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("SECOND-END"), "swapped");
+    assert_eq!(label(&on("load"), cx), None);
+}
+
+/// Round 6 thermo (P2 1), SUB decision `4311830a` item 2: when the newer
+/// read fails, what was shown stays, beside the error and a retry.
+#[gpui_kit::test]
+fn a_failed_load_the_latest_keeps_what_is_shown_beside_a_retry(cx: &mut TestAppContext) {
+    let (_board, served, cx) = newer_named(cx);
+    *served.busy_first.lock().unwrap() = true;
+    load(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("FIRST-END"), "kept");
+    assert!(drawn(&on("failed"), cx).starts_with("Stargate is busy"));
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Try again"));
+    *served.busy_first.lock().unwrap() = false;
+    load(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("SECOND-END"));
+    assert!(drawn(&on("failed"), cx).is_empty());
+}
+
+/// Round 6 thermo (P2 1), SUB decision `4311830a` item 2: a read that
+/// completes after a later request leaves that request the latest.
+#[gpui_kit::test]
+fn an_answer_never_becomes_the_latest_request(cx: &mut TestAppContext) {
+    let (board, served, cx) = served(cx, 6, "short");
+    let bytes = served.item.lock().unwrap().1.len();
+    let mut items = paged(6, bytes);
+    let reply = json!({"id": "i1", "seq": 4, "startedAt": 1, "updatedAt": 2,
+                       "kind": "text", "status": "completed", "text": "a reply"});
+    items.as_array_mut().unwrap().insert(0, reply);
+    refresh(&board, cx);
+    answer(&board, Ok(running(items)), cx);
+    let i1 = ("t-now".to_owned(), "i1".to_owned());
+    cx.update(|window, cx| window.click(SharedString::from(on("load")), cx));
+    board.update(cx, |board, _| {
+        ask_for(board.inspector_activity.as_mut().unwrap(), "t-now", "i1");
+    });
+    settle(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("short"), "read");
+    let latest = board.read_with(cx, |board, _| {
+        latest_request(board.inspector_activity.as_ref().unwrap())
+    });
+    assert_eq!(latest, Some(i1));
+}
+
+/// Round 7 delta (P2), SUB decision `084f5236` item 2 (Deimos's fixture):
+/// with no room left, **Load the latest** of an item read in parts counts
+/// beside the part shown and its window only the page it asks for, so a
+/// snapshot of the same generation fitted while it is read keeps the part
+/// shown until the newer one arrives in its place.
+#[gpui_kit::test]
+fn a_refresh_while_the_latest_is_read_at_no_room_keeps_the_part_shown(cx: &mut TestAppContext) {
+    let (board, served, cx) = served(cx, 6, &"x".repeat(200_000));
+    board.update(cx, |board, cx| {
+        set_room(board.inspector_activity.as_mut().unwrap(), 0);
+        cx.notify();
+    });
+    settle(cx);
+    let inline = held(&board, cx);
+    load(cx);
+    assert!(drawn(&on("json-part"), cx).contains("xxxx"));
+    served.serve(7, tool(7, &"y".repeat(200_000)));
+    let (json, _) = served_json(&served);
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(7, json.len()))), cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+
+    // The snapshot is fitted before the read can arrive.
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("load")), cx);
+        board.update(cx, |board, _| {
+            snapshot_pruned(board.inspector_activity.as_mut().unwrap());
+        });
+        window.render_frame(cx);
+    });
+    let shown = drawn(&on("json-part"), cx);
+    assert!(
+        shown.contains("xxxx"),
+        "the snapshot let go of the part shown"
+    );
+    assert_eq!(drawn(&on("loading"), cx), "Loading the latest…");
+    // The floor's part and window, beside one page coming in.
+    let charged = held(&board, cx) - inline;
+    let most = 3 * PAGE as u64;
+    assert!(charged <= most, "{charged} past {most}");
+    settle(cx);
+    assert!(
+        drawn(&on("loading"), cx).is_empty(),
+        "the newer one arrived"
+    );
+    let newer = drawn(&on("json-part"), cx);
+    assert!(
+        newer.contains("yyyy") && json.starts_with(&newer),
+        "{newer}"
+    );
+}
+
+/// Round 9 Opus review (P3 1), rule `469f1320`: moving to another part
+/// while **Load the latest** is read withdraws that read. The snapshot
+/// names version 7 before the item route serves it, so the part asked for
+/// arrives at the version shown; the read of the latest asks for nothing
+/// more and its answer is dropped. The item never counts both: only the
+/// page coming in is charged beside the part shown. **Load the latest** is
+/// offered again, beside a caption saying why it is back.
+#[gpui_kit::test]
+fn moving_to_another_part_withdraws_the_latest_and_says_so(cx: &mut TestAppContext) {
+    let (board, served, cx) = in_parts_with_room(cx, &"x".repeat(300_000));
+    let (json, pages) = served_json(&served);
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(7, json.len()))), cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+    assert_eq!(drawn(&on("page"), cx), format!("Part 1 of {pages}"));
+    let shown = held(&board, cx);
+
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("load")), cx);
+        window.click(SharedString::from(on("page-next")), cx);
+        window.render_frame(cx);
+    });
+    let charged = held(&board, cx);
+    assert!(
+        charged <= shown + PAGE as u64,
+        "{charged} counts more than a page beside the {shown} shown"
+    );
+    settle(cx);
+    assert_eq!(
+        drawn(&on("page"), cx),
+        format!("Part 2 of {pages}"),
+        "the part arrived, the latest's answer dropped; gateway saw {:?}",
+        served.asked()
+    );
+    assert_eq!(drawn(&on("json-part"), cx), &json[PAGE..2 * PAGE]);
+    assert!(drawn(&on("loading"), cx).is_empty());
+    assert_eq!(drawn(&on("withdrawn"), cx), WITHDRAWN);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+}
+
+/// Round 10 Opus review (P3 1): moving to another part after **Load the
+/// latest** failed sets that failed read aside too. Its error goes with
+/// it, the part asked for arrives, and the caption beside **Load the
+/// latest** is true of a failed read: it never says a load was stopped.
+#[gpui_kit::test]
+fn moving_to_another_part_after_the_latest_failed_says_it_was_set_aside(cx: &mut TestAppContext) {
+    let (board, served, cx) = in_parts_with_room(cx, &"x".repeat(300_000));
+    let (json, pages) = served_json(&served);
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(7, json.len()))), cx);
+    *served.busy_first.lock().unwrap() = true;
+    load(cx);
+    assert!(drawn(&on("failed"), cx).starts_with("Stargate is busy"));
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Try again"));
+    assert!(drawn(&on("withdrawn"), cx).is_empty());
+
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("page-next")), cx);
+        window.render_frame(cx);
+    });
+    settle(cx);
+    assert_eq!(drawn(&on("page"), cx), format!("Part 2 of {pages}"));
+    assert_eq!(drawn(&on("json-part"), cx), &json[PAGE..2 * PAGE]);
+    assert!(
+        drawn(&on("failed"), cx).is_empty(),
+        "the error went with it"
+    );
+    assert!(drawn(&on("loading"), cx).is_empty());
+    assert_eq!(drawn(&on("withdrawn"), cx), WITHDRAWN);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+}
+
+/// Round 10 Opus review (outside the delta), SUB decision `084f5236` item
+/// 2: when the room shrinks while a whole **Load the latest** is read, so
+/// that the floor no longer holds it beside what is shown, that read is
+/// withdrawn and its reserve released, and what is shown stays. **Load
+/// the latest** is offered again beside a caption saying why it is back,
+/// never silently.
+#[gpui_kit::test]
+fn a_room_squeeze_withdraws_the_latest_and_says_so(cx: &mut TestAppContext) {
+    let (board, served, cx) = served(cx, 6, &format!("{}FIRST-END", "x".repeat(100_000)));
+    let inline = held(&board, cx);
+    load(cx);
+    assert!(drawn(&on("out:0"), cx).ends_with("FIRST-END"), "read whole");
+    served.serve(7, tool(7, &format!("{}SECOND-END", "y".repeat(100_000))));
+    let bytes = served.item.lock().unwrap().1.len();
+    refresh(&board, cx);
+    answer(&board, Ok(running(paged(7, bytes))), cx);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+
+    // The room goes before the newer version can arrive.
+    cx.update(|window, cx| {
+        window.click(SharedString::from(on("load")), cx);
+        board.update(cx, |board, _| {
+            let selection = board.inspector_activity.as_mut().unwrap();
+            set_room(selection, 0);
+            snapshot_pruned(selection);
+        });
+        window.render_frame(cx);
+    });
+    let charged = held(&board, cx) - inline;
+    let floor = 2 * PAGE as u64;
+    assert!(charged <= floor, "{charged} past the floor's {floor}");
+    assert!(drawn(&on("loading"), cx).is_empty(), "withdrawn");
+    assert_eq!(drawn(&on("squeezed"), cx), SQUEEZED);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+    settle(cx);
+    let shown = drawn(&on("body"), cx);
+    assert!(
+        shown.contains("xxxx") && !shown.contains("yyyy"),
+        "what was shown stays, the newer read's answer dropped: {shown}"
+    );
+    assert_eq!(drawn(&on("squeezed"), cx), SQUEEZED);
+    assert_eq!(label(&on("load"), cx).as_deref(), Some("Load the latest"));
+}

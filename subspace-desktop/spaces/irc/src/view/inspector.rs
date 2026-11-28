@@ -25,6 +25,7 @@ use crate::live::{self, FleetLive};
 use crate::members::MemberList;
 use crate::{Irc, dock};
 
+pub(crate) mod activity;
 mod play;
 mod reason;
 mod ship;
@@ -114,6 +115,8 @@ struct Front {
     subject: Subject,
     channel: String,
     roster: std::rc::Rc<Roster>,
+    /// The fleet's Subspace API id, when the roster places the channel.
+    fleet_id: Option<String>,
     fleet: Option<FleetLive>,
 }
 
@@ -126,12 +129,46 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
     let roster = hub.roster(&buffer.network, cx);
     let subject = Subject::of(roster.channel(channel)?)?;
     let fleet = live::fleet_of(&hub.fleets, &roster, channel).cloned();
+    let fleet_id = live::fleet_id(&roster, channel).map(str::to_owned);
     Some(Front {
         subject,
         channel: channel.clone(),
         roster,
+        fleet_id,
         fleet,
     })
+}
+
+/// Closes the captain's turns once they no longer belong to the ship in
+/// front: the channel's fleet changed, or the ship left the live fleet
+/// (the fleet is no longer live, or its overview lists no such ship, or
+/// lists it under another registration ID).
+pub(crate) fn drop_stale_activity(board: &mut Irc, cx: &mut Context<Irc>) {
+    let Some(selected) = activity::selected(board) else {
+        return;
+    };
+    if stale_activity(front(board, cx).as_ref(), &selected) {
+        activity::close(board, cx);
+    }
+}
+
+/// Whether turns opened for `(fleet, captain, agent)` no longer belong to
+/// the ship in `front`.
+fn stale_activity(
+    front: Option<&Front>,
+    (fleet, captain, agent): &(String, String, String),
+) -> bool {
+    let Some(front) = front else {
+        return true;
+    };
+    if front.fleet_id.as_deref() != Some(fleet.as_str()) {
+        return true;
+    }
+    front
+        .fleet
+        .as_ref()
+        .and_then(|live| live.ship(captain))
+        .is_none_or(|ship| ship.id != *agent)
 }
 
 /// Asks for the answers of what the Ship tab's **In play here** lists.
@@ -193,6 +230,10 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
             move |index, _, _, cx| {
                 _ = board_entity.update(cx, |board, cx| {
                     board.inspector_tab = InspectorTab::at(index);
+                    if board.inspector_tab != InspectorTab::Subject {
+                        // The Ship tab's turns are no longer on show.
+                        activity::close(board, cx);
+                    }
                     // Shown now: ask for what In play here lists.
                     want_in_play(board, cx);
                     cx.notify();
@@ -239,7 +280,7 @@ fn people(members: Option<Entity<MemberList>>, cx: &App) -> AnyElement {
 
 /// The subject tab: the ship or the Starbase. Like every tab, it starts
 /// at the inspector body's own text edge, with no inset of its own.
-fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
+fn subject_body(board: &Irc, front: &Front, cx: &Context<Irc>) -> AnyElement {
     let content = match &front.subject {
         Subject::Ship { captain } => ship::body(board, front, captain, cx),
         Subject::Starbase => starbase::body(front, cx),

@@ -2,6 +2,7 @@
 //! against raw loopback servers for what the fixture cannot show.
 
 mod fixture;
+mod streams;
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::TcpListener;

@@ -18,7 +18,7 @@ mod details;
 mod empty;
 mod frame;
 mod hosting;
-mod inspector;
+pub(crate) mod inspector;
 mod navigator;
 
 use details::{kind, kind_icon};
@@ -54,6 +54,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         captions: Default::default(),
         watch: Default::default(),
         inspector_tab: Default::default(),
+        inspector_activity: None,
         threads: Default::default(),
         seen_fleets: Default::default(),
         absorbing: Default::default(),
@@ -133,6 +134,7 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
     publish_visible(board, cx);
     crate::reveal::settle(board, cx);
     crate::live::watch::sync(board, cx);
+    inspector::drop_stale_activity(board, cx);
     crate::thread::refresh(board, cx);
     inspector::want_in_play(board, cx);
     cx.notify();

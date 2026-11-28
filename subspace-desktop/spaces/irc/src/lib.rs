@@ -90,6 +90,8 @@ pub struct Irc {
     /// The inspector's open tab for a fleet channel: its ship or Starbase,
     /// or its people.
     inspector_tab: view::InspectorTab,
+    /// The captain whose turns the Ship tab shows, while they are open.
+    inspector_activity: Option<view::inspector::activity::Selection>,
     /// The thread chosen in each conversation, for the inspector's Thread
     /// tab.
     threads: thread::Threads,
@@ -253,6 +255,8 @@ impl Dashboard for Irc {
         self.active = false;
         toolbar::close_menus(self, window, cx);
         join::close(self, window, cx);
+        // The turns close with the Space: no watch or read outlives it.
+        view::inspector::activity::close(self, cx);
         view::publish_visible(self, cx);
         live::watch::sync(self, cx);
     }

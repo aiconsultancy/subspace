@@ -29,6 +29,8 @@ pub(crate) enum StreamEnd {
     Protocol,
     /// Stargate closed the stream, as it does when its roster changes.
     Closed,
+    /// The watched officers changed: open it again with the new query.
+    Retarget,
 }
 
 pub(crate) fn http_client() -> Result<reqwest::Client, StreamEnd> {
@@ -49,14 +51,23 @@ pub(crate) fn http_client() -> Result<reqwest::Client, StreamEnd> {
         .map_err(|_| StreamEnd::Network)
 }
 
+/// Opens the stream, subscribed to the `agent-activity` events of each of
+/// `agents` (at most eight).
 pub(crate) async fn connect(
     http: &reqwest::Client,
     client: &FleetClient,
+    agents: &[String],
 ) -> Result<EventStream, StreamEnd> {
-    let url = client
+    let mut url = client
         .address()
         .url(&["events"])
         .map_err(StreamEnd::Refused)?;
+    if !agents.is_empty() {
+        let mut query = url.query_pairs_mut();
+        for agent in agents {
+            query.append_pair("agent", agent);
+        }
+    }
     let mut bearer = HeaderValue::from_str(&format!("Bearer {}", client.token().expose()))
         .map_err(|_| StreamEnd::Refused(Error::TokenRefused))?;
     bearer.set_sensitive(true);

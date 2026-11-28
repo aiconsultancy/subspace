@@ -7,8 +7,8 @@
 use chrono::{DateTime, Utc};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, TestSupportExt as _, div,
+    AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, Styled as _, TestSupportExt as _, div,
 };
 use subspace_client_fleet::model::Activity;
 use subspace_framework::dashboard::avatar::{self, AgentIcons, AgentRank};
@@ -26,8 +26,19 @@ const HERE_NAMED: usize = 4;
 
 /// The Ship tab's body for the ship of `captain`, the roster's captain of
 /// the channel in front.
-pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &App) -> AnyElement {
+pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &Context<Irc>) -> AnyElement {
     let ship = front.fleet.as_ref().and_then(|fleet| fleet.ship(captain));
+    let fleet_id = front.fleet_id.as_deref();
+    if let Some(turns) = ship
+        .as_ref()
+        .and_then(|_| super::activity::body(board, fleet_id, captain, cx))
+    {
+        return turns;
+    }
+    let activity = ship
+        .as_ref()
+        .zip(fleet_id)
+        .map(|(ship, fleet)| super::activity::action(fleet, captain, &ship.id, cx));
     let hub = board.hub.as_ref().map(|hub| hub.read(cx));
     let now = hub.map_or_else(Utc::now, |hub| hub.now);
     let here = hub.map(|hub| here_now(board, hub)).unwrap_or_default();
@@ -35,7 +46,13 @@ pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &App) -> AnyEl
         .w_full()
         .min_w_0()
         .gap_4()
-        .child(fleet_part(ship.as_ref(), front, captain, now, cx))
+        .child(fleet_part(
+            ship.as_ref(),
+            front,
+            (captain, activity),
+            now,
+            cx,
+        ))
         .children(play::section(board, cx))
         .children(here_section(&here, cx))
         .into_any_element()
@@ -45,7 +62,7 @@ pub(super) fn body(board: &Irc, front: &Front, captain: &str, cx: &App) -> AnyEl
 fn fleet_part(
     ship: Option<&ShipLive>,
     front: &Front,
-    captain: &str,
+    (captain, activity): (&str, Option<AnyElement>),
     now: DateTime<Utc>,
     cx: &App,
 ) -> AnyElement {
@@ -55,7 +72,7 @@ fn fleet_part(
             .w_full()
             .min_w_0()
             .gap_4()
-            .child(card(ship, captain, cx))
+            .child(card(ship, captain, activity, cx))
             .child(crew_section(ship, now, cx))
             .into_any_element(),
         (None, Some((title, sentence))) => reason::view(title, sentence, cx),
@@ -68,7 +85,7 @@ fn fleet_part(
 
 /// The ship's header card: icon, name, `captain · model`, state, then the
 /// figures.
-fn card(ship: &ShipLive, captain: &str, cx: &App) -> AnyElement {
+fn card(ship: &ShipLive, captain: &str, activity: Option<AnyElement>, cx: &App) -> AnyElement {
     let tokens = Tokens::current(cx);
     let avatar = avatar::agent(
         "irc-inspector-captain",
@@ -121,6 +138,7 @@ fn card(ship: &ShipLive, captain: &str, cx: &App) -> AnyElement {
         .child(head)
         .children(facts)
         .children(unavailable)
+        .children(activity)
         .into_any_element()
 }
 
