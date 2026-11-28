@@ -4,13 +4,14 @@ use super::{
     message_gutter,
 };
 use gpui_kit::component::message::{MessageAlignment, MessageContent};
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _, Role,
-    SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
+    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, Role, SharedString,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
 use subspace_framework::dashboard::chat_bubble;
+use subspace_framework::lucide::IconName;
 pub(crate) fn message(
     original: &Entry,
     continues: bool,
@@ -38,14 +39,23 @@ pub(crate) fn message(
         .roster
         .verified(&nick, entry.line.account.as_deref());
     let leading = message_gutter(entry, (&nick, rank), continues, &group, cx);
+    let reply = entry.line.reply_to.is_some();
+    let selected_thread = context.selected_thread == Some(entry.seq);
     let column = v_flex()
         .relative()
         .flex_1()
         .min_w_0()
         .gap_0p5()
         .when(!continues, |column| {
-            column.child(header(entry, &nick, rank, &tokens, cx))
+            column.child(
+                h_flex()
+                    .min_w_0()
+                    .gap_2()
+                    .child(header(entry, &nick, rank, &tokens, cx))
+                    .children(reply.then(|| reply_mark(&tokens))),
+            )
         })
+        .children((continues && reply).then(|| reply_mark(&tokens)))
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
@@ -54,12 +64,29 @@ pub(crate) fn message(
         .children(attachments(original, context, &tokens, cx))
         .children(crate::transcript::reactions::row(entry, context))
         .children(marks::focus_card(entry, context));
-    let row = h_flex()
+    let row = row_frame((&id, group), spoken, selected_thread, &tokens)
+        .test_support()
+        .child(leading)
+        .child(column)
+        .children(marks::focus_ring(entry, context, &tokens, cx))
+        .children(toolbar);
+    let row = measure_focused(hovered(row, entry.seq, context), entry, context);
+    let selected = selected_thread || entry.highlight || context.target == Some(entry.seq);
+    let row = filled(row, RowFill::of(selected, unread, &tokens));
+    (message_frame(id, row, continues), identifiers)
+}
+
+fn row_frame(
+    (id, group): (&SharedString, SharedString),
+    spoken: String,
+    selected_thread: bool,
+    tokens: &Tokens,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    h_flex()
         .id(SharedString::from(format!("{id}:row")))
         .group(group)
         .role(Role::Group)
         .aria_label(spoken)
-        .test_support()
         .w_full()
         .min_w_0()
         .items_start()
@@ -68,14 +95,22 @@ pub(crate) fn message(
         .py_0p5()
         .relative()
         .rounded(tokens.control_radius)
-        .child(leading)
-        .child(column)
-        .children(marks::focus_ring(entry, context, &tokens, cx))
-        .children(toolbar);
-    let row = measure_focused(hovered(row, entry.seq, context), entry, context);
-    let selected = entry.highlight || context.target == Some(entry.seq);
-    let row = filled(row, RowFill::of(selected, unread, &tokens));
-    (message_frame(id, row, continues), identifiers)
+        .border_l_1()
+        .border_color(if selected_thread {
+            tokens.accent
+        } else {
+            gpui_kit::transparent_black()
+        })
+}
+
+fn reply_mark(tokens: &Tokens) -> impl IntoElement {
+    h_flex()
+        .gap_1()
+        .flex_shrink_0()
+        .text_color(tokens.muted)
+        .text_size(tokens.caption_size())
+        .child(div().child(Icon::from(IconName::Reply).xsmall()))
+        .child("Thread reply")
 }
 
 /// `original` as the hub shows it now: with resolved uploads' text hidden,

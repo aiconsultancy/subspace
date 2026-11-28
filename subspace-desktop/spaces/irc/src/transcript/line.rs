@@ -53,6 +53,8 @@ pub(crate) struct RowContext {
     pub upload: crate::uploads::viewer::Claim,
     /// The line a search result opened, shown selected.
     pub target: Option<i64>,
+    /// The original message of the conversation’s selected thread.
+    pub selected_thread: Option<i64>,
     /// The hub, whose answers give issue references their look and tooltip.
     pub hub: WeakEntity<Hub>,
     /// The message and reference with keyboard focus.

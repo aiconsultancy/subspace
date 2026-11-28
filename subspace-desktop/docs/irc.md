@@ -1110,33 +1110,21 @@ It shows one thread at a time: a request, or any message with replies.
   around this message** (`Command::LoadAround`) while the network is
   connected and keeps `draft/chathistory`.
 - **Lifetime.** The chosen thread is kept per conversation for the session
-  (`thread::Threads`), across the inspector's tabs and switching
-  conversations. It is rebuilt only when its buffer's held lines change, by
-  a fingerprint of their count, ends, folded count and the root's ending,
-  so a sync that leaves the buffer alone reads none of its lines; it goes
-  once its root is no longer held (the line cap, or the conversation
-  removed). A reply being written to it then stays in reply mode, marked
-  gone: the row says the thread is no longer loaded, Enter sends nothing,
-  not even a command, Escape keeps it, and only **Write to the channel**
-  leaves reply mode, keeping the text. **Reply in thread** on another
-  thread does not take such a draft with it: while the draft holds text,
-  the row adds **Move to \<author\>'s thread**, and only that choice moves
-  it; choosing yet another thread withdraws the offer, as does that
-  thread's root going; an emptied draft starts the new reply at once. New replies and steps show
-  live. A linked status line keeps a zero-size status element beside its
-  button, not inside it, so its changes are still announced however nested
-  roles are flattened.
-- **Replying.** **Reply in thread**, the tab's footer action, puts the
-  composer into reply mode (`compose/reply.rs`): a row above the input says
-  `Replying in thread to <author>: <start of the root>`, with **Cancel
-  reply** (Escape also cancels), and the placeholder reads
-  `Reply in thread to <author>`. Sending sends `Command::Reply` to the
-  channel with `+draft/reply=<root msgid>`, so everyone in the channel sees
-  it, then leaves reply mode. A `/command` is refused in reply mode (`//`
-  is a literal slash), as are attachments, with the reason in the
-  composer. Reply mode exists only in a channel and never sends a private
-  message. Without a connection, or on a connection that did not agree
-  `message-tags`, the action is replaced by the reason.
+  (`thread::Threads`), across the inspector's tabs and switching conversations.
+  It is rebuilt when its buffer's held lines change. If the original message
+  drops out of loaded history, the inspector offers **Copy draft** under
+  **Unsent replies**. Each draft is bound to the message ID it started on.
+  New replies and steps show live. A linked status line keeps a zero-size
+  status element beside its button so its changes are still announced.
+- **Replying.** The inspector footer holds the separate `ReplyDraft` editor
+  (`compose/reply.rs`). **Reply in thread** in the transcript opens the
+  inspector and focuses it. **Jump to message** reveals the selected origin
+  in the transcript. The editor uses `Command::Reply` with
+  `+draft/reply=<root msgid>`. The destination line says the channel can see
+  the reply. A leading `//` sends one literal slash. Commands and attachments
+  are available from the channel editor. The footer shows the capability
+  refusal if the connection is down or the server did not agree
+  `message-tags`, and keeps any typed draft.
 - **Left out**: the mock-up's `Wren closed NAV-6` on the settled line and
   the *delegated* and *pull request* steps, which Stargate's progress tag
   does not carry; a reply count from the server rather than the loaded

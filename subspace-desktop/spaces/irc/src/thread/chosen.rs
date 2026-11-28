@@ -66,6 +66,7 @@ impl Threads {
     }
 
     /// The root message ID of `buffer`'s chosen thread.
+    #[cfg(test)]
     pub(crate) fn chosen(&self, buffer: &BufferKey) -> Option<&str> {
         self.chosen.get(buffer).map(|chosen| chosen.root.as_str())
     }
