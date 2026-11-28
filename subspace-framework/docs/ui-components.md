@@ -411,17 +411,19 @@ close button.
 
 ### Shared messaging controls
 
-- `ChatInput` and `ChatInputEvent` are exported at the crate root. IRC uses
-  `ChatInput::message`, the same `InputGroup`/`Textarea` composition as
-  Copilot, with send controls instead of agent settings. `set_plain_text`
-  removes its Markdown Write/Preview. Only a plain Enter sends: Kit reports
+- `ChatInput` and `ChatInputEvent` are exported at the crate root. Message
+  inputs share Kit's `InputGroup` and `Textarea` with the agent input.
+  `set_plain_text` removes Write/Preview from the standard message input.
+  Only a plain Enter sends: Kit reports
   Shift+Enter as a `PressEnter` too, after inserting the line break, and the
   input ignores it. The message input's hint names the platform's key,
   `Return to send · Shift+Return for a new line` on macOS and `Enter to send ·
   Shift+Enter for a new line` elsewhere.
   `ChatInput::compact_message` uses the inset Kit frame, a labelled send
-  action and an optional leading tools view. It keeps the same keyboard and
-  draft-sizing behaviour. The existing gallery card includes this state.
+  action and an optional leading tools view. The caller supplies the field's
+  accessible name. IRC uses it for the channel and thread destination.
+  The compact state keeps the message keyboard and draft-sizing behaviour
+  and has an example on the same gallery card.
   `composer::Composer` remains the Write/Preview Markdown editor.
 - `chat_input::completion::CompletionList` is the completion list above a
   chat input, shown with Kit's `Command` list with search and filtering off.

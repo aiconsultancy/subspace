@@ -16,10 +16,15 @@ use gpui_kit::{
     Styled as _, TestSupportExt as _, div,
 };
 
+pub(super) struct CompactMessage {
+    pub label: SharedString,
+    pub input_name: SharedString,
+}
+
 pub(super) struct MessageState {
     /// Write/Preview for Markdown; off for plain-text protocols.
     pub markdown: bool,
-    pub compact_label: Option<SharedString>,
+    pub compact: Option<CompactMessage>,
     pub busy: bool,
     pub submit_blocked: bool,
     pub error: Option<String>,
@@ -40,21 +45,26 @@ impl ChatInput {
     /// An addon set on this composer appears before the shared send controls.
     pub fn compact_message(
         label: impl Into<SharedString>,
+        input_name: impl Into<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::with_message(Some(label.into()), window, cx)
+        let compact = CompactMessage {
+            label: label.into(),
+            input_name: input_name.into(),
+        };
+        Self::with_message(Some(compact), window, cx)
     }
 
     fn with_message(
-        compact_label: Option<SharedString>,
+        compact: Option<CompactMessage>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             message: Some(MessageState {
-                markdown: compact_label.is_none(),
-                compact_label,
+                markdown: compact.is_none(),
+                compact,
                 busy: false,
                 submit_blocked: false,
                 error: None,
@@ -67,8 +77,8 @@ impl ChatInput {
         }
     }
 
-    pub(super) fn compact_label(&self) -> Option<&SharedString> {
-        self.message.as_ref()?.compact_label.as_ref()
+    pub(super) fn compact(&self) -> Option<&CompactMessage> {
+        self.message.as_ref()?.compact.as_ref()
     }
 
     /// A plain-text message input for a protocol without Markdown, such as
@@ -142,8 +152,8 @@ impl ChatInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if let Some(label) = self.compact_label() {
-            return self.compact_toolbar(label, window, cx);
+        if let Some(compact) = self.compact() {
+            return self.compact_toolbar(&compact.label, window, cx);
         }
         if let Some(addon) = &self.addon {
             return Some(addon.clone().into_any_element());
@@ -211,8 +221,13 @@ impl ChatInput {
                 .text_color(tokens.red)
                 .into_any_element();
         }
-        if message.compact_label.is_some() {
-            return crate::truncated::text("message-status", "⇧↵ New line")
+        if message.compact.is_some() {
+            let keys = if cx.platform_info().is_mac() {
+                "⇧↵ New line"
+            } else {
+                "Shift+Enter · New line"
+            };
+            return crate::truncated::text("message-status", keys)
                 .flex_1()
                 .min_w_0()
                 .text_right()

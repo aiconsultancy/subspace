@@ -147,7 +147,8 @@ impl Messaging {
 
 fn compact_reply(window: &mut Window, cx: &mut App) -> (Entity<ChatInput>, Subscription) {
     let input = cx.new(|cx| {
-        let mut input = ChatInput::compact_message("Reply", window, cx);
+        let mut input =
+            ChatInput::compact_message("Reply", "Reply to the fixture thread", window, cx);
         input.set_attachment_budget(
             subspace_dashboard::chat_input::attachments::AttachmentBudget::new(
                 1,

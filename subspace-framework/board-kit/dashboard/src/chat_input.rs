@@ -471,7 +471,7 @@ impl Render for ChatInput {
             .w_full()
             .min_w_0()
             .flex_shrink_0()
-            .when(self.compact_label().is_none(), |frame| {
+            .when(self.compact().is_none(), |frame| {
                 frame.border_t_1().border_color(tokens.line)
             })
             .key_context(self.key_context(cx.platform_info().os))

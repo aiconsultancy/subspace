@@ -16,13 +16,14 @@ pub(super) fn group(
     window: &mut Window,
     cx: &mut Context<ChatInput>,
 ) -> InputGroup {
-    let compact = input.compact_label();
-    let label = compact.map_or_else(|| "Chat message".into(), |label| format!("{label} text"));
-    let mut group = InputGroup::new("chat-input")
-        .aria_label(label.clone())
-        .when(compact.is_none(), |group| {
-            group.rounded_none().border_0().focus_ring(false)
-        });
+    let compact = input.compact();
+    let mut group = InputGroup::new("chat-input").when(compact.is_none(), |group| {
+        group
+            .aria_label("Chat message")
+            .rounded_none()
+            .border_0()
+            .focus_ring(false)
+    });
     group = counter(input, group, cx);
     if input
         .message
@@ -40,7 +41,9 @@ pub(super) fn group(
         let budget = input.attachment_budget;
         group = group.input(
             Textarea::new(&input.state)
-                .aria_label(label)
+                .when_some(compact, |field, compact| {
+                    field.aria_label(compact.input_name.clone())
+                })
                 .min_h_0()
                 .disabled(input.disabled)
                 .on_paste(move |item, _, cx| {
