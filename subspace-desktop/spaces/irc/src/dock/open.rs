@@ -239,9 +239,17 @@ fn conversation_event(
             super::members::focus(board, &buffer, cx);
             crate::thread::open(board, &buffer, root.clone(), window, cx);
         }
+        ConversationEvent::PreviewThread(root) => {
+            crate::thread::preview(board, &buffer, root.clone(), window, cx);
+        }
+        ConversationEvent::FollowThreads => {
+            board.threads.set_pinned(&buffer, false);
+            cx.notify();
+        }
         ConversationEvent::ReplyInThread(root) => {
             super::members::focus(board, &buffer, cx);
             crate::thread::open(board, &buffer, root.clone(), window, cx);
+            board.threads.set_pinned(&buffer, true);
             crate::thread::focus_reply(board, &buffer, window, cx);
         }
     }

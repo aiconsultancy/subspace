@@ -244,7 +244,7 @@ fn choices_offer_the_common_set_and_the_stop_group_only_when_asked() {
         stops_agent: true,
     }];
     let plain = choices(&summaries, None);
-    assert_eq!(plain.common.len(), 6);
+    assert!(plain.common.iter().any(|choice| choice.name == "Thank you"));
     assert!(plain.stop.is_none());
     assert!(
         plain

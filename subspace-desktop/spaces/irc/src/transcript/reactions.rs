@@ -5,8 +5,7 @@
 //!
 //! Selecting a pill adds or takes back our reaction. The row ends with
 //! **Add reaction**, a menu of a short fixed set of reactions
-//! ([`crate::reactions::choices`]) and, on a running request to a verified
-//! agent or that agent's reply, the stop group under `Stop <ship>`. Every
+//! ([`crate::reactions::choices`]) with the separate `Stop <ship>` control in the message toolbar. Every
 //! selection goes through [`reacting::toggle`] and its one rule
 //! ([`crate::reactions::gate`]): a new ✋ or 🛑 of ours is sent only from
 //! that labelled menu item, never from a pill or the `+N` menu, whether or
@@ -144,12 +143,9 @@ pub(crate) fn row(entry: &Entry, context: &RowContext) -> Option<AnyElement> {
         )
     });
     let add = msgid.as_ref().map(|msgid| {
-        let ship = agent
-            .filter(|agent| agent.running)
-            .map(|agent| agent.ship.as_str());
         add_control(
             entry.seq,
-            choices(summaries, ship),
+            choices(summaries, None),
             msgid,
             &context.conversation,
         )
@@ -320,32 +316,27 @@ fn add_control(
     );
     let (conversation, msgid) = (conversation.clone(), msgid.to_owned());
     anchored::dropdown_menu(button, move |menu, _, _| {
-        menu_items(menu, &choices, &msgid, &conversation)
+        menu_items(menu, &choices.common, (&msgid, None), &conversation)
     })
     .into_any_element()
 }
 
-/// The reaction choices as menu items: the common set, then the stop
-/// group apart under its plain label. A checked item is ours; choosing it
-/// takes ours back.
+/// A checked item is ours; choosing it takes ours back.
 pub(crate) fn menu_items(
     menu: PopupMenu,
-    choices: &Choices,
-    msgid: &str,
+    choices: &[Choice],
+    (msgid, ship): (&str, Option<&str>),
     conversation: &WeakEntity<Conversation>,
 ) -> PopupMenu {
-    let menu = choices.common.iter().fold(menu, |menu, choice| {
+    choices.iter().fold(menu, |menu, choice| {
         let item = PopupMenuItem::new(choice.label()).checked(choice.mine);
-        menu.item(on_choose(item, choice, msgid, None, conversation))
-    });
-    let Some(group) = &choices.stop else {
-        return menu;
-    };
-    let menu = menu.separator().label(group.label());
-    group.choices.iter().fold(menu, |menu, choice| {
-        let item = PopupMenuItem::new(choice.label()).checked(choice.mine);
-        let ship = Some(group.ship.clone());
-        menu.item(on_choose(item, choice, msgid, ship, conversation))
+        menu.item(on_choose(
+            item,
+            choice,
+            msgid,
+            ship.map(str::to_owned),
+            conversation,
+        ))
     })
 }
 

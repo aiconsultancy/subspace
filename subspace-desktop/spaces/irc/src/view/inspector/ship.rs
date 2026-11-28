@@ -23,6 +23,7 @@ use crate::live::{CrewLine, ShipLive};
 
 /// The most people the Here now line names before it counts the rest.
 const HERE_NAMED: usize = 4;
+const HERE_AVATARS: usize = 2;
 
 /// The Ship tab's body for the ship of `captain`, the roster's captain of
 /// the channel in front.
@@ -273,8 +274,9 @@ fn here_section(here: &[String], cx: &App) -> Option<AnyElement> {
         return None;
     }
     let tokens = Tokens::current(cx);
-    let faces = avatar::group(
+    let faces = h_flex().flex_shrink_0().gap_1().children(
         here.iter()
+            .take(HERE_AVATARS)
             .map(|nick| avatar::member(nick.clone(), &tokens)),
     );
     Some(

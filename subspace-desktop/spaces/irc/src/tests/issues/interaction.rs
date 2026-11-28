@@ -34,7 +34,7 @@ fn secondary_click_copies_the_displayed_issue_text_and_primary_click_opens_issue
         let mut menu = window.within("popup-menu");
         assert_eq!(menu.find(0usize).label(), Some("Copy"));
         assert_eq!(menu.find(1usize).label(), Some("Select all"));
-        assert_eq!(menu.find(2usize).label(), Some("Add to chat"));
+        assert!(menu.try_find(2usize).is_none());
         menu.click(0usize, cx);
     });
     assert_eq!(

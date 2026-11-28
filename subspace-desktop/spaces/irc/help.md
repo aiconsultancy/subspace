@@ -691,10 +691,11 @@ messages or searchable.
 
 ### Follow a thread
 
-In a ship's channel or a Starbase, the inspector has a **Thread** tab between
-**Ship** (or **Starbase**) and **People**. Choose a message's `N replies ›`
-or a request's status line, or press `Enter` on a focused message that has
-either, to open its thread there. Until you do, the tab says how.
+The inspector for a ship, Starbase, Command or Fleet audit has a **Thread**
+tab beside the channel tab and **People**. Open **Thread** and click messages
+to preview their threads. A message's reply count or a request's status line
+also opens the thread. With the keyboard, focus a message that has either
+and press `Enter`.
 
 The tab shows the message you chose, with its author, time and references.
 For a request it then lists **Status**: each step the agent reported, such as
@@ -714,7 +715,9 @@ steps are not, with **Load around this message** when the server keeps
 history.
 
 The **Thread** inspector has its own reply box, pinned below the replies.
-Choose **Reply in thread** on a message to put the cursor in that box.
+Choose **Reply in thread** in the toolbar or right-click anywhere in a message
+and choose it there. This focuses the reply box and pins the thread while you
+select other messages. Choose **Unpin thread** to follow your selection again.
 **Jump to message** reveals the original in the channel. The channel input
 keeps its draft, and each thread keeps its own draft when you switch threads,
 switch channels or hide the inspector. Choose **Thread draft** in the
@@ -739,10 +742,10 @@ filled pill and bold text. Hover a pill to see who reacted. Select a pill to
 add your reaction, or select one that is yours to take it back. After ten
 pills, **+N** lists the rest.
 
-To add a reaction, choose **Add reaction** at the end of a message's pills,
-or focus the message (`Shift+Tab` from the message input, then `↑` or `↓`)
-and press `r`. The menu offers a few common reactions; a ticked one is yours,
-and choosing it again takes it back. A reaction goes to the conversation the
+To add a reaction, choose **Add reaction** in the message toolbar or at the
+end of its pills. The menu opens beside the button. You can also focus the message (`Shift+Tab` from the message input, then `↑` or `↓`)
+and press `r`. The menu includes 🙏 **Thank you**. A ticked reaction is yours.
+Choose it again to take it back. A reaction goes to the conversation the
 message is in. Your reaction appears once the server has it; if it can't be
 sent, a short note above the message input says why. Taking yours back
 removes exactly the reaction you made.
@@ -755,7 +758,7 @@ so knows who the fleet agents are, private conversations take no
 reactions: just after it starts, if the latest read failed, or if you are
 not signed in to Subspace API. A reaction typed by hand as a `TAGMSG`
 through `/raw` is held to the same rules as the reaction controls: a stop
-reaction goes only from **Stop** and the agent's name in **Add reaction**.
+reaction goes only from **Stop** and the agent's name in the message toolbar.
 
 Reactions need a server that supports them (IRCv3 `message-tags`). Without
 that, or while the network is disconnected, the pills stay but you can't
@@ -763,8 +766,8 @@ add or take back a reaction. A message without a server message ID can't
 take one.
 
 **Stop an agent.** On a request to a fleet agent that is still running, or
-the agent's reply to it, **Add reaction** also lists ✋ **Raised hand** and
-🛑 **Stop sign** apart, under **Stop** and the agent's name. Choosing one
+the agent's reply to it, the message toolbar offers **Stop** and the agent's
+name. Its menu offers ✋ **Raised hand** and 🛑 **Stop sign**. Choosing one
 asks Stargate to stop the agent's turn, if you are signed in to an account
 on the server. The note above the message input then says only that the
 reaction was sent; the request's status line shows whether the agent
@@ -810,7 +813,7 @@ command stays in the message input. The issue's tile and **In play here**
 show the change once the Issues Space has read it again.
 
 Hover a message, or focus it with the keyboard, to see its toolbar:
-**Add reaction**, **Reply in thread** (in a ship's channel or Starbase),
+**Add reaction**, **Reply in thread** (in fleet channels),
 **Make issue…** and **Record decision…**. The last two open a dialog where
 you can edit the title and choose the project or the issue; only its button
 changes the tracker, and only under the account, organisation and tracker
@@ -864,9 +867,9 @@ to them. **Escape** closes find and restores focus. App-wide Search keeps
 **⌘⇧F / Ctrl+Shift+F** and can search kept history beyond the loaded transcript.
 
 Drag within a message to select a range, double-click for a word or triple-click
-for a line. Drag across messages to copy in reading order. The right-click text
-menu offers **Copy**, **Copy link** on links, **Select all** for the block and
-**Add to chat**. Opening it does not put text in chat.
+for a line. Drag across messages to copy in reading order. Right-click anywhere
+in a message for **Copy** and **Select all**. On a link, the menu also offers
+**Copy link**. **Add to local model chat** appears when local Chat is enabled.
 
 ### Keep or clear message history
 

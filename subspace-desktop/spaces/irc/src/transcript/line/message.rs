@@ -7,8 +7,9 @@ use gpui_kit::component::message::{MessageAlignment, MessageContent};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, Role, SharedString,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
+    AnyElement, App, ClickEvent, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
+    TestSupportExt as _, div, px,
 };
 use subspace_framework::dashboard::chat_bubble;
 use subspace_framework::lucide::IconName;
@@ -38,9 +39,48 @@ pub(crate) fn message(
         .roster
         .verified(&nick, entry.line.account.as_deref());
     let leading = message_gutter(entry, (&nick, rank), continues, &group, cx);
+    let column = message_column(entry, (&nick, rank), continues, &tokens, cx);
+    let below = thread_facts(entry, context, &tokens, cx)
+        .into_iter()
+        .chain(crate::tiles::row(entry, &refs, context, cx))
+        .chain(attachments(original, context, &tokens, cx))
+        .chain(crate::transcript::reactions::row(entry, context))
+        .chain(marks::focus_card(entry, context))
+        .collect::<Vec<_>>();
+    let row = row_frame((&id, group), spoken, &tokens).child(leading);
+    let focus = marks::focus_ring(entry, context, &tokens, cx);
+    let seq = entry.seq;
+    let selected = context.selected_thread == Some(seq) || context.target == Some(seq);
+    let row = message_click(hovered(row, seq, context), entry, context);
+    let row = measure_focused(row, entry, context);
+    let row = filled(row, RowFill::of(selected, &tokens));
+    let content = body(entry, rendered.as_ref(), context, &tokens, cx)
+        .when(entry.line.text.is_empty(), |body| body.h_0())
+        .menu_host(move |body| {
+            row.test_support()
+                .child(column.child(body).children(below))
+                .children(focus)
+                .children(toolbar)
+        });
+    let content = if context.actions.reply && entry.line.id.is_some() {
+        let conversation = context.conversation.clone();
+        content
+            .menu_action(move || crate::transcript::actions::reply_item(conversation.clone(), seq))
+    } else {
+        content
+    };
+    (message_frame(id, content, continues), identifiers)
+}
+
+fn message_column(
+    entry: &Entry,
+    (nick, rank): (&str, Option<crate::fleet::Rank>),
+    continues: bool,
+    tokens: &Tokens,
+    cx: &App,
+) -> gpui_kit::Div {
     let reply = entry.line.reply_to.is_some();
-    let selected_thread = context.selected_thread == Some(entry.seq);
-    let column = v_flex()
+    v_flex()
         .relative()
         .flex_1()
         .min_w_0()
@@ -50,29 +90,11 @@ pub(crate) fn message(
                 h_flex()
                     .min_w_0()
                     .gap_2()
-                    .child(header(entry, &nick, rank, &tokens, cx))
-                    .children(reply.then(|| reply_mark(&tokens))),
+                    .child(header(entry, nick, rank, tokens, cx))
+                    .children(reply.then(|| reply_mark(tokens))),
             )
         })
-        .children((continues && reply).then(|| reply_mark(&tokens)))
-        .when(!entry.line.text.is_empty(), |column| {
-            column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
-        })
-        .children(thread_facts(entry, context, &tokens, cx))
-        .children(crate::tiles::row(entry, &refs, context, cx))
-        .children(attachments(original, context, &tokens, cx))
-        .children(crate::transcript::reactions::row(entry, context))
-        .children(marks::focus_card(entry, context));
-    let row = row_frame((&id, group), spoken, &tokens)
-        .test_support()
-        .child(leading)
-        .child(column)
-        .children(marks::focus_ring(entry, context, &tokens, cx))
-        .children(toolbar);
-    let row = measure_focused(hovered(row, entry.seq, context), entry, context);
-    let selected = selected_thread || context.target == Some(entry.seq);
-    let row = filled(row, RowFill::of(selected, &tokens));
-    (message_frame(id, row, continues), identifiers)
+        .children((continues && reply).then(|| reply_mark(tokens)))
 }
 
 fn row_frame(
@@ -148,6 +170,38 @@ pub(crate) fn thread_message(
         .into_any_element()
 }
 
+/// Pointer movement below this threshold still counts as selecting a message.
+const CLICK_SLOP_PX: f32 = 4.;
+
+fn message_click(
+    row: gpui_kit::Stateful<gpui_kit::Div>,
+    entry: &Entry,
+    context: &RowContext,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let Some(id) = entry.line.id.as_ref().filter(|_| context.threads).cloned() else {
+        return row;
+    };
+    let conversation = context.conversation.clone();
+    row.on_click(move |event, _, cx| {
+        let ClickEvent::Mouse(event) = event else {
+            return;
+        };
+        // A text drag or a multi-click selection is not a thread selection.
+        let moved = event.up.position - event.down.position;
+        if event.up.button == MouseButton::Left
+            && event.down.click_count == 1
+            && moved.x.abs() < px(CLICK_SLOP_PX)
+            && moved.y.abs() < px(CLICK_SLOP_PX)
+        {
+            _ = conversation.update(cx, |_, cx| {
+                cx.emit(crate::conversation::ConversationEvent::PreviewThread(
+                    id.clone(),
+                ));
+            });
+        }
+    })
+}
+
 /// The row tells its conversation when the pointer is over it, which
 /// shows its toolbar.
 fn hovered<E: gpui_kit::StatefulInteractiveElement>(row: E, seq: i64, context: &RowContext) -> E {
@@ -166,30 +220,20 @@ pub(crate) fn named_issues(entry: &Entry, mentions: &crate::markup::Mentions) ->
     markup::issues(&entry.line.text, mentions, rendered.as_ref())
 }
 
-/// The keyboard-focused message measures itself into the reaction menu's
-/// first anchor, for `r`, and the hovered one into the second, for its
-/// toolbar's React, so each opens the menu at its own message. Other rows
-/// are untouched.
+/// The keyboard-focused row anchors the `r` shortcut. The toolbar measures
+/// its own reaction button independently.
 fn measure_focused<E: gpui_kit::base::ElementExt>(
     row: E,
     entry: &Entry,
     context: &RowContext,
 ) -> E {
-    let focused = context.focus.is_some_and(|at| at.seq == entry.seq);
-    let hovered = context.hovered == Some(entry.seq);
-    let anchor = context.react_anchor.clone().and_then(|(keys, pointer)| {
-        if focused {
-            Some(keys)
-        } else {
-            hovered.then_some(pointer)
-        }
-    });
-    match anchor {
-        Some(anchor) => row.on_prepaint(move |bounds, _, cx| {
-            anchor.update(cx, |anchor, cx| anchor.set_bounds(bounds, cx));
-        }),
-        None => row,
+    if !context.focus.is_some_and(|focus| focus.seq == entry.seq) {
+        return row;
     }
+    let anchor = context.react_anchors.keyboard.clone();
+    row.on_prepaint(move |bounds, _, cx| {
+        anchor.update(cx, |anchor, cx| anchor.set_bounds(bounds, cx));
+    })
 }
 
 /// What a message's thread says under it: the reply count, then the status

@@ -1,9 +1,5 @@
-//! The inspector of a fleet channel, with tabs (the owner's exception in
-//! the design guide's *Inspector tabs*): a ship's channel has **Ship**,
-//! **Thread** and **People**, a Starbase **Starbase**, **Thread** and
-//! **People**, every tab about the channel in front, and three the most the
-//! shell draws. Other conversations keep the member list under its title,
-//! without tabs.
+//! The inspector of a fleet channel. Its tabs show the channel, Thread and
+//! People. Other conversations keep the member list under its title.
 //!
 //! What a ship or Starbase tab shows comes from the fleet's Fleet API as
 //! the hub holds it ([`crate::live`]); while the fleet is not live the tab
@@ -39,7 +35,7 @@ pub(crate) use reason::reason;
 /// The inspector's open tab for a fleet channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum InspectorTab {
-    /// The channel's ship, or its fleet for a Starbase.
+    /// The channel, its ship or its fleet.
     #[default]
     Subject,
     /// The thread chosen in the conversation ([`crate::thread`]).
@@ -70,17 +66,19 @@ pub(crate) enum Subject {
         captain: String,
     },
     Starbase,
+    Command,
+    Audit,
 }
 
 impl Subject {
-    /// The subject of a channel of `kind`; `None` for the command channel.
-    pub(crate) fn of(kind: &ChannelKind) -> Option<Self> {
+    fn of(kind: &ChannelKind) -> Self {
         match kind {
-            ChannelKind::Ship { captain } => Some(Self::Ship {
+            ChannelKind::Ship { captain } => Self::Ship {
                 captain: captain.clone(),
-            }),
-            ChannelKind::Starbase => Some(Self::Starbase),
-            ChannelKind::Command | ChannelKind::Audit => None,
+            },
+            ChannelKind::Starbase => Self::Starbase,
+            ChannelKind::Command => Self::Command,
+            ChannelKind::Audit => Self::Audit,
         }
     }
 
@@ -89,6 +87,8 @@ impl Subject {
         match self {
             Self::Ship { .. } => "Ship",
             Self::Starbase => "Starbase",
+            Self::Command => "Command",
+            Self::Audit => "Fleet audit",
         }
     }
 }
@@ -124,7 +124,7 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
     };
     let hub = board.hub.as_ref()?.read(cx);
     let roster = hub.roster(&buffer.network, cx);
-    let subject = Subject::of(roster.channel(channel)?)?;
+    let subject = Subject::of(roster.channel(channel)?);
     let fleet = live::fleet_of(&hub.fleets, &roster, channel).cloned();
     Some(Front {
         subject,
@@ -139,8 +139,7 @@ pub(crate) fn want_in_play(board: &Irc, cx: &mut Context<Irc>) {
     play::want(board, cx);
 }
 
-/// The inspector: a fleet channel's ship or Starbase and its people under
-/// tabs; else the focused channel's members under their count, or a hint
+/// The inspector: a fleet channel and its people under tabs; else the focused channel's members under their count, or a hint
 /// for a buffer that has none.
 pub(super) fn inspector(board: &Irc, cx: &mut Context<Irc>) -> workspace::Inspector {
     tabbed(board, cx).unwrap_or_else(|| members_only(board, cx))
@@ -237,12 +236,13 @@ fn people(members: Option<Entity<MemberList>>, cx: &App) -> AnyElement {
     }
 }
 
-/// The subject tab: the ship or the Starbase. Like every tab, it starts
+/// The channel tab. Like every tab, it starts
 /// at the inspector body's own text edge, with no inset of its own.
 fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
     let content = match &front.subject {
         Subject::Ship { captain } => ship::body(board, front, captain, cx),
         Subject::Starbase => starbase::body(front, cx),
+        Subject::Command | Subject::Audit => channel_details(board, front, cx),
     };
     v_flex()
         .id("irc-inspector-subject")
@@ -251,6 +251,25 @@ fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
         .min_w_0()
         .gap_4()
         .child(content)
+        .into_any_element()
+}
+
+fn channel_details(board: &Irc, front: &Front, cx: &App) -> AnyElement {
+    let topic = board
+        .hub
+        .as_ref()
+        .zip(board.dock.focused.as_ref())
+        .and_then(|(hub, buffer)| hub.read(cx).state.buffer(buffer))
+        .and_then(|held| held.topic.as_ref())
+        .map(|topic| subspace_client_irc::format::strip(&topic.text))
+        .filter(|topic| !topic.trim().is_empty());
+    let tokens = Tokens::current(cx);
+    workspace::section(front.channel.clone(), cx)
+        .child(feedback::empty_line(
+            &tokens,
+            "irc-inspector-topic",
+            topic.as_deref().unwrap_or("No channel topic."),
+        ))
         .into_any_element()
 }
 

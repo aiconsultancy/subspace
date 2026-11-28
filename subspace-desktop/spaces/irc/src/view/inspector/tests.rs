@@ -15,11 +15,10 @@ use crate::fleet::ChannelKind;
 use crate::live::tests::{NOW, lyra};
 
 #[test]
-fn a_ship_and_a_starbase_have_their_subject_thread_and_people_and_command_has_no_tabs() {
+fn all_fleet_channels_have_their_subject_thread_and_people() {
     let ship = Subject::of(&ChannelKind::Ship {
         captain: "aurora-lyra".into(),
-    })
-    .unwrap();
+    });
     let labels = |tabs: Vec<subspace_framework::dashboard::workspace::InspectorTab>| {
         tabs.iter()
             .map(|tab| tab.accessible_label().to_string())
@@ -29,12 +28,20 @@ fn a_ship_and_a_starbase_have_their_subject_thread_and_people_and_command_has_no
         labels(tabs(&ship, Some(5))),
         ["Ship", "Thread", "People, 5"]
     );
-    let starbase = Subject::of(&ChannelKind::Starbase).unwrap();
+    let starbase = Subject::of(&ChannelKind::Starbase);
     assert_eq!(
         labels(tabs(&starbase, None)),
         ["Starbase", "Thread", "People"]
     );
-    assert_eq!(Subject::of(&ChannelKind::Command), None);
+    for (kind, label) in [
+        (ChannelKind::Command, "Command"),
+        (ChannelKind::Audit, "Fleet audit"),
+    ] {
+        assert_eq!(
+            labels(tabs(&Subject::of(&kind), Some(7))),
+            [label, "Thread", "People, 7"]
+        );
+    }
     assert_eq!(
         tabs(&ship, None).len(),
         subspace_framework::dashboard::workspace::INSPECTOR_MAX_TABS,

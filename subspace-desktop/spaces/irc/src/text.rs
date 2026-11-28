@@ -83,6 +83,16 @@ pub(crate) fn selectable(
     refs: Option<RefHandlers>,
     cx: &App,
 ) -> AnyElement {
+    prepared(id, text, tone, refs, cx).into_any_element()
+}
+
+pub(crate) fn prepared(
+    id: SharedString,
+    text: Rendered,
+    tone: Tone,
+    refs: Option<RefHandlers>,
+    cx: &App,
+) -> rich::RichText {
     let claim = refs.as_ref().map(|refs| refs.open.clone());
     let view = rich::rich_text_prepared(id, text.markdown, move |url, window, cx| {
         let found = claim.as_ref().zip(markup::parse_ref_url(url));
@@ -102,7 +112,7 @@ pub(crate) fn selectable(
     } else {
         rich::tinted(view, Tokens::current(cx).tone(tone), cx)
     };
-    view.copy_text(text.plain).into_any_element()
+    view.copy_text(text.plain)
 }
 
 #[cfg(test)]

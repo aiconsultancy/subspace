@@ -82,10 +82,8 @@ pub(crate) struct RowContext {
     pub stops: Rc<crate::reactions::stop::Stops>,
     /// The network can react now, so pills toggle and Add reaction shows.
     pub can_react: bool,
-    /// Where the reaction menu opens: the keyboard-focused message measures
-    /// itself into the first anchor, for `r`; the hovered message into the
-    /// second, for its toolbar's React.
-    pub react_anchor: Option<crate::conversation::reacting::Anchors>,
+    /// Where the keyboard, reaction and Stop menus open.
+    pub react_anchors: crate::conversation::reacting::Anchors,
     /// The message under the pointer, whose toolbar shows.
     pub hovered: Option<i64>,
     /// What the message toolbar's actions can do in this conversation.
@@ -202,14 +200,14 @@ fn body(
     context: &RowContext,
     tokens: &Tokens,
     cx: &App,
-) -> AnyElement {
+) -> subspace_framework::dashboard::rich::RichText {
     let view = style::message_view(entry, &context.mentions);
     let styled = marks::marked(entry, view.styled, rendered, context, cx);
     let id = SharedString::from(format!("irc-line:{}:text", entry.seq));
     let shown = rendered
         .cloned()
         .unwrap_or_else(|| text::literal(&styled, tokens));
-    let content = text::selectable(
+    text::prepared(
         id,
         shown,
         view.base,
@@ -218,18 +216,15 @@ fn body(
             rendered.is_none().then_some(styled),
         )),
         cx,
-    );
+    )
     // Message text keeps a readable line length in a wide pane; the row's
     // fill still runs the pane's width.
-    div()
-        .w_full()
-        .max_w(px(READING_WIDTH_PX))
-        .min_w_0()
-        .text_size(tokens.row_font)
-        .text_color(tokens.tone(view.base))
-        .when(view.italic, |body| body.italic())
-        .child(content)
-        .into_any_element()
+    .w_full()
+    .max_w(px(READING_WIDTH_PX))
+    .min_w_0()
+    .text_size(tokens.row_font)
+    .text_color(tokens.tone(view.base))
+    .when(view.italic, |body| body.italic())
 }
 
 /// The gutter of a message: the time on hover when it continues its

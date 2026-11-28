@@ -1,10 +1,11 @@
 //! The reaction menu at a message: `r` on the focused message, **Add
-//! reaction** and the toolbar's React open the same choices, with the stop
-//! group when its conditions hold. Every choice goes through
+//! reaction** and the toolbar's React open the same choices. Stop has its
+//! own toolbar control. Every choice goes through
 //! [`super::toggle`], which checks a stop item's choice again when it is
 //! made ([`labelled_stop`]).
 
-use gpui_kit::{App, Context, Window};
+use gpui_kit::{App, Context, Entity, Window};
+use subspace_framework::dashboard::anchored::Anchor;
 
 use crate::conversation::Conversation;
 use crate::reactions::choices::choices;
@@ -19,16 +20,36 @@ pub(in crate::conversation) fn open_choices(
     cx: &mut Context<Conversation>,
 ) {
     if let Some(seq) = this.keyboard.at.map(|at| at.seq) {
-        open_choices_for(this, seq, window, cx);
+        open_at(
+            this,
+            seq,
+            this.reacting.anchors.keyboard.clone(),
+            window,
+            cx,
+        );
     }
 }
 
-/// Opens the reaction choices for message `seq` at that message, as `r`,
-/// **Add reaction** and the toolbar's React do, when it can take
-/// reactions: the same menu, with the stop group when its conditions hold.
+/// Opens reactions at the toolbar's own button, even for a keyboard-focused row.
 pub(crate) fn open_choices_for(
     this: &mut Conversation,
     seq: i64,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    open_at(
+        this,
+        seq,
+        this.reacting.anchors.reaction.clone(),
+        window,
+        cx,
+    );
+}
+
+fn open_at(
+    this: &mut Conversation,
+    seq: i64,
+    anchor: Entity<Anchor>,
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
@@ -47,23 +68,11 @@ pub(crate) fn open_choices_for(
         return;
     };
     let summaries = this.reacting.shown.get(&seq).cloned().unwrap_or_default();
-    let ship = this
-        .reacting
-        .stops
-        .get(&seq)
-        .filter(|agent| agent.running)
-        .map(|agent| agent.ship.clone());
-    let offered = choices(&summaries, ship.as_deref());
+    let offered = choices(&summaries, None);
     let me = this.me.clone();
-    let keyboard = this.keyboard.at.is_some_and(|at| at.seq == seq);
-    let anchor = if keyboard {
-        &this.reacting.anchor
-    } else {
-        &this.reacting.hover_anchor
-    };
-    anchor.clone().update(cx, |anchor, cx| {
+    anchor.update(cx, |anchor, cx| {
         anchor.show_menu_with(window, cx, move |menu, _, _| {
-            pills::menu_items(menu, &offered, &msgid, &me)
+            pills::menu_items(menu, &offered.common, (&msgid, None), &me)
         });
     });
 }

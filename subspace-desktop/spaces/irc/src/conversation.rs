@@ -55,6 +55,10 @@ pub(crate) enum ConversationEvent {
     /// The thread of the message with this ID was chosen, from its reply
     /// count or its request's status line.
     OpenThread(String),
+    /// A channel message was clicked while reading the transcript.
+    PreviewThread(String),
+    /// The user chose to follow channel messages again.
+    FollowThreads,
     /// The Reply in thread action also focuses the inspector’s editor.
     ReplyInThread(String),
 }
@@ -367,7 +371,7 @@ impl Conversation {
             reactions: Rc::clone(&self.reacting.shown),
             stops: Rc::clone(&self.reacting.stops),
             can_react: self.reacting.supported,
-            react_anchor: Some(self.reacting.anchors()),
+            react_anchors: self.reacting.anchors.clone(),
             hovered: self.keyboard.hovered,
             actions: crate::transcript::actions::Availability::of(self, cx),
         }
@@ -537,8 +541,9 @@ impl Render for Conversation {
             .flex_1()
             .min_h_0()
             .child(self.render_transcript(cx))
-            .child(self.reacting.anchor.clone())
-            .child(self.reacting.hover_anchor.clone());
+            .child(self.reacting.anchors.keyboard.clone())
+            .child(self.reacting.anchors.reaction.clone())
+            .child(self.reacting.anchors.stop.clone());
         let notice = reacting::notice(self, cx);
         let dialog = crate::tracker::message::render(self, cx);
         let content = v_flex()

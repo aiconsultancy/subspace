@@ -14,7 +14,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
 };
 use subspace_client_irc::{BufferKey, Target};
-use subspace_framework::dashboard::action::{Intent, action_button};
+use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::{Tokens, feedback, truncated, workspace};
 use subspace_framework::lucide::IconName;
 
@@ -25,8 +25,7 @@ use crate::thread::Thread;
 use crate::transcript::{RowContext, thread_message};
 
 /// What the tab says before a thread is chosen.
-pub(crate) const PROMPT: &str =
-    "Choose a message's replies or a request's status line to see its thread here.";
+pub(crate) const PROMPT: &str = "Select a message to preview its thread.";
 /// What the tab says for a thread with no replies yet.
 pub(crate) const NO_REPLIES: &str = "No replies yet.";
 
@@ -87,7 +86,13 @@ fn content(
                 .w_full()
                 .min_w_0()
                 .gap_2()
-                .child(origin(thread, buffer, conversation, cx))
+                .child(origin(
+                    thread,
+                    buffer,
+                    conversation,
+                    board.threads.is_pinned(buffer),
+                    cx,
+                ))
                 .child(thread_message(&thread.root, false, &context, cx)),
         )
         .children(
@@ -104,6 +109,7 @@ fn origin(
     thread: &Thread,
     buffer: &BufferKey,
     conversation: &Entity<crate::conversation::Conversation>,
+    pinned: bool,
     cx: &App,
 ) -> impl IntoElement {
     let tokens = Tokens::current(cx);
@@ -113,6 +119,7 @@ fn origin(
     };
     let seq = thread.root.seq;
     let conversation = conversation.downgrade();
+    let follow = conversation.clone();
     h_flex()
         .w_full()
         .min_w_0()
@@ -123,6 +130,19 @@ fn origin(
                 .text_size(tokens.caption_size())
                 .text_color(tokens.muted),
         )
+        .children(pinned.then(|| {
+            icon_button(
+                "irc-thread-follow",
+                Intent::Quiet,
+                IconName::PinOff,
+                "Unpin thread",
+            )
+            .on_click(move |_, _, cx| {
+                _ = follow.update(cx, |_, cx| {
+                    cx.emit(crate::conversation::ConversationEvent::FollowThreads)
+                });
+            })
+        }))
         .child(
             action_button(
                 "irc-thread-jump",

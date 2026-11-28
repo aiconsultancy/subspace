@@ -6,9 +6,10 @@
 //! accent edge.
 //!
 //! - **React** opens the reaction menu ([`crate::conversation::reacting`]),
-//!   the same one as **Add reaction** and `r`, stop group included.
+//!   the same one as **Add reaction** and `r`.
+//! - **Stop** is separate and shows on running requests to verified agents.
 //! - **Reply in thread** opens the thread in the inspector and starts the
-//!   composer's reply mode, where the inspector has a Thread tab.
+//!   reply composer, where the inspector has a Thread tab.
 //! - **Make issue** and **Record decision** open their dialogs
 //!   ([`crate::tracker::message`]); only a dialog's button writes.
 //!
@@ -17,15 +18,16 @@
 //! nothing in the transcript. Each action also has a key on a focused
 //! message: `r`, `t`, `i` and `d`.
 
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::h_flex;
 use gpui_kit::{
     AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _, Role,
-    SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, WeakEntity,
-    Window, div, px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
+    px,
 };
-use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::action::{Intent, icon_button};
 use subspace_framework::dashboard::panel::IconName;
+use subspace_framework::dashboard::{Tokens, anchored::Anchor};
 
 use super::RowContext;
 use crate::conversation::Conversation;
@@ -44,18 +46,13 @@ pub(crate) enum MessageAction {
 }
 
 impl MessageAction {
-    /// Its element id suffix, its accessible name and tooltip (with its key
-    /// on a focused message) and its glyph.
+    /// Its element id suffix, accessible name, tooltip and glyph.
     fn look(self) -> (&'static str, &'static str, IconName) {
         match self {
-            Self::React => (
-                "react",
-                "Add reaction (r)",
-                IconName::FaceSlightlySmilingPlus,
-            ),
-            Self::Reply => ("reply", "Reply in thread (t)", IconName::Reply),
-            Self::MakeIssue => ("make-issue", "Make issue… (i)", IconName::CircleDot),
-            Self::RecordDecision => ("record-decision", "Record decision… (d)", IconName::Scale),
+            Self::React => ("react", "Add reaction", IconName::FaceSlightlySmilingPlus),
+            Self::Reply => ("reply", "Reply in thread", IconName::Reply),
+            Self::MakeIssue => ("make-issue", "Make issue…", IconName::CircleDot),
+            Self::RecordDecision => ("record-decision", "Record decision…", IconName::Scale),
         }
     }
 }
@@ -131,14 +128,15 @@ pub(crate) fn toolbar(
         return None;
     }
     let actions = offered(entry, context.actions, names_issue);
-    if actions.is_empty() {
+    let stop = stop_button(entry, context);
+    if actions.is_empty() && stop.is_none() {
         return None;
     }
     let tokens = Tokens::current(cx);
     let seq = entry.seq;
     let buttons = actions
         .into_iter()
-        .map(|action| button(action, seq, &context.conversation));
+        .map(|action| button(action, seq, context));
     Some(
         h_flex()
             .id(SharedString::from(format!("irc-line:{seq}:toolbar")))
@@ -156,25 +154,99 @@ pub(crate) fn toolbar(
             .bg(tokens.surface)
             .shadow_sm()
             .children(buttons)
+            .children(stop)
             .into_any_element(),
     )
 }
 
-fn button(action: MessageAction, seq: i64, conversation: &WeakEntity<Conversation>) -> AnyElement {
-    let conversation = conversation.clone();
+fn stop_button(entry: &Entry, context: &RowContext) -> Option<AnyElement> {
+    let msgid = entry.line.id.clone().filter(|_| context.actions.react)?;
+    let agent = context
+        .stops
+        .get(&entry.seq)
+        .filter(|agent| agent.running)?;
+    let summaries = context
+        .reactions
+        .get(&entry.seq)
+        .map_or(&[][..], Vec::as_slice);
+    let group = crate::reactions::choices::choices(summaries, Some(&agent.ship)).stop?;
+    let anchor = context.react_anchors.stop.clone();
+    let menu = anchor.clone();
+    let conversation = context.conversation.clone();
+    let button = icon_button(
+        SharedString::from(format!("irc-line:{}:stop", entry.seq)),
+        Intent::Quiet,
+        IconName::Square,
+        group.label(),
+    )
+    .on_click(move |_, window, cx| {
+        menu.update(cx, |anchor, cx| {
+            anchor.show_menu_with(window, cx, |menu, _, _| {
+                super::reactions::menu_items(
+                    menu.label(group.label()),
+                    &group.choices,
+                    (&msgid, Some(&group.ship)),
+                    &conversation,
+                )
+            });
+        });
+    });
+    Some(at_button(div().child(button), entry.seq, context, anchor))
+}
+
+pub(super) fn reply_item(
+    conversation: gpui_kit::WeakEntity<Conversation>,
+    seq: i64,
+) -> gpui_kit::component::menu::PopupMenuItem {
+    let (_, label, icon) = MessageAction::Reply.look();
+    gpui_kit::component::menu::PopupMenuItem::new(label)
+        .icon(icon)
+        .on_click(move |_, window, cx| {
+            _ = conversation.update(cx, |this, cx| {
+                run(this, MessageAction::Reply, seq, window, cx)
+            });
+        })
+}
+
+fn button(action: MessageAction, seq: i64, context: &RowContext) -> AnyElement {
+    let conversation = context.conversation.clone();
     let (id, label, icon) = action.look();
-    div()
-        .child(
-            icon_button(
-                SharedString::from(format!("irc-line:{seq}:{id}")),
-                Intent::Quiet,
-                icon,
-                label,
-            )
-            .on_click(move |_, window, cx| {
-                _ = conversation.update(cx, |this, cx| run(this, action, seq, window, cx));
-            }),
+    let button = div().child(
+        icon_button(
+            SharedString::from(format!("irc-line:{seq}:{id}")),
+            Intent::Quiet,
+            icon,
+            label,
         )
+        .on_click(move |_, window, cx| {
+            _ = conversation.update(cx, |this, cx| run(this, action, seq, window, cx));
+        }),
+    );
+    match action {
+        MessageAction::React => {
+            at_button(button, seq, context, context.react_anchors.reaction.clone())
+        }
+        _ => button.into_any_element(),
+    }
+}
+
+fn at_button(
+    button: gpui_kit::Div,
+    seq: i64,
+    context: &RowContext,
+    anchor: gpui_kit::Entity<Anchor>,
+) -> AnyElement {
+    if context.hovered.is_some_and(|hovered| hovered != seq) {
+        return button.into_any_element();
+    }
+    button
+        .on_prepaint(move |bounds, _, cx| {
+            anchor.update(cx, |anchor, cx| {
+                if !anchor.is_open() {
+                    anchor.set_bounds(bounds, cx);
+                }
+            });
+        })
         .into_any_element()
 }
 

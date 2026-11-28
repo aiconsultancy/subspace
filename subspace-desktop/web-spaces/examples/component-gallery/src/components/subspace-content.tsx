@@ -81,10 +81,54 @@ function Markdown({ text }: { text: string }) {
     : <p key={ix}>{inlineMarkdown(block)}</p>)}</div>;
 }
 
+function RichTextRowMenuSample() {
+  const [enabled, setEnabled] = useState(false);
+  const [status, setStatus] = useState('');
+  const actions = useRef<HTMLDetailsElement>(null);
+  const text = useRef<HTMLSpanElement>(null);
+  return <>
+    <label className="sc-control-note">
+      <input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} /> Local Chat enabled
+    </label>
+    <div className="sc-selectable sc-rich-width" onContextMenu={event => {
+      event.preventDefault();
+      if (actions.current) {
+        actions.current.open = true;
+        actions.current.querySelector('summary')?.focus();
+      }
+    }}>
+      <span ref={text}>A selectable message.</span>
+      <details ref={actions}><summary>Message actions</summary>
+        <Button variant="ghost" onClick={() => setStatus('Reply in thread selected')}>Reply in thread</Button>
+        <Button variant="ghost" onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(window.getSelection()?.toString() || text.current?.textContent || '');
+            setStatus('Copied fixture text');
+          } catch { setStatus('Clipboard unavailable'); }
+        }}><Copy aria-hidden="true" />Copy</Button>
+        <Button variant="ghost" onClick={() => {
+          const selection = window.getSelection();
+          if (text.current && selection) selectText(text.current, selection);
+        }}>Select all</Button>
+        {enabled && <Button variant="ghost" onClick={() => setStatus('Local model chat selected')}>Add to local model chat</Button>}
+      </details>
+    </div>
+    <span role="status" className="sc-note">{status}</span>
+  </>;
+}
+
+function selectText(text: HTMLElement, selection: Selection) {
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 function RichTextSamples() {
   return <div className="samples sc-content">
     <Sample caption="Markdown"><div className="sc-rich-width"><Markdown text={markdownFixture} /></div></Sample>
     <Sample caption="HTML"><div className="sc-rich sc-rich-width"><p><b>Bold</b> HTML with <code>code</code>.</p></div></Sample>
+    <Sample caption="Right-click anywhere in the row for its action and text menu"><RichTextRowMenuSample /></Sample>
   </div>;
 }
 

@@ -21,6 +21,7 @@ use crate::{Irc, view};
 
 mod composing;
 mod live;
+mod selection;
 pub(super) use composing::reply_input;
 
 const SHIP: &str = "#aurora-lyra";
