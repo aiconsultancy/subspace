@@ -11,6 +11,7 @@ mod view;
 pub(crate) use delivery::submit;
 pub(crate) use follow::{dismiss, follow};
 pub(crate) use recovery::check;
+pub(crate) use source::pick;
 pub(crate) use source::{ingest, paths};
 pub(crate) use view::{VISIBILITY, controls};
 

@@ -18,14 +18,42 @@ pub(super) fn refresh(conversation: &mut Conversation, cx: &mut Context<Conversa
 fn current(conversation: &Conversation, cx: &App) -> Option<Offer> {
     let input = conversation.draft.entity.read(cx);
     let (text, cursor) = (input.text(cx), input.cursor(cx));
-    let facts = Facts::gather(&conversation.hub.read(cx).state, &conversation.buffer)
+    suggest(&text, cursor, &facts(conversation, &text, cx))
+}
+
+fn facts(conversation: &Conversation, text: &str, cx: &App) -> Facts {
+    Facts::gather(&conversation.hub.read(cx).state, &conversation.buffer)
         .ranked(&conversation.roster)
         .asking(super::ask::agent(
             &conversation.roster,
             &conversation.buffer,
         ))
-        .tracking(tracker_facts(conversation, &text, cx));
-    suggest(&text, cursor, &facts)
+        .tracking(tracker_facts(conversation, text, cx))
+}
+
+/// Opens the command choices at the beginning of the draft, without editing it.
+pub(super) fn commands(
+    conversation: &mut Conversation,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    let input = conversation.draft.entity.clone();
+    let text = input.read(cx).text(cx);
+    let head = text.split_whitespace().next().unwrap_or_default();
+    if text.starts_with('/') && !text.starts_with("//") {
+        input.update(cx, |input, cx| {
+            input.set_selection(head.len()..head.len(), cx);
+            input.focus(window, cx);
+        });
+        refresh(conversation, cx);
+        return;
+    }
+    let offer = suggest("/", 1, &facts(conversation, "/", cx)).map(|mut offer| {
+        offer.range = 0..0;
+        offer
+    });
+    input.update(cx, |input, cx| input.focus(window, cx));
+    show(conversation, offer, cx);
 }
 
 /// What the tracker commands know, gathered only for a draft that is a

@@ -182,6 +182,9 @@ shared quick-start fragments live in `subspace/includes/`.
 
 ## Change records
 
+- [Channels composers and replies](changes/irc-thread-composer/README.md)
+  records the separate thread editor and the compact channel composer.
+
 - [Selectable find results and link menus](changes/gpui-text-patch/README.md):
   before-and-after evidence from the Component gallery fixture.
 - [Fleet API client and shared fleet tokens](changes/fleet-api-client/README.md):

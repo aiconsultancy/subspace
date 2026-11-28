@@ -5,12 +5,13 @@
 use gpui_kit::component::message::{MessageAlignment, MessageContent, MessageHeader};
 use gpui_kit::component::v_flex;
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, ParentElement as _, Styled as _, Window, div,
+    App, AppContext as _, Context, Entity, ParentElement as _, Styled as _, Subscription, Window,
+    div,
 };
 use subspace_dashboard::chat_input::DraftLimits;
 use subspace_dashboard::chat_input::completion::{CompletionItem, CompletionList};
 use subspace_dashboard::composer::Composer;
-use subspace_dashboard::{ChatInput, Tokens, avatar, chat_bubble};
+use subspace_dashboard::{ChatInput, ChatInputEvent, Tokens, avatar, chat_bubble};
 
 use super::{Sample, bounded, sample, sized};
 
@@ -115,25 +116,12 @@ pub(crate) struct Messaging {
     pub(crate) growing: Entity<ChatInput>,
     pub(crate) completion: Entity<CompletionList>,
     pub(crate) composer: Entity<Composer>,
+    _reply_submit: Subscription,
 }
 
 impl Messaging {
     pub(crate) fn new(window: &mut Window, cx: &mut App) -> Self {
-        let message = cx.new(|cx| {
-            let mut input = ChatInput::message(window, cx);
-            input.set_plain_text(cx);
-            input.set_attachment_budget(
-                subspace_dashboard::chat_input::attachments::AttachmentBudget::new(
-                    1,
-                    MESSAGE_ATTACHMENT_BYTES,
-                )
-                .with_image_limit(MESSAGE_ATTACHMENT_BYTES),
-                cx,
-            );
-            input.set_placeholder("Message #fixtures", window, cx);
-            input.set_limits(Some(DraftLimits::new(DRAFT_LINES, DRAFT_BYTES)), cx);
-            input
-        });
+        let (message, reply_submit) = compact_reply(window, cx);
         let growing = cx.new(|cx| {
             let mut input = ChatInput::message(window, cx);
             input.set_plain_text(cx);
@@ -152,8 +140,36 @@ impl Messaging {
             growing,
             completion,
             composer: cx.new(|cx| Composer::new("Comment", "Leave a fixture comment", window, cx)),
+            _reply_submit: reply_submit,
         }
     }
+}
+
+fn compact_reply(window: &mut Window, cx: &mut App) -> (Entity<ChatInput>, Subscription) {
+    let input = cx.new(|cx| {
+        let mut input =
+            ChatInput::compact_message("Reply", "Reply to the fixture thread", window, cx);
+        input.set_attachment_budget(
+            subspace_dashboard::chat_input::attachments::AttachmentBudget::new(
+                1,
+                MESSAGE_ATTACHMENT_BYTES,
+            )
+            .with_image_limit(MESSAGE_ATTACHMENT_BYTES),
+            cx,
+        );
+        input.set_placeholder("Write a reply…", window, cx);
+        input.set_limits(Some(DraftLimits::new(DRAFT_LINES, DRAFT_BYTES)), cx);
+        input
+    });
+    let handle = window.window_handle();
+    let submit = cx.subscribe(&input, move |input, event, cx| {
+        if matches!(event, ChatInputEvent::Submit(_)) {
+            _ = handle.update(cx, |_, window, cx| {
+                input.update(cx, |input, cx| input.clear(window, cx));
+            });
+        }
+    });
+    (input, submit)
 }
 
 fn completion_items() -> Vec<CompletionItem> {
@@ -178,7 +194,7 @@ pub(crate) fn chat_inputs(
             bounded(INPUT_BOX, tokens, messaging.agent.clone()),
         ),
         sample(
-            "Message: plain text, Return sends",
+            "Compact message: type a reply and press Return",
             bounded(INPUT_BOX, tokens, messaging.message.clone()),
         ),
         sample(

@@ -39,18 +39,15 @@ fn tab_on_a_whole_command_only_completes_and_writes_nothing(cx: &mut TestAppCont
 fn a_tracker_command_in_reply_mode_is_kept_and_never_reaches_irc(cx: &mut TestAppContext) {
     let mock = signed_in();
     let (conversation, hub, cx) = open(cx, true, Some(&mock));
-    let input = composer(&conversation, cx);
-    // A server that carries reply tags, so reply mode would send.
     let tags = subspace_client_irc::Event::Capabilities {
         network: crate::fixtures::network_id(),
         enabled: vec!["message-tags".to_owned()],
     };
     crate::tests::inject(&hub, vec![tags], cx);
-    cx.update(|window, cx| {
-        conversation.update(cx, |view, cx| {
-            let root = crate::compose::reply::ReplyTo::new("m1", "alice", "We need a decision");
-            crate::compose::reply::start(view, root, window, cx);
-        })
+    let input = conversation.update_in(cx, |view, window, cx| {
+        // This fixture's root message is held in the room.
+        let draft = crate::compose::reply::select(view, ("m1", 1), window, cx);
+        draft.read(cx).input().clone()
     });
     for command in [
         "/decision NAV-2 Decode on a pool",
@@ -65,13 +62,6 @@ fn a_tracker_command_in_reply_mode_is_kept_and_never_reaches_irc(cx: &mut TestAp
             "{command}: kept with an explanation"
         );
     }
-    // Return on the completion's run row takes the same path.
-    cx.update(|window, cx| input.update(cx, |input, cx| input.set_text("", window, cx)));
-    cx.simulate_input("/ready NAV-2");
-    cx.simulate_keystrokes("enter");
-    cx.run_until_parked();
-    assert_eq!(text(&input, cx), "/ready NAV-2");
-    conversation.read_with(cx, |view, _| assert!(view.draft.reply.is_some()));
     assert!(mock.requests().is_empty(), "nothing reached the tracker");
     hub.read_with(cx, |hub, _| {
         assert!(said(hub).is_empty(), "{:?}", said(hub))

@@ -73,8 +73,14 @@ fn new_conversation(
     };
     board.dock.open.insert(buffer.clone(), hosted);
     let available = *board.available_height.read(cx);
+    let shown = board.threads.shown(buffer);
     entity.update(cx, |conversation, cx| {
         conversation.set_available_height(available, cx);
+        if let Some(shown) = &shown
+            && let Some(root) = shown.root.line.id.as_deref()
+        {
+            crate::compose::reply::select(conversation, (root, shown.root.seq), window, cx);
+        }
     });
     Some(entity)
 }
@@ -230,7 +236,13 @@ fn conversation_event(
         }
         ConversationEvent::Closed => closed(board, conversation, window, cx),
         ConversationEvent::OpenThread(root) => {
+            super::members::focus(board, &buffer, cx);
             crate::thread::open(board, &buffer, root.clone(), window, cx);
+        }
+        ConversationEvent::ReplyInThread(root) => {
+            super::members::focus(board, &buffer, cx);
+            crate::thread::open(board, &buffer, root.clone(), window, cx);
+            crate::thread::focus_reply(board, &buffer, window, cx);
         }
     }
 }

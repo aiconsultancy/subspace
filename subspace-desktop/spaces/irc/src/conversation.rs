@@ -55,6 +55,8 @@ pub(crate) enum ConversationEvent {
     /// The thread of the message with this ID was chosen, from its reply
     /// count or its request's status line.
     OpenThread(String),
+    /// The Reply in thread action also focuses the inspector’s editor.
+    ReplyInThread(String),
 }
 
 pub(crate) struct Conversation {
@@ -72,6 +74,7 @@ pub(crate) struct Conversation {
     /// Which message keeps each reference's tile, read before rows show.
     pub(crate) tiles: Rc<crate::tiles::Tiles>,
     pub(crate) draft: Draft,
+    pub(crate) reply_drafts: compose::reply::Drafts,
     pub(crate) tray: crate::uploads::outgoing::Tray,
     pub(crate) upload_viewer: Option<crate::uploads::viewer::Viewer>,
     pub(crate) find_active: bool,
@@ -135,6 +138,7 @@ impl Conversation {
             roster: Rc::default(),
             tiles: Rc::default(),
             draft,
+            reply_drafts: Default::default(),
             tray: crate::uploads::outgoing::Tray::default(),
             upload_viewer: None,
             find_active: false,
@@ -262,6 +266,7 @@ impl Conversation {
         }
         self.refresh_tab(cx);
         compose::revalidate(self, cx);
+        self.reply_drafts.revalidate(cx);
         crate::uploads::outgoing::follow(self, cx);
         crate::uploads::viewer::follow(self, cx);
         cx.notify();
@@ -347,6 +352,7 @@ impl Conversation {
             claim: claim(self, cx),
             upload: crate::uploads::viewer::claim(&self.me),
             target: self.target,
+            selected_thread: self.reply_drafts.selected_seq(),
             hub: self.hub.downgrade(),
             focus: self.keyboard.at,
             card: self.keyboard.at.and(self.keyboard.card.clone()),
@@ -458,36 +464,28 @@ impl Conversation {
     }
 }
 
-/// Opens message `seq`'s thread in the inspector and puts the composer
-/// into reply mode for it, as the Thread tab's **Reply in thread** does:
-/// only where the inspector has a Thread tab and the network can carry
-/// the reply tag. The reply goes to the channel; nothing here sends a
-/// private message.
+/// Opens message `seq`'s thread and asks the inspector to focus its editor.
 pub(crate) fn reply_in_thread(
     this: &mut Conversation,
     seq: i64,
-    window: &mut Window,
+    _: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
     let hub = this.hub.read(cx);
     let network = hub.state.network(&this.buffer.network);
-    let allowed = crate::thread::has_tab(&this.roster, &this.buffer)
-        && crate::thread::reply_refusal(network).is_none();
+    if !crate::thread::has_tab(&this.roster, &this.buffer)
+        || crate::thread::reply_refusal(network).is_some()
+    {
+        return;
+    }
     let root = hub
         .state
         .buffer(&this.buffer)
         .and_then(|held| held.entries.iter().find(|entry| entry.seq == seq))
-        .filter(|_| allowed)
-        .and_then(|entry| {
-            let id = entry.line.id.as_deref()?;
-            let author = entry.line.from.as_deref().unwrap_or_default();
-            Some(compose::reply::ReplyTo::new(id, author, &entry.line.text))
-        });
-    let Some(root) = root else {
-        return;
-    };
-    cx.emit(ConversationEvent::OpenThread(root.root.clone()));
-    compose::reply::start(this, root, window, cx);
+        .and_then(|entry| entry.line.id.clone());
+    if let Some(root) = root {
+        cx.emit(ConversationEvent::ReplyInThread(root));
+    }
 }
 
 /// Who and which issues the buffer's messages may mention.
@@ -564,9 +562,11 @@ impl Render for Conversation {
                     .flex_shrink_0()
                     .children(notice)
                     .child(self.draft.render(
+                        &self.buffer,
                         &self.tray,
                         !matches!(self.buffer.target, Target::Server)
                             && subspace_api_client::capabilities().chat_uploads,
+                        self.reply_drafts.resumable(cx),
                         cx,
                     )),
             )

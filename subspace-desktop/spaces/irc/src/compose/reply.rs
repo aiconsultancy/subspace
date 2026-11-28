@@ -1,376 +1,298 @@
-//! Reply mode: the composer writes into a thread, chosen with **Reply in
-//! thread** in the inspector's Thread tab. The message goes to the channel
-//! like any other, so everyone there sees it, with the server's reply tag
-//! (`+draft/reply`) naming the thread's root
-//! ([`subspace_client_irc::Command::Reply`]). Nothing here sends a private
-//! message: reply mode exists only in a channel, which an owner rule keeps
-//! as the one place anything is said to an agent.
-//!
-//! A row above the input says it is a reply and to what, with a way to
-//! cancel; Escape cancels too. The composer leaves reply mode once the
-//! reply is sent. When the thread's root is no longer held, as under the
-//! line cap, the draft stays in reply mode, marked gone: the row says the
-//! thread is no longer loaded, Enter sends nothing, Escape keeps it, and
-//! only an explicit **Write to the channel** leaves reply mode, keeping
-//! the text, so a reply never silently becomes an ordinary message or a
-//! command. **Reply in thread** on another thread does not take such a
-//! draft with it either: while it holds text, the row offers to move it
-//! there, and only that choice does; an emptied draft starts the new reply
-//! at once.
+//! One retained inspector composer per IRC message ID, independent of the
+//! channel editor. Submitting targets that message with the server's reply tag.
 
-use gpui_kit::component::{Icon, Sizable as _, h_flex};
+use gpui_kit::component::v_flex;
 use gpui_kit::{
-    Context, InteractiveElement as _, IntoElement, ParentElement as _, Role, SharedString,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
+    App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled as _, Subscription, TestSupportExt as _, Window,
 };
-use subspace_client_irc::{BufferKey, Command, Target};
-use subspace_framework::dashboard::action::{Intent, icon_button};
-use subspace_framework::dashboard::panel::IconName;
-use subspace_framework::dashboard::{Tokens, truncated};
+use subspace_client_irc::{
+    BufferKey, Command, MAX_INLINE_BYTES, Target, check_draft, connection_batches, draft_line_limit,
+};
+use subspace_framework::dashboard::chat_input::DraftLimits;
+use subspace_framework::dashboard::chat_input::completion::{CompletionEvent, CompletionList};
+use subspace_framework::dashboard::{ChatInput, ChatInputEvent};
 
-use crate::conversation::Conversation;
+use super::recall::{self, Recall};
+use super::suggest::{Facts, Offer, suggest};
+use crate::hub::Hub;
 use crate::state::Network;
 
-/// The most characters of the root's text the reply row quotes.
-const EXCERPT_CHARS: usize = 80;
+mod drafts;
+#[cfg(test)]
+mod tests;
 
-/// The thread a draft replies in.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReplyTo {
-    /// The root message's ID, which the reply tag names.
-    pub root: String,
-    /// Who wrote the root.
-    pub author: String,
-    /// The start of the root's text, plain.
-    pub excerpt: String,
-    /// The root is no longer held: nothing is sent until the person
-    /// chooses to write to the channel instead.
-    pub gone: bool,
-    /// While gone, the thread the person then chose **Reply in thread**
-    /// on: the draft moves there only when they confirm it.
-    pub offered: Option<Box<ReplyTo>>,
-}
+pub(crate) use drafts::{Drafts, select};
 
-impl ReplyTo {
-    /// The thread of `root`, with message ID `id`, written by `author`.
-    pub(crate) fn new(id: &str, author: &str, text: &str) -> Self {
-        let plain = subspace_client_irc::format::strip(text);
-        let mut chars = plain.split_whitespace().collect::<Vec<_>>().join(" ");
-        if chars.chars().count() > EXCERPT_CHARS {
-            chars = chars.chars().take(EXCERPT_CHARS - 1).collect();
-            chars.push('…');
-        }
-        Self {
-            root: id.to_owned(),
-            author: author.to_owned(),
-            excerpt: chars,
-            gone: false,
-            offered: None,
-        }
-    }
-
-    /// What the row above the input says.
-    pub(crate) fn words(&self) -> String {
-        format!("Replying in thread to {}: {}", self.author, self.excerpt)
-    }
-}
-
-/// What the composer says in reply mode while empty.
-pub(crate) fn placeholder(reply: &ReplyTo) -> String {
-    format!("Reply in thread to {}", reply.author)
-}
-
-/// Why a draft refused in reply mode was kept.
 pub(crate) const COMMAND: &str =
-    "A thread reply is sent as text. Cancel the reply to run a command.";
-/// Why a draft with attachments in reply mode was kept.
-pub(crate) const ATTACHMENTS: &str =
-    "Attachments can't go in a thread reply yet. Cancel the reply to send them.";
-/// What the move button says: whose thread the draft would go to.
-pub(crate) fn move_words(offered: &ReplyTo) -> String {
-    format!("Move to {}'s thread", offered.author)
+    "Use the channel composer for commands. Start with // for a literal slash.";
+pub(crate) const ATTACHMENTS: &str = "Use the channel composer to attach files.";
+const CHANNEL_ONLY: &str = "Thread replies are sent in a channel.";
+pub(crate) const GONE: &str = "The original message is no longer loaded. Draft kept.";
+const TOO_LONG: &str = "This reply is too long to send in IRC.";
+/// The editor and completion state for one reply. Its destination never changes.
+pub(crate) struct ReplyDraft {
+    root: String,
+    buffer: BufferKey,
+    hub: Entity<Hub>,
+    input: Entity<ChatInput>,
+    list: Entity<CompletionList>,
+    offer: Option<Offer>,
+    draft_present: bool,
+    recall: Recall,
+    _subscriptions: [Subscription; 2],
 }
 
-/// Why a reply whose thread is no longer loaded was kept.
-pub(crate) const GONE: &str = "The thread is no longer loaded, so this reply was not sent. Choose Write to the channel to send it as an ordinary message.";
-/// The same, once the person chose to reply in another thread.
-pub(crate) const GONE_OFFERED: &str = "The thread is no longer loaded, so this reply was not sent. Choose Move to move it to the thread now open, or Write to the channel to send it as an ordinary message.";
-/// Why reply mode is refused outside a channel.
-pub(crate) const CHANNEL_ONLY: &str = "Thread replies are sent in a channel.";
+impl ReplyDraft {
+    fn new(
+        buffer: BufferKey,
+        root: String,
+        hub: Entity<Hub>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let input = cx.new(|cx| {
+            let destination = match &buffer.target {
+                Target::Channel(channel) => format!("Reply to thread in {channel}"),
+                _ => "Reply in thread".to_owned(),
+            };
+            let mut input = ChatInput::compact_message("Reply", destination, window, cx);
+            input.set_recall_keys(true, cx);
+            input.set_placeholder("Write a reply…", window, cx);
+            input
+        });
+        super::tools::install(&input, None, cx);
+        let list = cx.new(|cx| CompletionList::new("irc-reply-completion", window, cx));
+        let subscriptions = [
+            cx.subscribe_in(&input, window, |this, _, event, window, cx| {
+                this.handle(event, window, cx)
+            }),
+            cx.subscribe_in(&list, window, |this, _, event, window, cx| {
+                let CompletionEvent::Accept(index) = *event;
+                this.accept(index, window, cx);
+            }),
+        ];
+        Self {
+            root,
+            buffer,
+            hub,
+            input,
+            list,
+            offer: None,
+            draft_present: false,
+            recall: Recall::default(),
+            _subscriptions: subscriptions,
+        }
+    }
 
-/// The command that sends `text` as a reply in `reply`'s thread to
-/// `buffer`'s channel, or why it cannot be sent. A leading `//` is a
-/// literal slash, as in the composer; any other `/command` is refused.
-pub(crate) fn command(
+    pub(crate) fn root(&self) -> &str {
+        &self.root
+    }
+
+    pub(crate) fn text(&self, cx: &App) -> String {
+        self.input.read(cx).text(cx)
+    }
+
+    pub(crate) fn has_text(&self, cx: &App) -> bool {
+        !self.text(cx).is_empty()
+    }
+
+    pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn input(&self) -> &Entity<ChatInput> {
+        &self.input
+    }
+
+    fn handle(&mut self, event: &ChatInputEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            ChatInputEvent::Submit(text) => self.send(text, window, cx),
+            ChatInputEvent::Changed(_) => self.changed(cx),
+            ChatInputEvent::Complete if self.offer.is_some() => {
+                if let Some(index) = self.list.read(cx).active() {
+                    self.accept(index, window, cx);
+                }
+            }
+            ChatInputEvent::Complete => self.complete_nick(window, cx),
+            ChatInputEvent::Cancel => self.show(None, cx),
+            ChatInputEvent::Previous => self.navigate(true, window, cx),
+            ChatInputEvent::Next => self.navigate(false, window, cx),
+            ChatInputEvent::PasteAttachments(_) => self.error(ATTACHMENTS, cx),
+        }
+    }
+
+    fn send(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let state = &self.hub.read(cx).state;
+        let network = state.network(&self.buffer.network);
+        let loaded = state.buffer(&self.buffer).is_some_and(|held| {
+            held.entries
+                .iter()
+                .any(|entry| entry.line.id.as_deref() == Some(self.root.as_str()))
+        });
+        match command(&self.buffer, &self.root, text, loaded, network) {
+            Ok(command) => {
+                self.hub.update(cx, |hub, _| hub.send(command));
+                self.recall.push(text.to_owned());
+                self.input.update(cx, |input, cx| {
+                    input.set_busy(false, cx);
+                    input.clear(window, cx);
+                    input.focus(window, cx);
+                });
+                self.update_draft_presence(false, cx);
+            }
+            Err(reason) => self.error(reason, cx),
+        }
+    }
+
+    fn error(&self, reason: &str, cx: &mut App) {
+        self.input
+            .update(cx, |input, cx| input.set_error(reason.to_owned(), cx));
+    }
+
+    fn revalidate(&mut self, cx: &mut Context<Self>) {
+        let text = self.text(cx);
+        let network = self.hub.read(cx).state.network(&self.buffer.network);
+        let batches = network.is_some_and(|network| connection_batches(&network.caps));
+        let blocked =
+            check_draft(&text, batches).is_err() || crate::thread::reply_refusal(network).is_some();
+        let limits = DraftLimits::new(draft_line_limit(&text, batches), MAX_INLINE_BYTES);
+        self.input.update(cx, |input, cx| {
+            input.set_limits(Some(limits), cx);
+            input.set_submit_blocked(blocked, cx);
+        });
+    }
+
+    fn facts(&self, cx: &App) -> Facts {
+        let hub = self.hub.read(cx);
+        Facts::gather(&hub.state, &self.buffer).ranked(&hub.roster(&self.buffer.network, cx))
+    }
+
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        self.revalidate(cx);
+        let text = self.text(cx);
+        let recalled = self.recall.showing(&text);
+        self.input
+            .update(cx, |input, cx| input.set_recalled(recalled, cx));
+        let cursor = self.input.read(cx).cursor(cx);
+        let offer = (!is_command(&text))
+            .then(|| suggest(&text, cursor, &self.facts(cx)))
+            .flatten();
+        self.show(offer, cx);
+        self.update_draft_presence(!text.is_empty(), cx);
+    }
+
+    fn update_draft_presence(&mut self, draft_present: bool, cx: &mut Context<Self>) {
+        if draft_present != self.draft_present {
+            self.draft_present = draft_present;
+            cx.notify();
+        }
+    }
+
+    fn show(&mut self, offer: Option<Offer>, cx: &mut App) {
+        let items = offer.as_ref().map_or_else(Vec::new, |offer| {
+            offer
+                .choices
+                .iter()
+                .map(|choice| choice.item.clone())
+                .collect()
+        });
+        self.input
+            .update(cx, |input, cx| input.set_completing(!items.is_empty(), cx));
+        self.list.update(cx, |list, cx| list.show(items, cx));
+        self.offer = offer;
+    }
+
+    fn accept(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(offer) = &self.offer else { return };
+        let Some(choice) = offer.choices.get(index) else {
+            return;
+        };
+        let (range, insert) = (offer.range.clone(), choice.insert.clone());
+        self.show(None, cx);
+        self.input.update(cx, |input, cx| {
+            input.replace_range(range, &insert, window, cx);
+            input.focus(window, cx);
+        });
+    }
+
+    fn complete_nick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let facts = self.facts(cx);
+        let names: Vec<_> = facts
+            .people
+            .iter()
+            .map(|person| person.nick.as_str())
+            .collect();
+        let input = self.input.read(cx);
+        if let Some((range, nick)) =
+            super::complete::complete(&input.text(cx), input.cursor(cx), &names)
+        {
+            self.input.update(cx, |input, cx| {
+                input.replace_range(range, &nick, window, cx)
+            });
+        }
+    }
+
+    fn navigate(&mut self, older: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.offer.is_some() {
+            self.list
+                .update(cx, |list, cx| list.step(if older { -1 } else { 1 }, cx));
+        } else if recall::replace(&mut self.recall, &self.input, older, window, cx).is_some() {
+            self.revalidate(cx);
+            self.update_draft_presence(self.has_text(cx), cx);
+        }
+    }
+}
+
+impl Render for ReplyDraft {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("irc-reply-editor")
+            .test_support()
+            .w_full()
+            .min_w_0()
+            .gap_1()
+            .child(self.list.clone())
+            .child(self.input.clone())
+    }
+}
+
+fn is_command(text: &str) -> bool {
+    text.starts_with('/') && !text.starts_with("//")
+}
+
+fn command(
     buffer: &BufferKey,
-    reply: &ReplyTo,
+    root: &str,
     text: &str,
+    loaded: bool,
     network: Option<&Network>,
 ) -> Result<Command, &'static str> {
     if !matches!(buffer.target, Target::Channel(_)) {
         return Err(CHANNEL_ONLY);
     }
-    if reply.gone {
+    if !loaded {
         return Err(GONE);
     }
     if let Some(refusal) = crate::thread::reply_refusal(network) {
         return Err(refusal);
     }
-    let text = match text.strip_prefix('/') {
-        Some(rest) if rest.starts_with('/') => rest,
-        Some(_) => return Err(COMMAND),
-        None => text,
-    };
+    let text = text.trim();
+    if is_command(text) {
+        return Err(COMMAND);
+    }
+    let batches = network.is_some_and(|network| connection_batches(&network.caps));
+    if check_draft(text, batches).is_err() {
+        return Err(TOO_LONG);
+    }
     Ok(Command::Reply {
         buffer: buffer.clone(),
-        msgid: reply.root.clone(),
-        text: text.to_owned(),
+        msgid: root.to_owned(),
+        text: text
+            .strip_prefix('/')
+            .filter(|text| text.starts_with('/'))
+            .unwrap_or(text)
+            .to_owned(),
     })
 }
-
-/// Puts the composer into reply mode for `reply` and gives it the
-/// keyboard. Only in a channel. A draft written for a thread that has gone
-/// stays with it while it holds text: `reply` is only offered, and the
-/// person moves the draft there with [`move_offered`].
-pub(crate) fn start(
-    conversation: &mut Conversation,
-    reply: ReplyTo,
-    window: &mut Window,
-    cx: &mut Context<Conversation>,
-) {
-    if !matches!(conversation.buffer.target, Target::Channel(_)) {
-        return;
-    }
-    let held = !conversation
-        .draft
-        .entity
-        .read(cx)
-        .text(cx)
-        .trim()
-        .is_empty();
-    match conversation.draft.reply.as_mut() {
-        Some(current) if current.gone && held => offer(current, reply, cx),
-        _ => enter(conversation, reply, window, cx),
-    }
-}
-
-/// Offers `reply`'s thread to the gone draft `current`, without moving it.
-fn offer(current: &mut ReplyTo, reply: ReplyTo, cx: &mut Context<Conversation>) {
-    current.offered = Some(Box::new(reply));
-    cx.notify();
-}
-
-/// Moves a gone draft to the thread the person chose meanwhile, as they
-/// confirmed on the row.
-pub(crate) fn move_offered(
-    conversation: &mut Conversation,
-    window: &mut Window,
-    cx: &mut Context<Conversation>,
-) {
-    let offered = conversation
-        .draft
-        .reply
-        .as_mut()
-        .and_then(|reply| reply.offered.take());
-    if let Some(offered) = offered {
-        enter(conversation, *offered, window, cx);
-    }
-}
-
-/// Reply mode for `reply`, with the keyboard in the composer.
-fn enter(
-    conversation: &mut Conversation,
-    reply: ReplyTo,
-    window: &mut Window,
-    cx: &mut Context<Conversation>,
-) {
-    let hint = placeholder(&reply);
-    conversation.draft.reply = Some(reply);
-    conversation.draft.entity.update(cx, |input, cx| {
-        input.set_placeholder(hint, window, cx);
-        input.focus(window, cx);
-    });
-    cx.notify();
-}
-
-/// Leaves reply mode, if the composer is in it.
-pub(crate) fn cancel(
-    conversation: &mut Conversation,
-    window: &mut Window,
-    cx: &mut Context<Conversation>,
-) {
-    if conversation.draft.reply.take().is_none() {
-        return;
-    }
-    let hint = super::placeholder(&conversation.buffer.target);
-    conversation
-        .draft
-        .entity
-        .update(cx, |input, cx| input.set_placeholder(hint, window, cx));
-    cx.notify();
-}
-
-/// Escape in the composer: leaves reply mode, except for a reply whose
-/// thread is gone, which stays unsendable until the person chooses
-/// **Write to the channel**.
-pub(crate) fn escape(
-    conversation: &mut Conversation,
-    window: &mut Window,
-    cx: &mut Context<Conversation>,
-) {
-    if conversation
-        .draft
-        .reply
-        .as_ref()
-        .is_some_and(|reply| reply.gone)
-    {
-        return;
-    }
-    cancel(conversation, window, cx);
-}
-
-/// Marks the reply to `root`, whose thread is no longer held, as gone: it
-/// keeps the draft in reply mode and sends nothing until the person
-/// chooses to write to the channel instead.
-/// Drops the thread offered to a gone draft, as when another thread is
-/// chosen: the offer stood for the thread then in front.
-pub(crate) fn withdraw_offer(conversation: &mut Conversation, cx: &mut Context<Conversation>) {
-    if let Some(reply) = conversation.draft.reply.as_mut()
-        && reply.offered.take().is_some()
-    {
-        cx.notify();
-    }
-}
-
-/// A thread offered to a gone draft that goes too is no longer offered.
-pub(crate) fn forget(conversation: &mut Conversation, root: &str, cx: &mut Context<Conversation>) {
-    let Some(reply) = conversation.draft.reply.as_mut() else {
-        return;
-    };
-    if reply
-        .offered
-        .as_ref()
-        .is_some_and(|offered| offered.root == root)
-    {
-        reply.offered = None;
-        cx.notify();
-    }
-    if reply.root == root {
-        reply.gone = true;
-        cx.notify();
-    }
-}
-
-/// The row above the input in reply mode: what is replied to, and Cancel.
-pub(super) fn row(reply: &ReplyTo, cx: &mut Context<Conversation>) -> gpui_kit::AnyElement {
-    if reply.gone {
-        return gone_row(reply.offered.as_deref(), cx).into_any_element();
-    }
-    let tokens = Tokens::current(cx);
-    let words = reply.words();
-    h_flex()
-        .id("irc-reply-mode")
-        .test_support()
-        .role(Role::Status)
-        .aria_label(SharedString::from(words.clone()))
-        .w_full()
-        .min_w_0()
-        .gap_2()
-        .px_2()
-        .py_1()
-        .text_size(tokens.secondary_size())
-        .child(
-            div()
-                .flex()
-                .flex_shrink_0()
-                .text_color(tokens.muted)
-                .child(Icon::from(IconName::Reply).xsmall()),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_color(tokens.muted)
-                .child("Replying in thread to"),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_color(tokens.fg_strong)
-                .child(format!("{}:", reply.author)),
-        )
-        .child(
-            truncated::text("irc-reply-mode-excerpt", reply.excerpt.clone())
-                .flex_1()
-                .text_color(tokens.fg),
-        )
-        .child(
-            icon_button(
-                "irc-reply-mode-cancel",
-                Intent::Quiet,
-                IconName::X,
-                "Cancel reply",
-            )
-            .on_click(cx.listener(|this, _, window, cx| cancel(this, window, cx))),
-        )
-        .into_any_element()
-}
-
-/// The row once the thread is no longer loaded: why nothing was sent, and
-/// the ways on: **Write to the channel**, which keeps the text as an
-/// ordinary draft, and, once the person chose another thread, **Move to
-/// the thread**.
-fn gone_row(offered: Option<&ReplyTo>, cx: &mut Context<Conversation>) -> impl IntoElement {
-    let tokens = Tokens::current(cx);
-    let spoken = if offered.is_some() {
-        GONE_OFFERED
-    } else {
-        GONE
-    };
-    h_flex()
-        .id("irc-reply-mode")
-        .test_support()
-        .role(Role::Alert)
-        .aria_label(SharedString::from(spoken))
-        .w_full()
-        .min_w_0()
-        .gap_2()
-        .px_2()
-        .py_1()
-        .text_size(tokens.secondary_size())
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_color(tokens.fg)
-                .child("The thread is no longer loaded. Your reply was not sent."),
-        )
-        .children(offered.map(|offered| move_button(offered, cx)))
-        .child(
-            subspace_framework::dashboard::action::action_button(
-                "irc-reply-mode-to-channel",
-                Intent::Neutral,
-                Some(IconName::Hash),
-                "Write to the channel",
-            )
-            .on_click(cx.listener(|this, _, window, cx| cancel(this, window, cx))),
-        )
-}
-
-/// **Move to \<author\>'s thread**: the draft goes to the thread the
-/// person chose after its own had gone, named on the button.
-fn move_button(offered: &ReplyTo, cx: &mut Context<Conversation>) -> impl IntoElement {
-    subspace_framework::dashboard::action::action_button(
-        "irc-reply-mode-move",
-        Intent::Neutral,
-        Some(IconName::Reply),
-        move_words(offered),
-    )
-    .accessibility_label(format!(
-        "Move the reply to the thread of {}: {}",
-        offered.author, offered.excerpt
-    ))
-    .on_click(cx.listener(|this, _, window, cx| move_offered(this, window, cx)))
-}
-
-#[cfg(test)]
-mod tests;

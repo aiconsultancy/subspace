@@ -396,8 +396,8 @@ commands. Shorten the draft or choose **Save as file…** to save its text.
 The input grows from two to twelve visible rows, then scrolls. In a small
 window, its cap follows half the Space's height. Drag the top edge to resize;
 focus the resize handle and use Up or Down, or Home to restore automatic
-growth. The send hint fades as soon as you type and returns when you clear
-the draft. Errors and **Save as file…** stay visible.
+growth. The toolbar shows the new-line key. Errors and **Save as file…**
+appear with the draft.
 
 A pill at the input's top right shows the line count after the first line.
 Above 2,048 bytes, it also shows the size in KB (1 KB is 1,024 UTF-8 bytes).
@@ -405,9 +405,11 @@ It uses a warning tone from 80% of either limit and a danger tone above a
 limit. Commands use the 10-line cap; `//text` is literal text and can use
 the 100-line cap on a batching connection.
 
-A slim row under the input names its keys: `@` to mention someone, `/` for
-commands, `↑` to recall a line you sent (IRC cannot edit a sent message, so
-recalling puts it back in the input to send again) and `⇧⏎` for a new line.
+The label above the composer names the destination. Choose **Commands** or
+type `/` at the start to see IRC commands. The **@** button starts a mention.
+**Aa** inserts Markdown for bold, inline code or a quote. Use `↑` to recall a
+sent line and `⇧⏎` for a new line. Recalling a line puts it in the editor so
+you can change and send it again.
 
 In a fleet's ship channel or its Starbase, `/ask` comes first: `/ask` and
 your text send the text to the channel's agent, the ship's captain or the
@@ -711,19 +713,19 @@ loaded. If only the end of a request is loaded, the tab says the earlier
 steps are not, with **Load around this message** when the server keeps
 history.
 
-**Reply in thread**, at the foot of the tab, puts the message input into
-reply mode: a line above it says **Replying in thread to** and whose message,
-with × to cancel (`Esc` cancels too). Your reply goes to the channel, where
-everyone sees it, marked as a reply in that thread; it is never a private
-message. Commands and attachments can't be sent as a reply; cancel the reply
-first. When the server can't mark replies (it lacks `message-tags`) or the
-network is not connected, the tab says so in place of the action. If the
-message you are replying to is no longer loaded, your reply is kept but
-not sent, and `Esc` keeps it so: choose **Write to the channel** to send it
-as an ordinary message instead. Choosing **Reply in thread** on another
-thread then doesn't move it there by itself: choose **Move to** that
-author's **thread** to reply there with it, or empty the message input
-first. Choosing yet another thread withdraws that offer.
+The **Thread** inspector has its own reply box, pinned below the replies.
+Choose **Reply in thread** on a message to put the cursor in that box.
+**Jump to message** reveals the original in the channel. The channel input
+keeps its draft, and each thread keeps its own draft when you switch threads,
+switch channels or hide the inspector. Choose **Thread draft** in the
+channel composer to return to the last open thread with a draft.
+
+Use **Reply** or **Enter** to send. The reply appears in the channel with a
+**Thread reply** mark, and in the inspector. Commands and attachments use
+the channel input. If the connection is down or the server lacks
+`message-tags`, the tab explains why sending is unavailable. When the
+original message drops out of loaded history, the inspector keeps the text
+under **Unsent replies**. Choose **Copy draft** to reuse it.
 
 A long thread shows its latest 40 replies and says how many earlier ones
 are in the channel. A long **Status** list shows its latest 24 steps and
@@ -887,7 +889,7 @@ reaches its size limit.
 ### Notifications and read state
 
 Opening a channel or private conversation marks it read. A **NEW SINCE YOU
-LEFT** line with the number of new messages, and a tinted background, show
+LEFT** line with the number of new messages shows
 which messages were unread when you opened it.
 With `draft/read-marker`, the read position syncs with your other clients,
 and reading elsewhere clears unread counts here.

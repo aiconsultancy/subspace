@@ -2,19 +2,21 @@
 //! to bottom its root message, a request's status timeline as a plain list,
 //! then the replies grouped by author as the transcript groups them, or an
 //! honest line when there are none. With no thread chosen it says how to
-//! open one. Its footer holds **Reply in thread**, or why a reply can't be
-//! sent here. See [`crate::thread`].
+//! open one. Its footer holds the reply editor and its delivery scope. See [`crate::thread`].
 
+mod drafts;
 mod footer;
 mod steps;
 
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _, Role,
+    AnyElement, App, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
 };
-use subspace_client_irc::BufferKey;
-use subspace_framework::dashboard::{Tokens, feedback, workspace};
+use subspace_client_irc::{BufferKey, Target};
+use subspace_framework::dashboard::action::{Intent, action_button};
+use subspace_framework::dashboard::{Tokens, feedback, truncated, workspace};
+use subspace_framework::lucide::IconName;
 
 pub(super) use footer::footer;
 
@@ -30,29 +32,26 @@ pub(crate) const NO_REPLIES: &str = "No replies yet.";
 
 /// The tab's body for the conversation in front.
 pub(super) fn body(board: &Irc, cx: &App) -> AnyElement {
-    let shown = board
-        .dock
-        .focused
-        .as_ref()
-        .and_then(|buffer| Some((buffer, board.threads.shown(buffer)?)));
-    let context = shown
-        .as_ref()
-        .and_then(|(buffer, _)| row_context(board, buffer, cx));
-    match (shown, context) {
-        (Some((buffer, thread)), Some(context)) => content(&thread, (board, buffer), &context, cx),
-        _ => prompt(cx),
-    }
-}
-
-/// The conversation's row facts, with no keyboard focus or search result
-/// marked, so the tab draws its messages as the transcript does.
-fn row_context(board: &Irc, buffer: &BufferKey, cx: &App) -> Option<RowContext> {
-    let hosted = board.dock.open.get(buffer)?;
-    let mut context = hosted.entity.read(cx).row_context(cx);
-    context.focus = None;
-    context.card = None;
-    context.target = None;
-    Some(context)
+    let Some(buffer) = board.dock.focused.as_ref() else {
+        return prompt(cx);
+    };
+    let Some(conversation) = board.dock.open.get(buffer).map(|hosted| &hosted.entity) else {
+        return prompt(cx);
+    };
+    let view = conversation.read(cx);
+    let hub = view.hub.read(cx);
+    let missing = view.reply_drafts.missing(buffer, &hub.state, cx);
+    let body = match board.threads.shown(buffer) {
+        Some(thread) => content(&thread, (board, buffer), conversation, cx),
+        None => prompt(cx),
+    };
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .gap_4()
+        .children(drafts::missing(missing, conversation, cx))
+        .child(body)
+        .into_any_element()
 }
 
 /// The one line that says how to open a thread.
@@ -70,24 +69,71 @@ fn prompt(cx: &App) -> AnyElement {
 fn content(
     thread: &Thread,
     (board, buffer): (&Irc, &BufferKey),
-    context: &RowContext,
+    conversation: &Entity<crate::conversation::Conversation>,
     cx: &App,
 ) -> AnyElement {
+    let mut context = conversation.read(cx).row_context(cx);
+    context.focus = None;
+    context.card = None;
+    context.target = None;
     v_flex()
         .id("irc-thread")
         .test_support()
         .w_full()
         .min_w_0()
         .gap_6()
-        .child(thread_message(&thread.root, false, context, cx))
+        .child(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .child(origin(thread, buffer, conversation, cx))
+                .child(thread_message(&thread.root, false, &context, cx)),
+        )
         .children(
             thread
                 .timeline
                 .as_ref()
                 .map(|timeline| steps::section(timeline, (board, buffer, thread), cx)),
         )
-        .child(replies(thread, context, cx))
+        .child(replies(thread, &context, cx))
         .into_any_element()
+}
+
+fn origin(
+    thread: &Thread,
+    buffer: &BufferKey,
+    conversation: &Entity<crate::conversation::Conversation>,
+    cx: &App,
+) -> impl IntoElement {
+    let tokens = Tokens::current(cx);
+    let channel = match &buffer.target {
+        Target::Channel(channel) => channel.clone(),
+        _ => String::new(),
+    };
+    let seq = thread.root.seq;
+    let conversation = conversation.downgrade();
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .gap_2()
+        .child(
+            truncated::text("irc-thread-channel", channel)
+                .flex_1()
+                .text_size(tokens.caption_size())
+                .text_color(tokens.muted),
+        )
+        .child(
+            action_button(
+                "irc-thread-jump",
+                Intent::Quiet,
+                Some(IconName::ArrowUpRight),
+                "Jump to message",
+            )
+            .on_click(move |_, _, cx| {
+                _ = conversation.update(cx, |view, cx| view.reveal(seq, cx));
+            }),
+        )
 }
 
 /// How many of `count` replies, the earliest, the tab leaves out: the
@@ -151,7 +197,10 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
                 .test_support()
                 .w_full()
                 .min_w_0()
-                .gap_1()
+                .gap_2()
+                .border_l_1()
+                .border_color(tokens.line)
+                .pl_3()
                 .children(
                     shown
                         .iter()

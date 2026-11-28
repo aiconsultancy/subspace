@@ -23,8 +23,8 @@ use crate::conversation::Conversation;
 mod agents;
 mod ask;
 mod complete;
+mod destination;
 mod gates;
-mod hints;
 mod limits;
 mod offer;
 #[cfg(test)]
@@ -34,6 +34,7 @@ mod recall;
 pub(crate) mod reply;
 mod send;
 pub(crate) mod suggest;
+mod tools;
 mod typing;
 
 pub(crate) use agents::{AgentNotice, listed_channel};
@@ -60,18 +61,19 @@ pub(crate) struct Draft {
     run_client: Option<std::sync::Arc<subspace_api_client::Client>>,
     /// Why a private message to a fleet agent was not sent or opened.
     pub agent_notice: Option<AgentNotice>,
-    /// The thread the draft replies in, in reply mode.
-    pub reply: Option<reply::ReplyTo>,
     _subscription: Subscription,
 }
 
 impl Draft {
     /// A plain-text composer for `buffer` that reports to its conversation.
     pub fn new(buffer: &BufferKey, window: &mut Window, cx: &mut Context<Conversation>) -> Self {
-        let hint = placeholder(&buffer.target);
+        let hint = match buffer.target {
+            Target::Server => "Enter a command…",
+            _ => "Write a message…",
+        };
         let entity = cx.new(|cx| {
-            let mut input = ChatInput::message(window, cx);
-            input.set_plain_text(cx);
+            let mut input =
+                ChatInput::compact_message("Send", placeholder(&buffer.target), window, cx);
             input.set_attachment_budget(crate::uploads::outgoing::Tray::default().budget(), cx);
             input.set_recall_keys(true, cx);
             input.set_placeholder(hint, window, cx);
@@ -84,6 +86,8 @@ impl Draft {
             );
             input
         });
+        let attaches = !matches!(buffer.target, Target::Server);
+        tools::install(&entity, Some((cx.entity().downgrade(), attaches)), cx);
         let list = cx.new(|cx| CompletionList::new("irc-completion", window, cx));
         let subscription = cx.subscribe_in(&list, window, offer::clicked);
         Self {
@@ -96,7 +100,6 @@ impl Draft {
             offer: None,
             run_client: None,
             agent_notice: None,
-            reply: None,
             _subscription: subscription,
         }
     }
@@ -114,19 +117,32 @@ impl Draft {
     /// The feedback, completions and editor for this draft.
     pub fn render(
         &self,
+        buffer: &BufferKey,
         tray: &crate::uploads::outgoing::Tray,
         uploads: bool,
+        thread_draft: Option<&str>,
         cx: &mut Context<Conversation>,
     ) -> AnyElement {
+        let tokens = subspace_framework::dashboard::Tokens::current(cx);
         v_flex()
             .w_full()
+            .min_w_0()
+            .px(subspace_framework::dashboard::workspace::text_edge(&tokens))
+            .py_2()
+            .gap_1()
+            .child(destination::row(
+                "irc-channel-destination",
+                placeholder(&buffer.target),
+                uploads,
+                thread_draft,
+                cx,
+            ))
             .children(
                 self.agent_notice
                     .as_ref()
                     .map(|notice| agents::notice(notice, cx)),
             )
             .children(self.oversized.then(|| paste::notice(self.saving, cx)))
-            .children(self.reply.as_ref().map(|replying| reply::row(replying, cx)))
             .children(uploads.then(|| crate::uploads::outgoing::controls(&self.entity, tray, cx)))
             .child(self.list.clone())
             .child(
@@ -140,12 +156,11 @@ impl Draft {
                     })
                     .child(self.entity.clone()),
             )
-            .child(hints::row(uploads, cx))
             .into_any_element()
     }
 }
 
-/// What the empty composer says: whom the message goes to.
+/// The channel composer’s visible destination.
 pub(crate) fn placeholder(target: &Target) -> String {
     match target {
         Target::Channel(name) | Target::Query(name) => format!("Message {name}"),
@@ -178,7 +193,7 @@ pub(crate) fn handle(
         }
         ChatInputEvent::Complete => complete::apply(conversation, window, cx),
         ChatInputEvent::Cancel if offer::is_open(conversation) => offer::close(conversation, cx),
-        ChatInputEvent::Cancel => reply::escape(conversation, window, cx),
+        ChatInputEvent::Cancel => {}
     }
 }
 
