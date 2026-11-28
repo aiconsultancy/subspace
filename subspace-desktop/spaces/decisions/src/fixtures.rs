@@ -300,9 +300,18 @@ fn answer(plan: &Plan) -> Answer {
         .into_iter()
         .filter(|item| keeps(item, &plan.query))
         .collect();
+    let mut found = Found {
+        items,
+        ..Found::default()
+    };
+    found.reveal = crate::load::reveal(plan, &found, |wider| {
+        self::items()
+            .into_iter()
+            .find(|item| keeps(item, &wider.query))
+    });
     Answer {
         directory: plan.directory.then(|| Ok(directory())),
-        found: Ok(Found { items, next: None }),
+        found: Ok(found),
     }
 }
 

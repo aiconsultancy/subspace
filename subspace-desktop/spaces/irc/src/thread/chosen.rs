@@ -22,6 +22,7 @@ pub(crate) struct Threads {
 struct Chosen {
     /// The root message's ID.
     root: String,
+    pinned: bool,
     /// The thread as last built.
     shown: Option<Rc<Thread>>,
     /// The buffer as it was when the thread was last built.
@@ -56,15 +57,33 @@ impl Threads {
     /// Chooses message `root` as `buffer`'s thread; built at the next
     /// [`Self::refresh`].
     pub(crate) fn choose(&mut self, buffer: &BufferKey, root: String) {
+        if self
+            .chosen
+            .get(buffer)
+            .is_some_and(|chosen| chosen.root == root)
+        {
+            return;
+        }
         self.chosen.insert(
             buffer.clone(),
             Chosen {
                 root,
+                pinned: false,
                 shown: None,
                 seen: None,
                 shown_limit: super::MAX_REPLIES,
             },
         );
+    }
+
+    pub(crate) fn set_pinned(&mut self, buffer: &BufferKey, pinned: bool) {
+        if let Some(chosen) = self.chosen.get_mut(buffer) {
+            chosen.pinned = pinned;
+        }
+    }
+
+    pub(crate) fn is_pinned(&self, buffer: &BufferKey) -> bool {
+        self.chosen.get(buffer).is_some_and(|chosen| chosen.pinned)
     }
 
     /// The root message ID of `buffer`'s chosen thread.

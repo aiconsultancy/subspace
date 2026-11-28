@@ -254,6 +254,7 @@ impl Dashboard for Irc {
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active = false;
         toolbar::close_menus(self, window, cx);
+        self.dock.dismiss_message_menus(None, window, cx);
         join::close(self, window, cx);
         view::publish_visible(self, cx);
         live::watch::sync(self, cx);

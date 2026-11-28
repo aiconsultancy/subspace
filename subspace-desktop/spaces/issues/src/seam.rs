@@ -216,7 +216,9 @@ impl Issues {
         if self.initiative_id.is_some() && (self.project != previous || previous_list) {
             return;
         }
-        self.listing.follow_list(view.list);
+        if self.listing.follow_list(view.list) {
+            self.invalidate_search_result();
+        }
         self.listing.follow_request(view.request_revision);
         self.listing.hidden_subissues_count = view.hidden_subissues_count;
         self.listing.my_issues_count = view.my_issues_count;
@@ -228,7 +230,7 @@ impl Issues {
             content.read_at = read_at;
         }
         self.show_status(view.status, cx);
-        self.maybe_search_all(cx);
+        self.check_hidden_matches(cx);
     }
 
     fn show_status(&mut self, status: Status, cx: &mut Context<Self>) {
@@ -273,11 +275,11 @@ impl Issues {
         ask: bool,
         cx: &mut Context<Self>,
     ) {
-        crate::listing::prefer_exact(&mut groups, &self.query);
+        crate::listing::prepare_search_groups(&mut groups, &self.query);
         self.listing.settle_unread(&mut groups);
         let mut waiting = Vec::new();
+        let nested = self.sub_issues == crate::model::SubIssues::Nested;
         for group in &mut groups {
-            let nested = self.sub_issues == crate::model::SubIssues::Nested;
             if ask && group.more == More::Unread && (nested || !self.group_folded(group)) {
                 group.more = More::Loading;
                 waiting.push(group.key.clone());

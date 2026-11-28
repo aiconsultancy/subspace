@@ -139,8 +139,8 @@ pub(crate) fn stop_sent(reaction: &str, ship: &str) -> String {
 pub(crate) fn explanation(ship: Option<&str>) -> String {
     match ship {
         Some(ship) => format!(
-            "To ask {ship} to stop, use Add reaction and choose under Stop {ship}, while its turn is running."
+            "To ask {ship} to stop, use Stop {ship} in the message actions, while its turn is running."
         ),
-        None => "\u{270B} and \u{1F6D1} can stop an agent's turn, so Subspace sends them only from Add reaction, under Stop and the agent's name, on a running request to a fleet agent.".to_owned(),
+        None => "\u{270B} and \u{1F6D1} can stop an agent's turn, so Subspace sends them only from Stop in the message actions on a running request to a fleet agent.".to_owned(),
     }
 }

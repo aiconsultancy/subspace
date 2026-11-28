@@ -76,13 +76,14 @@ fn copy_uses_exact_middle_words_without_a_synthetic_paragraph_newline(cx: &mut T
 #[gpui_kit::test]
 fn opening_a_menu_sets_no_chat_payload_but_explicit_add_does(cx: &mut TestAppContext) {
     let cx = selected(cx);
+    cx.update(|_, cx| super::set_local_chat_enabled(cx, true));
     cx.update(|_, cx| assert!(crate::take_selection(cx).is_empty()));
     menu(cx);
     cx.update(|window, cx| {
         assert!(crate::take_selection(cx).is_empty());
         assert_eq!(
             window.within("popup-menu").find(2usize).label(),
-            Some("Add to chat")
+            Some("Add to local model chat")
         );
         window.within("popup-menu").click(2usize, cx);
     });

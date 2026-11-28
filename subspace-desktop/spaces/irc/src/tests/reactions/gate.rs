@@ -78,7 +78,7 @@ fn a_stop_pill_on_a_request_with_no_status_yet_sends_nothing(cx: &mut TestAppCon
         !click_sends(&hub, format!("irc-line:{fresh}:reaction:0"), cx),
         "Stargate could stop the queued turn"
     );
-    assert!(notice(cx).contains("only from Add reaction"));
+    assert!(notice(cx).contains("only from Stop in the message actions"));
 }
 
 #[gpui_kit::test]
@@ -170,7 +170,7 @@ fn a_stop_item_left_open_is_checked_again_when_chosen(cx: &mut TestAppContext) {
     });
     assert_eq!(sent(&hub, cx), before, "astra is no longer a roster agent");
     assert!(
-        notice(cx).contains("only from Add reaction"),
+        notice(cx).contains("only from Stop in the message actions"),
         "explained, not sent"
     );
 }
@@ -213,7 +213,7 @@ fn a_stop_typed_by_hand_in_a_channel_is_refused_and_points_to_its_item(cx: &mut 
         error
             .as_deref()
             .unwrap_or_default()
-            .contains("only from Add reaction"),
+            .contains("only from Stop in the message actions"),
         "{error:?}"
     );
     let thumbs = "/raw @+draft/react=\u{1F44D};+draft/reply=m1 TAGMSG #subspace";

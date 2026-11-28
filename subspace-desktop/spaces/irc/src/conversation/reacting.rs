@@ -14,7 +14,7 @@
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::{App, AppContext as _, Context, Entity};
+use gpui_kit::{App, AppContext as _, Context, Entity, Window};
 use subspace_client_irc::Command;
 use subspace_framework::dashboard::anchored::Anchor;
 
@@ -33,10 +33,7 @@ pub(super) use notice::notice;
 /// One conversation's reactions for the current sync and what it is
 /// waiting to hear.
 pub(crate) struct Reacting {
-    /// Where the keyboard's reaction menu opens: the focused message.
-    pub anchor: Entity<Anchor>,
-    /// Where the hovered message's toolbar opens it.
-    pub hover_anchor: Entity<Anchor>,
+    pub anchors: Anchors,
     pub shown: Rc<Shown>,
     pub stops: Rc<Stops>,
     /// The network can react now.
@@ -81,8 +78,11 @@ impl Reacting {
     /// not shown.
     pub fn new(seen_refusal: u64, cx: &mut App) -> Self {
         Self {
-            anchor: cx.new(Anchor::new),
-            hover_anchor: cx.new(Anchor::new),
+            anchors: Anchors {
+                keyboard: cx.new(Anchor::new),
+                reaction: cx.new(Anchor::new),
+                stop: cx.new(Anchor::new),
+            },
             shown: Rc::default(),
             stops: Rc::default(),
             supported: false,
@@ -94,14 +94,19 @@ impl Reacting {
     }
 }
 
-/// The reaction menu's two anchors: the keyboard-focused message's, then
-/// the hovered message's.
-pub(crate) type Anchors = (Entity<Anchor>, Entity<Anchor>);
+/// Menus outlive the virtual row or the toolbar that opened them.
+#[derive(Clone)]
+pub(crate) struct Anchors {
+    pub keyboard: Entity<Anchor>,
+    pub reaction: Entity<Anchor>,
+    pub stop: Entity<Anchor>,
+}
 
-impl Reacting {
-    /// Both anchors, for the rows to measure into.
-    pub(crate) fn anchors(&self) -> Anchors {
-        (self.anchor.clone(), self.hover_anchor.clone())
+impl Anchors {
+    pub(crate) fn dismiss(&self, window: &mut Window, cx: &mut App) {
+        for anchor in [&self.keyboard, &self.reaction, &self.stop] {
+            anchor.update(cx, |anchor, cx| anchor.dismiss(window, cx));
+        }
     }
 }
 

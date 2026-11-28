@@ -135,6 +135,8 @@ impl Decisions {
         let number = self.reads;
         let plan = Plan {
             query: model::query(&self.choice, &self.query),
+            probe: (turn == Turn::First && self.choice.narrows() && !self.query.is_empty())
+                .then(|| self.choice.clone()),
             directory: directory || self.session.account.is_none(),
             stop: self.stop.clone(),
             initiative: self.initiative_id.clone(),
@@ -245,6 +247,7 @@ impl Decisions {
         }
         self.listing.query.clone_from(&self.query);
         self.listing.items = Some(found.items);
+        self.listing.reveal = found.reveal;
         self.listing.pages.landed(turn, found.next);
         self.listing.read_at = Some(now);
         self.listing.status = Status::Idle;
@@ -295,36 +298,73 @@ impl Decisions {
     }
 
     pub(crate) fn choose_view(&mut self, view: View, cx: &mut Context<Self>) {
-        if self.choice.view != view {
-            self.choice.view = view;
-            prefs::set(cx, VIEW_PREF, view.key());
-            self.choice_changed(cx);
-        }
-        self.show_list(cx);
+        self.select_choice(
+            Choice {
+                view,
+                ..self.choice.clone()
+            },
+            cx,
+        );
     }
 
     pub(crate) fn choose_maker(&mut self, maker: Maker, cx: &mut Context<Self>) {
-        if self.choice.maker != maker {
-            self.choice.maker = maker;
-            prefs::set(cx, MAKER_PREF, maker.key());
-            self.choice_changed(cx);
-        }
-        self.show_list(cx);
+        self.select_choice(
+            Choice {
+                maker,
+                ..self.choice.clone()
+            },
+            cx,
+        );
     }
 
     pub(crate) fn choose_project(&mut self, project: ProjectChoice, cx: &mut Context<Self>) {
-        if self.choice.project != project {
-            prefs::set(cx, PROJECT_PREF, project.key());
-            self.choice.project = project;
-            self.choice_changed(cx);
-        }
-        self.show_list(cx);
+        self.select_choice(
+            Choice {
+                project,
+                ..self.choice.clone()
+            },
+            cx,
+        );
     }
 
-    /// `None` shows every tag. The tag is not kept between runs.
     pub(crate) fn choose_tag(&mut self, tag: Option<String>, cx: &mut Context<Self>) {
-        if self.choice.tag != tag {
-            self.choice.tag = tag;
+        self.select_choice(
+            Choice {
+                tag,
+                ..self.choice.clone()
+            },
+            cx,
+        );
+    }
+
+    pub(crate) fn search_recovery(&self) -> Option<&Choice> {
+        (self.listing.status == Status::Idle
+            && self.query == self.listing.query
+            && !self.search_pending())
+        .then_some(self.listing.reveal.as_ref())
+        .flatten()
+    }
+
+    pub(crate) fn reveal_search(&mut self, cx: &mut Context<Self>) {
+        if !self.follow_account(cx)
+            && let Some(choice) = self.search_recovery().cloned()
+        {
+            self.select_choice(choice, cx);
+        }
+    }
+
+    fn select_choice(&mut self, choice: Choice, cx: &mut Context<Self>) {
+        if self.choice != choice {
+            if self.choice.view != choice.view {
+                prefs::set(cx, VIEW_PREF, choice.view.key());
+            }
+            if self.choice.maker != choice.maker {
+                prefs::set(cx, MAKER_PREF, choice.maker.key());
+            }
+            if self.choice.project != choice.project {
+                prefs::set(cx, PROJECT_PREF, choice.project.key());
+            }
+            self.choice = choice;
             self.choice_changed(cx);
         }
         self.show_list(cx);

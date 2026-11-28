@@ -92,6 +92,20 @@ impl IrcDock {
         self.members.open
     }
 
+    pub(crate) fn dismiss_message_menus(
+        &self,
+        kept: Option<&BufferKey>,
+        window: &mut Window,
+        cx: &mut Context<Irc>,
+    ) {
+        for (buffer, hosted) in &self.open {
+            if Some(buffer) != kept {
+                let anchors = hosted.entity.read(cx).reacting.anchors.clone();
+                anchors.dismiss(window, cx);
+            }
+        }
+    }
+
     /// Forgets the conversations of a hub that was replaced, so the stored
     /// layout is applied again for the new one.
     pub fn reset(&mut self) {

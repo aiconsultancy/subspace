@@ -135,12 +135,14 @@ impl Listing {
 
     /// The hub's groups belong to `list`: a new list may read every first
     /// page again.
-    pub(crate) fn follow_list(&mut self, list: Option<ListId>) {
-        if self.paged_for != list {
-            self.paged.clear();
-            self.pending.clear();
-            self.paged_for = list;
+    pub(crate) fn follow_list(&mut self, list: Option<ListId>) -> bool {
+        if self.paged_for == list {
+            return false;
         }
+        self.paged.clear();
+        self.pending.clear();
+        self.paged_for = list;
+        true
     }
 
     pub(crate) fn follow_request(&mut self, revision: u64) {
@@ -241,11 +243,12 @@ impl Listing {
     }
 }
 
-/// The scoped search can also return text that mentions the identifier.
-pub(crate) fn prefer_exact(groups: &mut Vec<IssueGroup>, query: &str) {
+/// Hide empty groups during search and prefer an exact issue identifier.
+pub(crate) fn prepare_search_groups(groups: &mut Vec<IssueGroup>, query: &str) {
     if query.is_empty() {
         return;
     }
+    groups.retain(|group| !group.rows.is_empty() || group.total != Some(0));
     let exact = groups.iter().enumerate().find_map(|(index, group)| {
         let row = group
             .rows

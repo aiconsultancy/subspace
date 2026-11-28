@@ -1,8 +1,13 @@
 //! One menu policy for literal values, rich blocks and legacy selectable hosts.
 
+use std::sync::Arc;
+
 use gpui_kit::base::TextSelection;
 use gpui_kit::component::menu::{ContextMenu, PopupMenu, PopupMenuItem};
-use gpui_kit::{App, Context, Entity, InteractiveElement, ParentElement, Styled, Window};
+use gpui_kit::{
+    AnyElement, App, Context, Entity, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Styled, Window,
+};
 
 use crate::anchored::AnchoredContextMenuExt as _;
 use crate::row_menu::MenuChat;
@@ -11,11 +16,62 @@ use crate::{AddSelectionToChat, links, set_selection};
 use super::plain::PlainState;
 use super::view::RichTextContext;
 
+#[derive(Clone)]
+pub(super) struct Options {
+    pub(super) chat: MenuChat,
+    pub(super) leading: Option<Arc<dyn Fn() -> PopupMenuItem + Send + Sync>>,
+}
+
+impl Options {
+    pub(super) fn new(chat: MenuChat) -> Self {
+        Self {
+            chat,
+            leading: None,
+        }
+    }
+}
+
 #[cfg(feature = "gpui-kit-text-patch")]
 #[path = "menu_link.rs"]
 mod link;
 #[cfg(feature = "gpui-kit-text-patch")]
-pub(super) use link::LinkMenuPress;
+use link::LinkMenuPress;
+
+#[derive(Default)]
+pub(super) struct RichMenu {
+    #[cfg(feature = "gpui-kit-text-patch")]
+    press: LinkMenuPress,
+}
+
+impl RichMenu {
+    pub(super) fn wrap<E>(
+        &self,
+        root: E,
+        context: RichTextContext,
+        options: Options,
+        show_menu: bool,
+    ) -> AnyElement
+    where
+        E: InteractiveElement + IntoElement + ParentElement + Styled + 'static,
+    {
+        let clear = context.clone();
+        let root = root.capture_any_mouse_down(move |event, _, _| {
+            if event.button == MouseButton::Right {
+                clear.clear_link();
+            }
+        });
+        if !show_menu {
+            return root.into_any_element();
+        }
+        #[cfg(feature = "gpui-kit-text-patch")]
+        let menu = self.press.wrap(root, context, options);
+        #[cfg(not(feature = "gpui-kit-text-patch"))]
+        let menu = root.anchored_context_menu(move |menu, window, cx| {
+            build(menu, &Source::Rich(context.clone()), &options, window, cx)
+        });
+        menu.into_any_element()
+    }
+}
 
 #[derive(Clone)]
 pub(super) enum Source {
@@ -53,22 +109,27 @@ impl Source {
     }
 }
 
-pub(super) fn with_source<E>(element: E, source: Source, chat: MenuChat) -> ContextMenu<E>
+pub(super) fn with_source<E>(element: E, source: Source, options: Options) -> ContextMenu<E>
 where
     E: InteractiveElement + ParentElement + Styled,
 {
-    element.anchored_context_menu(move |menu, window, cx| build(menu, &source, chat, window, cx))
+    element
+        .anchored_context_menu(move |menu, window, cx| build(menu, &source, &options, window, cx))
 }
 
 fn build(
     menu: PopupMenu,
     source: &Source,
-    chat: MenuChat,
+    options: &Options,
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     let payload = source.payload(window, cx);
     let copy = payload.clone();
+    let menu = match &options.leading {
+        Some(item) => menu.item(item()).separator(),
+        None => menu,
+    };
     let mut menu = menu.item(
         PopupMenuItem::new("Copy")
             .icon(subspace_lucide::IconName::Copy)
@@ -87,16 +148,16 @@ fn build(
             }),
         );
     }
-    if chat == MenuChat::Offered {
-        menu = menu.item(
-            PopupMenuItem::new("Add to chat").on_click(move |_, window, cx| {
+    if options.chat == MenuChat::Offered && super::local_chat_enabled(cx) {
+        menu = menu.item(PopupMenuItem::new("Add to local model chat").on_click(
+            move |_, window, cx| {
                 let payload = payload.clone();
                 window.defer(cx, move |window, cx| {
                     set_selection(cx, payload);
                     window.dispatch_action(Box::new(AddSelectionToChat), cx);
                 });
-            }),
-        );
+            },
+        ));
     }
     menu
 }

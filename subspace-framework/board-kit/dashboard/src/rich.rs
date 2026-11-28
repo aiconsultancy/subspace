@@ -36,6 +36,19 @@ mod view;
 pub use plain::PlainText;
 pub use view::{RichText, RichTextContext};
 
+struct LocalChatEnabled(bool);
+impl gpui_kit::Global for LocalChatEnabled {}
+
+/// Publish whether the running app has a local Chat engine for text menus.
+pub fn set_local_chat_enabled(cx: &mut App, enabled: bool) {
+    cx.set_global(LocalChatEnabled(enabled));
+}
+
+fn local_chat_enabled(cx: &App) -> bool {
+    cx.try_global::<LocalChatEnabled>()
+        .is_some_and(|chat| chat.0)
+}
+
 /// The markup of a text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -72,7 +85,11 @@ pub fn text_menu_with<E>(element: E, fallback: impl Into<String>, chat: MenuChat
 where
     E: InteractiveElement + ParentElement + Styled,
 {
-    menu::with_source(element, menu::Source::Fallback(fallback.into()), chat)
+    menu::with_source(
+        element,
+        menu::Source::Fallback(fallback.into()),
+        menu::Options::new(chat),
+    )
 }
 
 fn selected_or_fallback(selected: &str, fallback: &str) -> String {
@@ -477,8 +494,9 @@ mod tests {
     }
 
     /// The labels of the open context menu's entries, in order.
-    fn text_menu_labels(chat: MenuChat, cx: &mut TestAppContext) -> Vec<String> {
+    fn text_menu_labels(chat: MenuChat, enabled: bool, cx: &mut TestAppContext) -> Vec<String> {
         cx.update(gpui_kit::init);
+        cx.update(|cx| super::set_local_chat_enabled(cx, enabled));
         let (_, cx) = cx.add_window_view(|_, _| TextMenuFixture(chat));
         cx.update(|window, cx| {
             window.render_frame(cx);
@@ -497,14 +515,25 @@ mod tests {
     #[gpui_kit::test]
     fn the_text_menu_offers_copy_and_the_chat(cx: &mut TestAppContext) {
         assert_eq!(
-            text_menu_labels(MenuChat::Offered, cx),
-            ["Copy", "Select all", "Add to chat"]
+            text_menu_labels(MenuChat::Offered, true, cx),
+            ["Copy", "Select all", "Add to local model chat"]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn the_text_menu_omits_local_chat_when_the_engine_is_off(cx: &mut TestAppContext) {
+        assert_eq!(
+            text_menu_labels(MenuChat::Offered, false, cx),
+            ["Copy", "Select all"]
         );
     }
 
     #[gpui_kit::test]
     fn a_chat_free_text_menu_offers_copy_only(cx: &mut TestAppContext) {
-        assert_eq!(text_menu_labels(MenuChat::Off, cx), ["Copy", "Select all"]);
+        assert_eq!(
+            text_menu_labels(MenuChat::Off, true, cx),
+            ["Copy", "Select all"]
+        );
     }
 }
 

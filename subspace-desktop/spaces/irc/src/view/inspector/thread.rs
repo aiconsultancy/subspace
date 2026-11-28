@@ -14,7 +14,7 @@ use gpui_kit::{
     ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
 };
 use subspace_client_irc::{BufferKey, Target};
-use subspace_framework::dashboard::action::{Intent, action_button};
+use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::{Tokens, feedback, truncated, workspace};
 use subspace_framework::lucide::IconName;
 
@@ -25,8 +25,7 @@ use crate::thread::Thread;
 use crate::transcript::{RowContext, thread_message};
 
 /// What the tab says before a thread is chosen.
-pub(crate) const PROMPT: &str =
-    "Choose a message's replies or a request's status line to see its thread here.";
+pub(crate) const PROMPT: &str = "Select a message to preview its thread.";
 /// What the tab says for a thread with no replies yet.
 pub(crate) const NO_REPLIES: &str = "No replies yet.";
 
@@ -121,15 +120,31 @@ fn origin(
     h_flex()
         .w_full()
         .min_w_0()
-        .gap_2()
+        .gap_1()
         .child(
             truncated::text("irc-thread-channel", channel)
                 .flex_1()
                 .text_size(tokens.caption_size())
                 .text_color(tokens.muted),
         )
+        .children(board.threads.is_pinned(buffer).then(|| unpin(conversation)))
         .children(link.map(copy_link))
         .child(jump_to_message(board, conversation, seq))
+}
+
+fn unpin(conversation: &Entity<crate::conversation::Conversation>) -> impl IntoElement {
+    let conversation = conversation.downgrade();
+    icon_button(
+        "irc-thread-follow",
+        Intent::Quiet,
+        IconName::PinOff,
+        "Unpin thread",
+    )
+    .on_click(move |_, _, cx| {
+        _ = conversation.update(cx, |_, cx| {
+            cx.emit(crate::conversation::ConversationEvent::FollowThreads)
+        });
+    })
 }
 
 fn root_sequence(
@@ -153,10 +168,10 @@ fn root_sequence(
 }
 
 fn copy_link(link: String) -> impl IntoElement {
-    action_button(
+    icon_button(
         "irc-thread-copy-link",
         Intent::Quiet,
-        Some(IconName::Link),
+        IconName::Link,
         "Copy link",
     )
     .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(link.clone())))

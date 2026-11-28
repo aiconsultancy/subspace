@@ -18,6 +18,42 @@ fn served() -> Server {
 }
 
 #[test]
+fn a_live_list_refresh_invalidates_matches_found_for_the_previous_installation() {
+    let rest = api(Arc::new(AtomicI64::new(1)));
+    let server = Server::new(move |seen| {
+        if route(&seen.path) == GROUPS && seen.path.contains("stateType=") {
+            crate::tests::common_path(&seen.path)
+        } else {
+            rest(seen)
+        }
+    });
+    let hub = hub(&server);
+    let mut peer = server.peer();
+    super::ready_and_caught_up(&hub, &mut peer);
+    let wider = ListQuery::new(crate::ListTab::All)
+        .project(Some("SUB"))
+        .search("fixture");
+    let scoped = ListQuery::new(crate::ListTab::Backlog)
+        .project(Some("SUB"))
+        .search("fixture");
+    hub.activate(scoped.clone()).unwrap();
+    let checked = wait(&hub, |snapshot| {
+        snapshot.list().is_some_and(|list| list.groups.is_empty())
+    });
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let found = runtime
+        .block_on(hub.find_wider_matches(&scoped, &wider))
+        .unwrap();
+    peer.hint("SUB-1", 1, "issue.changed");
+    let refreshed = wait(&hub, |snapshot| snapshot.list_id() != checked.list_id());
+    assert_eq!(refreshed.list_revision(), checked.list_revision());
+    assert!(!hub.adopt_wider_matches(found));
+    hub.stop();
+}
+
+#[test]
 fn catch_up_waits_for_ready() {
     let server = served();
     let hub = hub(&server);

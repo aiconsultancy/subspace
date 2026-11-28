@@ -1,7 +1,7 @@
 //! An optional wider search uses the list workers without replacing the visible list.
 use super::{
     Hub, HubSnapshot, HubStatus, ReadPriority, ScopeGeneration, Shared, lock,
-    worker::{Job, Task},
+    worker::{Job, Task, read_list},
 };
 use crate::{ListQuery, model::IssueGroups};
 use std::sync::Mutex;
@@ -10,6 +10,7 @@ use tokio::sync::oneshot;
 pub(super) struct Probe {
     scoped: ListQuery,
     query: ListQuery,
+    list_id: u64,
     reply: Mutex<Option<oneshot::Sender<Option<WiderSearch>>>>,
 }
 
@@ -20,21 +21,32 @@ pub struct WiderSearch {
     groups: IssueGroups,
     generation: ScopeGeneration,
     revision: u64,
+    list_id: u64,
 }
 
 impl Hub {
     /// Checks for wider matches while the specified scoped search is still settled and empty.
-    pub async fn find_wider_matches(&self, scoped: &ListQuery) -> Option<WiderSearch> {
-        let wider = scoped.wider_search()?;
+    pub async fn find_wider_matches(
+        &self,
+        scoped: &ListQuery,
+        wider: &ListQuery,
+    ) -> Option<WiderSearch> {
+        if scoped == wider {
+            return None;
+        }
         let (reply, receive) = oneshot::channel();
         {
             let mut state = lock(&self.0.state);
-            if state.query.as_ref() != Some(scoped) || !settled_empty(&state.snapshot) {
+            if self.account_changed()
+                || state.query.as_ref() != Some(scoped)
+                || !settled_empty(&state.snapshot)
+            {
                 return None;
             }
             let probe = Probe {
                 scoped: scoped.clone(),
-                query: wider,
+                query: wider.clone(),
+                list_id: state.snapshot.list_id,
                 reply: Mutex::new(Some(reply)),
             };
             self.0
@@ -46,18 +58,22 @@ impl Hub {
     /// Installs those matches if the original search still owns the active list.
     pub fn adopt_wider_matches(&self, wider: WiderSearch) -> bool {
         let mut state = lock(&self.0.state);
-        if !state.current(wider.generation)
+        if self.account_changed()
+            || !state.current(wider.generation)
             || state.revision != wider.revision
+            || state.snapshot.list_id != wider.list_id
             || state.query.as_ref() != Some(&wider.scoped)
             || !settled_empty(&state.snapshot)
         {
             return false;
         }
+        state.select_project(wider.query.selected_project());
         state.query = Some(wider.query.clone());
         state.revision = state.revision.wrapping_add(1);
         state.snapshot.page_loading.clear();
         state.snapshot.page_errors.clear();
         state.snapshot.hidden_subissues_count = None;
+        state.snapshot.my_issues_count = None;
         state.install_list(wider.groups);
         state.changed();
         self.0.enqueue(
@@ -81,20 +97,29 @@ pub(super) fn probe(shared: &Shared, job: &Job, probe: &Probe) {
     let Some(reply) = lock(&probe.reply).take() else {
         return;
     };
-    if reply.is_closed() {
+    if reply.is_closed() || !probe_current(shared, job, probe) {
         return;
     }
-    let result = shared.client.issue_groups(&probe.query);
+    let result = read_list(shared, job, &probe.query);
     let found = result
         .ok()
         .filter(|list| list.groups.iter().any(|group| group.count > 0))
-        .filter(|_| job.current(&lock(&shared.state)))
+        .filter(|_| probe_current(shared, job, probe))
         .map(|groups| WiderSearch {
             scoped: probe.scoped.clone(),
             query: probe.query.clone(),
             groups,
             generation: job.generation,
             revision: job.revision,
+            list_id: probe.list_id,
         });
     _ = reply.send(found);
+}
+
+fn probe_current(shared: &Shared, job: &Job, probe: &Probe) -> bool {
+    let state = lock(&shared.state);
+    !shared.client.account_changed()
+        && job.current(&state)
+        && state.snapshot.list_id == probe.list_id
+        && settled_empty(&state.snapshot)
 }

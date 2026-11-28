@@ -12,6 +12,7 @@ const INITIATIVE: &str = "fixture-initiative";
 fn plan() -> Plan {
     Plan {
         query: Default::default(),
+        probe: None,
         directory: false,
         stop: Stop::default(),
         initiative: Some(INITIATIVE.into()),

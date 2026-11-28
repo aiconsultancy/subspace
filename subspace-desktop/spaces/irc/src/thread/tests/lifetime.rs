@@ -14,19 +14,20 @@ use crate::state::LINE_CAP;
 use crate::thread_status::tests::{joined, live, request, room, ship};
 
 #[test]
-fn the_tab_is_offered_in_a_ship_s_channel_and_a_starbase_only() {
+fn the_tab_is_offered_in_verified_fleet_channels_only() {
     let aurora = fleet_with(
         "aurora",
         vec![
             agent("admiral-vance", "rearAdmiral", Some("aurora-admiral"), None),
             agent("aurora-lyra", "captain", Some("aurora-lyra"), Some("Lyra")),
         ],
-        serde_json::json!({"starbaseChannel": "#aurora-starbase"}),
+        serde_json::json!({"starbaseChannel": "#aurora-starbase", "commandChannel": "#aurora-command"}),
     );
     let roster = Roster::new([&aurora]);
     assert!(has_tab(&roster, &channel("#aurora-lyra")));
     assert!(has_tab(&roster, &channel("#aurora-starbase")));
-    assert!(!has_tab(&roster, &channel("#aurora-command")));
+    assert!(has_tab(&roster, &channel("#aurora-command")));
+    assert!(has_tab(&roster, &channel("#aurora-audit")));
     assert!(!has_tab(&roster, &channel("#lounge")));
     assert!(
         !has_tab(&roster, &query("aurora-lyra")),

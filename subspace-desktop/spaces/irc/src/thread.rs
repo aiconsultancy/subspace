@@ -1,7 +1,7 @@
-//! The inspector's **Thread** tab in a ship's channel or a Starbase: one
-//! thread at a time, being a message that has replies or a request (a
-//! message addressed to an agent). It shows the root message, a request's
-//! status timeline, then the replies. The channel shows an entry point to each thread.
+//! The inspector's **Thread** tab in a fleet channel shows one thread at a
+//! time, previewed by selection or pinned to reply. It shows the root, a
+//! request's status timeline and the replies. The channel shows an entry
+//! point to each thread.
 //!
 //! - **Which messages belong** ([`model`]): a reply is a message whose
 //!   server reply tag (`+draft/reply`) leads, through held parents, to the
@@ -39,12 +39,17 @@ use crate::state::{IrcState, Network};
 pub(crate) const MESSAGE_TAGS: &str = "message-tags";
 
 /// Whether channel `buffer` has the inspector's tabs, and so a Thread tab:
-/// a ship's channel or a Starbase the roster knows.
+/// any fleet channel the roster knows.
 pub(crate) fn has_tab(roster: &Roster, buffer: &BufferKey) -> bool {
     match &buffer.target {
         Target::Channel(name) => matches!(
             roster.channel(name),
-            Some(ChannelKind::Ship { .. } | ChannelKind::Starbase)
+            Some(
+                ChannelKind::Ship { .. }
+                    | ChannelKind::Starbase
+                    | ChannelKind::Command
+                    | ChannelKind::Audit
+            )
         ),
         Target::Query(_) | Target::Server => false,
     }
@@ -99,6 +104,39 @@ pub(crate) fn open(
     window: &mut Window,
     cx: &mut Context<Irc>,
 ) {
+    select(board, buffer, root, window, cx);
+    board.inspector_tab = crate::view::InspectorTab::Thread;
+    if !board.dock.members_open() {
+        crate::dock::toggle_members(board, cx);
+    }
+    cx.notify();
+}
+
+/// Follow row selection only when Thread is showing and the user has not pinned it.
+pub(crate) fn preview(
+    board: &mut Irc,
+    buffer: &BufferKey,
+    root: String,
+    window: &mut Window,
+    cx: &mut Context<Irc>,
+) {
+    if board.dock.focused.as_ref() == Some(buffer)
+        && board.dock.members_open()
+        && board.inspector_tab == crate::view::InspectorTab::Thread
+        && !board.threads.is_pinned(buffer)
+    {
+        select(board, buffer, root, window, cx);
+        cx.notify();
+    }
+}
+
+fn select(
+    board: &mut Irc,
+    buffer: &BufferKey,
+    root: String,
+    window: &mut Window,
+    cx: &mut Context<Irc>,
+) {
     board.threads.choose(buffer, root);
     refresh(board, cx);
     if let Some(shown) = board.threads.shown(buffer)
@@ -109,11 +147,6 @@ pub(crate) fn open(
             crate::compose::reply::select(view, (root, shown.root.seq), window, cx)
         });
     }
-    board.inspector_tab = crate::view::InspectorTab::Thread;
-    if !board.dock.members_open() {
-        crate::dock::toggle_members(board, cx);
-    }
-    cx.notify();
 }
 
 pub(crate) fn focus_reply(

@@ -140,6 +140,7 @@ pub(crate) fn open(
         }
     });
     hide_placeholder(board, window, cx);
+    board.dock.dismiss_message_menus(Some(buffer), window, cx);
     if !board.comms.active {
         entity.update(cx, |conversation, cx| {
             conversation.focus_composer(window, cx)
@@ -232,7 +233,12 @@ fn conversation_event(
         ConversationEvent::Open(Ref::PullRequest(found)) => {
             pull_requests::open(found, &buffer, cx);
         }
-        ConversationEvent::Focused => super::members::focus(board, &buffer, cx),
+        ConversationEvent::Focused => {
+            if board.dock.focused.as_ref() != Some(&buffer) {
+                board.dock.dismiss_message_menus(Some(&buffer), window, cx);
+            }
+            super::members::focus(board, &buffer, cx);
+        }
         ConversationEvent::FindScopeChanged => {
             if board.active && board.dock.focused.as_ref() == Some(&buffer) {
                 board.find_revision = board.find_revision.wrapping_add(1);
@@ -244,9 +250,17 @@ fn conversation_event(
             super::members::focus(board, &buffer, cx);
             crate::thread::open(board, &buffer, root.clone(), window, cx);
         }
+        ConversationEvent::PreviewThread(root) => {
+            crate::thread::preview(board, &buffer, root.clone(), window, cx);
+        }
+        ConversationEvent::FollowThreads => {
+            board.threads.set_pinned(&buffer, false);
+            cx.notify();
+        }
         ConversationEvent::ReplyInThread(root) => {
             super::members::focus(board, &buffer, cx);
             crate::thread::open(board, &buffer, root.clone(), window, cx);
+            board.threads.set_pinned(&buffer, true);
             crate::thread::focus_reply(board, &buffer, window, cx);
         }
     }

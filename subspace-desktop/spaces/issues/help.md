@@ -21,10 +21,10 @@ match and total. **Enter** and **Shift+Enter** move forward and back;
 find and returns focus. App-wide Search keeps its **⌘⇧F / Ctrl+Shift+F** shortcut.
 
 Select text, then right-click for **Copy**, **Select all** for that block and
-**Add to chat**. On a link the menu also offers **Copy link**. With no selection,
-Copy uses the block under the pointer. Add to chat is an explicit manual action;
-opening the menu sends nothing to chat and Issues supplies no automatic chat
-context. The issue key retains its **Copy issue number** menu.
+**Add to local model chat** when Chat is enabled. On a link the menu also offers
+**Copy link**. With no selection, Copy uses the block under the pointer. Adding
+text to local Chat requires choosing the menu action. The issue key retains
+its **Copy issue number** menu.
 
 ## Before you start
 
@@ -96,7 +96,7 @@ toolbar.
 | **Active** | Issues in todo or in progress states. |
 | **Backlog** | Backlog issues. |
 | **All issues** | Issues across workflow states. |
-| **Search issues** | Searches the current view after a short typing pause. If only **All issues** has matches, it becomes the selected view and keeps the query and explicit filters. From **My issues**, this can show work assigned to other people. An exact identifier takes precedence over text matches. |
+| **Search issues** | Searches the current view after a short typing pause. If a filter hides a match, the list offers an action such as **Show all issues** or **Clear filters**. The action keeps your search. An exact identifier takes precedence over text matches. |
 | Initiatives | Choose from your Subspace initiative memberships in the navigator, or the initiative picker while the navigator is hidden. One initiative is selected at a time, the same in Channels: the one you last chose, or your first. |
 | Projects | Choose an active project in the current initiative in the navigator, or the project picker while the navigator is hidden. Once your initiatives are read, Issues lists the selected initiative's projects only; before then, or while they cannot be read or the API does not list them, it lists every project and **All projects**. |
 | **Assignee** | **Me**, **No assignee** or **All assignees**. In My issues, choose **All assignees** to open All issues. |

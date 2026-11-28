@@ -7,6 +7,8 @@ mod list;
 pub(super) mod pages;
 mod timeline;
 
+pub(super) use list::read_list;
+
 pub(super) enum Task {
     Bootstrap,
     RefreshProjects(u64),

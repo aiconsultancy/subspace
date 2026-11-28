@@ -21,19 +21,34 @@ use crate::{Irc, view};
 
 mod composing;
 mod live;
+mod selection;
 pub(super) use composing::reply_input;
 
 const SHIP: &str = "#aurora-lyra";
 
+pub(super) fn seq(hub: &Entity<Hub>, id: &str, cx: &mut VisualTestContext) -> i64 {
+    hub.read_with(cx, |hub, _| {
+        hub.state
+            .buffer(&channel(SHIP))
+            .and_then(|held| {
+                held.entries
+                    .iter()
+                    .find(|entry| entry.line.id.as_deref() == Some(id))
+            })
+            .map(|entry| entry.seq)
+            .expect("held")
+    })
+}
+
 /// mira's request `ask1` to the captain at minute 4.
-fn asked() -> Line {
+pub(super) fn asked() -> Line {
     let mut line = message(&channel(SHIP), "mira", "aurora-lyra: capture a baseline", 4);
     line.id = Some("ask1".into());
     line
 }
 
 /// The captain's progress notice on `ask1`, signed in to its own account.
-fn progress(value: &str, minute: i64) -> Line {
+pub(super) fn progress(value: &str, minute: i64) -> Line {
     let mut line = signed(line(
         &channel(SHIP),
         LineKind::Notice,
@@ -48,7 +63,7 @@ fn progress(value: &str, minute: i64) -> Line {
 }
 
 /// `nick`'s reply `id` to `parent`.
-fn reply(nick: &str, id: &str, parent: &str, minute: i64) -> Line {
+pub(super) fn reply(nick: &str, id: &str, parent: &str, minute: i64) -> Line {
     let text = format!("Reply {id}.");
     let mut line = signed(message(&channel(SHIP), nick, &text, minute));
     line.id = Some(id.into());

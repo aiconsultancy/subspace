@@ -12,6 +12,7 @@ pub(crate) const COMMON: &[(&str, &str)] = &[
     ("\u{1F389}", "Celebrate"),
     ("\u{1F440}", "Looking"),
     ("\u{2705}", "Done"),
+    ("\u{1F64F}", "Thank you"),
 ];
 
 /// Plain names for Stargate's default stop reactions.

@@ -292,13 +292,35 @@ impl ListDashboard for Decisions {
     }
 
     fn empty_message(&self) -> (SharedString, SharedString) {
+        if self.search_recovery().is_some() {
+            return (
+                "A matching decision is hidden".into(),
+                "Clear the filters that exclude it to see your match.".into(),
+            );
+        }
         let (title, hint) = words::empty(&self.choice, &self.listing.query);
         (title.into(), hint.into())
     }
 
-    /// The Space has no settings to configure; Reload reads again.
-    fn empty_actions(&self, _cx: &mut Context<Self>) -> Option<Vec<AnyElement>> {
-        Some(Vec::new())
+    fn empty_actions(&self, cx: &mut Context<Self>) -> Option<Vec<AnyElement>> {
+        use gpui_kit::IntoElement as _;
+        use subspace_framework::dashboard::action::{Intent, action_button};
+
+        let actions = self.search_recovery().map(|choice| {
+            let only_view = model::Choice {
+                view: model::View::All,
+                ..self.choice.clone()
+            } == *choice;
+            let label = if only_view {
+                "Show all decisions"
+            } else {
+                "Clear blocking filters"
+            };
+            action_button("decisions-search-reveal", Intent::Neutral, None, label)
+                .on_click(cx.listener(|this, _, _, cx| this.reveal_search(cx)))
+                .into_any_element()
+        });
+        Some(actions.into_iter().collect())
     }
 
     /// One click selects a decision for the inspector; a double click or

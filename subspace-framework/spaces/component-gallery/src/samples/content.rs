@@ -1,7 +1,9 @@
 //! Content: media previews, badges, links, shortened and rich text, headings,
 //! toolbar labels and avatars.
 
-use gpui_kit::{Context, ParentElement as _, Styled as _, Window, div, px};
+use gpui_kit::{
+    Context, InteractiveElement as _, ParentElement as _, Styled as _, Window, div, px,
+};
 use subspace_dashboard::activity_mark::ActivityMark;
 use subspace_dashboard::rich::{self, Format};
 use subspace_dashboard::toolbar_label::{self, ToolbarLabel};
@@ -187,7 +189,7 @@ pub(super) fn plain_text(
     _: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
     vec![sample(
-        "Select text or right-click for Copy, Select all and Add to chat",
+        "Right-click for Copy, Select all and Add to local model chat when Chat is enabled",
         rich::plain_text("gallery-sample:plain-text", "Select this fixture text."),
     )]
 }
@@ -211,6 +213,29 @@ pub(super) fn rich_text(
             sized(
                 RICH_WIDTH,
                 rich::rich_text("gallery-sample:rich-html", Format::Html, HTML),
+            ),
+        ),
+        sample(
+            "Right-click anywhere in the row for its action and text menu",
+            sized(
+                RICH_WIDTH,
+                rich::rich_text(
+                    "gallery-sample:rich-row",
+                    Format::Markdown,
+                    "A selectable message.",
+                )
+                .menu_host(|text| {
+                    div()
+                        .id("gallery-sample:rich-menu-row")
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .child(text)
+                })
+                .menu_action(|| {
+                    gpui_kit::component::menu::PopupMenuItem::new("Reply in thread")
+                        .icon(subspace_dashboard::panel::IconName::Reply)
+                }),
             ),
         ),
     ]

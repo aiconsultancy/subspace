@@ -456,11 +456,33 @@ impl ListDashboard for Issues {
     }
 
     fn empty_message(&self) -> (SharedString, SharedString) {
+        if self.search_recovery().is_some() {
+            return (
+                "A matching issue is hidden".into(),
+                "Change the filters that exclude it to see your match.".into(),
+            );
+        }
+        if matches!(self.search_fallback, board::SearchFallback::Checking { .. }) {
+            return ("Checking other filters…".into(), "".into());
+        }
         view::empty_message(self.tab, &self.query, filters::is_active(&self.filters))
     }
 
-    fn empty_actions(&self, _cx: &mut Context<Self>) -> Option<Vec<AnyElement>> {
-        Some(Vec::new())
+    fn empty_actions(&self, cx: &mut Context<Self>) -> Option<Vec<AnyElement>> {
+        use gpui_kit::IntoElement as _;
+        use subspace_framework::dashboard::action::{Intent, action_button};
+
+        let actions = self.search_recovery().map(|hidden| {
+            action_button(
+                "issues-search-reveal",
+                Intent::Neutral,
+                None,
+                hidden.action(),
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.reveal_search(cx)))
+            .into_any_element()
+        });
+        Some(actions.into_iter().collect())
     }
 
     fn on_activate(&mut self, key: &SharedString, cx: &mut Context<Self>) -> bool {

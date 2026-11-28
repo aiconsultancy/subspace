@@ -113,7 +113,11 @@ impl Continuation {
             .iter()
             .any(Feed::has_more)
             .then(|| Arc::new(self));
-        Ok(Found { items, next })
+        Ok(Found {
+            items,
+            next,
+            reveal: None,
+        })
     }
 }
 
@@ -141,6 +145,29 @@ pub(super) fn read(
         .cloned()
         .unwrap_or_else(|| Continuation::start(plan, projects, backend));
     continuation.take_batch(plan, &mut page)
+}
+
+/// Find just one record in the existing initiative scope. A NETT
+/// initiative filters locally and keeps full server pages to scan them.
+pub(super) fn first(
+    plan: &Plan,
+    projects: &[Project],
+    backend: Backend,
+    read: &mut ReadPage<'_>,
+) -> Result<Option<DecisionListItem>, Error> {
+    let Continuation { feeds, local_keys } = Continuation::start(plan, projects, backend);
+    for mut feed in feeds {
+        if local_keys.is_none()
+            && let Some(page) = feed.next.as_mut()
+        {
+            page.limit = 1;
+        }
+        feed.fill(plan, local_keys.as_ref(), read)?;
+        if let Some(item) = feed.rows.pop_front() {
+            return Ok(Some(item));
+        }
+    }
+    Ok(None)
 }
 
 fn order_key(item: &DecisionListItem) -> (&str, &str) {
