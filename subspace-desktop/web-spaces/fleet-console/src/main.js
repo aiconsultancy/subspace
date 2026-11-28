@@ -7,7 +7,7 @@ import { connectBridge } from "./bridge.js";
 import { createApiClient, normalizeEndpoint } from "./api.js";
 import { createLiveSource } from "./live.js";
 import { createSampleSource } from "./sample-source.js";
-import { initialFleetState, livePackets } from "./reducer.js";
+import { withCrewDetail, initialFleetState, livePackets } from "./reducer.js";
 import { describeConnection, initialConnection, tokenProblem } from "./connection.js";
 import { chain, createNavigator, fleetTier, LANDSCAPE, parentOf, sameSelection } from "./camera.js";
 import { composeFrame } from "./scene/index.js";
@@ -204,7 +204,7 @@ const activeEndpoint = () => activeFleet()?.entry.endpoint ?? "";
 /** The active fleet's state and connection, after a switch or a change. */
 function syncActive() {
   const fleet = app.manager?.active ? app.manager.get(app.manager.active) : null;
-  app.state = fleet ? fleet.state : initialFleetState();
+  app.state = fleet ? withCrewDetail(fleet.state, nav.state.sel) : initialFleetState();
   app.connection = fleet ? fleet.connection : initialConnection();
 }
 
@@ -365,16 +365,19 @@ function issueBadge(shipId, memberId) {
 }
 
 /** A fleet's data for a tier that shows it. */
-function stateFor(id) {
-  const fleet = app.manager?.get(id ?? app.manager.active);
+function stateFor(selection) {
+  const fleet = app.manager?.get(selection.fleet ?? app.manager.active);
   if (!fleet) return null;
+  const active = fleet.id === app.manager.active;
   const description = describeConnection(fleet.connection, { endpoint: fleet.entry.endpoint, now: Date.now() });
   return {
     fleet: fleet.state.fleet,
-    ships: fleet.state.ships,
+    ships: selection.level === 2
+      ? (active && sameSelection(selection, nav.state.sel) ? app.state : withCrewDetail(fleet.state, selection)).ships
+      : fleet.state.ships,
     unavailableSince: fleet.state.unavailableSince,
     name: fleetName(fleet.entry, fleet.state.fleet),
-    active: fleet.id === app.manager.active,
+    active,
     emptyMessage: fleet.connection.reason === "no-token" ? tokenProblem(fleet.entry.problem, fleet.entry.origin).title : description.banner ? description.banner.title : "Connecting to Stargate…",
     emptyDetail: `Stargate API · ${fleet.entry.endpoint}`,
   };
@@ -505,9 +508,10 @@ function onSelection() {
   const previous = app.lastSel;
   app.lastSel = sel;
   // Inside a fleet, that fleet streams; the Fleets tier polls the rest.
-  if (sel.level >= 0 && sel.fleet && app.manager && sel.fleet !== app.manager.active) {
-    app.manager.activate(sel.fleet);
-    syncActive();
+  const switched = sel.level >= 0 && sel.fleet && app.manager && sel.fleet !== app.manager.active;
+  if (switched) app.manager.activate(sel.fleet);
+  syncActive();
+  if (switched) {
     app.contextKey = "";
     chrome.ticker(app.state.activity, app.state.fleet, false);
   }
@@ -929,6 +933,14 @@ setInterval(() => {
 setInterval(() => {
   if (!document.hidden) issues.refresh();
 }, REFRESH_MS);
+
+// The ship summary can stay unchanged while an omitted project gains an outcome.
+setInterval(() => {
+  const sel = nav.state.sel;
+  if (!document.hidden && sel.level === 2 && app.state.ships[sel.ship]?.available) {
+    app.manager?.readCrew(sel.fleet, sel.ship, sel.crew);
+  }
+}, 30_000);
 
 // Settings have no change event: look again while waiting for setup or a new token.
 setInterval(() => {

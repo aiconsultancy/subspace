@@ -12,6 +12,7 @@ export function initialFleetState() {
   return {
     fleet: null,
     ships: {},
+    crewDetails: {},
     activity: [],
     packets: [],
     unavailableSince: {},
@@ -56,6 +57,7 @@ function applyFleet(state, fleet, receivedAt) {
     ...state,
     fleet,
     ships,
+    crewDetails: Object.fromEntries(Object.entries(state.crewDetails).filter(([id]) => ids.has(id))),
     unavailableSince: trackAvailability(state.unavailableSince, fleet, receivedAt),
     skew: nextSkew(state.skew, fleet.generatedAt, receivedAt),
   };
@@ -73,13 +75,52 @@ function applyShip(state, detail, receivedAt) {
   return { ...state, fleet, ships, unavailableSince: trackAvailability(state.unavailableSince, fleet, receivedAt) };
 }
 
-function applyCrewDetail(state, { ship, member }) {
+function applyCrewDetail(state, { ship, member }, shipAdvanced) {
+  const bounded = state.ships[ship]?.crewMembers.find((entry) => entry.id === member.id);
+  if (!bounded) return state;
+  const members = { ...state.crewDetails[ship], [member.id]: { member, bounded: shipAdvanced ? null : bounded } };
+  return { ...state, crewDetails: { ...state.crewDetails, [ship]: members } };
+}
+
+function contextTime(context) {
+  return Math.max(context.current?.updatedAt ?? 0, context.lastOutcome?.updatedAt ?? 0);
+}
+
+function crewRecordTime(member) {
+  return member.contexts.reduce((latest, context) => Math.max(latest, contextTime(context)), member.since ?? 0);
+}
+
+/** Use the full record for the selected crew member; the ship feed is bounded. */
+export function withCrewDetail(state, { ship, crew }) {
   const detail = state.ships[ship];
-  if (!detail) return state;
-  const known = detail.crewMembers.some((entry) => entry.id === member.id);
-  const crewMembers = known
-    ? detail.crewMembers.map((entry) => (entry.id === member.id ? member : entry))
-    : [...detail.crewMembers, member];
+  const snapshot = state.crewDetails[ship]?.[crew];
+  const bounded = detail?.crewMembers.find((entry) => entry.id === crew);
+  if (!bounded || !snapshot) return state;
+
+  const { member } = snapshot;
+  let selected = member;
+  if (detail.available && bounded !== snapshot.bounded) {
+    const activity = crewRecordTime(bounded) > crewRecordTime(member) ? bounded : member;
+    const byProject = new Map(member.contexts.map((context) => [context.project, context]));
+    for (const context of bounded.contexts) {
+      const previous = byProject.get(context.project);
+      const recent = new Map(previous?.recent.map((task) => [task.id, task]));
+      for (const task of context.recent) {
+        const known = recent.get(task.id);
+        if (!known || task.updatedAt > known.updatedAt) recent.set(task.id, task);
+      }
+      const latest = previous && contextTime(previous) >= contextTime(context) ? previous : context;
+      byProject.set(context.project, {
+        ...context, current: latest.current, lastOutcome: latest.lastOutcome,
+        recent: [...recent.values()], recentCount: Math.max(context.recentCount, previous?.recentCount ?? 0),
+      });
+    }
+    selected = {
+      ...bounded, activity: activity.activity, since: activity.since, idleSince: activity.idleSince,
+      contexts: [...byProject.values()], subagents: member.subagents,
+    };
+  }
+  const crewMembers = detail.crewMembers.map((entry) => entry.id === crew ? selected : entry);
   return { ...state, ships: { ...state.ships, [ship]: { ...detail, crewMembers } } };
 }
 
@@ -108,7 +149,7 @@ export function reduceFleet(state, event, receivedAt) {
   if (type === "ship-detail") {
     if (isShipDetail(data)) next = applyShip(state, data, receivedAt);
   } else if (type === "crew-detail") {
-    if (isCrewDetail(data)) next = applyCrewDetail(state, data);
+    if (isCrewDetail(data)) next = applyCrewDetail(state, data, event.shipAdvanced);
   } else if (!isValidEvent(type, data)) {
     return state;
   } else if (type === "fleet") {

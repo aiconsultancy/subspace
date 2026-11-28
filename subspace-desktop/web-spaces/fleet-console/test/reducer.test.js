@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { initialFleetState, livePackets, MAX_ACTIVITY, PACKET_LIFETIME_MS, reduceFleet } from "../src/reducer.js";
+import { initialFleetState, livePackets, MAX_ACTIVITY, PACKET_LIFETIME_MS, reduceFleet, withCrewDetail } from "../src/reducer.js";
 import { loadedState, NOW, sampleFleet } from "./fixtures.js";
 
 test("fleet then ship events build the state; versions count changes", async () => {
@@ -88,8 +88,84 @@ test("detail reads merge a crew member into its ship", async () => {
   const member = structuredClone(state.ships.pegasus.crewMembers[0]);
   member.role = "Gateway routes and SSE";
   const next = reduceFleet(state, { type: "crew-detail", data: { ship: "pegasus", member } }, NOW);
-  assert.equal(next.ships.pegasus.crewMembers[0].role, "Gateway routes and SSE");
+  const crew = { ship: "pegasus", crew: member.id };
+  assert.equal(withCrewDetail(next, crew).ships.pegasus.crewMembers[0].role, "Gateway routes and SSE");
   assert.equal(reduceFleet(state, { type: "crew-detail", data: { ship: "nowhere", member } }, NOW), state);
   const { ships } = sampleFleet();
   assert.equal(reduceFleet(initialFleetState(), { type: "ship-detail", data: ships.galactica }, NOW).ships.galactica.name, "Galactica");
+});
+
+
+test("bounded ship events preserve the selected crew member's recent project and idle age", async () => {
+  const state = await loadedState();
+  const ship = structuredClone(state.ships.pegasus);
+  const member = structuredClone(ship.crewMembers[0]);
+  const selection = { ship: ship.id, crew: member.id };
+  const latest = NOW - 1000;
+  member.since = latest;
+  member.idleSince = latest;
+  const task = {
+    id: "preview-1", kind: "assignment", status: "completed", summary: "Published the design preview", phase: "completed",
+    progress: "", startedAt: NOW - 60_000, createdAt: NOW - 60_000, finishedAt: latest, updatedAt: latest,
+  };
+  member.contexts[0] = { ...member.contexts[0], lastOutcome: task, recent: [task] };
+  member.contexts.push({
+    ...member.contexts[0], project: "design-preview", recent: [task],
+    lastOutcome: task, recentCount: 1,
+  });
+  const drilledIn = reduceFleet(state, { type: "crew-detail", data: { ship: ship.id, member } }, NOW);
+  const updated = reduceFleet(drilledIn, { type: "ship", data: ship }, NOW + 5000);
+  const selected = withCrewDetail(updated, selection).ships.pegasus.crewMembers[0];
+  assert.equal(selected.since, latest);
+  assert.equal(selected.contexts.at(-1).recent[0].id, task.id);
+  assert.ok(updated.ships.pegasus.crewMembers[0].contexts.every((context) => context.project !== "design-preview"));
+  const stale = reduceFleet(updated, {
+    type: "ship", data: { ...ship, available: false, detailStale: true },
+  }, NOW + 6000);
+  const projected = withCrewDetail(stale, selection).ships.pegasus;
+  assert.equal(projected.available, false);
+  assert.equal(projected.crewMembers[0].contexts.at(-1).recent[0].id, task.id);
+  const summaryOutage = reduceFleet(updated, {
+    type: "fleet", data: {
+      ...updated.fleet, ships: updated.fleet.ships.map((entry) =>
+        entry.id === ship.id ? { ...entry, available: false } : entry),
+    },
+  }, NOW + 7000);
+  assert.equal(withCrewDetail(summaryOutage, selection).ships.pegasus.crewMembers[0].contexts.at(-1).recent[0].id, task.id);
+
+  const bounded = ship.crewMembers[0];
+  const running = reduceFleet(updated, {
+    type: "ship", data: {
+      ...ship, crewMembers: [{
+        ...bounded, activity: "running", since: NOW + 8000, idleSince: null,
+        contexts: [{
+          ...bounded.contexts[0],
+          recent: [{ ...task, summary: "Published…" }],
+        }, ...bounded.contexts.slice(1)],
+      }, ...ship.crewMembers.slice(1)],
+    },
+  }, NOW + 8000);
+  const runningMember = withCrewDetail(running, selection).ships.pegasus.crewMembers[0];
+  assert.equal(runningMember.activity, "running");
+  assert.equal(runningMember.since, NOW + 8000);
+  assert.equal(runningMember.contexts.at(-1).recent[0].id, task.id);
+  assert.equal(runningMember.contexts[0].lastOutcome.id, task.id);
+  assert.equal(runningMember.contexts[0].recent[0].summary, task.summary);
+
+  const queued = reduceFleet(updated, {
+    type: "ship", data: {
+      ...ship, crewMembers: [{
+        ...bounded, contexts: [{ ...bounded.contexts[0], queuedCount: 1 }, ...bounded.contexts.slice(1)],
+      }, ...ship.crewMembers.slice(1)],
+    },
+  }, NOW + 9000);
+  const queuedMember = withCrewDetail(queued, selection).ships.pegasus.crewMembers[0];
+  assert.equal(queuedMember.contexts[0].queuedCount, 1);
+  assert.equal(queuedMember.contexts[0].lastOutcome.id, task.id);
+  const inFlight = reduceFleet(queued, {
+    type: "crew-detail", data: { ship: ship.id, member }, shipAdvanced: true,
+  }, NOW + 9999);
+  const inFlightMember = withCrewDetail(inFlight, selection).ships.pegasus.crewMembers[0];
+  assert.equal(inFlightMember.contexts[0].queuedCount, 1);
+  assert.equal(inFlightMember.contexts.at(-1).recent[0].id, task.id);
 });

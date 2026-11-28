@@ -113,7 +113,7 @@ Fleet Console reads Stargate's read-only Fleet API v1 with a bearer token:
 | `GET /api/v1/fleet` | The first view of a fleet; every 30 s for the fleets you are not inside while the Fleets tier is open; **Test connection** |
 | `GET /api/v1/events` | Live updates: `fleet`, `ship`, `host`, `activity` and `heartbeat` events |
 | `GET /api/v1/ships/{id}` | Fresh detail when you warp into a ship |
-| `GET /api/v1/ships/{id}/crew/{member}` | Fresh detail when you warp into a crew member |
+| `GET /api/v1/ships/{id}/crew/{member}` | Full history on drill-in and every 30 seconds while the crew view is visible |
 
 The event stream is read as a streamed `fetch` body, because `EventSource`
 cannot send an `Authorization` header. If it drops, Fleet Console reconnects
@@ -121,6 +121,9 @@ with jittered backoff and resumes from the last event ID; three missed
 heartbeats count as a dropped stream. The toolbar and a banner always say
 whether it is live, reconnecting, signed out (401), forbidden (403) or
 unreachable, and what to do about it.
+
+A ship event carries a bounded project summary. The selected crew view keeps
+the latest full project history alongside that summary.
 
 ## Set up Stargate
 
