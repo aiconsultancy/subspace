@@ -41,9 +41,7 @@ pub(super) fn group(
         let budget = input.attachment_budget;
         group = group.input(
             Textarea::new(&input.state)
-                .when_some(compact, |field, compact| {
-                    field.aria_label(compact.input_name.clone())
-                })
+                .aria_label(compact.map_or_else(|| "Chat message".into(), |c| c.input_name.clone()))
                 .min_h_0()
                 .disabled(input.disabled)
                 .on_paste(move |item, _, cx| {
