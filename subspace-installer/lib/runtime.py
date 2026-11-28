@@ -114,10 +114,19 @@ ERGO_ACCOUNT = r"[a-z][a-z0-9_-]{0,31}"
 UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 FAMILIES = {"claude": "claude-sonnet-5-5", "codex": "gpt-5.4"}
 # Each officer role's default harness model and reasoning effort; fleet.json's harness and its captain and
-# rearAdmiral blocks override them. Crew keep FAMILIES.
+# rearAdmiral blocks override them.
 OFFICER_DEFAULTS = {
     "rear_admiral": {"family": "claude", "model": "claude-fable-5-2", "effort": "high"},
     "captain": {"family": "claude", "model": "claude-opus-5-5", "effort": "xhigh"},
+}
+# OpenCode 2.3.2 compacts at the input window minus its default 15% reserve (at least 16,000).
+# Cap the input budgets of these models at 882,352 so each compacts at 750,000 without applying a
+# fleet-wide buffer to other models that share an engine.
+COMPACTION_INPUT_LIMIT = 882_352
+LONG_CONTEXT_MODELS = {
+    "claude-fable-5-2": 1_000_000,
+    "claude-opus-5-5": 1_000_000,
+    "gpt-6.2-sol": 1_050_000,
 }
 # The harness block for each role, under fleet.json's harness.
 ROLE_HARNESS = {"rear_admiral": "rearAdmiral", "captain": "captain"}
@@ -1943,6 +1952,8 @@ def model_provider(cfg, family, models):
     for model, entry in catalogue.items():
         if model in {"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "gpt-5.4", "gpt-6.2-sol"}:
             entry["capabilities"] = {"input": ["text", "image"]}
+        if model in LONG_CONTEXT_MODELS:
+            entry["limit"] = {"context": LONG_CONTEXT_MODELS[model], "input": COMPACTION_INPUT_LIMIT}
         if family == "codex" and model in CODEX_XHIGH_MODELS:
             entry["variants"] = [{"id": effort, "settings": {"reasoningEffort": effort}}
                                  for effort in (*EFFORTS["opencode", "codex"], "xhigh")]

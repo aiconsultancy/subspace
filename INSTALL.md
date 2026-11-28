@@ -225,11 +225,10 @@ answer it now.
    **If the user cannot answer, put Ergo on the fleet VM**: it creates no
    extra cloud resources and costs nothing more. Tell them that moving to a
    shared server later keeps the fleet but not its IRC history.
-3. **Names.** A name for the fleet (for example "Example Fleet"), a name for
-   the rear admiral (for example "Atlas"), one or more captain or ship names
-   (for example "Orion, Vega") and a name for every crew member on every
-   ship (question 5 sets how many). Suggest names, with a theme for the
-   fleet or for each ship (stars, birds, rivers), and let the user accept or
+3. **Names.** Ask for the fleet and rear admiral names and the names for
+   each ship and crew member. New fleets default to four captains with
+   names based on the fleet ID. The user can choose a different roster with
+   `--captains`. Suggest a theme for the names and let the user accept or
    change each one.
    - **An officer's name is its one name everywhere.** In lower case it is
      the rear admiral's or captain's IRC account and nick, its agent name in
@@ -289,11 +288,10 @@ answer it now.
    captain's files, credentials and GitHub App, commit as the captain, and
    have no IRC accounts. The user talks to the captain, who delegates to its
    crew. A captain's crew roster is fixed once the fleet first starts, so
-   settle the counts now. Ask which model each kind of crew member uses
-   (**`claude-sonnet-5-5` and `gpt-5.4`**), for example
-   `--crew-claude-model claude-opus-5-5 --crew-codex-model gpt-6.2-sol`; the
-   models, unlike the counts, can change later. The officers themselves run
-   Claude: captains `claude-opus-5-5` at reasoning effort `xhigh`, the rear
+   settle the counts now. Ask which model each kind of crew member uses.
+   The defaults are **`claude-opus-5-5` and `gpt-6.2-sol`** and the models
+   can change later with `--crew-claude-model` and `--crew-codex-model`.
+   Captains use `claude-opus-5-5` at reasoning effort `xhigh` and the rear
    admiral `claude-fable-5-2` at `high`, which needs a Claude account. If the
    user has only a ChatGPT account, choose models it serves, for example
    `--captain-model gpt-5.4 --rear-admiral-model gpt-5.4`.
@@ -1194,10 +1192,11 @@ the agents come online. CLIProxyAPI also supports `antigravity`, `kimi`,
 
 The default models are `claude-opus-5-5` at reasoning effort `xhigh` for
 captains, `claude-fable-5-2` at `high` for the rear admiral, and
-`claude-sonnet-5-5` and `gpt-5.4` for Claude-family and Codex-family crew.
-Use model IDs your accounts can reach: the officers' defaults need a Claude
-account. Once an account is signed in, the dry run and the install stop if
-none can serve an officer's Claude or GPT model. Set the officers' models
+`claude-opus-5-5` and `gpt-6.2-sol` for Claude-family and Codex-family crew.
+OpenCode automatically compacts these models at 750,000 tokens by default.
+The default crew use a Claude account and a Codex account. Once an account
+is signed in, the dry run and the install stop if no account can serve an
+officer's Claude or GPT model. Set the officers' models
 with `sudo subspace-setup --captain-model MODEL --captain-effort EFFORT
 --rear-admiral-model MODEL --rear-admiral-effort EFFORT`, and the crew's with
 `--crew-claude-model MODEL --crew-codex-model MODEL` (or the same options on

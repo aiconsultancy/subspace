@@ -324,7 +324,8 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual([m["account"] for m in members], ["atlas", "orion", "vega"])
         # Crew have no IRC accounts; without repositories they have no worktrees either.
         self.assertEqual(set(secrets["ircPasswords"]), {"admiral"})
-        self.assertEqual(config["crew"], {"claude": {"count": 2}, "codex": {"count": 2}})
+        self.assertEqual(config["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"},
+                                          "codex": {"count": 2, "model": "gpt-6.2-sol"}})
         self.assertEqual(config["repositories"], [])
         # Setup names no channels: the installer makes the standard set, with a separate command channel.
         self.assertNotIn("starbaseChannel", config["irc"])
@@ -469,12 +470,12 @@ class SetupInputsTests(unittest.TestCase):
         base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
                 "--repositories", "https://github.com/example/project.git", *CREW]
         answers, members, config, secrets, _ = self.generate(
-            [*base, "--crew-claude-model", "claude-opus-5-5", "--crew-codex-model", "gpt-6.2-sol"])
+            [*base, "--crew-claude-model", "claude-opus-5-5", "--crew-codex-model", "gpt-5.4"])
         self.assertEqual(config["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"},
-                                          "codex": {"count": 2, "model": "gpt-6.2-sol"}})
+                                          "codex": {"count": 2, "model": "gpt-5.4"}})
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(sorted({worker["model"] for worker in cfg["members"][1]["crew"]}),
-                         ["claude-opus-5-5", "gpt-6.2-sol"])
+                         ["claude-opus-5-5", "gpt-5.4"])
         # A rerun without the options keeps them, as saved answers.
         fleet_setup.save_answers(answers)
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
@@ -482,10 +483,11 @@ class SetupInputsTests(unittest.TestCase):
         with patch.object(fleet_setup.pwd, "getpwnam"):
             again = fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
         self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["crew"], config["crew"])
-        # A model set in fleet.json by hand, with no answer for it, is kept too; '' returns to the default.
+        # An empty model option selects the new default even when the fleet has saved a different model.
         answers, rear, captains = answers_for([*base, "--crew-codex-model", ""])
         rebuilt = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
-        self.assertEqual(rebuilt["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"}, "codex": {"count": 2}})
+        self.assertEqual(rebuilt["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"},
+                                          "codex": {"count": 2, "model": "gpt-6.2-sol"}})
         with self.assertRaisesRegex(fleet_setup.SetupError, "--crew-codex-model must be a model ID"):
             answers_for([*base, "--crew-codex-model", "gpt 6"])
 
@@ -526,14 +528,43 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual(summary["SUBSPACE_AGENTSVIEW"], "1")
         self.assertIn("8081", summary["SUBSPACE_PORTS"].split())
 
-    def test_a_new_fleet_runs_its_officers_on_the_default_models(self):
-        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
-        answers, _, config, secrets, _ = self.generate(argv)
+    def test_a_new_fleet_defaults_to_four_captains_with_four_crew_each(self):
+        captains = [f"c-example-{number}" for number in range(1, 5)]
+        crew_names = ";".join(f"{captain}=" + ",".join(f"{captain}-{slot}" for slot in range(1, 5))
+                              for captain in captains)
+        argv = ["--name", "Example Fleet", "--slug", "example", "--rear-admiral", "Atlas", "--no-demo",
+                "--repositories", "https://github.com/example/project.git", "--crew-names", crew_names]
+        answers, members, config, secrets, _ = self.generate(argv)
+        self.assertEqual(answers["captains"], captains)
         self.assertNotIn("harness", config)
         self.assertEqual(answers["officerModels"], {"captain": {}, "rearAdmiral": {}})
-        self.assertEqual(self.officers(config, secrets), [("claude", "claude-fable-5-2", "high"),
-                                                          ("claude", "claude-opus-5-5", "xhigh"),
-                                                          ("claude", "claude-opus-5-5", "xhigh")])
+        self.assertEqual(self.officers(config, secrets),
+                         [("claude", "claude-fable-5-2", "high")] + [("claude", "claude-opus-5-5", "xhigh")] * 4)
+        roster = validate(config, secrets, check_files=False)["members"]
+        for captain in roster[1:]:
+            self.assertEqual([(worker["family"], worker["model"]) for worker in captain["crew"]],
+                             [("claude", "claude-opus-5-5")] * 2 + [("codex", "gpt-6.2-sol")] * 2)
+        rerun = self.rerun(answers, config)
+        self.assertEqual(rerun["captains"], captains)
+        self.assertEqual(fleet_setup.fleet_config(rerun, members, "a" * 40)["crew"], config["crew"])
+        config["crew"]["codex"]["model"] = "gpt-5.4"
+        rerun = self.rerun(answers, config)
+        self.assertEqual(fleet_setup.fleet_config(rerun, members, "a" * 40)["crew"], config["crew"])
+
+    def test_default_captain_names_distinguish_long_fleet_slugs_with_the_same_prefix(self):
+        argv = ["--rear-admiral", "Atlas", "--no-demo"]
+        _, _, first = answers_for([*argv, "--name", "Example Fleet Alpha"])
+        _, _, second = answers_for([*argv, "--name", "Example Fleet Beta"])
+        self.assertTrue(set(first).isdisjoint(second))
+
+    def test_upgrade_preserves_legacy_implicit_crew_models(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Pavo", "--no-demo"]
+        answers, members, config, _, _ = self.generate(argv)
+        answers.pop("crewModels")
+        config["crew"] = {"claude": {"count": 2}, "codex": {"count": 2}}
+        upgraded = self.rerun(answers, config)
+        self.assertEqual(upgraded["captains"], ["Pavo"])
+        self.assertEqual(fleet_setup.fleet_config(upgraded, members, "a" * 40)["crew"], config["crew"])
 
     def test_captain_delegate_policy_grants_pull_requests_and_leaves_coding_to_crew(self):
         args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
