@@ -1,8 +1,6 @@
 //! One retained inspector composer per IRC message ID, independent of the
 //! channel editor. Submitting targets that message with the server's reply tag.
 
-use std::collections::{HashMap, HashSet};
-
 use gpui_kit::component::v_flex;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
@@ -17,131 +15,21 @@ use subspace_framework::dashboard::{ChatInput, ChatInputEvent};
 
 use super::recall::{self, Recall};
 use super::suggest::{Facts, Offer, suggest};
-use crate::conversation::Conversation;
 use crate::hub::Hub;
-use crate::state::{IrcState, Network};
+use crate::state::Network;
 
+mod drafts;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use drafts::{Drafts, select};
 
 pub(crate) const COMMAND: &str =
     "Use the channel composer for commands. Start with // for a literal slash.";
 pub(crate) const ATTACHMENTS: &str = "Use the channel composer to attach files.";
+const CHANNEL_ONLY: &str = "Thread replies are sent in a channel.";
 pub(crate) const GONE: &str = "The original message is no longer loaded. Draft kept.";
 const TOO_LONG: &str = "This reply is too long to send in IRC.";
-
-#[derive(Default)]
-pub(crate) struct Drafts {
-    by_root: HashMap<String, Entity<ReplyDraft>>,
-    selected: Option<Selected>,
-}
-
-struct Selected {
-    root: String,
-    seq: i64,
-    _observe: Subscription,
-}
-
-impl Drafts {
-    pub(crate) fn get(&self, root: &str) -> Option<Entity<ReplyDraft>> {
-        self.by_root.get(root).cloned()
-    }
-
-    pub(crate) fn remove(&mut self, root: &str) {
-        if self
-            .selected
-            .as_ref()
-            .is_some_and(|selected| selected.root == root)
-        {
-            self.selected = None;
-        }
-        self.by_root.remove(root);
-    }
-
-    pub(crate) fn selected_seq(&self) -> Option<i64> {
-        self.selected.as_ref().map(|selected| selected.seq)
-    }
-
-    pub(crate) fn selected_with_text(&self, cx: &App) -> Option<&str> {
-        let selected = self.selected.as_ref()?;
-        self.by_root
-            .get(&selected.root)?
-            .read(cx)
-            .has_text(cx)
-            .then_some(selected.root.as_str())
-    }
-
-    pub(crate) fn missing(
-        &self,
-        buffer: &BufferKey,
-        state: &IrcState,
-        cx: &App,
-    ) -> Vec<Entity<ReplyDraft>> {
-        let written: Vec<_> = self
-            .by_root
-            .iter()
-            .filter(|(_, draft)| draft.read(cx).has_text(cx))
-            .collect();
-        if written.is_empty() {
-            return Vec::new();
-        }
-        let loaded = loaded_ids(buffer, state);
-        let mut missing: Vec<_> = written
-            .into_iter()
-            .filter(|(root, _)| !loaded.contains(root.as_str()))
-            .collect();
-        missing.sort_unstable_by_key(|(root, _)| *root);
-        missing
-            .into_iter()
-            .map(|(_, draft)| draft.clone())
-            .collect()
-    }
-}
-
-fn loaded_ids<'a>(buffer: &BufferKey, state: &'a IrcState) -> HashSet<&'a str> {
-    state
-        .buffer(buffer)
-        .into_iter()
-        .flat_map(|held| held.entries.iter())
-        .filter_map(|entry| entry.line.id.as_deref())
-        .collect()
-}
-
-pub(crate) fn select(
-    conversation: &mut Conversation,
-    target: (&str, i64),
-    window: &mut Window,
-    cx: &mut Context<Conversation>,
-) -> Entity<ReplyDraft> {
-    let (root, seq) = target;
-    let draft = conversation.reply_drafts.get(root).unwrap_or_else(|| {
-        let buffer = conversation.buffer.clone();
-        let hub = conversation.hub.clone();
-        cx.new(|cx| ReplyDraft::new(buffer, root.to_owned(), hub, window, cx))
-    });
-    let previous = conversation.reply_drafts.selected.replace(Selected {
-        root: root.to_owned(),
-        seq,
-        _observe: cx.observe(&draft, |_, _, cx| cx.notify()),
-    });
-    conversation
-        .reply_drafts
-        .by_root
-        .insert(root.to_owned(), draft.clone());
-    if let Some(previous) = previous
-        && previous.root != root
-        && conversation
-            .reply_drafts
-            .by_root
-            .get(&previous.root)
-            .is_some_and(|old| !old.read(cx).keep(cx))
-    {
-        conversation.reply_drafts.by_root.remove(&previous.root);
-    }
-    cx.notify();
-    draft
-}
-
 /// The editor and completion state for one reply. Its destination never changes.
 pub(crate) struct ReplyDraft {
     root: String,
@@ -150,8 +38,9 @@ pub(crate) struct ReplyDraft {
     input: Entity<ChatInput>,
     list: Entity<CompletionList>,
     offer: Option<Offer>,
+    draft_present: bool,
     recall: Recall,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 2],
 }
 
 impl ReplyDraft {
@@ -163,7 +52,11 @@ impl ReplyDraft {
         cx: &mut Context<Self>,
     ) -> Self {
         let input = cx.new(|cx| {
-            let mut input = ChatInput::compact_message("Reply", window, cx);
+            let destination = match &buffer.target {
+                Target::Channel(channel) => format!("Reply to thread in {channel}"),
+                _ => "Reply in thread".to_owned(),
+            };
+            let mut input = ChatInput::compact_message("Reply", destination, window, cx);
             input.set_recall_keys(true, cx);
             input.set_placeholder("Write a reply…", window, cx);
             input
@@ -178,20 +71,18 @@ impl ReplyDraft {
                 let CompletionEvent::Accept(index) = *event;
                 this.accept(index, window, cx);
             }),
-            cx.observe(&hub, |this, _, cx| this.revalidate(cx)),
         ];
-        let mut draft = Self {
+        Self {
             root,
             buffer,
             hub,
             input,
             list,
             offer: None,
+            draft_present: false,
             recall: Recall::default(),
             _subscriptions: subscriptions,
-        };
-        draft.revalidate(cx);
-        draft
+        }
     }
 
     pub(crate) fn root(&self) -> &str {
@@ -206,10 +97,6 @@ impl ReplyDraft {
         !self.text(cx).is_empty()
     }
 
-    fn keep(&self, cx: &App) -> bool {
-        self.has_text(cx) || !self.recall.is_empty()
-    }
-
     pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
         self.input.update(cx, |input, cx| input.focus(window, cx));
     }
@@ -222,7 +109,7 @@ impl ReplyDraft {
     fn handle(&mut self, event: &ChatInputEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             ChatInputEvent::Submit(text) => self.send(text, window, cx),
-            ChatInputEvent::Changed(text) => self.changed(text, cx),
+            ChatInputEvent::Changed(_) => self.changed(cx),
             ChatInputEvent::Complete if self.offer.is_some() => {
                 if let Some(index) = self.list.read(cx).active() {
                     self.accept(index, window, cx);
@@ -281,18 +168,22 @@ impl ReplyDraft {
         Facts::gather(&hub.state, &self.buffer).ranked(&hub.roster(&self.buffer.network, cx))
     }
 
-    fn changed(&mut self, text: &str, cx: &mut Context<Self>) {
+    fn changed(&mut self, cx: &mut Context<Self>) {
         self.revalidate(cx);
-        let recalled = self.recall.showing(text);
+        let text = self.text(cx);
+        let recalled = self.recall.showing(&text);
         self.input
             .update(cx, |input, cx| input.set_recalled(recalled, cx));
         let cursor = self.input.read(cx).cursor(cx);
-        let offer = (!is_command(text))
-            .then(|| suggest(text, cursor, &self.facts(cx)))
+        let offer = (!is_command(&text))
+            .then(|| suggest(&text, cursor, &self.facts(cx)))
             .flatten();
         self.show(offer, cx);
-        // The inspector renders the current value to keep unavailable drafts visible.
-        cx.notify();
+        let draft_present = !text.is_empty();
+        if draft_present != self.draft_present {
+            self.draft_present = draft_present;
+            cx.notify();
+        }
     }
 
     fn show(&mut self, offer: Option<Offer>, cx: &mut App) {
@@ -373,7 +264,10 @@ fn command(
     loaded: bool,
     network: Option<&Network>,
 ) -> Result<Command, &'static str> {
-    if !matches!(buffer.target, Target::Channel(_)) || !loaded {
+    if !matches!(buffer.target, Target::Channel(_)) {
+        return Err(CHANNEL_ONLY);
+    }
+    if !loaded {
         return Err(GONE);
     }
     if let Some(refusal) = crate::thread::reply_refusal(network) {

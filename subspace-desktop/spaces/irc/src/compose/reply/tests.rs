@@ -1,6 +1,6 @@
 use subspace_client_irc::{Command, ConnectionStatus, Event};
 
-use super::{COMMAND, GONE, command};
+use super::{CHANNEL_ONLY, COMMAND, GONE, command};
 use crate::fixtures::{at, channel, network_id, query};
 use crate::state::Network;
 use crate::thread::{MESSAGE_TAGS, NO_REPLY_TAG, NOT_CONNECTED};
@@ -53,7 +53,7 @@ fn replies_wait_for_a_loaded_message_and_the_server_capability() {
     );
     assert_eq!(
         command(&query("mira"), "first", "Hello", true, Some(&tagged)),
-        Err(GONE)
+        Err(CHANNEL_ONLY)
     );
     assert_eq!(
         command(&room, "first", "Hello", true, Some(&network(&[]))),

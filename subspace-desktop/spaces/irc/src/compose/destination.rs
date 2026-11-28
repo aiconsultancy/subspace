@@ -12,12 +12,12 @@ use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::lucide::IconName;
 
 /// Who can see what is sent and for how long, as the hint row says it:
-/// short enough for the slim row, which truncates it in a narrow pane; the
+/// short enough for the caption, which truncates it in a narrow pane; the
 /// full sentence is its accessible name and its tooltip.
 pub(crate) const RETENTION: &str = "Subspace users see it for 30 days. No credentials.";
 
 /// The destination above the input and the existing attachment disclosure.
-pub(super) fn destination(
+pub(super) fn row(
     id: &'static str,
     words: String,
     uploads: bool,

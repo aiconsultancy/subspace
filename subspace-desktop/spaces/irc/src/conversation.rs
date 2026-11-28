@@ -266,6 +266,7 @@ impl Conversation {
         }
         self.refresh_tab(cx);
         compose::revalidate(self, cx);
+        self.reply_drafts.revalidate(cx);
         crate::uploads::outgoing::follow(self, cx);
         crate::uploads::viewer::follow(self, cx);
         cx.notify();
@@ -565,7 +566,7 @@ impl Render for Conversation {
                         &self.tray,
                         !matches!(self.buffer.target, Target::Server)
                             && subspace_api_client::capabilities().chat_uploads,
-                        self.reply_drafts.selected_with_text(cx),
+                        self.reply_drafts.resumable(cx),
                         cx,
                     )),
             )

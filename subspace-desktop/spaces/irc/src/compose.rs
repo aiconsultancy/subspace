@@ -23,8 +23,8 @@ use crate::conversation::Conversation;
 mod agents;
 mod ask;
 mod complete;
+mod destination;
 mod gates;
-mod hints;
 mod limits;
 mod offer;
 #[cfg(test)]
@@ -72,7 +72,8 @@ impl Draft {
             _ => "Write a message…",
         };
         let entity = cx.new(|cx| {
-            let mut input = ChatInput::compact_message("Send", window, cx);
+            let mut input =
+                ChatInput::compact_message("Send", placeholder(&buffer.target), window, cx);
             input.set_attachment_budget(crate::uploads::outgoing::Tray::default().budget(), cx);
             input.set_recall_keys(true, cx);
             input.set_placeholder(hint, window, cx);
@@ -129,7 +130,7 @@ impl Draft {
             .px(subspace_framework::dashboard::workspace::text_edge(&tokens))
             .py_2()
             .gap_1()
-            .child(hints::destination(
+            .child(destination::row(
                 "irc-channel-destination",
                 placeholder(&buffer.target),
                 uploads,

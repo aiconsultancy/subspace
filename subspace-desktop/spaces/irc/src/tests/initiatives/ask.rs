@@ -32,18 +32,22 @@ fn says(hub: &Entity<Hub>, text: &str, cx: &mut VisualTestContext) -> bool {
 #[gpui_kit::test]
 fn the_channel_composer_opens_irc_commands_from_its_toolbar(cx: &mut TestAppContext) {
     let (board, _, cx) = ship(cx);
+    let conversation = front(&board, cx);
+    let input = conversation.read_with(cx, |view, _| view.composer().clone());
     cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.set_text("Capture the baseline.", window, cx)
+        });
         assert!(window.find("irc-mention").visible());
         window.click("irc-commands", cx);
     });
     settle(cx);
-    let conversation = front(&board, cx);
     conversation.read_with(cx, |view, cx| {
         assert_eq!(
             view.draft.offered(cx).first().map(String::as_str),
             Some("/ask")
         );
-        assert!(view.composer().read(cx).text(cx).is_empty());
+        assert_eq!(view.composer().read(cx).text(cx), "Capture the baseline.");
     });
 }
 

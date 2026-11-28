@@ -1,7 +1,7 @@
 //! The tray above the composer: one small thumbnail per attachment with ×,
 //! "Check upload" for an upload that may have completed, the limit notice
 //! and file picker. Who can see files is said at the end of the
-//! composer's hint row (`compose/hints.rs`).
+//! channel composer’s destination row.
 use super::{Item, ItemState, Pending, Phase, Tray};
 use crate::conversation::Conversation;
 use crate::uploads::intake::Preview;

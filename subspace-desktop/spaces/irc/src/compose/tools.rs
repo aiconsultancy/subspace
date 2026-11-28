@@ -1,9 +1,9 @@
 //! The IRC-specific actions in the compact message input.
 
-use gpui_kit::component::{h_flex, menu::PopupMenuItem};
+use gpui_kit::component::{Disableable as _, h_flex, menu::PopupMenuItem};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
-    WeakEntity, Window,
+    Subscription, WeakEntity, Window,
 };
 use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::{ChatInput, anchored};
@@ -15,9 +15,16 @@ type Channel = (WeakEntity<Conversation>, bool);
 
 /// The shared input owns its tools view. The tools keep only weak references.
 pub(super) fn install(input: &Entity<ChatInput>, channel: Option<Channel>, cx: &mut App) {
-    let tools = cx.new(|_| Tools {
-        input: input.downgrade(),
-        channel,
+    let tools = cx.new(|cx| {
+        let observe = channel
+            .as_ref()
+            .and_then(|(owner, _)| owner.upgrade())
+            .map(|owner| cx.observe(&owner, |_, _, cx| cx.notify()));
+        Tools {
+            input: input.downgrade(),
+            channel,
+            _observe: observe,
+        }
     });
     input.update(cx, |input, cx| input.set_addon(Some(tools.into()), cx));
 }
@@ -25,10 +32,11 @@ pub(super) fn install(input: &Entity<ChatInput>, channel: Option<Channel>, cx: &
 struct Tools {
     input: WeakEntity<ChatInput>,
     channel: Option<Channel>,
+    _observe: Option<Subscription>,
 }
 
 impl Render for Tools {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let input = self.input.clone();
         h_flex()
             .flex_shrink_0()
@@ -40,7 +48,7 @@ impl Render for Tools {
             )
             .children(self.channel.as_ref().and_then(|(owner, attaches)| {
                 (*attaches && subspace_api_client::capabilities().chat_uploads)
-                    .then(|| attach(owner.clone()))
+                    .then(|| attach(owner.clone(), cx))
             }))
             .child(
                 icon_button(
@@ -70,7 +78,10 @@ fn commands(owner: WeakEntity<Conversation>) -> impl IntoElement {
     })
 }
 
-fn attach(owner: WeakEntity<Conversation>) -> impl IntoElement {
+fn attach(owner: WeakEntity<Conversation>, cx: &App) -> impl IntoElement {
+    let idle = owner
+        .upgrade()
+        .is_some_and(|view| view.read(cx).tray.idle());
     icon_button(
         "irc-attach-file",
         Intent::Quiet,
@@ -78,6 +89,7 @@ fn attach(owner: WeakEntity<Conversation>) -> impl IntoElement {
         "Attach files…",
     )
     .compact()
+    .disabled(!idle)
     .on_click(move |_, _, cx| {
         _ = owner.update(cx, crate::uploads::outgoing::pick);
     })

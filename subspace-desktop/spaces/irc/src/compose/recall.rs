@@ -21,6 +21,14 @@ impl Recall {
         self.sent.is_empty()
     }
 
+    /// Retain the sent lines when the editor is replaced.
+    pub(super) fn take_sent(&mut self) -> Self {
+        Self {
+            sent: std::mem::take(&mut self.sent),
+            ..Self::default()
+        }
+    }
+
     pub fn push(&mut self, text: String) {
         if self.sent.last() != Some(&text) {
             self.sent.push(text);
