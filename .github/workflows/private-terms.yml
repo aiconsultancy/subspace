@@ -1,0 +1,65 @@
+# Fails when a pull request holds a private term: in a line or a path a
+# commit adds, a commit message, an author's or committer's name or address,
+# or the pull request's title, description or branch name. See
+# scripts/check-private-terms.py.
+#
+# The terms are the `PRIVATE_TERMS` secret, one regular expression per line.
+# The log says how many findings there are and never where, because anyone
+# can read it.
+#
+# `pull_request_target` gives a pull request from a fork the secret. So the
+# job runs only the base branch's copy of the script and never checks out,
+# builds or runs anything from the pull request: it fetches the commits and
+# reads them with Git. The title, description and branch name come from the
+# event file, not from `env`, whose values the log prints.
+#
+# A pull request is on GitHub before this runs, so a finding means the term
+# is already published. The commit and push hooks in prek.toml run the same
+# script earlier, for whoever holds the list.
+name: private terms
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
+
+permissions: {}
+
+concurrency:
+  group: private-terms-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  private-terms:
+    name: private terms
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the pull request's commits without checking them out
+        env:
+          TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch --quiet --no-tags origin "$HEAD_SHA"
+      - name: Check the commits
+        env:
+          SUBSPACE_PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check-private-terms.py --require-terms --no-places --range "$BASE_SHA" "$HEAD_SHA"
+      - name: Check the title, description and branch name
+        if: ${{ !cancelled() }}
+        env:
+          SUBSPACE_PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
+        run: |
+          set -euo pipefail
+          jq --raw-output '.pull_request | .head.ref, .title, .body // ""' "$GITHUB_EVENT_PATH" |
+            python3 scripts/check-private-terms.py --require-terms --no-places --text "the pull request"
