@@ -9,7 +9,7 @@ use std::time::Instant;
 use subspace_api_client::model::{DecisionListItem, Me, Project};
 use subspace_framework::dashboard::list::LoadStatus;
 
-use crate::load::Failure;
+use crate::load::{Continuation, Failure};
 use crate::words::{self, People};
 
 /// The signed-in account and what was read with it.
@@ -37,7 +37,63 @@ pub(crate) enum Status {
     #[default]
     Idle,
     Loading,
+    LoadingPage,
     Failed(Failure),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Turn {
+    First,
+    Previous,
+    Next,
+}
+
+/// The current page's start and the starts visited on the way to it.
+/// In an initiative these can also hold buffered rows from its projects.
+#[derive(Default)]
+pub(crate) struct Pages {
+    previous: Vec<Option<Arc<Continuation>>>,
+    current: Option<Arc<Continuation>>,
+    next: Option<Arc<Continuation>>,
+}
+
+impl Pages {
+    pub(crate) fn index(&self) -> usize {
+        self.previous.len() + 1
+    }
+
+    pub(crate) fn can_turn(&self, turn: Turn) -> bool {
+        match turn {
+            Turn::First => true,
+            Turn::Previous => !self.previous.is_empty(),
+            Turn::Next => self.next.is_some(),
+        }
+    }
+
+    pub(crate) fn cursor(&self, turn: Turn) -> Option<Arc<Continuation>> {
+        match turn {
+            Turn::First => None,
+            Turn::Previous => self.previous.last().cloned().flatten(),
+            Turn::Next => self.next.clone(),
+        }
+    }
+
+    /// Advances only after the read lands, so a failure can be retried
+    /// from the same page.
+    pub(crate) fn landed(&mut self, turn: Turn, next: Option<Arc<Continuation>>) {
+        match turn {
+            Turn::First => {
+                self.previous.clear();
+                self.current = None;
+            }
+            Turn::Previous => self.current = self.previous.pop().flatten(),
+            Turn::Next => {
+                self.previous.push(self.current.take());
+                self.current = self.next.take();
+            }
+        }
+        self.next = next;
+    }
 }
 
 /// The loaded decisions.
@@ -45,15 +101,20 @@ pub(crate) enum Status {
 pub(crate) struct Listing {
     /// None until a read lands, and again after an account-level failure.
     pub(crate) items: Option<Vec<DecisionListItem>>,
-    /// The read stopped before the last page.
-    pub(crate) more: bool,
+    pub(crate) pages: Pages,
+    /// The search that produced the visible rows.
+    pub(crate) query: String,
     pub(crate) read_at: Option<Instant>,
     pub(crate) status: Status,
 }
 
 impl Listing {
     pub(crate) fn loading(&self) -> bool {
-        self.status == Status::Loading
+        matches!(self.status, Status::Loading | Status::LoadingPage)
+    }
+
+    pub(crate) fn more(&self) -> bool {
+        self.pages.next.is_some()
     }
 
     /// The failure that leaves nothing to show, which the Space draws in
@@ -70,7 +131,7 @@ impl Listing {
 /// banner over decisions kept from an earlier read when a read fails.
 pub(crate) fn list_status(listing: &Listing) -> LoadStatus {
     match (&listing.items, listing.status) {
-        (None, Status::Idle | Status::Loading) => LoadStatus::Loading,
+        (None, Status::Idle | Status::Loading | Status::LoadingPage) => LoadStatus::Loading,
         (Some(_), Status::Failed(failure)) => LoadStatus::Failed {
             title: failure.title().into(),
             message: failure.message().into(),
@@ -100,7 +161,7 @@ fn listing_part(listing: &Listing, now: Instant) -> Option<String> {
     match (&listing.items, listing.read_at) {
         (Some(items), Some(read_at)) => Some(format!(
             "{} · {}",
-            words::decisions(items.len(), listing.more),
+            words::decisions(items.len(), listing.more()),
             words::updated(read_at, now)
         )),
         _ if listing.loading() => Some("Loading decisions…".to_owned()),
@@ -113,7 +174,7 @@ pub(crate) fn count_line(listing: &Listing) -> Option<String> {
     listing
         .items
         .as_ref()
-        .map(|items| words::decisions(items.len(), listing.more))
+        .map(|items| words::decisions(items.len(), listing.more()))
 }
 
 /// The navigator's footer: who is signed in, or why no one is.
@@ -138,7 +199,8 @@ mod tests {
     fn loaded(read_at: Instant) -> Listing {
         Listing {
             items: Some(fixtures::items()),
-            more: false,
+            pages: Default::default(),
+            query: String::new(),
             read_at: Some(read_at),
             status: Status::Idle,
         }
@@ -202,10 +264,8 @@ mod tests {
 
     #[test]
     fn the_count_and_the_account_line_follow_the_read() {
-        let mut listing = loaded(Instant::now());
+        let listing = loaded(Instant::now());
         assert_eq!(count_line(&listing).as_deref(), Some("8 decisions"));
-        listing.more = true;
-        assert_eq!(count_line(&listing).as_deref(), Some("8+ decisions"));
         assert_eq!(count_line(&Listing::default()), None);
         assert_eq!(
             account_line("Subspace API", Some("local-operator"), &listing),

@@ -4,19 +4,19 @@
 //! filter. The count and actions trail. The dock switches are
 //! the status bar's (`Dashboard::docks`).
 
-use gpui_kit::component::Icon;
+use gpui_kit::component::{Icon, Sizable as _, h_flex, spinner::Spinner};
 use gpui_kit::{
     ClickEvent, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
     div, px,
 };
 use subspace_api_client::decision_writes::DecisionReview;
-use subspace_framework::dashboard::Dashboard as _;
 use subspace_framework::dashboard::action::{Intent, action_button, icon_button, main_action};
 use subspace_framework::dashboard::fields;
 use subspace_framework::dashboard::icon_button::IconButton;
 use subspace_framework::dashboard::tabs::{self, TabBar, TabSpec};
 use subspace_framework::dashboard::toolbar_label::{self, ToolbarLabel};
 use subspace_framework::dashboard::workspace;
+use subspace_framework::dashboard::{Dashboard as _, Tokens};
 use subspace_framework::lucide::IconName;
 
 use crate::{Decisions, keys, menus, state};
@@ -56,18 +56,42 @@ pub(crate) fn render(this: &Decisions, cx: &mut Context<Decisions>) -> workspace
     if let Some(tag) = menus::tag_button(this, cx) {
         toolbar = toolbar.leading(tag);
     }
-    if let Some(count) = state::count_line(&this.listing) {
-        toolbar = toolbar.trailing(toolbar_label::label(
-            "decisions-count",
-            ToolbarLabel {
-                icon: Some(Icon::from(IconName::Scale)),
-                accessible: count.clone().into(),
-                text: count.into(),
-            },
-            cx,
-        ));
+    if let Some(status) = list_status(this, cx) {
+        toolbar = toolbar.trailing(status);
     }
     trailing_actions(toolbar, this, cx)
+}
+
+fn list_status(this: &Decisions, cx: &Context<Decisions>) -> Option<impl IntoElement> {
+    let loading = this.search_pending() || this.listing.loading();
+    let search_changed = this.query != this.listing.query;
+    let text = if loading {
+        match this.listing.status {
+            _ if this.search_pending() || search_changed => "Searching…",
+            state::Status::LoadingPage => "Loading page…",
+            _ if this.listing.items.is_some() => "Refreshing…",
+            _ => "Loading…",
+        }
+        .to_owned()
+    } else if search_changed && this.listing.items.is_some() {
+        "Previous results".to_owned()
+    } else {
+        state::count_line(&this.listing)?
+    };
+    let tokens = Tokens::current(cx);
+    Some(
+        h_flex()
+            .children(loading.then(|| Spinner::new().small().color(tokens.muted)))
+            .child(toolbar_label::label(
+                "decisions-count",
+                ToolbarLabel {
+                    icon: (!loading && !search_changed).then(|| Icon::from(IconName::Scale)),
+                    accessible: text.clone().into(),
+                    text: text.into(),
+                },
+                cx,
+            )),
+    )
 }
 
 fn trailing_actions(
@@ -119,7 +143,7 @@ fn new_decision(primary: bool, cx: &Context<Decisions>) -> IconButton {
     button.on_click(cx.listener(|this, _, window, cx| this.new_decision(false, window, cx)))
 }
 
-/// Typing searches the titles and text after a short pause; Enter or Escape
+/// Typing searches IDs and text after a short pause; Enter or Escape
 /// returns to the list.
 fn search_field(this: &Decisions, cx: &Context<Decisions>) -> impl IntoElement {
     let search = fields::toolbar_search(&this.search, "Search decisions", cx);

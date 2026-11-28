@@ -19,7 +19,7 @@ Issues crate.
 | Module | Holds |
 | --- | --- |
 | `model` | The navigator's choices (view, maker, project, tag) and the `DecisionQuery` they and the search build. |
-| `load` | The `Reader`: a list read (account, projects, people, then every page of decisions), a detail read and the `Lease` each read returns on the account of the client that made it, run with `cx.background_spawn`. A list read carries a `Stop` that a newer read sets. Tests replace the reader with fixture answers. |
+| `load` | The `Reader`: a list read (account, projects, people, then the first batch of decisions), a detail read and the `Lease` each read returns on the account of the client that made it, run with `cx.background_spawn`. A list read carries a `Stop` that a newer read sets. Tests replace the reader with fixture answers. |
 | `account` | Following the signed-in account: the watch that notices an account or organisation change, and what the Space drops when it does. |
 | `state`, `listing`, `words`, `peek` | Pure: what the Space holds between reads, the status groups and their first folds, the counts, the wording and the inspector's facts. |
 | `board`, `search`, `page` | The Space's changes: reads and answers, choices, the debounced search, and the decision page with its tab. |
@@ -30,25 +30,28 @@ Issues crate.
 
 A read builds a `DecisionQuery` from the view (one status, or none), the
 maker (`human` or `agent`), the project key, the tag and the committed search
-text (`q`, at most 200 characters), and asks for pages of 100 until the last,
-at most ten pages. A repeated cursor fails the read. One read therefore lists
-at most 1,000 matching decisions: when more match, the count ends in **+**,
-and the decisions after the first thousand cannot be paged to in the same
-view; narrowing the view, maker, project, tag or search reaches them, as the
-[in-app guide](../spaces/decisions/help.md) says. The first read, a reload
-and showing a list that is more than a minute old also read `GET /me`, every
-project and the account's people (`Client::issue_choices` with
+text (`q`, at most 200 characters). Each batch shows up to 100 decisions.
+**Next** follows the continuation. **Previous** reads from the saved start of
+the previous page. Only the current page is rendered, even after browsing
+many pages. A new search, filter or refresh starts at Page 1.
+Initiative views merge the heads of each project's cursor stream and buffer
+rows that belong in the following batch. For NETT the initiative is filtered
+locally because its decisions endpoint has no project predicate. A repeated
+cursor fails the read. The toolbar and navigator counts refer to the visible page. A **+** after
+a count means a next page exists.
+The first read, a reload and showing a list that is more than a minute old
+also read `GET /me`, every project and the account's people (`Client::issue_choices` with
 `ChoiceSource::Assignees`), which name the people who made and recorded
 decisions. A failure of the projects or people read leaves those parts empty.
 
-Each list read has a number; an answer to an older read is dropped. A newer
-read also sets the superseded read's `Stop`, so it asks for no further page.
-A new choice or a committed search clears the listed rows before it reads,
-so a failed read never shows the rows found for the previous choice or text
-under the new one; it shows the reason with **Retry**. A failed sign-in, a
-refusal or a missing organisation clears what was read with that account. A
-network failure on reload keeps the decisions on screen under the shared
-list's banner.
+Each list read has a number. A keystroke, new request or account change
+supersedes old work and sets its `Stop`, which prevents further page requests.
+Search debounces for 200 ms. The toolbar marks the search as running while
+the previous results stay visible. The newest successful response replaces the
+list and its cursor together. On a temporary search failure the list shows a
+banner and labels the retained rows **Previous results**. A different choice
+starts a fresh list. Sign-in failures, access refusals and missing organisations
+clear the rows and continuation for the old account.
 
 The page reads `GET /decisions/{id}` by UUID from the list or by reference
 from Channels. It uses the returned UUID for later reads and writes. The

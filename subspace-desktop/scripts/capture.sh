@@ -31,7 +31,7 @@
 #                              backend (SUBSPACE_BUILD_CONFIG naming {"api_backend": "none"}),
 #                              which refuses to start with them
 #   CAPTURE_NO_UPDATES_STREAM=1   the Subspace API fixture has no live updates stream
-#   CAPTURE_DECISION_SCENARIO=<normal|missing|forbidden|unavailable|conflict>  Decisions fixture
+#   CAPTURE_DECISION_SCENARIO=<normal|missing|forbidden|unavailable|conflict|paging>  Decisions fixture
 #   CAPTURE_IRC_CREDENTIAL=1   the Subspace API fixture issues fictional IRC sign-ins, so Channels
 #                              keeps a network for each server the fixture's fleets use
 #   CAPTURE_NO_MEMBERSHIPS=1   the Subspace API fixture's person belongs to no initiative

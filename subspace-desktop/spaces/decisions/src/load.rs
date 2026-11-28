@@ -4,22 +4,18 @@
 //! account of the client that made it, and a list read carries a [`Stop`]
 //! that a newer read sets.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use subspace_api_client::issue_writes::ChoiceSource;
-use subspace_api_client::model::{DecisionDetail, DecisionListItem, Me, Page, Project};
-use subspace_api_client::{Client, DecisionQuery, Error, MAX_DECISION_PAGE_SIZE, PageRequest};
+use subspace_api_client::model::{DecisionDetail, DecisionListItem, Me, Project};
+use subspace_api_client::{Client, DecisionQuery, Error};
 
 use crate::words::People;
 
 mod scope;
 
-/// The list reads at most this many pages, a thousand decisions; the status
-/// says when there are more.
-const MAX_PAGES: usize = 10;
-const MAX_ITEMS: usize = MAX_PAGES * MAX_DECISION_PAGE_SIZE as usize;
+pub(crate) use scope::Continuation;
 
 /// What a list read asks for: the decisions for this query, and first the
 /// account, its projects and its people when `directory` is set. `stop`
@@ -31,6 +27,7 @@ pub(crate) struct Plan {
     pub(crate) stop: Stop,
     pub(crate) initiative: Option<String>,
     pub(crate) projects: Arc<[Project]>,
+    pub(crate) next: Option<Arc<Continuation>>,
 }
 
 /// Set when a newer read, or another account, supersedes a list read: the
@@ -76,9 +73,10 @@ pub(crate) struct Directory {
 
 /// The decisions a list read found, newest decided first, and whether more
 /// were left unread.
+#[derive(Default)]
 pub(crate) struct Found {
     pub(crate) items: Vec<DecisionListItem>,
-    pub(crate) more: bool,
+    pub(crate) next: Option<Arc<Continuation>>,
 }
 
 /// One list read's answer.
@@ -297,58 +295,14 @@ fn read_detail(id: &str, lease: Option<&Lease>) -> Leased<Result<DecisionDetail,
     })
 }
 
-/// Reads pages with `read` until the last, or until [`MAX_PAGES`], and
-/// refuses a cursor that repeats. A read that `stop` ends asks for no
-/// further page; its answer is dropped, so what it returns does not matter.
-pub(crate) fn all_pages(
-    stop: &Stop,
-    read: impl FnMut(&PageRequest) -> Result<Page<DecisionListItem>, Error>,
-) -> Result<Found, Error> {
-    collect_pages(stop, MAX_PAGES, read)
-}
-
-/// The NETT path can skip unrelated rows before applying the item limit.
-fn collect_pages(
-    stop: &Stop,
-    page_limit: usize,
-    mut read: impl FnMut(&PageRequest) -> Result<Page<DecisionListItem>, Error>,
-) -> Result<Found, Error> {
-    let mut page = PageRequest::default();
-    page.limit = MAX_DECISION_PAGE_SIZE;
-    let mut items = Vec::new();
-    let mut cursors = HashSet::new();
-    for _ in 0..page_limit {
-        if stop.stopped() {
-            return Ok(Found { items, more: true });
-        }
-        let found = read(&page)?;
-        items.extend(found.items);
-        if items.len() >= MAX_ITEMS {
-            let more = items.len() > MAX_ITEMS || found.next_cursor.is_some();
-            items.truncate(MAX_ITEMS);
-            return Ok(Found { items, more });
-        }
-        let Some(cursor) = found.next_cursor else {
-            return Ok(Found { items, more: false });
-        };
-        if !cursors.insert(cursor.clone()) {
-            return Err(Error::InvalidResponse);
-        }
-        page.cursor = Some(cursor);
-    }
-    Ok(Found { items, more: true })
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use serde_json::json;
     use subspace_api_client::Error;
-    use subspace_api_client::model::{DecisionListItem, Page};
 
-    use super::{Failure, Leased, Stop, all_pages, directory_projects, failure, leased};
+    use super::{Failure, Leased, directory_projects, failure, leased};
     use crate::fixtures;
 
     #[test]
@@ -406,60 +360,6 @@ mod tests {
         let (lease, found) = read.split(|_| "refused");
         assert!(lease.is_none());
         assert_eq!(found, "refused");
-    }
-
-    fn page(ids: &[&str], next: Option<&str>) -> Page<DecisionListItem> {
-        let item = |id: &str| fixtures::item_value(id, "NAV", "Fixture", "accepted", "2026-11-19");
-        let items: Vec<_> = ids.iter().map(|id| item(id)).collect();
-        serde_json::from_value(json!({"items": items, "nextCursor": next})).unwrap()
-    }
-
-    #[test]
-    fn every_page_is_read_until_the_last() {
-        let mut asked = Vec::new();
-        let found = all_pages(&Stop::default(), |request| {
-            asked.push((request.limit, request.cursor.clone()));
-            Ok(match request.cursor.as_deref() {
-                None => page(&["a", "b"], Some("next")),
-                _ => page(&["c"], None),
-            })
-        })
-        .unwrap();
-        let ids: Vec<_> = found.items.iter().map(|item| item.id.as_str()).collect();
-        assert_eq!(ids, ["a", "b", "c"]);
-        assert!(!found.more);
-        assert_eq!(asked, [(100, None), (100, Some("next".to_owned()))]);
-    }
-
-    #[test]
-    fn a_repeated_cursor_is_refused_and_a_long_list_stops_with_more() {
-        let go = Stop::default();
-        let repeated = all_pages(&go, |_| Ok(page(&["a"], Some("same"))));
-        assert!(matches!(repeated, Err(Error::InvalidResponse)));
-        let mut cursor = 0;
-        let long = all_pages(&go, |_| {
-            cursor += 1;
-            Ok(page(&["a"], Some(cursor.to_string().as_str())))
-        })
-        .unwrap();
-        assert!(long.more);
-        assert_eq!(long.items.len(), 10);
-        assert!(all_pages(&go, |_| Err(Error::Network)).is_err());
-    }
-
-    #[test]
-    fn a_stopped_read_asks_for_no_further_page() {
-        let stop = Stop::default();
-        let mut asked = 0;
-        let found = all_pages(&stop, |_| {
-            asked += 1;
-            // A newer read supersedes this one while its first page loads.
-            stop.stop();
-            Ok(page(&["a"], Some(asked.to_string().as_str())))
-        })
-        .unwrap();
-        assert_eq!(asked, 1, "no page after the stop");
-        assert_eq!(found.items.len(), 1);
     }
 
     #[test]

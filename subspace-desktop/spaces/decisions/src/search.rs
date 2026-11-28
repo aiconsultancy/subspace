@@ -1,5 +1,5 @@
-//! The search field: typing reads the list again after a short pause, as
-//! the Issues Space's search does.
+//! Debounced decision search. Keep the visible rows while the latest
+//! request is running, and discard any response superseded by a keystroke.
 
 use std::time::Duration;
 
@@ -7,12 +7,9 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{AppContext as _, Context, Entity, Subscription, Window};
 
 use crate::Decisions;
-use crate::model;
 
-/// Typing waits this long before the list is read again.
-const SEARCH_PAUSE: Duration = Duration::from_millis(300);
+const SEARCH_PAUSE: Duration = Duration::from_millis(200);
 
-/// The field's state, and the subscription that follows its typing.
 pub(crate) fn input(
     window: &mut Window,
     cx: &mut Context<Decisions>,
@@ -28,29 +25,18 @@ fn changed(
     event: &InputEvent,
     cx: &mut Context<Decisions>,
 ) {
-    if matches!(event, InputEvent::Change) {
-        commit_after_a_pause(decisions, cx);
+    if matches!(event, InputEvent::Change) && decisions.capture_query(cx) {
+        decisions._search_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SEARCH_PAUSE).await;
+            _ = this.update(cx, commit);
+        }));
+        cx.notify();
     }
 }
 
-fn commit_after_a_pause(decisions: &mut Decisions, cx: &mut Context<Decisions>) {
-    decisions._search_task = Some(cx.spawn(async move |this, cx| {
-        cx.background_executor().timer(SEARCH_PAUSE).await;
-        _ = this.update(cx, commit);
-    }));
-}
-
-/// Reads the list for the field's text, when it changed; the list shows
-/// again in place of an open decision. As with a new choice, the rows found
-/// for the previous text go, so a failed read never shows them under the
-/// new text.
 pub(crate) fn commit(decisions: &mut Decisions, cx: &mut Context<Decisions>) {
-    let text = model::search_text(&decisions.search.read(cx).value());
-    if text == decisions.query {
-        return;
+    if decisions.capture_query(cx) || decisions.search_pending() {
+        decisions.read(false, cx);
+        decisions.show_list(cx);
     }
-    decisions.query = text;
-    decisions.listing.items = None;
-    decisions.read(false, cx);
-    decisions.show_list(cx);
 }

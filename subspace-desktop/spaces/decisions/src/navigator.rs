@@ -142,7 +142,7 @@ fn whole_list(
 pub(crate) fn render(this: &Decisions, cx: &Context<Decisions>) -> workspace::Navigator {
     let loaded = this.listing.items.as_deref().map(|items| Loaded {
         items,
-        more: this.listing.more,
+        more: this.listing.more(),
     });
     let scoped: Vec<_> = this
         .session
