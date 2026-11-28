@@ -3172,6 +3172,7 @@ retention and explicit pruning, the Node toolchain, read-only reference
 checkouts and fresh worktree bases. It exercises nftables when permitted by
 the container and checks rule generation otherwise. For the offline checks,
 run `python3 -B subspace-installer/tests/policy_test.py`,
+`python3 -B subspace-installer/tests/headscale_test.py`,
 `python3 -B subspace-installer/tests/private_network_test.py`,
 `python3 -B subspace-installer/tests/sessions_test.py`,
 `python3 -B subspace-installer/tests/setup_test.py`,

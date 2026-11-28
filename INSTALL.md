@@ -6,7 +6,7 @@ in it, and ask it to set Subspace up. The agent reads this page, asks you a few
 questions and runs the installer for you. You can also follow it yourself.
 
 We recommend a fleet VM in your cloud, reached over a private network
-(Tailscale, Cloudflare Zero Trust or similar): Subspace is meant to be
+(Tailscale, Cloudflare Zero Trust, Headscale or similar): Subspace is meant to be
 multiplayer, and that keeps the agents' builds off your machine. Your agent
 can create the VM with your cloud provider's own tools and set the private
 network up for you, with your permission. To just try Subspace out, a VM on
@@ -21,7 +21,7 @@ your own computer is the quickest way, and it stays fully supported.
 >    names for them.
 > 2. **Confirm the plan once.** Summarise the answers, the exact commands you
 >    will run and everything they will install or change: software on this
->    computer (Lima, QEMU, Multipass, Tailscale, `cloudflared`), the VM and
+>    computer (Lima, QEMU, Multipass, Tailscale, `cloudflared`), the VMs and
 >    any other cloud resources with their cost, the cloud account and private
 >    network they use, the user's agent profiles. Wait for one clear yes.
 >    That yes covers only what the plan lists; pass `--install-deps` only if
@@ -334,12 +334,23 @@ answer it now.
     and a trusted certificate for the private name; it is not available with
     the default development sign-in. Ask for any addresses that alone may
     use SSH (`--ssh-from`). Keep the SSH route for administration.
+    Offer [a dedicated Headscale coordinator](docs/headscale.md) if they want
+    self-hosted private desktop access. Ask whether they have a second,
+    dedicated Ubuntu 24.04 VM or want you to create one. Collect the provider,
+    account, region, size and acceptable cost if creating it. Ask for the
+    public coordinator name and its DNS administrator, the provider's
+    management channel, and the private HTTPS API and TLS IRC addresses the
+    fleet router can reach. Include the second VM, DNS and TCP 443 ingress
+    in the same confirmation. Use a Desktop build with embedded Headscale
+    support and keep the separate private administrator SSH route. If they
+    want an existing operator HTTPS gateway on Headscale, collect its
+    distinct private address and the approved operators.
     Also offer nginx with internal host names if they want browser-friendly
     addresses.
 
-    The private network needs the user in their browser: signing in to
-    Tailscale or Cloudflare, approving this computer, and creating a one-off
-    auth key or a tunnel token. Ask whether they are there to do it now.
+    Tailscale and Cloudflare setup need the user in their browser to sign
+    in, approve this computer, and create a one-off auth key or tunnel token.
+    Ask whether they are there to do it now.
     Do it together before the unattended run starts, because that run
     cannot reach a VM with no public IP without it: before you confirm the
     plan, or straight after its yes for any step that needs Tailscale or
@@ -586,6 +597,9 @@ these routes; follow it rather than improvising.
   IRC clients must verify the server's certificate: while the proxy is
   stopped by its guard or a rollback, a local VM user can bind its private
   address on port 6697.
+- **Headscale.** Follow the [dedicated coordinator guide](docs/headscale.md)
+  to set up the second VM and enrol the private router and workstations.
+  Use the existing private SSH path for operator commands and fleet setup.
 - **Tailscale.** The user, in their browser: signs in to Tailscale, adds
   `tag:fleet` to the tailnet policy as Private access shows, signs this
   computer in to the tailnet, and creates a one-off, pre-approved auth key
