@@ -15,6 +15,8 @@
 # Commands:
 #   install       create or connect a VM and set up a fleet on it (default)
 #   irc-server    create or connect a host and run a shared IRC server on it
+#   headscale     configure a dedicated Ubuntu VM as a Headscale coordinator
+#   headscale-router  connect a private host as a Headscale fleet router
 #   tunnel        forward the fleet's ports to 127.0.0.1 here (--background to detach)
 #   providers     show the model provider accounts; `providers login P` signs
 #                 one in (codex-device, codex, claude, ...). Agents need one.
@@ -148,6 +150,9 @@ usage() {
 # Arguments ------------------------------------------------------------------
 
 case ${1:-} in
+    headscale|headscale-router)
+        command=$1; shift
+        exec bash "$root/subspace-installer/vm/$command.sh" "$@" ;;
     install|irc-server|tunnel|providers|skills|desktop|ssh|status|audit|stop|start|destroy) command=$1; shift ;;
 esac
 while [ $# -gt 0 ]; do
