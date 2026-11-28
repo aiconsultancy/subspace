@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { AgentName, IrcNick, reconcileFleetOfficer } from "./agents";
 import { agentTokenAudience, authProviders, pairingAudience, reservedUsernames } from "./config";
+import { type AuditFields } from "./audit";
 import { Database, databaseUrl } from "./db";
 import { insertEnrolmentToken, maxEnrolmentChecks } from "./enrolment";
 import { lockInitiativeFleet, lockProjectFleet } from "./fleet-ownership";
@@ -72,10 +73,6 @@ function validateRoster(spec: Spec) {
   return Effect.void;
 }
 
-type AuditFields = Pick<
-  typeof auditLogs.$inferInsert,
-  "action" | "entityType" | "entityId" | "summary" | "changes"
->;
 const audit = (tx: Db, organisationId: string, fields: AuditFields) =>
   tx.insert(auditLogs).values({
     ...fields,
@@ -117,7 +114,7 @@ function reconcileOfficerShip(
   existingShips: ReadonlyMap<string, Effect.Success<ReturnType<typeof listShips>>[number]>,
 ) {
   return Effect.gen(function* () {
-    if (officer.rank === "rearAdmiral" || !officer.ship) return undefined;
+    if (officer.rank === "rearAdmiral") return undefined;
     const old = existingShips.get(lower(officer.ship));
     const ship = yield* old
       ? renameShip(owner, old.id, {
