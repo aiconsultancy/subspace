@@ -39,3 +39,5 @@ Native captures use the Twilight Two theme and the loopback fixture services.
 ![The reaction menu opens beside its trigger and includes Thank you](evidence/reaction-menu.png)
 
 ![The separate Stop menu for a running request](evidence/stop-menu.png)
+
+![Stop opens beside a verified reply in the Thread inspector](evidence/thread-stop-menu.png)

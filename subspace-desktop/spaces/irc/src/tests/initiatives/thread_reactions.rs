@@ -5,10 +5,11 @@
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, Role, SharedString, TestAppContext, VisualTestContext};
-use subspace_client_irc::{Command, Update};
+use subspace_client_irc::{Command, Event, Update};
 
-use super::super::remove::settle;
-use super::thread::{finished, front, reply_input, seq};
+use super::super::{inject, remove::settle};
+use super::fleet::ship;
+use super::thread::{asked, finished, front, progress, reply, reply_input, seq};
 use crate::fixtures::{at, channel, network_id};
 use crate::hub::Hub;
 use crate::thread::MESSAGE_TAGS;
@@ -133,4 +134,66 @@ fn reacting_keeps_the_independent_reply_draft(cx: &mut TestAppContext) {
     input.read_with(cx, |input, cx| {
         assert_eq!(input.text(cx), "Ready for review.")
     });
+}
+
+#[gpui_kit::test]
+fn stop_on_a_hidden_reply_targets_the_verified_running_agent(cx: &mut TestAppContext) {
+    let (_, hub, cx) = ship(cx);
+    let verified = reply("aurora-lyra", "r1", "ask1", 6);
+    let mut unsigned = reply("aurora-lyra", "r2", "ask1", 7);
+    unsigned.account = None;
+    inject(
+        &hub,
+        vec![
+            Event::Capabilities {
+                network: network_id(),
+                enabled: vec![MESSAGE_TAGS.into()],
+            },
+            Event::Line(asked()),
+            Event::Line(progress("accepted", 5)),
+            Event::Line(verified),
+            Event::Line(unsigned),
+        ],
+        cx,
+    );
+    receive(
+        &hub,
+        vec![Update::ReactionSupport {
+            network: network_id(),
+            supported: true,
+        }],
+        cx,
+    );
+    cx.update(|window, cx| window.click("irc-status:ask1", cx));
+    settle(cx);
+    let [verified, unsigned] = ["r1", "r2"].map(|id| seq(&hub, id, cx));
+    let stop = SharedString::from(format!("irc-thread-line:{verified}:stop"));
+    let before = hub.read_with(cx, |hub, _| hub.sent().len());
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find(format!("irc-line:{verified}:row"))
+                .is_none()
+        );
+        assert!(
+            window
+                .try_find(format!("irc-thread-line:{unsigned}:stop"))
+                .is_none()
+        );
+        assert_eq!(window.find(stop.clone()).label(), Some("Stop aurora-lyra"));
+        window.click(stop.clone(), cx);
+    });
+    settle(cx);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        let mut menu = window.within("popup-menu");
+        assert_eq!(menu.find(1usize).label(), Some("✋  Raised hand"));
+        menu.click(1usize, cx);
+    });
+    let sent = hub.read_with(cx, |hub, _| hub.sent()[before..].to_vec());
+    assert!(matches!(sent.as_slice(),
+        [Command::React { msgid, reaction, .. }] if msgid == "r1" && reaction == "✋"));
+    inject(&hub, vec![Event::Line(progress("completed", 8))], cx);
+    cx.update(|window, _| assert!(window.try_find(stop).is_none()));
 }

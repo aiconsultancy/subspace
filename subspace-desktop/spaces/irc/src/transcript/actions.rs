@@ -33,6 +33,9 @@ use super::RowContext;
 use crate::conversation::Conversation;
 use crate::state::Entry;
 
+mod stop;
+pub(in crate::transcript) use stop::thread as thread_stop;
+
 /// How far the toolbar sits in from the row's right edge.
 const INSET_PX: f32 = 8.;
 
@@ -128,7 +131,7 @@ pub(crate) fn toolbar(
         return None;
     }
     let actions = offered(entry, context.actions, names_issue);
-    let stop = stop_button(entry, context);
+    let stop = stop::toolbar(entry, context);
     if actions.is_empty() && stop.is_none() {
         return None;
     }
@@ -157,41 +160,6 @@ pub(crate) fn toolbar(
             .children(stop)
             .into_any_element(),
     )
-}
-
-fn stop_button(entry: &Entry, context: &RowContext) -> Option<AnyElement> {
-    let msgid = entry.line.id.clone().filter(|_| context.actions.react)?;
-    let agent = context
-        .stops
-        .get(&entry.seq)
-        .filter(|agent| agent.running)?;
-    let summaries = context
-        .reactions
-        .get(&entry.seq)
-        .map_or(&[][..], Vec::as_slice);
-    let group = crate::reactions::choices::choices(summaries, Some(&agent.ship)).stop?;
-    let anchor = context.react_anchors.stop.clone();
-    let menu = anchor.clone();
-    let conversation = context.conversation.clone();
-    let button = icon_button(
-        SharedString::from(format!("irc-line:{}:stop", entry.seq)),
-        Intent::Quiet,
-        IconName::Square,
-        group.label(),
-    )
-    .on_click(move |_, window, cx| {
-        menu.update(cx, |anchor, cx| {
-            anchor.show_menu_with(window, cx, |menu, _, _| {
-                super::reactions::menu_items(
-                    menu.label(group.label()),
-                    &group.choices,
-                    (&msgid, Some(&group.ship)),
-                    &conversation,
-                )
-            });
-        });
-    });
-    Some(at_button(div().child(button), entry.seq, context, anchor))
 }
 
 pub(super) fn reply_item(

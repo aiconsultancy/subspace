@@ -1,6 +1,6 @@
 //! Message rendering in the Thread inspector.
 
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, Role, SharedString,
@@ -53,5 +53,9 @@ pub(crate) fn thread_message(
         } else {
             crate::transcript::reactions::read_only(entry, context)
         })
+        .children(
+            crate::transcript::actions::thread_stop(entry, context)
+                .map(|stop| h_flex().child(stop)),
+        )
         .into_any_element()
 }
