@@ -37,3 +37,9 @@ on the existing Component gallery card. Fixture screenshots and the
 ![At a narrower native window size the reply remains pinned below the thread](evidence/narrow.png)
 
 ![The compact reply sample on the ChatInput card in the Component gallery](evidence/gallery.png)
+
+Message hover controls sit inside the row with a consistent top inset. A
+selected thread root uses a soft fill, and the unread divider and inline
+mentions mark attention across the rest of the transcript.
+
+- [Message hover](evidence/hover.png)
