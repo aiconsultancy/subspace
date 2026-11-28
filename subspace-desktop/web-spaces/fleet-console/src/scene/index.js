@@ -19,7 +19,7 @@ export function buildTier(selection, ctx, extra = {}) {
     return list;
   }
   // Each tier draws its own fleet's data; only the streamed fleet has packets.
-  const data = ctx.stateFor ? ctx.stateFor(selection.fleet) : null;
+  const data = ctx.stateFor ? ctx.stateFor(selection) : null;
   const tierCtx = data
     ? { ...ctx, ...extra, fleet: data.fleet, ships: data.ships, unavailableSince: data.unavailableSince, packets: data.active ? ctx.packets : [], title: data.name, emptyTitle: data.name, emptyMessage: data.emptyMessage ?? ctx.emptyMessage, emptyDetail: data.emptyDetail ?? ctx.emptyDetail }
     : { ...ctx, ...extra };
@@ -35,7 +35,7 @@ export function buildTier(selection, ctx, extra = {}) {
 /** Node order of the parent tier, which decides where the focus node sits. */
 function parentIds(parent, ctx) {
   if (parent.level === -1) return (ctx.fleets ?? []).map((fleet) => fleet.id);
-  const data = ctx.stateFor ? ctx.stateFor(parent.fleet) : ctx;
+  const data = ctx.stateFor ? ctx.stateFor(parent) : ctx;
   if (!data?.fleet) return [];
   if (parent.level === 0) return data.fleet.ships.map((ship) => ship.id);
   const detail = data.ships[parent.ship];

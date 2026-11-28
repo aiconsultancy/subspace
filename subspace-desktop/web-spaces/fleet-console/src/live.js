@@ -24,8 +24,10 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
   let stopped = false;
   let lastEventId = "";
   let haveFleet = false;
+  const detailLifetime = new AbortController();
   /** How many `ship` events each ship has had, so a slow detail read can tell it is stale. */
   const shipEvents = new Map();
+  const crewReads = new Map();
 
   function update(event) {
     connection = nextConnection(connection, event, now(), random);
@@ -137,6 +139,46 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
     }
   }
 
+  // The narrower ship stream cannot supersede the full crew endpoint. Share
+  // an in-flight read and refresh once more if another caller asks meanwhile.
+  async function readCrew(ship, member) {
+    if (stopped) return false;
+    const key = JSON.stringify([ship, member]);
+    const existing = crewReads.get(key);
+    if (existing) {
+      existing.refresh = true;
+      return existing.promise;
+    }
+    const pending = { refresh: false, promise: null };
+    crewReads.set(key, pending);
+    pending.promise = (async () => {
+      let ok = false;
+      try {
+        do {
+          pending.refresh = false;
+          try {
+            const timeout = AbortSignal.timeout?.(DETAIL_TIMEOUT_MS);
+            const signal = timeout && AbortSignal.any
+              ? AbortSignal.any([timeout, detailLifetime.signal])
+              : timeout ?? detailLifetime.signal;
+            const seen = shipEvents.get(ship);
+            const data = await client.crew(ship, member, signal);
+            if (!stopped && !signal.aborted) {
+              onEvent({ type: "crew-detail", data, shipAdvanced: shipEvents.get(ship) !== seen });
+              ok = true;
+            }
+          } catch {
+            // Keep the last complete view and honour a pending refresh.
+          }
+        } while (pending.refresh && !stopped);
+        return ok;
+      } finally {
+        crewReads.delete(key);
+      }
+    })();
+    return pending.promise;
+  }
+
   return {
     get connection() {
       return connection;
@@ -145,6 +187,7 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
     retryNow: () => connect(),
     stop() {
       stopped = true;
+      detailLifetime.abort();
       clearTimer(retryTimer);
       clearTimer(healthy);
       disarmWatchdog();
@@ -153,6 +196,6 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
     },
     /** Fresh detail on drill-in; the stream keeps it current afterwards. */
     readShip: (id) => detail(id, (signal) => client.ship(id, signal), "ship-detail"),
-    readCrew: (ship, member) => detail(ship, (signal) => client.crew(ship, member, signal), "crew-detail"),
+    readCrew,
   };
 }

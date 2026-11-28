@@ -300,12 +300,35 @@ test("live source: a slow detail read never overwrites a newer stream event for 
   await settle();
   answerDetail();
   await crew;
-  assert.deepEqual(h.events.map((event) => event.type), ["fleet", "ship", "ship"]);
+  assert.deepEqual(h.events.map((event) => event.type), ["fleet", "ship", "ship", "crew-detail"], "a bounded ship read cannot supersede full crew detail");
+  assert.equal(h.events.at(-1).shipAdvanced, true);
 
   const quiet = h.source.readShip("galactica");
   await settle();
   answerDetail();
   await quiet;
   assert.equal(h.events.at(-1).type, "ship-detail", "with no newer event, the detail is applied");
+  h.source.stop();
+});
+
+
+test("concurrent crew detail reads share one request and one trailing refresh", async () => {
+  const { ships } = sampleFleet();
+  const responses = [];
+  const h = harness(async (url) => {
+    assert.ok(url.includes("/crew/"));
+    return new Promise((resolve) => responses.push(resolve));
+  });
+  const member = ships.galactica.crewMembers[0];
+  const first = h.source.readCrew("galactica", member.id);
+  const second = h.source.readCrew("galactica", member.id);
+  const third = h.source.readCrew("galactica", member.id);
+  assert.equal(responses.length, 1);
+  responses.shift()(response(200, { ship: "galactica", member }));
+  await settle();
+  assert.equal(responses.length, 1);
+  responses.shift()(response(200, { ship: "galactica", member: { ...member, since: 42 } }));
+  assert.deepEqual(await Promise.all([first, second, third]), [true, true, true]);
+  assert.equal(h.events.at(-1).data.member.since, 42);
   h.source.stop();
 });
