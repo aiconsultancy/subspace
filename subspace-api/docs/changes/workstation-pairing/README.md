@@ -394,6 +394,13 @@ nullable column, `pairing_invites.issuer_authority`, with no default and no
 backfill. Existing invites keep null, which redemption judges as it does the
 provisioned role. It takes only the table lock that adding a column needs,
 briefly, and no organisation lock, since it reads and writes no rows.
+`drizzle/20261128003908_invite_issuer_authority_check` then adds the check
+`pairing_invites_issuer_authority`: the column holds `entraAppRole`,
+`provisioned` or null, as `member_identities_provider` limits its provider.
+Existing rows already satisfy it, since only the API writes the column and
+only those values; the part-one image, which knows nothing of it, leaves it
+null. Adding the check takes the table's exclusive lock while PostgreSQL reads
+the rows to validate them, and no organisation lock.
 
 **Upgrade the IRC image with or before this API.** This API issues `sirc2.`
 passwords to every key credential, agents' included, and an IRC image whose

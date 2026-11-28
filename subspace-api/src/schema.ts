@@ -295,6 +295,10 @@ export const pairingInvites = pgTable(
     index("pairing_invites_member").on(table.organisationId, table.userId),
     index("pairing_invites_issuing_device").on(table.createdByCredentialId),
     check("pairing_invites_hash", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      "pairing_invites_issuer_authority",
+      sql`${table.issuerAuthority} in ('entraAppRole', 'provisioned')`,
+    ),
   ],
 );
 
