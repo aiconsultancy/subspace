@@ -99,7 +99,7 @@ export function withCrewDetail(state, { ship, crew }) {
 
   const { member } = snapshot;
   let selected = member;
-  if (detail.available && bounded !== snapshot.bounded) {
+  if (bounded !== snapshot.bounded) {
     const activity = crewRecordTime(bounded) > crewRecordTime(member) ? bounded : member;
     const byProject = new Map(member.contexts.map((context) => [context.project, context]));
     for (const context of bounded.contexts) {
@@ -112,7 +112,7 @@ export function withCrewDetail(state, { ship, crew }) {
       const latest = previous && contextTime(previous) >= contextTime(context) ? previous : context;
       byProject.set(context.project, {
         ...context, current: latest.current, lastOutcome: latest.lastOutcome,
-        recent: [...recent.values()], recentCount: Math.max(context.recentCount, previous?.recentCount ?? 0),
+        recent: [...recent.values()], recentCount: Math.max(recent.size, context.recentCount, previous?.recentCount ?? 0),
       });
     }
     selected = {

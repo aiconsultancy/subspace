@@ -140,7 +140,7 @@ export function createLiveSource({ client, onEvent, onConnection, now = Date.now
   }
 
   // The narrower ship stream cannot supersede the full crew endpoint. Share
-  // an in-flight read and refresh once more if a ship update landed meanwhile.
+  // an in-flight read and refresh once more if another caller asks meanwhile.
   async function readCrew(ship, member) {
     if (stopped) return false;
     const key = JSON.stringify([ship, member]);

@@ -168,4 +168,13 @@ test("bounded ship events preserve the selected crew member's recent project and
   const inFlightMember = withCrewDetail(inFlight, selection).ships.pegasus.crewMembers[0];
   assert.equal(inFlightMember.contexts[0].queuedCount, 1);
   assert.equal(inFlightMember.contexts.at(-1).recent[0].id, task.id);
+  const offlineAfterQueue = reduceFleet(inFlight, {
+    type: "fleet", data: {
+      ...inFlight.fleet, ships: inFlight.fleet.ships.map((entry) =>
+        entry.id === ship.id ? { ...entry, available: false } : entry),
+    },
+  }, NOW + 10_000);
+  const offlineMember = withCrewDetail(offlineAfterQueue, selection).ships.pegasus.crewMembers[0];
+  assert.equal(offlineMember.contexts[0].queuedCount, 1);
+  assert.equal(offlineMember.contexts.at(-1).recent[0].id, task.id);
 });

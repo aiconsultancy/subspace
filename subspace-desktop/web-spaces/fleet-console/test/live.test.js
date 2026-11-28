@@ -312,7 +312,7 @@ test("live source: a slow detail read never overwrites a newer stream event for 
 });
 
 
-test("crew detail refreshes once after updates during an in-flight read", async () => {
+test("concurrent crew detail reads share one request and one trailing refresh", async () => {
   const { ships } = sampleFleet();
   const responses = [];
   const h = harness(async (url) => {
