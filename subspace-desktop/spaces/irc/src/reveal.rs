@@ -2,14 +2,27 @@
 //! line and selected. A line the buffer does not hold, such as one older than
 //! what was restored, is asked for around its time first.
 
-use gpui_kit::{Context, Window};
-use subspace_client_irc::{BufferKey, NetworkId, Target, ThreadRoots};
+use gpui_kit::Context;
+use subspace_client_irc::{BufferKey, ThreadRoots};
 use subspace_framework::dashboard::full_text::{Hit, ReadPermit};
 use subspace_framework::dashboard::{DashboardEvent, Toast, full_text_service};
 
 use crate::{Irc, dock, store, view};
 
 const GONE: &str = "This message is no longer on the server.";
+const JOIN_REFUSED: &str = "Could not join the linked thread's channel.";
+
+mod thread_link;
+
+pub(crate) use thread_link::open_thread;
+use thread_link::{request_thread, show_conversation};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Loading {
+    Join,
+    Queued,
+    History,
+}
 
 /// A search result waiting for its line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +32,7 @@ pub(crate) struct Pending {
     /// Thread links name the IRC message ID. Search names the stored record.
     pub thread: bool,
     open_after_load: bool,
+    loading: Loading,
 }
 
 /// Opens `hit` when it is a valid, current IRC record of this app.
@@ -46,91 +60,11 @@ pub(crate) fn open(board: &mut Irc, hit: &Hit, permit: &ReadPermit, cx: &mut Con
         id: hit.document.id.clone(),
         thread: false,
         open_after_load: false,
+        loading: Loading::History,
     });
     if !settled(board, cx) {
         hub.update(cx, |hub, _| hub.load_around(&navigation));
     }
-}
-
-/// Opens a thread link on the source message's IRC network.
-pub(crate) fn open_thread(
-    board: &mut Irc,
-    (network, channel): (&NetworkId, &str),
-    id: &str,
-    window: &mut Window,
-    cx: &mut Context<Irc>,
-) {
-    let Some(hub) = board.hub.clone() else {
-        return;
-    };
-    let state = &hub.read(cx).state;
-    if state.network(network).is_none() {
-        return;
-    }
-    let held = state.buffers().find_map(|(key, _)| {
-        let same_channel =
-            matches!(&key.target, Target::Channel(name) if name.eq_ignore_ascii_case(channel));
-        (&key.network == network && same_channel).then(|| key.clone())
-    });
-    let open_after_load = held.is_none();
-    let buffer = held.unwrap_or_else(|| {
-        let name = crate::rows::unjoined(state, network)
-            .into_iter()
-            .find(|listed| listed.name.eq_ignore_ascii_case(channel))
-            .map_or(channel, |listed| listed.name.as_str());
-        BufferKey {
-            network: network.clone(),
-            target: Target::Channel(name.to_owned()),
-        }
-    });
-    if !open_after_load {
-        show_conversation(board, &buffer, window, cx);
-    }
-    if board.comms.active {
-        board.comms.selected = Some(crate::comms::Key {
-            buffer: buffer.clone(),
-            root: id.to_owned(),
-        });
-    }
-    board.reveal = Some(Pending {
-        buffer: buffer.clone(),
-        id: id.to_owned(),
-        thread: true,
-        open_after_load,
-    });
-    if !settled(board, cx) {
-        request_thread(board, &buffer, id, cx);
-    }
-}
-
-fn show_conversation(
-    board: &mut Irc,
-    buffer: &BufferKey,
-    window: &mut Window,
-    cx: &mut Context<Irc>,
-) {
-    if !board.comms.active {
-        view::reveal_row(board, buffer, cx);
-    }
-    dock::open(board, buffer, dock::Where::Tab, window, cx);
-}
-
-fn request_thread(board: &mut Irc, buffer: &BufferKey, id: &str, cx: &mut Context<Irc>) {
-    let Some(hub) = board.hub.clone() else {
-        return;
-    };
-    if !crate::listing::connected(&hub.read(cx).state, &buffer.network) {
-        settle(board, cx);
-        return;
-    }
-    let navigation = store::Navigation {
-        network: buffer.network.clone(),
-        target: buffer.target.clone(),
-        msgid: Some(id.to_owned()),
-        time: chrono::Utc::now(),
-        from: None,
-    };
-    hub.update(cx, |hub, _| hub.load_around(&navigation));
 }
 
 fn supports_threads(board: &Irc, buffer: &BufferKey, cx: &Context<Irc>) -> bool {
@@ -160,15 +94,38 @@ pub(crate) fn settle(board: &mut Irc, cx: &mut Context<Irc>) {
     if settled(board, cx) {
         return;
     }
-    let waiting = board
-        .hub
-        .as_ref()
-        .is_some_and(|hub| hub.read(cx).recall.awaiting(&pending.buffer));
-    if !waiting {
-        board.reveal = None;
-        if !pending.thread || !open_retained_replies(board, &pending, cx) {
-            cx.emit(DashboardEvent::Toast(Toast::info(GONE)));
+    let Some(hub) = board.hub.clone() else {
+        return;
+    };
+    let held = hub.read(cx);
+    let connected = crate::listing::connected(&held.state, &pending.buffer.network);
+    if pending.loading == Loading::Join
+        && connected
+        && !held
+            .state
+            .buffer(&pending.buffer)
+            .is_some_and(|held| held.joined)
+    {
+        return;
+    }
+    if held.recall.awaiting(&pending.buffer) {
+        return;
+    }
+    if pending.loading != Loading::History && connected {
+        if let Some(waiting) = board.reveal.as_mut() {
+            waiting.loading = Loading::History;
         }
+        hub.update(cx, |hub, _| request_thread(hub, &pending));
+        return;
+    }
+    board.reveal = None;
+    if !pending.thread || !open_retained_replies(board, &pending, cx) {
+        let message = if pending.loading == Loading::Join {
+            JOIN_REFUSED
+        } else {
+            GONE
+        };
+        cx.emit(DashboardEvent::Toast(Toast::info(message)));
     }
 }
 

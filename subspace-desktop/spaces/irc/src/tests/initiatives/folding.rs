@@ -2,7 +2,6 @@
 //! initiative's, unless it is a network's only fleet whose group took in
 //! the network's own rows, and what a folded group says it hides.
 
-use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use subspace_api_client::model::MemberInitiative;
@@ -213,7 +212,12 @@ fn other_starts_collapsed_and_can_be_opened(cx: &mut TestAppContext) {
         assert!(board.list.is_folded(&group));
         assert!(!board.list.visible_keys().contains(&server));
     });
-    cx.update(|window, cx| window.click(format!("list-group-title:{group}"), cx));
+    board.update(cx, |board, cx| {
+        subspace_framework::dashboard::list::update(board, cx, |list| {
+            list.select(group.clone());
+            list.activate();
+        });
+    });
     board.read_with(cx, |board, _| {
         assert!(!board.list.is_folded(&group));
         assert!(board.list.visible_keys().contains(&server));

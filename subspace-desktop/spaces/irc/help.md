@@ -730,7 +730,8 @@ The **Thread** inspector has its own reply box, pinned below the replies.
 Choose **Reply in thread** on a message to put the cursor in that box.
 **Jump to message** reveals the original in the channel. **Copy link** copies
 a link you can paste into another conversation on the same IRC network.
-Selecting it opens the thread in the inspector. The channel input
+Selecting it opens the thread in the inspector. If you have not joined the
+channel, Channels joins it before requesting older messages. The channel input
 keeps its draft, and each thread keeps its own draft when you switch threads,
 switch channels or hide the inspector. Choose **Thread draft** in the
 channel composer to return to the last open thread with a draft.

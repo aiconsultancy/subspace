@@ -46,8 +46,8 @@ people one place to catch up on mentions and replies.
   The Comms badge shows the unread count and mentions. Existing system
   notifications continue to use the Channels process hub.
 - **Links and search.** In-message links use the Channels reference handler and
-  the source IRC network. Links to unloaded messages ask that server for
-  permitted history. Search results for a hidden reply open its thread.
+  the source IRC network. Links to unloaded messages join the channel if
+  needed before asking that server for permitted history. Search results for a hidden reply open its thread.
 - **Identity, settings, tools, chat context and contracts.** This is a view
   within the registered Channels Space with its existing IRC configuration,
   storage, agent tools and contracts. No extra registration applies.

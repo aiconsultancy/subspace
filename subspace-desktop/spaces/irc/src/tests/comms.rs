@@ -73,6 +73,21 @@ fn selecting_comms_opens_a_thread_without_reading_the_channel(cx: &mut TestAppCo
     });
     hub.read_with(cx, |hub, _| {
         assert!(hub.sent().iter().any(|command| matches!(
+            command, Command::Join { channel, .. } if channel == "#example-command"
+        )));
+        assert!(!hub.sent().iter().any(|command| matches!(
+            command, Command::LoadAround { buffer, .. } if buffer == &destination
+        )));
+    });
+    inject(
+        &hub,
+        vec![Event::Joined {
+            buffer: destination.clone(),
+        }],
+        cx,
+    );
+    hub.read_with(cx, |hub, _| {
+        assert!(hub.sent().iter().any(|command| matches!(
             command, Command::LoadAround { buffer, id: Some(id), .. }
                 if buffer == &destination && id == "decision"
         )));

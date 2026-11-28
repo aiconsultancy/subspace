@@ -88,6 +88,15 @@ fn badge(count: usize, mention: bool, tokens: &Tokens) -> impl gpui_kit::IntoEle
 
 pub(super) fn pane(board: &Irc, cx: &mut Context<Irc>) -> workspace::Pane {
     let mut pane = workspace::Pane::new("irc-comms-pane").toolbar(heading(board, cx));
+    if let Some(hosted) = board
+        .dock
+        .focused
+        .as_ref()
+        .and_then(|buffer| board.dock.open.get(buffer))
+        && hosted.entity.read(cx).upload_viewer.is_some()
+    {
+        return pane.child(hosted.entity.clone());
+    }
     let rows: Vec<_> = board
         .hub
         .as_ref()
