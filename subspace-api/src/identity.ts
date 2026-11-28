@@ -243,11 +243,12 @@ type Db = (typeof Database)["Service"];
  * Revokes the pending pairing invites a member issued for other people, once the member may no
  * longer issue them: deactivated, or no longer an administrator. Their invites for their own
  * devices stay. Returns the revoked invites, for the caller to audit with `issuerInviteRevoked`.
+ * Dated by the database's clock, which judges which invites are still pending.
  */
 export const revokeIssuedInvites = (tx: Db, member: Pick<Member, "id" | "organisationId">) =>
   tx
     .update(pairingInvites)
-    .set({ revokedAt: new Date() })
+    .set({ revokedAt: sql`clock_timestamp()` })
     .where(
       and(
         eq(pairingInvites.organisationId, member.organisationId),

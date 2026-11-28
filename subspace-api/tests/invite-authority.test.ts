@@ -144,6 +144,25 @@ describe.skipIf(!testDatabase)("invites against their issuer's authority", () =>
     expect(mappedList.has(byToken)).toBe(true);
   });
 
+  test("an invite records no issuer authority but the two redemption knows", async () => {
+    const admin = await entraAdmin();
+    const issued = await call(mapped, admin.token, "/api/v1/pairing/invites", {
+      displayName: "Gwen Treloar",
+    });
+    expect(issued.status).toBe(201);
+    const set = (value: string | null) =>
+      database.client.query("UPDATE pairing_invites SET issuer_authority = $2 WHERE id = $1", [
+        issued.body.inviteId,
+        value,
+      ]);
+    for (const value of ["tokenRole", "admin", "", "Provisioned"])
+      await expect(set(value)).rejects.toMatchObject({
+        code: "23514",
+        constraint: "pairing_invites_issuer_authority",
+      });
+    for (const value of ["provisioned", "entraAppRole", null]) await set(value);
+  });
+
   test("an administrator by both roles keeps their invites without ENTRA_ADMIN_ROLE, never above their recorded token role", async () => {
     const admin = await entraAdmin();
     await database.client.query("UPDATE users SET role = 'admin' WHERE id = $1", [admin.id]);

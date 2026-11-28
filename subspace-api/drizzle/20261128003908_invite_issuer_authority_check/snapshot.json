@@ -1,0 +1,42 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "ba456c47-ee57-45fe-bdca-bc594ea300f5",
+  "prevIds": [
+    "9728dcc3-83ed-4ac3-a9b7-c84e5c467f8f"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "pairing_invites"
+      ],
+      "writes": [
+        "s|ck|public.pairing_invites.pairing_invites_issuer_authority",
+        "n|ck|public.pairing_invites.pairing_invites_issuer_authority",
+        "e|ck|public.pairing_invites.pairing_invites_issuer_authority",
+        "n|con|public.pairing_invites.pairing_invites_issuer_authority"
+      ],
+      "reads": [
+        "n|tbl|public.pairing_invites",
+        "n|sch|public",
+        "n|col|public.pairing_invites.issuer_authority"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "pairing_invites",
+        "name": "pairing_invites_issuer_authority",
+        "value": "\"issuer_authority\" in ('entraAppRole', 'provisioned')",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

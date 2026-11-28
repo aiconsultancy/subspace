@@ -316,9 +316,10 @@ const revokeInvite = (caller: Caller, inviteId: string) =>
           eq(pairingInvites.organisationId, caller.organisationId),
           eq(pairingInvites.id, inviteId),
         );
+        // Dated by the database's clock, which `pending` judges the row by, never this process's.
         const [revoked] = yield* tx
           .update(pairingInvites)
-          .set({ revokedAt: new Date() })
+          .set({ revokedAt: sql`clock_timestamp()` })
           .where(and(where, pending))
           .returning();
         if (revoked) {

@@ -120,7 +120,9 @@ and fingerprint, and a device token with its header and claims, valid only at
   Redemption judges expiry by the database's clock once it holds the
   organisation's lock, never by the API process's, so replicas with skewed
   clocks agree: after one refuses an invite as expired, no later redemption
-  pairs with it.
+  pairs with it. The same clock dates an invite's redemption and its
+  revocation, by an administrator or with its issuer's role, so neither is ever
+  recorded before the invite was issued.
 - **Invite format.** `spair1.` and the unpadded base64url encoding of the row's
   16-byte ID and 32 random bytes, like `senr1.` enrolment tokens. The prefix is the
   version.
@@ -226,9 +228,11 @@ Development sign-in is unchanged; its removal is a later part of SUB-76.
   request signed in with (`RoleSource`); for a person's own Entra token it is
   the recorded token role but never above the role that request's token granted
   (`tokenGrant`, `requestRole` in `src/identity.ts`), so a withdrawal another
-  sign-in records meanwhile applies and a grant does not. Both routes answer
-  `pairing-unavailable` when pairing is off, because no device token could be
-  checked. Administrators list pending invites and revoke one
+  sign-in records meanwhile applies and a grant does not. Routes that do not
+  read the caller again, such as the agent credential routes, authorise with
+  the role from sign-in, which a role recorded meanwhile does not lower. Both
+  routes answer `pairing-unavailable` when pairing is off, because no device
+  token could be checked. Administrators list pending invites and revoke one
   (`GET /api/v1/pairing/invites`, `DELETE /api/v1/pairing/invites/{inviteId}`).
   The list leaves out an invite that redemption would refuse for its issuer, by
   the same rule (`issuerWithdrawal` in `src/pairing-invites.ts`).
@@ -390,6 +394,13 @@ nullable column, `pairing_invites.issuer_authority`, with no default and no
 backfill. Existing invites keep null, which redemption judges as it does the
 provisioned role. It takes only the table lock that adding a column needs,
 briefly, and no organisation lock, since it reads and writes no rows.
+`drizzle/20261128003908_invite_issuer_authority_check` then adds the check
+`pairing_invites_issuer_authority`: the column holds `entraAppRole`,
+`provisioned` or null, as `member_identities_provider` limits its provider.
+Existing rows already satisfy it, since only the API writes the column and
+only those values; the part-one image, which knows nothing of it, leaves it
+null. Adding the check takes the table's exclusive lock while PostgreSQL reads
+the rows to validate them, and no organisation lock.
 
 **Upgrade the IRC image with or before this API.** This API issues `sirc2.`
 passwords to every key credential, agents' included, and an IRC image whose
@@ -577,7 +588,8 @@ new membership instead.
   outside the walk, the rollback statement, and an issuer's sign-in that
   withdraws their role while a redemption of their invite holds it, an
   administrator by both roles, and the pending list leaving out what redemption
-  refuses.
+  refuses. `tests/invite-clocks.test.ts` covers an invite's revocation and
+  redemption dated by the database's clock while the API process's is behind.
   `tests/irc.test.ts` covers the `sirc2.` format and the hook's credential checks.
 - Not verified: the desktop against these routes, a real WorkOS or Entra tenant,
   and the migration on a copy of a production database.
