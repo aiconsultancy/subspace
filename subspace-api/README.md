@@ -111,10 +111,13 @@ create one member, and every one of them succeeds.
 `ENTRA_ADMIN_ROLE` names an app role defined on the API's app registration. When it
 is set, an Entra token whose `roles` claim holds that value makes its holder an
 administrator, and a token without it makes them a member, on every request. A
-request never acts above its own token's role: if another sign-in records a
-different role while it is in flight, it keeps the lower of the two. The
-API records the token's role apart from the provisioned role that the membership
-command's `--role` sets, writes it only when it changes and audits each change as
+request made with the person's own Entra token never acts above that token's
+role. If another sign-in records a different role while it is in flight, the
+lower of the two applies only at the routes that read the caller's role again
+under the lock (see below); the others, such as the agent credential routes,
+authorise with the role the request signed in with. The API records the token's
+role apart from the provisioned role that the membership command's `--role`
+sets, writes it only when it changes and audits each change as
 `memberRoleChanged`. While the setting is configured, the token's role is the
 effective one for Entra members; when it is removed, the provisioned role applies
 again, so the grants it made end with it. An agent record is never an
@@ -131,8 +134,9 @@ them:
   there too, from their next request, once an Entra sign-in has recorded the
   change.
 
-A request is checked again under its organisation's lock before it changes
-anything, with its role from the same source as when it signed in.
+The device, linked account and pairing invite routes check a request again under
+its organisation's lock before they change anything, with its role from the
+same source as when it signed in.
 
 ### Upgrading
 
@@ -976,11 +980,12 @@ docker compose exec -u 0 -T api bun run auth:owner example --name "Tamsin Pryor"
   device revoked earlier without what it issued, for example by part one's image
   during a rollback, is not walked again. Finish that walk by revoking the device
   again with `DELETE /api/v1/members/{memberId}/devices/{credentialId}`, which
-  revokes anything it issued that is not yet revoked. The command prints how many devices and invites went with
-  the owner's, and each revocation is audited. Pair the new laptop with the new
-  invite first; then invite again the people invited from the old one, who pair
-  again. A provider account linked from the old workstation stays linked: see
-  [Devices](#devices) to find and unlink it.
+  revokes anything it issued that is not yet revoked. The command prints how
+  many devices and invites went with the owner's, and each revocation is
+  audited. Pair the new laptop with the new invite first; then invite again the
+  people invited from the old one, who pair again. A provider account linked
+  from the old workstation stays linked: see [Devices](#devices) to find and
+  unlink it.
 - `--reactivate` restores an existing deactivated owner and issues a fresh
   invite without changing their identity. The command refuses to reactivate
   anyone unless the flag is set. If the owner has device credentials that were

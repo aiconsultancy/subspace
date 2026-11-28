@@ -226,9 +226,11 @@ Development sign-in is unchanged; its removal is a later part of SUB-76.
   request signed in with (`RoleSource`); for a person's own Entra token it is
   the recorded token role but never above the role that request's token granted
   (`tokenGrant`, `requestRole` in `src/identity.ts`), so a withdrawal another
-  sign-in records meanwhile applies and a grant does not. Both routes answer
-  `pairing-unavailable` when pairing is off, because no device token could be
-  checked. Administrators list pending invites and revoke one
+  sign-in records meanwhile applies and a grant does not. Routes that do not
+  read the caller again, such as the agent credential routes, authorise with
+  the role from sign-in, which a role recorded meanwhile does not lower. Both
+  routes answer `pairing-unavailable` when pairing is off, because no device
+  token could be checked. Administrators list pending invites and revoke one
   (`GET /api/v1/pairing/invites`, `DELETE /api/v1/pairing/invites/{inviteId}`).
   The list leaves out an invite that redemption would refuse for its issuer, by
   the same rule (`issuerWithdrawal` in `src/pairing-invites.ts`).
