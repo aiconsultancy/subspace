@@ -1,14 +1,14 @@
 //! The compact timeline preview and the full issue list on a milestone.
 
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, Context, Div, FontWeight, IntoElement as _, ParentElement as _, Styled as _, div,
 };
 use subspace_api_client::model::{IssueListItem, StateSummary};
 use subspace_framework::dashboard::{
     Tokens,
-    action::{Intent, action_button},
-    feedback,
+    action::{Intent, action_button, row_button},
+    feedback, truncated,
 };
 use subspace_framework::lucide::IconName;
 
@@ -114,25 +114,25 @@ fn retry(id: &str, message: String, tokens: &Tokens, cx: &Context<Projects>) -> 
 
 fn issue_row(row: &IssueListItem, tokens: &Tokens, cx: &Context<Projects>) -> Div {
     let identifier = row.fields.identifier.clone();
+    let label = issue_label(row);
+    let content = h_flex()
+        .min_w_0()
+        .gap_2()
+        .child(Icon::from(IconName::CircleDot).xsmall().flex_shrink_0())
+        .child(truncated::text(
+            format!("milestone-issue-title:{identifier}"),
+            label.clone(),
+        ));
+    let open = row_button(format!("milestone-issue:{identifier}"), label, content)
+        .min_w_0()
+        .on_click(cx.listener(move |this, _, _, cx| this.open_linked_issue(&identifier, cx)));
     h_flex()
         .py_1()
         .gap_3()
         .min_w_0()
         .border_t_1()
         .border_color(tokens.line)
-        .child(
-            h_flex().min_w_0().flex_1().justify_start().child(
-                action_button(
-                    format!("milestone-issue:{identifier}"),
-                    Intent::Quiet,
-                    Some(IconName::CircleDot),
-                    issue_label(row),
-                )
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.open_linked_issue(&identifier, cx)),
-                ),
-            ),
-        )
+        .child(div().min_w_0().flex_1().child(open))
         .child(status(row, tokens))
 }
 

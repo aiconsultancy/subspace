@@ -23,10 +23,13 @@ use subspace_framework::dashboard::{
     contracts::BoardContracts,
     menu::{Menu, MenuAnchors},
     overflow_toolbar::OverflowToolbar,
+    prefs,
     settings::BoardSettings,
+    workspace::{SpaceDock, SpaceDocks},
 };
 use subspace_framework::lucide::IconName;
 
+const INSPECTOR_KEY: &str = "projects.inspector";
 const ACCOUNT_WATCH: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -63,6 +66,7 @@ pub struct Projects {
     trailing: Option<Entity<OverflowToolbar>>,
     projects: Result<Vec<PlanningProject>, Error>,
     selected: Option<String>,
+    inspector_open: bool,
     record: Option<Result<Record, Error>>,
     tab: Tab,
     milestone_pages: milestone_page::Pages,
@@ -118,6 +122,7 @@ impl Dashboard for Projects {
             trailing: None,
             projects: Ok(Vec::new()),
             selected: None,
+            inspector_open: prefs::get(cx, INSPECTOR_KEY).as_deref() != Some("hidden"),
             record: None,
             tab: Tab::Overview,
             milestone_pages: milestone_page::Pages::default(),
@@ -181,6 +186,26 @@ impl Dashboard for Projects {
             },
         };
         Some(status.into())
+    }
+
+    fn docks(&self, _: &App) -> SpaceDocks {
+        SpaceDocks {
+            inspector: Some(self.inspector_open),
+            ..SpaceDocks::NONE
+        }
+    }
+
+    fn toggle_dock(&mut self, dock: SpaceDock, _: &mut Window, cx: &mut Context<Self>) {
+        if dock == SpaceDock::Inspector {
+            self.inspector_open = !self.inspector_open;
+            let visibility = if self.inspector_open {
+                "shown"
+            } else {
+                "hidden"
+            };
+            prefs::set(cx, INSPECTOR_KEY, visibility);
+            cx.notify();
+        }
     }
 
     fn reload(&mut self, _: &mut Window, cx: &mut Context<Self>) {

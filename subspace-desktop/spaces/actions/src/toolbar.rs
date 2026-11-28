@@ -3,17 +3,34 @@
 //! switches are the status bar's (`Dashboard::docks`).
 
 use gpui_kit::component::Disableable as _;
-use gpui_kit::{AnyElement, ClickEvent, Context, WeakEntity};
+use gpui_kit::{AnyElement, ClickEvent, Context, Styled as _, WeakEntity};
 use subspace_framework::dashboard::action::{
     Intent, action_button, icon_button, main_action, menu_button,
 };
 use subspace_framework::dashboard::icon_button::IconButton;
-use subspace_framework::dashboard::workspace;
+use subspace_framework::dashboard::{Tokens, back_label, truncated, workspace};
 use subspace_framework::lucide::IconName;
 
 use crate::{Actions, filter_popup, menus::Picker, model::View, writes::Operation};
 
 pub(crate) fn render(this: &Actions, cx: &mut Context<Actions>) -> workspace::Toolbar {
+    if let Some(open) = this.opened() {
+        let back = icon_button(
+            "actions-page-back",
+            Intent::Quiet,
+            IconName::ArrowLeft,
+            back_label(open.view.title()),
+        )
+        .on_click(cx.listener(|this, _, _, cx| this.select_tab(0, cx)));
+        let tokens = Tokens::current(cx);
+        let reference = truncated::text("actions-page-reference", open.label.clone())
+            .text_size(tokens.secondary_size())
+            .text_color(tokens.fg_strong);
+        return workspace::Toolbar::new("actions-page-toolbar")
+            .leading(back)
+            .leading(reference)
+            .trailing(refresh(cx));
+    }
     let toolbar = workspace::Toolbar::new("actions-list-toolbar");
     // The navigator holds the views; hidden, they stay one menu away.
     let toolbar = if this.docks.navigator {
@@ -25,16 +42,18 @@ pub(crate) fn render(this: &Actions, cx: &mut Context<Actions>) -> workspace::To
         .leading(filter_popup::button(this, cx))
         .leading(picker(this, Picker::Account, cx))
         .leading(picker(this, Picker::Log, cx))
-        .trailing(
-            icon_button(
-                "actions-refresh",
-                Intent::Quiet,
-                IconName::RefreshCw,
-                "Refresh",
-            )
-            .on_click(cx.listener(|this, _, _, cx| this.refresh_all(cx))),
-        )
+        .trailing(refresh(cx))
         .trailing(trigger(this))
+}
+
+fn refresh(cx: &Context<Actions>) -> IconButton {
+    icon_button(
+        "actions-refresh",
+        Intent::Quiet,
+        IconName::RefreshCw,
+        "Refresh",
+    )
+    .on_click(cx.listener(|this, _, _, cx| this.refresh_all(cx)))
 }
 
 /// A menu button that opens its picker from its own anchor.

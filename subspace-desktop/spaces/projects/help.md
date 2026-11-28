@@ -10,9 +10,13 @@ Sign in under **Settings > Account**. Projects uses the same API account and ini
 
 ## Main view
 
-Select a project in the navigator. **Overview** shows its status, health, priority, lead, dates, description, timeline and latest update.
+Select a project in the navigator. **Overview** shows the project timeline,
+description and latest update. The inspector shows the status, health,
+priority, lead and dates in both **Overview** and **Milestones**.
 
-The initiative, **Overview**, **Milestones** and **Back** stay on one line at the top of the pane. In a narrow window, the last of them move into the menu at the end of that line.
+The initiative and project views share one toolbar. When you open a
+milestone, **Back** leads the toolbar. In a narrow window, the project
+views can move into the toolbar menu.
 
 Hover over a milestone on the timeline to see a preview of its linked issues and their statuses. Select a milestone to open its details.
 
@@ -22,7 +26,15 @@ Use the initiative switcher to change the project list. The chosen initiative ap
 
 ## Details
 
-The milestone list shows target dates, status and progress from linked issues. Select a milestone to read its description and see all its linked issues and their statuses. Open an issue to work on it in Issues. **Back** returns to the milestone and its scroll position, and **Back** from the milestone returns to the Overview or Milestones view you came from.
+The milestone list shows target dates, status and progress from linked
+issues. Open a milestone to read its description and linked issues.
+The inspector then shows the milestone's project, status, target date and
+issue progress. Use the inspector switch in the status bar to hide or show
+the panel. While it is hidden, the properties appear in the page.
+
+Open a linked issue to work on it in Issues. **Back** returns to the milestone
+and its scroll position. **Back** from the milestone restores the project view
+you came from.
 
 ## Actions
 

@@ -9,7 +9,7 @@ use gpui_kit::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, div,
 };
-use subspace_framework::dashboard::action::{Intent, action_button};
+use subspace_framework::dashboard::action::{Intent, action_button, row_button};
 use subspace_framework::dashboard::row_menu::MenuChat;
 use subspace_framework::dashboard::{Tokens, feedback, links, rich, truncated, workspace};
 use subspace_framework::lucide::IconName;
@@ -253,19 +253,25 @@ fn issues_section(
 
 fn issue_row(issue: &Issue, cx: &mut Context<Decisions>) -> AnyElement {
     let identifier = issue.identifier.clone();
-    let button = action_button(
+    let label = format!("{} {}", issue.identifier, issue.title);
+    let content = h_flex()
+        .id(SharedString::from(format!(
+            "decisions-issue-content:{}",
+            issue.identifier
+        )))
+        .test_support()
+        .min_w_0()
+        .gap_2()
+        .child(Icon::from(IconName::CircleDot).xsmall().flex_shrink_0())
+        .child(truncated::text(
+            SharedString::from(format!("decisions-issue-title:{}", issue.identifier)),
+            label.clone(),
+        ));
+    let button = row_button(
         SharedString::from(format!("decisions-issue:{}", issue.identifier)),
-        Intent::Quiet,
-        Some(IconName::CircleDot),
-        "",
+        format!("Open issue {}: {}", issue.identifier, issue.title),
+        content,
     )
-    .min_w_0()
-    .max_w_full()
-    .child(truncated::text(
-        SharedString::from(format!("decisions-issue-title:{}", issue.identifier)),
-        format!("{} {}", issue.identifier, issue.title),
-    ))
-    .accessibility_label(format!("Open issue {}: {}", issue.identifier, issue.title))
     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
         open_issue::open(&identifier, this, cx);
     }));

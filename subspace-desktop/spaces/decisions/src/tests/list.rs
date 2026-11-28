@@ -1,5 +1,6 @@
 //! The list, the navigator, the toolbar and the peek.
 
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_api_client::Error;
 use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
@@ -69,6 +70,15 @@ fn one_click_selects_a_decision_and_peeks_without_opening_it(cx: &mut TestAppCon
     );
     assert!(has(cx, "decisions-issue-row:NAV-2"));
     assert!(has(cx, "decisions-issue-row:NAV-5"));
+    cx.update(|window, _| {
+        let first = window.find("decisions-issue-content:NAV-2").bounds();
+        let second = window.find("decisions-issue-content:NAV-5").bounds();
+        assert_eq!(
+            first.left(),
+            second.left(),
+            "different lengths share a text edge"
+        );
+    });
     assert!(has(cx, "decisions-open"));
 }
 

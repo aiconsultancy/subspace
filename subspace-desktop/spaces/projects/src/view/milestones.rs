@@ -3,7 +3,7 @@
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, Context, Div, FontWeight, IntoElement, ParentElement as _, Styled as _, div,
+    AnyElement, Context, Div, FontWeight, Hsla, IntoElement, ParentElement as _, Styled as _, div,
 };
 use subspace_api_client::projects::{
     CompletionSource, IssueProgress, Milestone, MilestoneChange, MilestoneStatus, Move,
@@ -147,7 +147,7 @@ pub(super) fn detail(
                 .text_color(tokens.fg_strong)
                 .child(row.name.clone()),
         )
-        .child(status_line(row, tokens))
+        .children((!this.inspector_open).then(|| status_line(row, tokens)))
         .children(
             row.description
                 .as_deref()
@@ -156,6 +156,7 @@ pub(super) fn detail(
         .children(
             row.issue_progress
                 .as_ref()
+                .filter(|_| !this.inspector_open)
                 .map(|progress| issue_progress(id, progress, tokens)),
         )
         .child(linked_issues::detail(this, id, tokens, cx))
@@ -163,12 +164,7 @@ pub(super) fn detail(
 }
 
 pub(super) fn status_line(row: &Milestone, tokens: &Tokens) -> Div {
-    let (status, color) = match row.status {
-        MilestoneStatus::Unstarted => ("Not started", tokens.muted),
-        MilestoneStatus::Next => ("Next", tokens.accent),
-        MilestoneStatus::Overdue => ("Overdue", tokens.orange),
-        MilestoneStatus::Done => ("Done", tokens.green),
-    };
+    let (status, color) = status_label(row.status, tokens);
     let from_issues = matches!(
         row.completion_source,
         Some(CompletionSource::Issues | CompletionSource::ManualAndIssues)
@@ -190,7 +186,16 @@ pub(super) fn status_line(row: &Milestone, tokens: &Tokens) -> Div {
         }))
 }
 
-fn issue_progress(id: &str, progress: &IssueProgress, tokens: &Tokens) -> Div {
+pub(super) fn status_label(status: MilestoneStatus, tokens: &Tokens) -> (&'static str, Hsla) {
+    match status {
+        MilestoneStatus::Unstarted => ("Not started", tokens.muted),
+        MilestoneStatus::Next => ("Next", tokens.accent),
+        MilestoneStatus::Overdue => ("Overdue", tokens.orange),
+        MilestoneStatus::Done => ("Done", tokens.green),
+    }
+}
+
+pub(super) fn issue_progress(id: &str, progress: &IssueProgress, tokens: &Tokens) -> Div {
     let (percent, summary, excluded) = progress_labels(progress);
     h_flex()
         .flex_wrap()

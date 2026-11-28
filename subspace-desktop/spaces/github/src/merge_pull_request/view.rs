@@ -5,9 +5,12 @@ use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
 };
 use subspace_framework::client_github::model::{GhItem, MergeMethod, PrState};
-use subspace_framework::dashboard::action::{Intent, action_button, dialog_button};
+use subspace_framework::dashboard::action::{
+    Intent, action_button, dialog_button, icon_button, main_action,
+};
 use subspace_framework::dashboard::dialog::{self, DialogWidth};
 use subspace_framework::dashboard::panel::IconName;
+use subspace_framework::dashboard::tokens::ButtonRole;
 use subspace_framework::dashboard::{Tokens, fields};
 
 use super::{CONTEXT, CancelMerge, cancel, open, still_current, submit, target};
@@ -17,6 +20,7 @@ pub(crate) fn button(
     board: &Github,
     item: &GhItem,
     primary: bool,
+    role: ButtonRole,
     cx: &mut Context<Github>,
 ) -> Option<AnyElement> {
     if !is_closable(item) {
@@ -29,13 +33,17 @@ pub(crate) fn button(
         _ => "GitHub has not confirmed that this pull request can be merged.",
     };
     let key = item.key.clone();
-    let intent = if available && primary {
-        Intent::Primary
-    } else {
-        Intent::Neutral
+    let icon = IconName::GitPullRequest;
+    let button = match (role, primary, available) {
+        (ButtonRole::Toolbar, true, true) => main_action("gh-merge", icon, "Merge…"),
+        (ButtonRole::Toolbar, false, _) => {
+            icon_button("gh-merge", Intent::Quiet, icon, "Merge pull request…")
+        }
+        (_, true, true) => action_button("gh-merge", Intent::Primary, Some(icon), "Merge…"),
+        _ => action_button("gh-merge", Intent::Neutral, Some(icon), "Merge…"),
     };
     Some(
-        action_button("gh-merge", intent, Some(IconName::GitPullRequest), "Merge…")
+        button
             .accessibility_label("Merge pull request…")
             .tooltip(tooltip)
             .disabled(board.writing || !available)

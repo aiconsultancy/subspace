@@ -6,13 +6,14 @@ use subspace_framework::client_github::model::{GhItemDetail, ItemKind};
 use subspace_framework::contracts::github::recognition::PullRequestLink;
 use subspace_framework::core::http::{Error, status};
 use subspace_framework::dashboard::list::{Detail, Section, ServiceLink};
-use subspace_framework::dashboard::{DashboardEvent, Glyph, Group, Row, Tone};
+use subspace_framework::dashboard::{DashboardEvent, Glyph, Group, ReturnPoint, Row, Tone};
 
 use crate::{Github, model, rows};
 
 pub(super) struct Target {
     link: PullRequestLink,
     key: String,
+    pub(super) origin: Option<ReturnPoint>,
 }
 
 /// The PRs Space shows only the pull request it asked for; any other detail
@@ -31,11 +32,12 @@ pub(crate) fn requested_pr<T>(
 }
 
 pub(super) fn open(board: &mut Github, url: &str, cx: &mut Context<Github>) -> bool {
+    let origin = board.arrival.take();
     let Some(link) = PullRequestLink::parse(url) else {
         return false;
     };
     let key = loaded_key(board, &link.key()).unwrap_or_else(|| link.key());
-    board.navigation = Some(Target { link, key });
+    board.navigation = Some(Target { link, key, origin });
     board.composer = None;
     board.diff = None;
     board._detail_task = None;

@@ -1,3 +1,4 @@
+use gpui_kit::test::TestWindowExt as _;
 use std::sync::{Arc, Mutex};
 
 use gpui_kit::TestAppContext;
@@ -186,6 +187,28 @@ fn dismissing_a_list_review_conflict_refreshes_the_selected_decision(cx: &mut Te
     click(cx, "decision-author-cancel");
     assert!(!has(cx, "decisions-accept"));
     assert!(has(cx, "decisions-new"));
+}
+
+#[gpui_kit::test]
+fn an_open_proposal_uses_the_record_toolbar(cx: &mut TestAppContext) {
+    let (board, cx) = mount(cx);
+    board.update(cx, |board, cx| board.open_decision("d1", cx));
+    render(cx);
+    cx.update(|window, _| {
+        let toolbar = window.within("decisions-page-toolbar");
+        let back = toolbar.find("decisions-page-back").bounds();
+        let refresh = toolbar.find("decisions-refresh").bounds();
+        let accept = toolbar.find("decision-accept").bounds();
+        assert!(back.right() < refresh.left() && refresh.right() < accept.left());
+    });
+    assert!(has(cx, "decision-history"));
+    assert!(!has(cx, "decisions-new"));
+    assert!(!has(cx, "decisions-search"));
+    click(cx, "decision-accept");
+    assert_eq!(
+        label(cx, "decision-author-dialog").as_deref(),
+        Some("Accept decision?")
+    );
 }
 
 #[gpui_kit::test]

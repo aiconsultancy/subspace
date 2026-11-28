@@ -95,7 +95,9 @@ supersedes another (**Supersedes**); choose the named decision to open it.
 Then come the title, the status and the date, and the sections **Decision**,
 **Context**, **Why**, **Implications** and **Alternatives**, leaving out any
 that are empty, then **Evidence**. The text is no wider than a comfortable
-reading width.
+reading width. The detail toolbar puts Back and the decision reference on
+the left. **Revision history** is the clock button on the right, beside
+the actions available for the open decision.
 
 Beside the page, the inspector shows the decision's facts: status, decided
 on, made by, recorded by, when and by whom it was accepted or rejected, the

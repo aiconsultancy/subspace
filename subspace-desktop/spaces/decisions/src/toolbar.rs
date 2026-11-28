@@ -44,6 +44,9 @@ pub(crate) fn open_tabs(this: &Decisions, cx: &mut Context<Decisions>) -> TabBar
 }
 
 pub(crate) fn render(this: &Decisions, cx: &mut Context<Decisions>) -> workspace::Toolbar {
+    if let Some(page) = this.shown_page() {
+        return crate::page::controls::toolbar(this, page, cx);
+    }
     let mut toolbar = workspace::Toolbar::new("decisions-toolbar");
     // The navigator holds the views; hidden, they stay one menu away.
     if !this.docks.navigator {
@@ -72,19 +75,11 @@ fn trailing_actions(
     this: &Decisions,
     cx: &mut Context<Decisions>,
 ) -> workspace::Toolbar {
-    let can_review = this.shown_page().is_none() && this.review_item().is_some();
+    let can_review = this.review_item().is_some();
     if can_review && this.can_author() {
         toolbar = toolbar.trailing(new_decision(false, cx));
     }
-    toolbar = toolbar.trailing(
-        icon_button(
-            "decisions-refresh",
-            Intent::Quiet,
-            IconName::RefreshCw,
-            "Refresh",
-        )
-        .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
-    );
+    toolbar = toolbar.trailing(refresh(cx));
     if can_review {
         return toolbar.trailing(
             main_action("decisions-accept", IconName::Check, "Accept").on_click(cx.listener(
@@ -98,6 +93,16 @@ fn trailing_actions(
         toolbar = toolbar.trailing(new_decision(true, cx));
     }
     toolbar
+}
+
+pub(crate) fn refresh(cx: &Context<Decisions>) -> IconButton {
+    icon_button(
+        "decisions-refresh",
+        Intent::Quiet,
+        IconName::RefreshCw,
+        "Refresh",
+    )
+    .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx)))
 }
 
 fn new_decision(primary: bool, cx: &Context<Decisions>) -> IconButton {

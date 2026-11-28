@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AppContext as _, Context, Entity, EventEmitter, TestAppContext, VisualTestContext};
 use subspace_framework::client_github::{Client, model::GhItemDetail};
 use subspace_framework::contracts::github::OpenPullRequest;
 use subspace_framework::dashboard::contracts::{self, BoardContracts, Declaration, Role};
 use subspace_framework::dashboard::list::ListDashboard as _;
-use subspace_framework::dashboard::{Dashboard as _, DashboardEvent};
+use subspace_framework::dashboard::{Dashboard as _, DashboardEvent, ReturnPoint};
 
 use crate::{Account, Github, SectionData, sample};
 
@@ -102,6 +103,49 @@ fn known_pr_opens_the_normal_panel_and_unfolds_its_repository(cx: &mut TestAppCo
     board.update_in(cx, |board, window, cx| board.focus.focus(window, cx));
     cx.simulate_keystrokes("escape");
     board.read_with(cx, |board, _| assert!(board.list.open_row().is_none()));
+}
+
+#[gpui_kit::test]
+fn toolbar_back_returns_to_the_conversation_only_for_the_linked_page(cx: &mut TestAppContext) {
+    let (board, cx) = mount(cx, None);
+    let origin = ReturnPoint {
+        board: "irc",
+        label: "#review".into(),
+        location: Some("review-buffer".into()),
+    };
+    let returned = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = cx.update(|_, cx| {
+        let returned = returned.clone();
+        cx.subscribe(&board, move |_, event: &DashboardEvent, _| {
+            if let DashboardEvent::Return(point) = event {
+                returned.borrow_mut().push(point.clone());
+            }
+        })
+    });
+    board.update(cx, |board, cx| {
+        seed(board, cx);
+        board.arrived_from(Some(origin.clone()), cx);
+        assert!(board.open_link(URL, cx));
+    });
+    render(cx);
+    cx.update(|window, cx| {
+        assert_eq!(window.find("gh-page-back").label(), Some("Back to #review"));
+        window.click("gh-page-back", cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(returned.borrow().as_slice(), &[origin]);
+    board.read_with(cx, |board, _| assert!(board.list.open_row().is_none()));
+
+    board.update(cx, |board, cx| crate::page::open_page(board, KEY, cx));
+    render(cx);
+    cx.update(|window, cx| window.click("gh-page-back", cx));
+    cx.run_until_parked();
+    board.read_with(cx, |board, _| assert!(board.list.open_row().is_none()));
+    assert_eq!(
+        returned.borrow().len(),
+        1,
+        "the list opened the second page"
+    );
 }
 
 #[gpui_kit::test]

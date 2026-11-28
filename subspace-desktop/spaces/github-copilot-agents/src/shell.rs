@@ -7,7 +7,7 @@ use gpui_kit::{
     AnyElement, App, ClickEvent, Context, IntoElement as _, ParentElement as _, Styled as _,
     Window, div,
 };
-use subspace_framework::dashboard::action::{Intent, action_button};
+use subspace_framework::dashboard::action::{Intent, icon_button};
 use subspace_framework::dashboard::list;
 use subspace_framework::dashboard::tabs::{self, TabSpec};
 use subspace_framework::dashboard::workspace::{
@@ -106,9 +106,13 @@ impl CopilotAgents {
 
     /// The opened item's toolbar: Back to the list, and its page on GitHub.
     fn item_toolbar(&self, cx: &mut Context<Self>) -> Toolbar {
-        let back = action_button(BACK_ID, Intent::Neutral, Some(IconName::ArrowLeft), "Back")
-            .accessibility_label("Back to the list")
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_list(cx)));
+        let back = icon_button(
+            BACK_ID,
+            Intent::Quiet,
+            IconName::ArrowLeft,
+            "Back to the list",
+        )
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_list(cx)));
         let bar = Toolbar::new(TOOLBAR_ID).leading(back);
         match self.browser_button(cx) {
             Some(browser) => bar.trailing(browser),

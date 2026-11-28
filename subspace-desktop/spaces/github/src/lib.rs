@@ -330,6 +330,7 @@ pub struct Github {
     /// The item whose detail the panel asked for last.
     detail_key: Option<String>,
     navigation: Option<navigation::Target>,
+    arrival: Option<subspace_framework::dashboard::ReturnPoint>,
     detail_generation: u64,
     detail_poll: Option<Task<()>>,
     covered: bool,
@@ -1541,6 +1542,14 @@ impl Dashboard for Github {
         CONTRACTS
     }
 
+    fn arrived_from(
+        &mut self,
+        from: Option<subspace_framework::dashboard::ReturnPoint>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.arrival = from;
+    }
+
     fn open_link(&mut self, url: &str, cx: &mut Context<Self>) -> bool {
         navigation::open(self, url, cx)
     }
@@ -1577,6 +1586,7 @@ impl Dashboard for Github {
             collapsed: prefs::get_list(cx, COLLAPSED_KEY),
             detail_key: None,
             navigation: None,
+            arrival: None,
             detail_generation: 0,
             detail_poll: None,
             covered: false,

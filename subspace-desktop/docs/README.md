@@ -219,6 +219,8 @@ record. [Change records](changes/README.md) explains the convention.
 - [Workspace shell](changes/workspace-shell/intent.md): one layout for every
   Space, the restyle to the owner's mock-ups, the dock switches in the status
   bar and the Twilight Two theme, with the captures and the known gaps.
+- [Native Space toolbars and inspectors](changes/native-space-toolbar-alignment/README.md):
+  interactive list and detail mockups, contextual actions and Back navigation.
 - [Standard right-click menu](changes/standard-context-menu/intent.md): the
   seven groups every menu is built from, in one order.
 - [Add a Space from the title bar](changes/add-space-from-title-bar/intent.md):

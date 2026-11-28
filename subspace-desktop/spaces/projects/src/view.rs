@@ -1,6 +1,7 @@
 //! The Projects workspace with shared navigation and project header.
 
 mod actions;
+mod inspector;
 mod linked_issues;
 mod milestones;
 mod overview;
@@ -39,6 +40,11 @@ impl Render for Projects {
         let workspace = workspace::Workspace::new("projects-workspace")
             .navigator(navigator(self, cx))
             .pane(pane);
+        let workspace = if self.inspector_open {
+            workspace.inspector(inspector::render(self, &tokens, cx))
+        } else {
+            workspace
+        };
         v_flex()
             .track_focus(&self.focus)
             .size_full()
@@ -176,7 +182,7 @@ fn record_body(
                 )
                 .children(initiative_name.map(|name| div().text_color(tokens.muted).child(name))),
         )
-        .child(overview::facts(project, tokens))
+        .children((!this.inspector_open).then(|| overview::facts(project, tokens)))
         .child(overview::stages(project, tokens))
         .child(match this.tab {
             Tab::Overview => overview::render(this, record, tokens, cx),

@@ -10,9 +10,10 @@ use gpui_kit::{
     TestSupportExt as _, div,
 };
 use subspace_framework::client_github::model::{GhCheck, GhItem, GhItemDetail, ItemKind};
-use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
+use subspace_framework::dashboard::action::{Intent, action_button, icon_button, main_action};
 use subspace_framework::dashboard::list::{self, ListDashboard as _};
 use subspace_framework::dashboard::panel::IconName;
+use subspace_framework::dashboard::tokens::ButtonRole;
 use subspace_framework::dashboard::workspace::{self, Inspector};
 use subspace_framework::dashboard::{Tokens, anchored, avatar, feedback, heading_font, links};
 
@@ -98,6 +99,7 @@ impl Github {
                 div()
                     .id("gh-peek-excerpt")
                     .test_support()
+                    .text_size(tokens.secondary_size())
                     .text_color(tokens.fg)
                     .child(text)
                     .into_any_element()
@@ -227,11 +229,10 @@ impl Github {
             .min_w_0()
             .flex_wrap()
             .gap_2()
-            .children(
-                peek::footer_actions(allowed)
-                    .into_iter()
-                    .map(|action| self.item_action_button(action, "top", allowed.approved, &on)),
-            )
+            .children(peek::footer_actions(allowed).into_iter().map(|action| {
+                let reviewed = allowed.approved || self.list.open_row().is_some();
+                self.item_action_button(action, "top", reviewed, &on)
+            }))
             .children(
                 (self.list.open_row().is_none())
                     .then(|| {
@@ -239,6 +240,7 @@ impl Github {
                             self,
                             item,
                             allowed.merge_is_primary(),
+                            ButtonRole::Action,
                             cx,
                         )
                     })
@@ -259,15 +261,16 @@ impl Github {
         let look = peek::look(action, approved);
         let on = on.clone();
         let panel_action = look.action;
-        let button = action_button(
-            (look.id, place.len()),
-            look.intent,
-            Some(look.icon),
-            look.label,
-        )
-        .accessibility_label(look.name)
-        .disabled(self.writing)
-        .on_click(move |_, window, cx| on(panel_action, window, cx));
+        let id = (look.id, place.len());
+        let button = match (place, look.intent) {
+            ("page", Intent::Primary) => main_action(id, look.icon, look.label),
+            ("page", _) => icon_button(id, Intent::Quiet, look.icon, look.name),
+            _ => action_button(id, look.intent, Some(look.icon), look.label),
+        };
+        let button = button
+            .accessibility_label(look.name)
+            .disabled(self.writing)
+            .on_click(move |_, window, cx| on(panel_action, window, cx));
         match action {
             ItemAction::Assign => {
                 anchored::trigger(&self.assignee_anchor, button).into_any_element()
