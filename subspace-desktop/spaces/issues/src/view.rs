@@ -80,16 +80,16 @@ fn body_element(
 
 /// Subspace API's empty wording for the current filters, search or tab.
 pub(crate) fn empty_message(tab: Tab, query: &str, filtered: bool) -> (SharedString, SharedString) {
-    if filtered {
-        return (
-            "No issues match your filters".into(),
-            "Try changing your filters.".into(),
-        );
-    }
     if !query.is_empty() {
         return (
             "No issues match your search".into(),
             "Try other words, or clear the search.".into(),
+        );
+    }
+    if filtered {
+        return (
+            "No issues match your filters".into(),
+            "Try changing your filters.".into(),
         );
     }
     (

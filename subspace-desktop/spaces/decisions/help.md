@@ -61,6 +61,8 @@ already listed under an **Offline** message. While searching, the current
 list stays visible and the toolbar shows **Searching…**. The results replace
 it when they arrive. If the search fails, **Previous results** identifies the
 rows still on screen. Use **Refresh** to retry.
+If a matching decision is hidden by a view, maker, project or tag, use the
+action in the list to clear the blocking choices and keep your search.
 
 ## Toolbar and filters
 

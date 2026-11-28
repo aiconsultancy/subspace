@@ -171,6 +171,34 @@ fn search_keeps_visible_rows_while_loading_and_labels_them_after_failure(cx: &mu
     );
 }
 
+#[gpui_kit::test]
+fn a_decision_hidden_by_status_can_be_revealed_without_clearing_the_search(
+    cx: &mut TestAppContext,
+) {
+    let (board, cx) = mount(cx);
+    click(cx, "decisions-project:project:NAV");
+    click(cx, "decisions-view:accepted");
+    cx.update(|window, cx| {
+        board.update(cx, |board, cx| {
+            board.search.update(cx, |input, cx| {
+                input.set_value("before each burn", window, cx)
+            });
+            search::commit(board, cx);
+        });
+    });
+    render(cx);
+    assert!(rows(&board, cx).is_empty());
+    assert!(labelled(cx, "Show all decisions"));
+    board.update(cx, |board, cx| board.reveal_search(cx));
+    render(cx);
+    assert_eq!(rows(&board, cx), ["decision:d6"]);
+    cx.update(|_, cx| {
+        let board = board.read(cx);
+        assert_eq!(board.query, "before each burn");
+        assert_eq!(board.choice.project.project_key(), Some("NAV"));
+    });
+}
+
 /// Uses a dock's switch as the shell's status bar does: through the Space's
 /// dock contract.
 fn use_dock_switch(board: &Entity<Decisions>, cx: &mut VisualTestContext, dock: SpaceDock) {

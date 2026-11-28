@@ -208,12 +208,19 @@ fn empty_filtered_lists_describe_the_filters(cx: &mut TestAppContext) {
             render(cx);
             cx.update(|_, cx| {
                 let (title, message) = board.read(cx).empty_message();
+                let expected = if query.is_empty() {
+                    ("No issues match your filters", "Try changing your filters.")
+                } else {
+                    (
+                        "No issues match your search",
+                        "Try other words, or clear the search.",
+                    )
+                };
                 assert_eq!(
-                    title.as_ref(),
-                    "No issues match your filters",
+                    (title.as_ref(), message.as_ref()),
+                    expected,
                     "{choice}, {query}"
                 );
-                assert_eq!(message.as_ref(), "Try changing your filters.");
             });
         }
     }

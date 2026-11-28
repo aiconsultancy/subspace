@@ -1,3 +1,4 @@
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
 use std::sync::{
@@ -112,11 +113,18 @@ fn wait_for_probe(board: &Entity<Issues>, cx: &mut VisualTestContext, offline: &
 }
 
 #[gpui_kit::test]
-fn an_empty_active_search_widens_to_all_and_keeps_filters(cx: &mut TestAppContext) {
+fn an_empty_active_search_offers_all_and_keeps_filters(cx: &mut TestAppContext) {
     let offline = fixture(Arc::default());
     let (board, cx) = open(&offline, cx);
     board.update(cx, |board, _| board.filters.priorities = vec![2]);
     search(&board, cx, "review");
+    settle_board(&board, cx, |board| board.search_recovery().is_some());
+    assert_eq!(board.read_with(cx, |board, _| board.tab), Tab::Active);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("issues-search-reveal").visible());
+        board.update(cx, |board, cx| board.reveal_search(cx));
+    });
     settle_board(&board, cx, |board| {
         board.tab == Tab::All && board.listing.issue_count() == Some(1)
     });
@@ -148,7 +156,7 @@ fn no_matches_or_a_failed_probe_keeps_the_search_in_active(cx: &mut TestAppConte
         search(&board, cx, query);
         settle_board(&board, cx, |board| {
             board.listing.issue_count() == Some(0)
-                && matches!(board.search_fallback, SearchFallback::Idle)
+                && matches!(board.search_fallback, SearchFallback::Checked)
         });
         board.update(cx, |board, _| {
             assert_eq!(board.tab, Tab::Active);
@@ -156,13 +164,13 @@ fn no_matches_or_a_failed_probe_keeps_the_search_in_active(cx: &mut TestAppConte
         });
     }
     let requests = offline.mock.requests();
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| probe(&request.path) && search_read(request))
-            .count(),
-        2
-    );
+    for query in ["q=empty", "q=failed"] {
+        assert!(
+            requests
+                .iter()
+                .any(|request| probe(&request.path) && request.path.contains(query))
+        );
+    }
 }
 
 #[gpui_kit::test]
@@ -193,10 +201,10 @@ fn a_manual_tab_choice_takes_precedence_over_a_pending_probe(cx: &mut TestAppCon
     wait_for_probe(&board, cx, &offline);
     board.update(cx, |board, cx| board.set_tab(Tab::Backlog, cx));
     held.store(false, Ordering::Relaxed);
-    settle_board(&board, cx, |board| board.listing.issue_count() == Some(0));
-    board.update(cx, |board, _| {
+    settle_board(&board, cx, |board| board.search_recovery().is_some());
+    board.read_with(cx, |board, _| {
         assert_eq!(board.tab, Tab::Backlog);
-        assert!(matches!(board.search_fallback, SearchFallback::Idle));
+        assert_eq!(board.listing.issue_count(), Some(0));
     });
 }
 

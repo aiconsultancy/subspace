@@ -24,8 +24,14 @@ pub struct WiderSearch {
 
 impl Hub {
     /// Checks for wider matches while the specified scoped search is still settled and empty.
-    pub async fn find_wider_matches(&self, scoped: &ListQuery) -> Option<WiderSearch> {
-        let wider = scoped.wider_search()?;
+    pub async fn find_wider_matches(
+        &self,
+        scoped: &ListQuery,
+        wider: &ListQuery,
+    ) -> Option<WiderSearch> {
+        if scoped == wider {
+            return None;
+        }
         let (reply, receive) = oneshot::channel();
         {
             let mut state = lock(&self.0.state);
@@ -34,7 +40,7 @@ impl Hub {
             }
             let probe = Probe {
                 scoped: scoped.clone(),
-                query: wider,
+                query: wider.clone(),
                 reply: Mutex::new(Some(reply)),
             };
             self.0

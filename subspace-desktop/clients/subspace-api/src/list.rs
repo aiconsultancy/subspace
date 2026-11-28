@@ -107,13 +107,6 @@ impl ListQuery {
         self.tab
     }
 
-    pub(crate) fn wider_search(&self) -> Option<Self> {
-        (self.tab != ListTab::All && !self.search.is_empty()).then(|| Self {
-            tab: ListTab::All,
-            ..self.clone()
-        })
-    }
-
     pub fn grouped_parameters(&self) -> Result<Vec<(String, String)>, Error> {
         let mut parameters = self.filters()?;
         parameters.push(("groupBy".into(), self.dimension().into()));

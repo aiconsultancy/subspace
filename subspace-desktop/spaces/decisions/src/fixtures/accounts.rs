@@ -108,6 +108,9 @@ fn other_answer(plan: &Plan) -> Answer {
         .collect();
     Answer {
         directory: plan.directory.then_some(Ok(directory)),
-        found: Ok(Found { items, next: None }),
+        found: Ok(Found {
+            items,
+            ..Found::default()
+        }),
     }
 }

@@ -102,6 +102,7 @@ pub(crate) struct Listing {
     /// None until a read lands, and again after an account-level failure.
     pub(crate) items: Option<Vec<DecisionListItem>>,
     pub(crate) pages: Pages,
+    pub(crate) reveal: Option<crate::model::Choice>,
     /// The search that produced the visible rows.
     pub(crate) query: String,
     pub(crate) read_at: Option<Instant>,
@@ -200,6 +201,7 @@ mod tests {
         Listing {
             items: Some(fixtures::items()),
             pages: Default::default(),
+            reveal: None,
             query: String::new(),
             read_at: Some(read_at),
             status: Status::Idle,

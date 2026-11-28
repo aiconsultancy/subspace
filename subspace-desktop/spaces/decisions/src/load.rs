@@ -23,6 +23,7 @@ pub(crate) use scope::Continuation;
 #[derive(Clone)]
 pub(crate) struct Plan {
     pub(crate) query: DecisionQuery,
+    pub(crate) probe: Option<crate::model::Choice>,
     pub(crate) directory: bool,
     pub(crate) stop: Stop,
     pub(crate) initiative: Option<String>,
@@ -76,6 +77,7 @@ pub(crate) struct Directory {
 #[derive(Default)]
 pub(crate) struct Found {
     pub(crate) items: Vec<DecisionListItem>,
+    pub(crate) reveal: Option<crate::model::Choice>,
     pub(crate) next: Option<Arc<Continuation>>,
 }
 
@@ -223,14 +225,39 @@ fn read_list(plan: &Plan) -> Leased<Answer> {
             .as_ref()
             .and_then(|directory| directory.as_ref().ok())
             .map_or(plan.projects.as_ref(), |directory| &directory.projects);
-        let found = scope::read(
-            plan,
-            projects,
-            subspace_api_client::backend(),
-            |query, page| client.decisions(query, page),
-        );
+        let backend = subspace_api_client::backend();
+        let mut read = |query: &DecisionQuery, page: &subspace_api_client::PageRequest| {
+            client.decisions(query, page)
+        };
+        let found = scope::read(plan, projects, backend, &mut read).map(|mut found| {
+            found.reveal = reveal(plan, &found, |wider| {
+                scope::first(wider, projects, backend, &mut read)
+                    .ok()
+                    .flatten()
+            });
+            found
+        });
         Answer { directory, found }
     })
+}
+
+/// Check for one match with the list filters relaxed but the same account,
+/// initiative and search. A refusal or an absent match leaves the normal empty state.
+pub(crate) fn reveal(
+    plan: &Plan,
+    found: &Found,
+    match_looking_wider: impl FnOnce(&Plan) -> Option<DecisionListItem>,
+) -> Option<crate::model::Choice> {
+    let choice = plan.probe.as_ref()?;
+    if !found.items.is_empty() || found.next.is_some() || plan.stop.stopped() {
+        return None;
+    }
+    let mut wider = plan.clone();
+    wider.query = DecisionQuery::default();
+    wider.query.q.clone_from(&plan.query.q);
+    let item = match_looking_wider(&wider)?;
+    let reveal = choice.revealing(&item);
+    (reveal != *choice).then_some(reveal)
 }
 
 /// Every part of the answer failed with `error`.

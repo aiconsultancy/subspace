@@ -165,6 +165,40 @@ pub(crate) struct Choice {
 }
 
 impl Choice {
+    /// The controls that let a known match through, with unrelated choices kept.
+    pub(crate) fn revealing(&self, item: &subspace_api_client::model::DecisionListItem) -> Self {
+        let mut choice = self.clone();
+        if self
+            .view
+            .status()
+            .is_some_and(|status| status != item.status)
+        {
+            choice.view = View::All;
+        }
+        if self
+            .maker
+            .kind()
+            .is_some_and(|kind| kind != item.made_by_type)
+        {
+            choice.maker = Maker::Anyone;
+        }
+        if self
+            .project
+            .project_key()
+            .is_some_and(|key| key != item.project_key)
+        {
+            choice.project = ProjectChoice::All;
+        }
+        if self
+            .tag
+            .as_ref()
+            .is_some_and(|tag| !item.tags.contains(tag))
+        {
+            choice.tag = None;
+        }
+        choice
+    }
+
     /// Whether anything narrows the list beyond the search.
     pub(crate) fn narrows(&self) -> bool {
         self.view != View::All

@@ -228,7 +228,7 @@ impl Issues {
             content.read_at = read_at;
         }
         self.show_status(view.status, cx);
-        self.maybe_search_all(cx);
+        self.check_hidden_matches(cx);
     }
 
     fn show_status(&mut self, status: Status, cx: &mut Context<Self>) {
@@ -274,6 +274,9 @@ impl Issues {
         ask: bool,
         cx: &mut Context<Self>,
     ) {
+        if !self.query.is_empty() {
+            groups.retain(|group| !group.rows.is_empty() || group.total != Some(0));
+        }
         crate::listing::prefer_exact(&mut groups, &self.query);
         self.listing.settle_unread(&mut groups);
         let mut waiting = Vec::new();
