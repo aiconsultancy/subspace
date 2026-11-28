@@ -102,7 +102,9 @@ symlink). It has no HTTP route. A request looks like this:
   reruns the existing owner is reused, not renamed or replaced. A `dev:ORG`
   or externally managed organisation with the same suffix is not migrated.
 - `fleet` uses the create-fleet API fields, including optional `ircWebsocketUrl`,
-  `vmHost` and `fleetApiUrl`. Supply the standard channel names from the installer
+  `vmHost` and `fleetApiUrl`. On a rerun, as with the update-fleet API, an
+  optional field the specification omits keeps its saved value; set it to
+  `null` to clear it. Supply the standard channel names from the installer
   for the fleet and each captain. There is one rear admiral and up to 49
   captains. Officer names, IRC nicks, ships and channels each differ ignoring
   case. Officers are matched by name; same-fleet, same-rank active officers keep

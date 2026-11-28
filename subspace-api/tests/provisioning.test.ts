@@ -459,6 +459,21 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
     await expect(provision(input)).rejects.toThrow("Several initiatives match");
   });
 
+  test("a rerun keeps an optional fleet field it omits and clears one it sets to null", async () => {
+    const input = spec("fleet-fields", "fields");
+    const first = await provision({
+      ...input,
+      fleet: { ...input.fleet, vmHost: "vm.example.com" },
+    });
+    const vmHost = async () =>
+      (await database.client.query("SELECT vm_host FROM fleets WHERE id = $1", [first.fleetId]))
+        .rows[0].vm_host;
+    await provision(input);
+    expect(await vmHost()).toBe("vm.example.com");
+    await provision({ ...input, fleet: { ...input.fleet, vmHost: null } });
+    expect(await vmHost()).toBeNull();
+  });
+
   test("a renamed fleet keeps its own initiative instead of gaining a second one", async () => {
     const input = spec("initiative-rename", "rename");
     const first = await provision(input);
