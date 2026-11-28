@@ -7,7 +7,7 @@ use gpui_kit::{Context, Window};
 use subspace_client_irc::{BufferKey, Command, NetworkId, Target};
 use subspace_framework::dashboard::{DashboardEvent, Toast};
 
-use super::{JOIN_REFUSED, Loading, Pending, settle, settled};
+use super::{JOIN_REFUSED, Loading, Pending, settle};
 use crate::{Irc, dock, store, view};
 
 const JOIN_TIMEOUT: Duration = Duration::from_secs(12);
@@ -69,9 +69,6 @@ pub(crate) fn open_thread(
         waiting.buffer == pending.buffer && waiting.loading == Loading::Join
     });
     board.reveal = Some(pending.clone());
-    if settled(board, cx) {
-        return;
-    }
     if needs_join {
         join_channel(&hub, pending, joining, cx);
     } else {

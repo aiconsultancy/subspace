@@ -692,7 +692,8 @@ messages or searchable.
 ### Read notifications in Comms
 
 Open **Comms** at the top of the Channels navigator. It shows one row per
-thread with a mention or a reply in a thread you joined. The count is unread
+thread with a mention or an unread reply. It also keeps activity from
+threads you have taken part in. The count is unread
 activity, and **@** marks unread mentions. Use **Mentions**, **Replies**, or
 **Unread only** to narrow the list.
 

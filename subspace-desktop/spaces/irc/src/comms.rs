@@ -1,4 +1,4 @@
-//! Notification summaries of mentions and replies in threads we joined.
+//! Notification summaries for mentions and thread replies.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -122,7 +122,7 @@ impl Channel {
         self.unread.retain(|seq| loaded.contains(seq));
         self.unread
             .extend(buffer.unread_entries.difference(&self.read).copied());
-        self.summaries = summaries(key, buffer, &self.unread)
+        self.summaries = summaries(key, buffer, (&self.unread, &self.read))
             .into_values()
             .map(Rc::new)
             .collect();
@@ -142,7 +142,11 @@ impl Channel {
     }
 }
 
-fn summaries(key: &BufferKey, buffer: &Buffer, unread: &HashSet<i64>) -> HashMap<String, Summary> {
+fn summaries(
+    key: &BufferKey,
+    buffer: &Buffer,
+    (unread, read): (&HashSet<i64>, &HashSet<i64>),
+) -> HashMap<String, Summary> {
     let entries = buffer
         .entries
         .iter()
@@ -161,7 +165,10 @@ fn summaries(key: &BufferKey, buffer: &Buffer, unread: &HashSet<i64>) -> HashMap
         .filter(|entry| !entry.line.own && !buffer.folded.contains(&entry.seq))
         .filter_map(|entry| {
             let root = roots.root(&entry.line)?;
-            let reply = entry.line.reply_to.is_some() && participated.contains(root);
+            let reply = entry.line.reply_to.is_some()
+                && (participated.contains(root)
+                    || unread.contains(&entry.seq)
+                    || read.contains(&entry.seq));
             (entry.highlight || reply).then_some((root, entry, reply))
         });
     collect_summaries(key, &original, recent, unread)

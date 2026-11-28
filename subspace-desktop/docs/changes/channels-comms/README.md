@@ -13,8 +13,8 @@ people one place to catch up on mentions and replies.
 - The fleet navigator shows the current audit and ship channels once.
   **Other** starts collapsed and can be opened using the list's existing
   disclosure control.
-- **Comms** summarises mentions and replies to threads the user participated
-  in. Its badge counts unread activity and marks unread mentions with **@**.
+- **Comms** summarises mentions and unread thread replies, and keeps earlier
+  activity in threads the user participated in. Its badge counts unread activity and marks unread mentions with **@**.
   The **All**, **Mentions**, **Replies**, and **Unread only** filters change
   the visible summaries. Selecting a row opens the right-hand Thread
   inspector and marks that summary read for the session. Other messages

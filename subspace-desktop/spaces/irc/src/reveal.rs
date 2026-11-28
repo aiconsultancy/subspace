@@ -91,9 +91,6 @@ pub(crate) fn settle(board: &mut Irc, cx: &mut Context<Irc>) {
     let Some(pending) = board.reveal.clone() else {
         return;
     };
-    if settled(board, cx) {
-        return;
-    }
     let Some(hub) = board.hub.clone() else {
         return;
     };
@@ -108,7 +105,10 @@ pub(crate) fn settle(board: &mut Irc, cx: &mut Context<Irc>) {
     {
         return;
     }
-    if held.recall.awaiting(&pending.buffer) {
+    if settled(board, cx) {
+        return;
+    }
+    if hub.read(cx).recall.awaiting(&pending.buffer) {
         return;
     }
     if pending.loading != Loading::History && connected {

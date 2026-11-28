@@ -134,6 +134,75 @@ fn removing_the_network_clears_comms_without_waiting_for_irc(cx: &mut TestAppCon
     });
 }
 
+#[gpui_kit::test]
+fn a_cached_link_waits_for_channel_membership_before_opening(cx: &mut TestAppContext) {
+    let (board, hub, cx) = mount(cx, settings());
+    let room = channel("#example-cached");
+    let mut root = message(&room, "captain", "Cached request", 1);
+    root.id = Some("cached".into());
+    hub.update(cx, |hub, _| hub.state.restore(&room, vec![root]));
+    inject(
+        &hub,
+        vec![Event::Status {
+            network: room.network.clone(),
+            status: ConnectionStatus::Connected {
+                nick: "subspace".into(),
+            },
+        }],
+        cx,
+    );
+    board.update_in(cx, |board, window, cx| {
+        crate::reveal::open_thread(
+            board,
+            (&room.network, "#example-cached"),
+            "cached",
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    board.read_with(cx, |board, _| {
+        assert!(board.threads.chosen(&room).is_none())
+    });
+    hub.read_with(cx, |hub, _| {
+        assert!(hub.sent().iter().any(|command| matches!(
+            command, Command::Join { channel, .. } if channel == "#example-cached"
+        )));
+    });
+
+    inject(
+        &hub,
+        vec![Event::Joined {
+            buffer: room.clone(),
+        }],
+        cx,
+    );
+    board.read_with(cx, |board, _| {
+        assert_eq!(board.threads.chosen(&room), Some("cached"))
+    });
+}
+
+#[gpui_kit::test]
+fn reading_a_channel_preserves_an_offscreen_threads_unread_reply_in_comms(cx: &mut TestAppContext) {
+    let (_, hub, cx) = mount(cx, settings());
+    let room = channel("#example-ship");
+    let mut root = message(&room, "mira", "Earlier discussion", 1);
+    root.id = Some("earlier".into());
+    inject(&hub, vec![Event::Line(root)], cx);
+    hub.update(cx, |hub, cx| {
+        hub.set_visible(Some(room.clone()), vec![room.clone()], cx)
+    });
+    let mut reply = message(&room, "captain", "New information", 2);
+    reply.id = Some("new".into());
+    reply.reply_to = Some("earlier".into());
+    inject(&hub, vec![Event::Line(reply)], cx);
+    hub.read_with(cx, |hub, _| {
+        assert_eq!(hub.state.buffer(&room).unwrap().unread, 0);
+        assert_eq!(hub.comms.unread(), (1, false));
+        assert_eq!(hub.comms.summaries()[0].key.root, "earlier");
+    });
+}
+
 fn requested_history(commands: &[Command], destination: &subspace_client_irc::BufferKey) -> bool {
     commands.iter().any(|command| {
         matches!(

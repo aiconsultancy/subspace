@@ -33,7 +33,7 @@ pub(crate) use model::{MAX_REPLIES, Step, StepKind, Thread, Timeline};
 
 use crate::Irc;
 use crate::fleet::{ChannelKind, Roster};
-use crate::state::Network;
+use crate::state::{IrcState, Network};
 
 /// The capability the server's reply tag needs.
 pub(crate) const MESSAGE_TAGS: &str = "message-tags";
@@ -61,6 +61,14 @@ pub(crate) fn reply_refusal(network: Option<&Network>) -> Option<&'static str> {
     }
     let tags = network.caps.iter().any(|cap| cap == MESSAGE_TAGS);
     (!tags).then_some(NO_REPLY_TAG)
+}
+
+/// Whether a thread can accept a reply to its channel now.
+pub(crate) fn channel_reply_refusal(state: &IrcState, buffer: &BufferKey) -> Option<&'static str> {
+    reply_refusal(state.network(&buffer.network)).or_else(|| {
+        (!state.buffer(buffer).is_some_and(|held| held.joined))
+            .then_some("Join this channel to reply in its thread.")
+    })
 }
 
 /// Why replying waits for the network.

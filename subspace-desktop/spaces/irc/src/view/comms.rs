@@ -120,7 +120,7 @@ pub(super) fn pane(board: &Irc, cx: &mut Context<Irc>) -> workspace::Pane {
         } else {
             (
                 "No notifications yet",
-                "Mentions and replies to threads you join appear here.",
+                "Mentions and unread thread replies appear here.",
             )
         };
         feedback::empty(&tokens, "irc-comms-empty", title, hint).into_any_element()
