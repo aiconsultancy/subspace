@@ -15,7 +15,6 @@ use subspace_framework::lucide::IconName;
 pub(crate) fn message(
     original: &Entry,
     continues: bool,
-    unread: bool,
     context: &RowContext,
     cx: &App,
 ) -> (AnyElement, Vec<String>) {
@@ -71,8 +70,8 @@ pub(crate) fn message(
         .children(marks::focus_ring(entry, context, &tokens, cx))
         .children(toolbar);
     let row = measure_focused(hovered(row, entry.seq, context), entry, context);
-    let selected = selected_thread || entry.highlight || context.target == Some(entry.seq);
-    let row = filled(row, RowFill::of(selected, unread, &tokens));
+    let selected = selected_thread || context.target == Some(entry.seq);
+    let row = filled(row, RowFill::of(selected, &tokens));
     (message_frame(id, row, continues), identifiers)
 }
 

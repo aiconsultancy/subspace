@@ -1488,8 +1488,7 @@ its start; a fix needs a Kit selection adapter for virtual lists. Right-click
 The unread divider, **NEW SINCE YOU LEFT · N** with the number of messages
 that arrived since the conversation was last read (spoken as *N new
 messages since you left*), is also a label: it does not interrupt selection
-or add its label to copied text. Unread row fills remain visible behind a
-text selection. Literal links and references retain their native look and
+or add its label to copied text. Literal links and references retain their native look and
 cards through Kit inline objects. Right-click **Copy** on an issue link
 copies the selection or the link's displayed text. A primary click opens
 the issue in the current Issues board, including while the preview loads.
@@ -1951,8 +1950,9 @@ messages after its anchor.
   compact lines, so they read as a column. Senders' names are semibold in
   their tone.
   Every row but the day divider is tinted under the pointer with the foreground
-  at low opacity; a row that mentions us keeps its `select` fill
-  (`transcript/fill.rs`). Message and compact-line text is capped at
+  at low opacity. The selected thread root and a search result use a stronger
+  foreground tint. Mentions are marked inline and unread messages start at
+  the unread divider (`transcript/fill.rs`). Message and compact-line text is capped at
   `workspace::READING_WIDTH_PX`; the row's fill runs the pane's width.
   `thread_status.rs` reads the progress marker and `thread_status/trust.rs`
   decides which notices the server vouches for; `state/folding.rs` keeps

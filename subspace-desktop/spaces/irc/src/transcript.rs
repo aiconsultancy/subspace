@@ -147,18 +147,17 @@ pub(crate) fn row(
 ) -> (AnyElement, Vec<String>) {
     let tokens = Tokens::current(cx);
     let entry = |at: usize| held.entries.get(at);
-    let unread = |entry: &Entry| held.shown_unread().contains(&entry.seq);
     let element = match row {
         Row::History => history_control(origin, held.history.state == HistoryState::Loading),
         Row::UnreadDivider(seq) => unread_divider(seq, held.shown_unread().len(), &tokens),
         Row::Item(Item::Day(date)) => day_separator(date, context.today, &tokens),
         Row::Item(Item::Message { at, continues }) => {
             return entry(at)
-                .map(|entry| line::message(entry, continues, unread(entry), context, cx))
+                .map(|entry| line::message(entry, continues, context, cx))
                 .unwrap_or_else(|| (div().into_any_element(), Vec::new()));
         }
         Row::Item(Item::Line(at)) => entry(at)
-            .map(|entry| line::line(entry, unread(entry), &tokens, cx))
+            .map(|entry| line::line(entry, context.target == Some(entry.seq), &tokens, cx))
             .unwrap_or_else(|| div().into_any_element()),
         Row::Item(Item::Membership { first, last }) => {
             let run: Vec<&Entry> = held.entries.range(first..=last).collect();

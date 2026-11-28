@@ -2,7 +2,7 @@
 //! message under its sender's avatar and name (or,
 //! continuing their group, with its time shown on hover), a compact server
 //! line, or a condensed run of membership lines. Every row but the day pill
-//! is tinted under the pointer, as in Slack (`super::fill`).
+//! is tinted under the pointer (`super::fill`).
 
 use std::{rc::Rc, sync::Arc};
 
@@ -298,7 +298,7 @@ fn compact(
 }
 
 /// A server, topic, mode or error line, as compact as before.
-pub(super) fn line(entry: &Entry, unread: bool, tokens: &Tokens, cx: &App) -> AnyElement {
+pub(super) fn line(entry: &Entry, selected: bool, tokens: &Tokens, cx: &App) -> AnyElement {
     let view = style::line_view(entry);
     let id: SharedString = format!("irc-line:{}", entry.seq).into();
     let spoken = subspace_client_irc::format::strip(&view.styled.text);
@@ -317,7 +317,7 @@ pub(super) fn line(entry: &Entry, unread: bool, tokens: &Tokens, cx: &App) -> An
         entry,
         spoken,
         text,
-        (tokens, RowFill::of(entry.highlight, unread, tokens), cx),
+        (tokens, RowFill::of(selected, tokens), cx),
     )
 }
 
@@ -344,6 +344,6 @@ pub(super) fn membership(run: &[&Entry], tokens: &Tokens, cx: &App) -> AnyElemen
         first,
         summary,
         text,
-        (tokens, RowFill::of(false, false, tokens), cx),
+        (tokens, RowFill::of(false, tokens), cx),
     )
 }

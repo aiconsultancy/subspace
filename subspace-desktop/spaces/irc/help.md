@@ -889,7 +889,7 @@ reaches its size limit.
 ### Notifications and read state
 
 Opening a channel or private conversation marks it read. A **NEW SINCE YOU
-LEFT** line with the number of new messages, and a tinted background, show
+LEFT** line with the number of new messages shows
 which messages were unread when you opened it.
 With `draft/read-marker`, the read position syncs with your other clients,
 and reading elsewhere clears unread counts here.
