@@ -96,13 +96,10 @@ pub(crate) fn settle(board: &mut Irc, cx: &mut Context<Irc>) {
     };
     let held = hub.read(cx);
     let connected = crate::listing::connected(&held.state, &pending.buffer.network);
-    if pending.loading == Loading::Join
-        && connected
-        && !held
-            .state
-            .buffer(&pending.buffer)
-            .is_some_and(|held| held.joined)
-    {
+    if waiting_to_join(&pending, &held.state) {
+        if !connected {
+            finish(board, &pending, cx);
+        }
         return;
     }
     if settled(board, cx) {
@@ -121,9 +118,19 @@ pub(crate) fn settle(board: &mut Irc, cx: &mut Context<Irc>) {
     finish(board, &pending, cx);
 }
 
+fn waiting_to_join(pending: &Pending, state: &crate::state::IrcState) -> bool {
+    pending.loading == Loading::Join
+        && !state
+            .buffer(&pending.buffer)
+            .is_some_and(|held| held.joined)
+}
+
 fn finish(board: &mut Irc, pending: &Pending, cx: &mut Context<Irc>) {
     board.reveal = None;
-    if pending.thread && open_retained_replies(board, pending, cx) {
+    if pending.loading != Loading::Join
+        && pending.thread
+        && open_retained_replies(board, pending, cx)
+    {
         return;
     }
     let message = if pending.loading == Loading::Join {
