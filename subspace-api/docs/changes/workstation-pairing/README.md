@@ -131,8 +131,14 @@ On success standard output contains one JSON line, with these fields:
 | `grant`                                                | `{id, token, expiresAt, maxUses}`: UUID, opaque `senr1.` token, UTC timestamp and integer |
 
 Pass only the grant token to Stargate's existing enrolment flow through a private
-channel. It is fleet-scoped, valid for ten minutes and has one use per officer in
-the specification; as with any fleet grant, a new certificate consumes one use.
+channel. It is fleet-scoped, valid for ten minutes and has as many uses as the
+specification has officers; as with any fleet grant, a new certificate consumes
+one use. The roster does not bind it: until it is spent or expires, it can
+enrol a new officer of any name in that fleet or add a key to any existing
+officer of the fleet, the rear admiral included. Treat it as that authority.
+Carry it, and present it to the enrolment endpoint, only over authenticated TLS
+or a trusted local or tunnelled transport: the command checks that the device
+audience is https or loopback, not the address Stargate enrols at.
 The gateway should keep its existing officer keys on reruns. Provision close to
 enrolment: each successful run returns a fresh grant; earlier grants keep their
 original expiry and use limit. Do not print the response to a setup log or keep
