@@ -184,14 +184,22 @@ fn a_cached_link_waits_for_channel_membership_before_opening(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn reading_a_channel_preserves_an_offscreen_threads_unread_reply_in_comms(cx: &mut TestAppContext) {
-    let (_, hub, cx) = mount(cx, settings());
+    let (board, hub, cx) = mount(cx, settings());
     let room = channel("#example-ship");
     let mut root = message(&room, "mira", "Earlier discussion", 1);
     root.id = Some("earlier".into());
-    inject(&hub, vec![Event::Line(root)], cx);
-    hub.update(cx, |hub, cx| {
-        hub.set_visible(Some(room.clone()), vec![room.clone()], cx)
-    });
+    inject(
+        &hub,
+        vec![
+            Event::Joined {
+                buffer: room.clone(),
+            },
+            Event::Line(root),
+        ],
+        cx,
+    );
+    board.update(cx, |board, cx| crate::view::reveal(board, &room, cx));
+    cx.run_until_parked();
     let mut reply = message(&room, "captain", "New information", 2);
     reply.id = Some("new".into());
     reply.reply_to = Some("earlier".into());
