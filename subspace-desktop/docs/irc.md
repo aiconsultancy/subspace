@@ -437,16 +437,16 @@ in `live.rs` and `live/`.
   control and bidirectional formatting characters, put on one line and
   drawn as text; a ship keeps at most 24 crew lines, chosen before they are
   formatted, while its figures count everyone.
-- **Live** means `FleetState::is_live()`: streamed or polled. Otherwise no
-  live figure shows anywhere, and nothing stale is kept. A ship's crew
-  detail that Stargate kept after a failed read (`detailStale`), or that
-  the overview or the detail marks unavailable, gives no crew lines (the
-  overview's totals stand in), and a kept overview (`overviewStale`) shows
-  no ships. Each says so: the Ship and Starbase tabs say **Not current**
-  for a kept overview and **Waiting** before the first one, and **Not
-  listed** only when a current overview lacks the ship; the crew says its
-  detail is kept from an earlier read rather than that it has not
-  arrived.
+- **Live** means `FleetState::is_live()`: streamed or polled. A kept
+  overview (`overviewStale`) supplies no current ships. Kept crew detail
+  (`detailStale`) and unavailable samples supply no current crew lines.
+  The open Ship tab waits for the initial complete read, then keeps the
+  last complete captain and crew details during a refresh. It marks
+  those details as last known after five seconds and updates them when
+  the next complete read arrives. A new stream keeps earlier samples
+  stale until their replacements arrive. The Starbase tab still says
+  **Not current** for a kept overview and **Waiting** before the first
+  one. **Not listed** means the current overview lacks the ship.
 - **A ship's dot** follows its crew: a crew member is working while one of
   its contexts has a current task, as Stargate counts `busy`. From the
   ship's detail once it arrives, else the overview's `crew.busy`. A ship

@@ -94,8 +94,7 @@ impl FleetLive {
         Self { state, ships, kept }
     }
 
-    /// Whether the fleet is live but shows no ship because its latest
-    /// overview is one Stargate kept, not a current one.
+    /// Whether the fleet is live but its overview is from an earlier read.
     pub(crate) fn kept(&self) -> bool {
         self.kept
     }
