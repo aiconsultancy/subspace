@@ -22,7 +22,7 @@ pub(crate) use keys::{focused, focused_upload, has_card};
 use std::{rc::Rc, sync::Arc};
 
 use chrono::Local;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle,
@@ -525,16 +525,7 @@ impl Render for Conversation {
             return find::scope(self, content, cx);
         }
         let tokens = Tokens::current(cx);
-        let header = self.standalone_title(cx).map(|title| {
-            h_flex()
-                .flex_shrink_0()
-                .min_h(tokens.toolbar_height)
-                .px_3()
-                .gap_2()
-                .border_b_1()
-                .border_color(tokens.line)
-                .child(title)
-        });
+        let header = self.standalone_header(&tokens, cx);
         let transcript = keys::transcript(self, cx)
             .flex_1()
             .min_h_0()
