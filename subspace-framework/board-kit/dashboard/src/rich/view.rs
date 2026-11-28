@@ -1,12 +1,16 @@
 //! Retained native rich-text state with the shared text-menu policy.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use gpui_kit::base::{TextView, TextViewState, TextViewStyle};
+use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::{
-    AnyElement, App, Context, ElementId, Entity, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, RenderOnce, SharedString, StyleRefinement, Styled, Subscription,
-    TestSupportExt as _, WeakEntity, Window, div,
+    AnyElement, App, Context, ElementId, Entity, InteractiveElement, IntoElement, ParentElement,
+    RenderOnce, SharedString, StyleRefinement, Styled, Subscription, TestSupportExt as _,
+    WeakEntity, Window, div,
 };
 
 use crate::row_menu::MenuChat;
@@ -16,12 +20,14 @@ use super::menu;
 
 pub(super) type Claim = Arc<dyn Fn(&str, &mut Window, &mut App) -> bool + Send + Sync>;
 type Configure = Box<dyn FnOnce(TextView, RichTextContext) -> TextView>;
+type MenuHost = Box<
+    dyn FnOnce(AnyElement, &menu::RichMenu, RichTextContext, menu::Options, bool) -> AnyElement,
+>;
 
 struct Owner {
     state: Entity<TextViewState>,
     target: Arc<Mutex<Option<String>>>,
-    #[cfg(feature = "gpui-kit-text-patch")]
-    menu_press: menu::LinkMenuPress,
+    menu: menu::RichMenu,
     _subscription: Subscription,
 }
 impl Owner {
@@ -31,8 +37,7 @@ impl Owner {
         Self {
             state,
             target: Arc::default(),
-            #[cfg(feature = "gpui-kit-text-patch")]
-            menu_press: menu::LinkMenuPress::default(),
+            menu: menu::RichMenu::default(),
             _subscription: subscription,
         }
     }
@@ -44,32 +49,6 @@ impl Owner {
         self.state = state;
         self.target = Arc::default();
         cx.notify();
-    }
-
-    fn wrap_menu<E>(
-        &self,
-        root: E,
-        context: RichTextContext,
-        chat: MenuChat,
-        show_menu: bool,
-    ) -> AnyElement
-    where
-        E: InteractiveElement + IntoElement + ParentElement + Styled + 'static,
-    {
-        let clear = context.clone();
-        let root = root.capture_any_mouse_down(move |event, _, _| {
-            if event.button == MouseButton::Right {
-                clear.clear_link();
-            }
-        });
-        if !show_menu {
-            return root.into_any_element();
-        }
-        #[cfg(feature = "gpui-kit-text-patch")]
-        let menu = self.menu_press.wrap(root, context, chat);
-        #[cfg(not(feature = "gpui-kit-text-patch"))]
-        let menu = menu::with_source(root, menu::Source::Rich(context), chat);
-        menu.into_any_element()
     }
 }
 
@@ -172,7 +151,8 @@ pub struct RichText {
     claim: Claim,
     configure: Vec<Configure>,
     style: StyleRefinement,
-    chat: MenuChat,
+    menu_options: menu::Options,
+    menu_host: Option<MenuHost>,
     menu: bool,
     fallback: Option<String>,
 }
@@ -186,7 +166,8 @@ impl RichText {
             claim,
             configure: Vec::new(),
             style: StyleRefinement::default(),
-            chat: MenuChat::Offered,
+            menu_options: menu::Options::new(MenuChat::Offered),
+            menu_host: None,
             menu: true,
             fallback: None,
         }
@@ -216,7 +197,25 @@ impl RichText {
     }
 
     pub fn chat(mut self, chat: MenuChat) -> Self {
-        self.chat = chat;
+        self.menu_options.chat = chat;
+        self
+    }
+
+    /// Enclose the selectable text in a larger region that owns its native menu.
+    /// The menu retains selection and link context from the text itself.
+    pub fn menu_host<E>(mut self, wrap: impl FnOnce(AnyElement) -> E + 'static) -> Self
+    where
+        E: InteractiveElement + IntoElement + ParentElement + Styled + 'static,
+    {
+        self.menu_host = Some(Box::new(move |text, owner, context, options, menu| {
+            owner.wrap(wrap(text), context, options, menu)
+        }));
+        self
+    }
+
+    /// Place a contextual action before the shared text commands.
+    pub fn menu_action(mut self, item: impl Fn() -> PopupMenuItem + 'static) -> Self {
+        self.menu_options.leading = Some(Rc::new(item));
         self
     }
 
@@ -235,7 +234,6 @@ impl Styled for RichText {
 
 impl RenderOnce for RichText {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let source = self.source.clone();
         let scope = crate::find_in_page::current(cx);
         let pooled = scope.as_ref().and_then(|scope| {
             scope
@@ -243,13 +241,7 @@ impl RenderOnce for RichText {
                 .read(cx)
                 .pooled(&self.id, scope.identity.as_ref())
         });
-        let initial = pooled.clone();
-        let owner = window.use_keyed_state((self.id.clone(), "rich-owner"), cx, |_, cx| {
-            Owner::new(&source, initial, cx)
-        });
-        if let Some(state) = pooled {
-            owner.update(cx, |owner, cx| owner.adopt(state, cx));
-        }
+        let owner = retained_owner(&self.id, &self.source, pooled, window, cx);
         let state = owner.read(cx).state.clone();
         if let Some(scope) = &scope {
             scope.session.update(cx, |session, cx| {
@@ -280,11 +272,42 @@ impl RenderOnce for RichText {
             .test_support()
             .refine_style(&self.style)
             .child(view);
-        let root = owner
-            .read(cx)
-            .wrap_menu(root, context, self.chat, self.menu);
-        crate::find_in_page::scope::measured(scope, self.id, root)
+        let menu = &owner.read(cx).menu;
+        match self.menu_host {
+            Some(host) => {
+                let text =
+                    crate::find_in_page::scope::measured(scope, self.id, root.into_any_element());
+                host(
+                    text.into_any_element(),
+                    menu,
+                    context,
+                    self.menu_options,
+                    self.menu,
+                )
+            }
+            None => {
+                let root = menu.wrap(root, context, self.menu_options, self.menu);
+                crate::find_in_page::scope::measured(scope, self.id, root).into_any_element()
+            }
+        }
     }
+}
+
+fn retained_owner(
+    id: &ElementId,
+    source: &str,
+    pooled: Option<Entity<TextViewState>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Owner> {
+    let initial = pooled.clone();
+    let owner = window.use_keyed_state((id.clone(), "rich-owner"), cx, |_, cx| {
+        Owner::new(source, initial, cx)
+    });
+    if let Some(state) = pooled {
+        owner.update(cx, |owner, cx| owner.adopt(state, cx));
+    }
+    owner
 }
 
 fn configure_view(

@@ -65,7 +65,10 @@ fn menu_labels(
     at: (f32, f32),
     cx: &mut TestAppContext,
 ) -> Vec<String> {
-    cx.update(gpui_kit::init);
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::rich::set_local_chat_enabled(cx, true);
+    });
     let (_, cx) = cx.add_window_view(|_, _| Surfaces(chat));
     let options = ClickOptions::new()
         .with_offset(point(px(at.0), px(at.1)))
@@ -87,7 +90,7 @@ fn menu_labels(
 #[gpui_kit::test]
 fn a_state_offers_the_chat_by_default(cx: &mut TestAppContext) {
     let labels = menu_labels(MenuChat::Offered, "state-host", STATE_TITLE, cx);
-    assert_eq!(labels, ["Copy", "Select all", "Add to chat"]);
+    assert_eq!(labels, ["Copy", "Select all", "Add to local model chat"]);
 }
 
 #[gpui_kit::test]

@@ -412,6 +412,8 @@ impl SubspaceApp {
 
     /// Open the chat pane when it was open last time; returns whether it is.
     fn restore_chat(chat: &Entity<ChatPanel>, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let enabled = !chat.read(cx).is_disabled();
+        subspace_dashboard::rich::set_local_chat_enabled(cx, enabled);
         if cx
             .try_global::<crate::notifications::Runtime>()
             .is_some_and(|runtime| runtime.pending.is_some())

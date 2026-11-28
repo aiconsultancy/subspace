@@ -6,9 +6,9 @@ use std::{cell::Cell, rc::Rc};
 use gpui_kit::component::menu::{ContextMenu, PopupMenu};
 use gpui_kit::{App, InteractiveElement, MouseButton, ParentElement, Styled, WeakEntity, Window};
 
-use crate::{anchored::AnchoredContextMenuExt as _, row_menu::MenuChat};
+use crate::anchored::AnchoredContextMenuExt as _;
 
-use super::{RichTextContext, Source, build};
+use super::{Options, RichTextContext, Source, build};
 
 #[derive(Default)]
 enum Press {
@@ -26,7 +26,7 @@ impl LinkMenuPress {
         &self,
         element: E,
         context: RichTextContext,
-        chat: MenuChat,
+        options: Options,
     ) -> ContextMenu<E>
     where
         E: InteractiveElement + ParentElement + Styled,
@@ -38,6 +38,8 @@ impl LinkMenuPress {
         let inside_source = source.clone();
         let outside_source = source.clone();
         let press = self.clone();
+        let inside_options = options.clone();
+        let outside_options = options.clone();
         element
             .capture_any_mouse_down(move |event, _, _| {
                 if event.button == MouseButton::Right {
@@ -46,32 +48,33 @@ impl LinkMenuPress {
             })
             .capture_any_mouse_up(move |event, window, cx| {
                 if event.button == MouseButton::Right {
-                    inside.finish(&inside_source, chat, window, cx);
+                    inside.finish(&inside_source, &inside_options, window, cx);
                 }
             })
             .on_mouse_up_out(MouseButton::Right, move |_, window, cx| {
-                outside.finish(&outside_source, chat, window, cx);
+                outside.finish(&outside_source, &outside_options, window, cx);
             })
             .anchored_context_menu(move |menu, window, cx| match press.0.take() {
                 Press::RightDown => {
                     press.0.set(Press::WaitingForLink(cx.weak_entity()));
                     menu
                 }
-                _ => build(menu, &source, chat, window, cx),
+                _ => build(menu, &source, &options, window, cx),
             })
     }
 
-    fn finish(&self, source: &Source, chat: MenuChat, window: &mut Window, cx: &mut App) {
+    fn finish(&self, source: &Source, options: &Options, window: &mut Window, cx: &mut App) {
         let Press::WaitingForLink(menu) = self.0.take() else {
             return;
         };
         // Link handlers run in the bubble phase and may stop propagation.
         // Read the destination after dispatch has completed.
         let source = source.clone();
+        let options = options.clone();
         window.defer(cx, move |window, cx| {
             _ = menu.update(cx, |menu, cx| {
                 menu.rebuild(window, cx, |menu, window, cx| {
-                    build(menu, &source, chat, window, cx)
+                    build(menu, &source, &options, window, cx)
                 });
             });
         });
