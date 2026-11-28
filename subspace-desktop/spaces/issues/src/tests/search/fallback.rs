@@ -11,7 +11,7 @@ use crate::{
     Issues,
     board::SearchFallback,
     listing::Status,
-    model::Tab,
+    model::{SubIssues, Tab},
     tests::offline::{Offline, board_with_hub, offline_with, row, settle_board, wait_for},
 };
 
@@ -146,6 +146,34 @@ fn an_empty_active_search_offers_all_and_keeps_filters(cx: &mut TestAppContext) 
     for pair in ["project=SUB", "priority=2", "parent=none", "q=review"] {
         assert!(probes[0].path.contains(pair), "probe keeps {pair}");
     }
+}
+
+#[gpui_kit::test]
+fn search_can_reveal_a_sub_issue_in_the_nested_view(cx: &mut TestAppContext) {
+    let offline = offline_with(|request| {
+        if !search_read(request) {
+            return None;
+        }
+        if request.path.contains("parent=none") {
+            return Some(results(Vec::new(), 0));
+        }
+        let mut child = row("5", "A nested issue");
+        child["parentId"] = json!("parent");
+        Some(results(vec![child], 1))
+    });
+    let (board, cx) = open(&offline, cx);
+    search(&board, cx, "nested");
+    settle_board(&board, cx, |board| board.search_recovery().is_some());
+    board.update(cx, |board, cx| {
+        assert_eq!(board.search_recovery().unwrap().action(), "Show sub-issues");
+        board.reveal_search(cx);
+    });
+    settle_board(&board, cx, |board| board.issue("issue:5").is_some());
+    board.read_with(cx, |board, _| {
+        assert_eq!(board.sub_issues, SubIssues::Nested);
+        assert_eq!(board.tab, Tab::Active);
+        assert_eq!(board.query, "nested");
+    });
 }
 
 #[gpui_kit::test]

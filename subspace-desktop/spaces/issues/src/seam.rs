@@ -267,23 +267,20 @@ impl Issues {
         self.sync_lines(cx);
     }
 
-    /// The list's first page of each group. An unfolded group whose rows
-    /// wait is read at once when `ask`; not while the hub reads a new list,
-    /// which queues no page, and whose own groups ask when they arrive.
+    /// Read first pages for open groups, and for folded groups in the nested
+    /// view since they can contain children of an open group’s parents.
     pub(crate) fn show_groups(
         &mut self,
         mut groups: Vec<IssueGroup>,
         ask: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self.query.is_empty() {
-            groups.retain(|group| !group.rows.is_empty() || group.total != Some(0));
-        }
-        crate::listing::prefer_exact(&mut groups, &self.query);
+        crate::listing::prepare_search_groups(&mut groups, &self.query);
         self.listing.settle_unread(&mut groups);
         let mut waiting = Vec::new();
+        let nested = self.sub_issues == crate::model::SubIssues::Nested;
         for group in &mut groups {
-            if ask && group.more == More::Unread && !self.group_folded(group) {
+            if ask && group.more == More::Unread && (nested || !self.group_folded(group)) {
                 group.more = More::Loading;
                 waiting.push(group.key.clone());
             }

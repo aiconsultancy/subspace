@@ -69,7 +69,7 @@ fn a_reaction_row_leaves_the_linked_status_line_and_its_status_element(cx: &mut 
 }
 
 #[gpui_kit::test]
-fn the_thread_tab_shows_the_root_s_and_the_replies_pills_read_only(cx: &mut TestAppContext) {
+fn the_thread_tab_keeps_the_root_pill_read_only_and_replies_interactive(cx: &mut TestAppContext) {
     let (_board, hub, cx) = reacted(cx);
     cx.update(|window, cx| window.click("irc-status:ask1", cx));
     settle(cx);
@@ -80,13 +80,19 @@ fn the_thread_tab_shows_the_root_s_and_the_replies_pills_read_only(cx: &mut Test
     );
     cx.update(|window, cx| window.render_frame(cx));
     cx.update(|window, _| {
-        for at in [ask1, r1, r2] {
-            let pill = window
-                .try_find(SharedString::from(format!(
-                    "irc-thread-line:{at}:reaction:0:pill"
-                )))
-                .unwrap_or_else(|| panic!("the pill of {at} in the tab"));
-            assert_ne!(pill.role(), Some(Role::Button), "read-only");
+        let root = window.find(format!("irc-thread-line:{ask1}:reaction:0:pill"));
+        assert_ne!(
+            root.role(),
+            Some(Role::Button),
+            "the channel also shows this pill"
+        );
+        for at in [r1, r2] {
+            let pill = window.find(format!("irc-line:{at}:reaction:0"));
+            assert_eq!(
+                pill.role(),
+                Some(Role::Button),
+                "reply reactions stay interactive"
+            );
         }
     });
     let sent = hub.read_with(cx, |hub, _| hub.sent().len());

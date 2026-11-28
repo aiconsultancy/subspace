@@ -14,7 +14,7 @@ use subspace_framework::dashboard::{
     DASHBOARD_CONTEXT, Dashboard as _, Tokens, list, measure, workspace,
 };
 
-use super::{bind_hub, conversations, empty};
+use super::{bind_hub, comms, conversations, empty};
 use crate::{Irc, dock, initiatives, join, toolbar};
 
 impl Render for Irc {
@@ -30,7 +30,12 @@ impl Render for Irc {
             frame = frame.navigator(navigator(self, configured, window, cx));
         }
         if configured && self.dock.members_open() {
-            frame = frame.inspector(super::inspector::inspector(self, cx));
+            let inspector = if self.comms.active {
+                comms::inspector(self, cx)
+            } else {
+                super::inspector::inspector(self, cx)
+            };
+            frame = frame.inspector(inspector);
         }
         // The root carries the Space's key context and focus, so the board
         // stays focusable and its keys answer while the navigator, whose
@@ -119,10 +124,13 @@ fn navigator(
     }
     let tokens = Tokens::current(cx);
     let buffers = list::render(board, window, cx)
-        .size_full()
+        .flex_1()
+        .min_h_0()
+        .w_full()
         .bg(tokens.sidebar);
     navigator
         .action(toolbar::navigator_join(board, cx))
+        .child(comms::nav(board, cx))
         .child(buffers)
 }
 
@@ -140,6 +148,7 @@ fn pane(
             close_hidden_menus(board, window, cx);
             pane.child(stand_in)
         }
+        None if board.comms.active => comms::pane(board, cx),
         None => conversations_pane(board, pane, window, cx),
     }
 }

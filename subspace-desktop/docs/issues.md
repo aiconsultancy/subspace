@@ -55,11 +55,10 @@ around the list and `view/issue.rs` around the issue page.
   list and Close goes back as Back does.
 - **Toolbar**: on the list, search (`fields::toolbar_search`), Assignee and
   Priority (named by their labels, `action::filter_button`) and Filters
-  lead; the quiet text **Grouped by state** (`issues-grouping`), the
-  Sub-issues switch (`issues-sub-issues`, pressed while sub-issues show; its
-  name and tooltip give the hidden count) and **New issue…**, the one
-  primary action (`action::main_action`), trail. The issue count and the
-  hidden sub-issue count are the status bar's. While
+  lead. **Show sub-issues** / **Hide sub-issues** (`issues-sub-issues`),
+  Refresh and **New issue…**, the one primary action, trail. The sub-issue
+  action stays pressed while children are shown. Its tooltip and the status
+  bar give the hidden count. While
   the navigator is hidden the view menu (`view_menu.rs`) and the
   initiative, project and organisation pickers lead it. On the issue page it
   is the former path bar: Back and the path, then Edit issue… and More.

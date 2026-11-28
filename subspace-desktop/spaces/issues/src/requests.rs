@@ -54,7 +54,7 @@ impl ListChoice {
                 .project(project)
                 .initiative(self.initiative.as_deref())
                 .search(self.search.clone())
-                .show_subissues(self.sub_issues == SubIssues::Flat),
+                .show_subissues(self.sub_issues == SubIssues::Nested),
         )
     }
 }

@@ -256,7 +256,7 @@ fn load_around(
     let name = target_name(&buffer.target).unwrap_or_default().to_string();
     match history::around(session, &name, point, limit) {
         Some(request) => out.send(request),
-        None => out.event(Event::Backfill {
+        None => out.event(Event::Around {
             buffer: buffer.clone(),
             lines: Vec::new(),
         }),

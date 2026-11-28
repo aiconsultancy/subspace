@@ -21,6 +21,7 @@ pub(crate) struct Switches {
     pub(crate) offline_lists: AtomicBool,
     pub(crate) hold_pages: AtomicBool,
     pub(crate) empty_pages: AtomicBool,
+    pub(crate) nested_done_child: AtomicBool,
     pub(crate) refuse_cursors: AtomicBool,
     pub(crate) offline_issue: AtomicBool,
     pub(crate) issue_error: AtomicU16,
@@ -118,6 +119,12 @@ fn group_page(path: &str, switches: &Switches) -> Value {
         hold(&switches.hold_pages);
         if switches.empty_pages.load(Ordering::Relaxed) {
             return json!({"items":[],"nextCursor":null});
+        }
+        if switches.nested_done_child.load(Ordering::Relaxed) {
+            let mut child = row("3", "Finished child");
+            child["parentId"] = json!("1");
+            child["state"] = json!({"id":DONE,"name":"Done","type":"completed"});
+            return json!({"items":[child],"nextCursor":null});
         }
     }
     json!({"items":[row("2",LATER_TITLE)],"nextCursor":null})

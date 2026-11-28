@@ -3,7 +3,7 @@
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use subspace_client_irc::{BufferKey, Command, Target, format};
+use subspace_client_irc::{BufferKey, Command, Target, format as irc_format};
 use subspace_framework::agent_tools::ReadService;
 
 mod messages;
@@ -158,7 +158,7 @@ fn buffer_summary(key: &BufferKey, buffer: &Buffer) -> Value {
         "kind": kind_of(&key.target),
         "target": lookup::target_name(&key.target),
         "joined": buffer.joined,
-        "topic": buffer.topic.as_ref().map(|topic| format::strip(&topic.text)),
+        "topic": buffer.topic.as_ref().map(|topic| irc_format::strip(&topic.text)),
         "members": buffer.members.len(),
         "unread": buffer.unread,
         "mentions": buffer.highlights,

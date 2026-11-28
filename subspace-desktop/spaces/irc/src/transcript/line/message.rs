@@ -13,6 +13,10 @@ use gpui_kit::{
 };
 use subspace_framework::dashboard::chat_bubble;
 use subspace_framework::lucide::IconName;
+
+mod thread;
+pub(crate) use thread::thread_message;
+
 pub(crate) fn message(
     original: &Entry,
     continues: bool,
@@ -132,42 +136,6 @@ fn reply_mark(tokens: &Tokens) -> impl IntoElement {
 fn shown_now(original: &Entry, context: &RowContext, cx: &App) -> Option<Entry> {
     let hub = context.hub.upgrade();
     displayed(original, hub.as_ref().map(|hub| hub.read(cx)))
-}
-
-/// A message as the inspector's Thread tab shows it: its sender, rank and
-/// time unless it `continues` their group, then its text with its
-/// references, as the transcript draws them. No avatar, tiles, thread facts
-/// or attachments: the transcript keeps those.
-pub(crate) fn thread_message(
-    original: &Entry,
-    continues: bool,
-    context: &RowContext,
-    cx: &App,
-) -> AnyElement {
-    let tokens = Tokens::current(cx);
-    let shown = shown_now(original, context, cx);
-    let entry = shown.as_ref().unwrap_or(original);
-    let nick = entry.line.from.clone().unwrap_or_default();
-    let rendered = markup::rich(&entry.line.text, &context.mentions);
-    let rank = context
-        .roster
-        .verified(&nick, entry.line.account.as_deref());
-    v_flex()
-        .id(SharedString::from(format!("irc-thread-line:{}", entry.seq)))
-        .role(Role::Group)
-        .aria_label(spoken(entry, rendered.as_ref()))
-        .test_support()
-        .w_full()
-        .min_w_0()
-        .gap_0p5()
-        .when(!continues, |column| {
-            column.child(header(entry, &nick, rank, &tokens, cx))
-        })
-        .when(!entry.line.text.is_empty(), |column| {
-            column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
-        })
-        .children(crate::transcript::reactions::read_only(entry, context))
-        .into_any_element()
 }
 
 /// Pointer movement below this threshold still counts as selecting a message.

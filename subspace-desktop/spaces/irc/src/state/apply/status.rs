@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use chrono::{DateTime, Utc};
-use subspace_client_irc::{BufferKey, ConnectionStatus, Line, LineKind, NetworkId};
+use subspace_client_irc::{BufferKey, ConnectionStatus, Line, LineKind, NetworkId, Target};
 
 use super::{IrcState, append, network_mut};
 use crate::state::server_key;
@@ -9,7 +9,8 @@ use crate::state::server_key;
 /// A status change, with a local error line in the server buffer when the
 /// connection failed, so the reason stays readable after it changes again.
 /// Any state but connected drops every nick status of the network, whether
-/// or not the runtime's clears arrived, so none outlives its connection.
+/// or not the runtime's clears arrived. Channel membership belongs to the
+/// connection as well.
 pub(super) fn apply(
     state: &mut IrcState,
     id: &NetworkId,
@@ -28,6 +29,13 @@ pub(super) fn apply(
     }
     network.held_at_connect = held_at_connect(network.held_at_connect.take(), &status, held);
     network.status = status;
+    if !matches!(network.status, ConnectionStatus::Connected { .. }) {
+        for (key, buffer) in &mut state.buffers {
+            if &key.network == id && matches!(key.target, Target::Channel(_)) {
+                buffer.joined = false;
+            }
+        }
+    }
     if let Some(error) = error {
         let key = server_key(id);
         let repeated = state

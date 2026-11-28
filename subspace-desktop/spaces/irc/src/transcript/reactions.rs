@@ -13,8 +13,8 @@
 //! someone else's stop reaction says where the deliberate stop is.
 //!
 //! Without reaction support, or on a message without a `msgid`, the pills
-//! stay as read-only text and there is nothing to add. The inspector's
-//! Thread tab shows the same pills read-only.
+//! stay as read-only text and there is nothing to add. A reply that only
+//! appears in the inspector keeps its reaction controls there.
 //!
 //! Every name and value comes from the network: values are bounded by the
 //! client and cleaned for display ([`shown_value`]), names are cleaned and
@@ -43,6 +43,10 @@ use crate::reactions::choices::{Choice, Choices, choices};
 use crate::reactions::stop::AgentMessage;
 use crate::state::Entry;
 use crate::thread_status::{agent_name, invisible};
+
+mod thread;
+
+pub(crate) use thread::thread_reply;
 
 /// Pills shown before the rest go behind `+N`.
 pub(crate) const SHOWN_PILLS: usize = 10;

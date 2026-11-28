@@ -10,15 +10,15 @@ mod steps;
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Role,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
+    AnyElement, App, ClipboardItem, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
 };
 use subspace_client_irc::{BufferKey, Target};
 use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::{Tokens, feedback, truncated, workspace};
 use subspace_framework::lucide::IconName;
 
-pub(super) use footer::footer;
+pub(in crate::view) use footer::footer;
 
 use crate::Irc;
 use crate::thread::Thread;
@@ -30,7 +30,7 @@ pub(crate) const PROMPT: &str = "Select a message to preview its thread.";
 pub(crate) const NO_REPLIES: &str = "No replies yet.";
 
 /// The tab's body for the conversation in front.
-pub(super) fn body(board: &Irc, cx: &App) -> AnyElement {
+pub(in crate::view) fn body(board: &Irc, cx: &App) -> AnyElement {
     let Some(buffer) = board.dock.focused.as_ref() else {
         return prompt(cx);
     };
@@ -86,14 +86,8 @@ fn content(
                 .w_full()
                 .min_w_0()
                 .gap_2()
-                .child(origin(
-                    thread,
-                    buffer,
-                    conversation,
-                    board.threads.is_pinned(buffer),
-                    cx,
-                ))
-                .child(thread_message(&thread.root, false, &context, cx)),
+                .child(origin(thread, (board, buffer), conversation, cx))
+                .child(thread_message(&thread.root, (false, false), &context, cx)),
         )
         .children(
             thread
@@ -101,15 +95,14 @@ fn content(
                 .as_ref()
                 .map(|timeline| steps::section(timeline, (board, buffer, thread), cx)),
         )
-        .child(replies(thread, &context, cx))
+        .child(replies(thread, (board, buffer), &context, cx))
         .into_any_element()
 }
 
 fn origin(
     thread: &Thread,
-    buffer: &BufferKey,
+    (board, buffer): (&Irc, &BufferKey),
     conversation: &Entity<crate::conversation::Conversation>,
-    pinned: bool,
     cx: &App,
 ) -> impl IntoElement {
     let tokens = Tokens::current(cx);
@@ -117,49 +110,96 @@ fn origin(
         Target::Channel(channel) => channel.clone(),
         _ => String::new(),
     };
-    let seq = thread.root.seq;
-    let conversation = conversation.downgrade();
-    let follow = conversation.clone();
+    let link = thread
+        .root
+        .line
+        .id
+        .as_ref()
+        .map(|id| crate::markup::thread_url(channel.clone(), id.clone()));
+    let seq = root_sequence(thread, buffer, conversation, cx);
     h_flex()
         .w_full()
         .min_w_0()
-        .gap_2()
+        .gap_1()
         .child(
             truncated::text("irc-thread-channel", channel)
                 .flex_1()
                 .text_size(tokens.caption_size())
                 .text_color(tokens.muted),
         )
-        .children(pinned.then(|| {
-            icon_button(
-                "irc-thread-follow",
-                Intent::Quiet,
-                IconName::PinOff,
-                "Unpin thread",
-            )
-            .on_click(move |_, _, cx| {
-                _ = follow.update(cx, |_, cx| {
-                    cx.emit(crate::conversation::ConversationEvent::FollowThreads)
-                });
-            })
-        }))
-        .child(
-            action_button(
-                "irc-thread-jump",
-                Intent::Quiet,
-                Some(IconName::ArrowUpRight),
-                "Jump to message",
-            )
-            .on_click(move |_, _, cx| {
-                _ = conversation.update(cx, |view, cx| view.reveal(seq, cx));
-            }),
-        )
+        .children(board.threads.is_pinned(buffer).then(|| unpin(conversation)))
+        .children(link.map(copy_link))
+        .child(jump_to_message(board, conversation, seq))
 }
 
-/// How many of `count` replies, the earliest, the tab leaves out: the
-/// thread keeps only the latest [`crate::thread::MAX_REPLIES`].
-pub(crate) fn earlier(count: usize) -> usize {
-    count.saturating_sub(crate::thread::MAX_REPLIES)
+fn unpin(conversation: &Entity<crate::conversation::Conversation>) -> impl IntoElement {
+    let conversation = conversation.downgrade();
+    icon_button(
+        "irc-thread-follow",
+        Intent::Quiet,
+        IconName::PinOff,
+        "Unpin thread",
+    )
+    .on_click(move |_, _, cx| {
+        _ = conversation.update(cx, |_, cx| {
+            cx.emit(crate::conversation::ConversationEvent::FollowThreads)
+        });
+    })
+}
+
+fn root_sequence(
+    thread: &Thread,
+    buffer: &BufferKey,
+    conversation: &Entity<crate::conversation::Conversation>,
+    cx: &App,
+) -> i64 {
+    conversation
+        .read(cx)
+        .hub
+        .read(cx)
+        .state
+        .buffer(buffer)
+        .and_then(|held| {
+            held.entries
+                .iter()
+                .find(|entry| entry.line.id.as_deref() == Some(&thread.root_id))
+        })
+        .map_or(thread.root.seq, |entry| entry.seq)
+}
+
+fn copy_link(link: String) -> impl IntoElement {
+    icon_button(
+        "irc-thread-copy-link",
+        Intent::Quiet,
+        IconName::Link,
+        "Copy link",
+    )
+    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(link.clone())))
+}
+
+fn jump_to_message(
+    board: &Irc,
+    conversation: &Entity<crate::conversation::Conversation>,
+    seq: i64,
+) -> impl IntoElement {
+    let owner = board.me.clone();
+    let conversation = conversation.downgrade();
+    action_button(
+        "irc-thread-jump",
+        Intent::Quiet,
+        Some(IconName::ArrowUpRight),
+        "Jump to message",
+    )
+    .on_click(move |_, _, cx| {
+        _ = owner.update(cx, |board, cx| {
+            if board.comms.close() {
+                board.find_revision = board.find_revision.wrapping_add(1);
+                crate::view::publish_visible(board, cx);
+                cx.notify();
+            }
+        });
+        _ = conversation.update(cx, |view, cx| view.reveal(seq, cx));
+    })
 }
 
 /// `Replies`, or `Replies in this thread` for a follow-up request made as
@@ -172,19 +212,16 @@ pub(crate) fn replies_heading(thread: &Thread) -> &'static str {
     }
 }
 
-/// What the tab says of the earlier replies it leaves out.
-pub(crate) fn earlier_words(skipped: usize) -> String {
-    match skipped {
-        1 => "1 earlier reply is in the channel.".to_owned(),
-        n => format!("{n} earlier replies are in the channel."),
-    }
-}
-
 /// The replies under their heading and count, grouped by author, or the
 /// line that says there are none yet.
 /// For a follow-up request made as a reply, the heading says the replies
 /// are the whole thread's, as its own status line counts none.
-fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
+fn replies(
+    thread: &Thread,
+    (board, buffer): (&Irc, &BufferKey),
+    context: &RowContext,
+    cx: &App,
+) -> AnyElement {
     let tokens = Tokens::current(cx);
     let title = match thread.reply_count {
         0 => "Replies".to_owned(),
@@ -200,17 +237,14 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
             )
             .into_any_element();
     }
-    // The latest replies only, so a long thread draws a bounded list; the
-    // heading still counts every loaded reply.
-    let skipped = earlier(thread.reply_count);
-    let shown = &thread.replies;
+    let skipped = thread
+        .replies
+        .len()
+        .saturating_sub(board.threads.visible_replies(buffer));
+    let shown = &thread.replies[skipped..];
     let continues = crate::thread::continues(shown);
     section
-        .children((skipped > 0).then(|| {
-            feedback::empty_line(&tokens, "irc-thread-earlier", earlier_words(skipped))
-                .id("irc-thread-earlier-line")
-                .test_support()
-        }))
+        .children((skipped > 0).then(|| show_earlier(board, buffer, skipped)))
         .child(
             v_flex()
                 .id("irc-thread-replies")
@@ -221,12 +255,31 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
                 .border_l_1()
                 .border_color(tokens.line)
                 .pl_3()
-                .children(
-                    shown
-                        .iter()
-                        .zip(continues)
-                        .map(|(entry, continues)| thread_message(entry, continues, context, cx)),
-                ),
+                .children(shown.iter().zip(continues).map(|(entry, continues)| {
+                    thread_message(entry, (continues, true), context, cx)
+                })),
         )
         .into_any_element()
+}
+
+fn show_earlier(board: &Irc, buffer: &BufferKey, skipped: usize) -> impl IntoElement {
+    let owner = board.me.clone();
+    let buffer = buffer.clone();
+    let count = skipped.min(crate::thread::MAX_REPLIES);
+    action_button(
+        "irc-thread-earlier",
+        Intent::Quiet,
+        Some(IconName::ChevronUp),
+        format!(
+            "Show {count} earlier {}",
+            if count == 1 { "reply" } else { "replies" }
+        ),
+    )
+    .on_click(move |_, _, cx| {
+        _ = owner.update(cx, |board, cx| {
+            board.threads.show_earlier(&buffer);
+            crate::thread::visible_attachments(board, cx);
+            cx.notify();
+        });
+    })
 }

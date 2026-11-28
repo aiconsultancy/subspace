@@ -1,8 +1,7 @@
-//! The inspector's **Thread** tab in a fleet channel: one
-//! thread at a time, previewed by selection or pinned to reply.
-//! It shows the root message, a request's
-//! status timeline, then the replies. The transcript is unchanged: replies
-//! still show in the channel, and this is another view of them.
+//! The inspector's **Thread** tab in a fleet channel shows one thread at a
+//! time, previewed by selection or pinned to reply. It shows the root, a
+//! request's status timeline and the replies. The channel shows an entry
+//! point to each thread.
 //!
 //! - **Which messages belong** ([`model`]): a reply is a message whose
 //!   server reply tag (`+draft/reply`) leads, through held parents, to the
@@ -34,7 +33,7 @@ pub(crate) use model::{MAX_REPLIES, Step, StepKind, Thread, Timeline};
 
 use crate::Irc;
 use crate::fleet::{ChannelKind, Roster};
-use crate::state::Network;
+use crate::state::{IrcState, Network};
 
 /// The capability the server's reply tag needs.
 pub(crate) const MESSAGE_TAGS: &str = "message-tags";
@@ -67,6 +66,14 @@ pub(crate) fn reply_refusal(network: Option<&Network>) -> Option<&'static str> {
     }
     let tags = network.caps.iter().any(|cap| cap == MESSAGE_TAGS);
     (!tags).then_some(NO_REPLY_TAG)
+}
+
+/// Whether a thread can accept a reply to its channel now.
+pub(crate) fn channel_reply_refusal(state: &IrcState, buffer: &BufferKey) -> Option<&'static str> {
+    reply_refusal(state.network(&buffer.network)).or_else(|| {
+        (!state.buffer(buffer).is_some_and(|held| held.joined))
+            .then_some("Join this channel to reply in its thread.")
+    })
 }
 
 /// Why replying waits for the network.
@@ -169,5 +176,29 @@ pub(crate) fn focus_reply(
 pub(crate) fn refresh(board: &mut Irc, cx: &mut Context<Irc>) {
     if let Some(hub) = &board.hub {
         board.threads.refresh(&hub.read(cx).state);
+    }
+    visible_attachments(board, cx);
+}
+
+pub(crate) fn visible_attachments(board: &Irc, cx: &mut Context<Irc>) {
+    let Some(buffer) = board.dock.focused.as_ref() else {
+        return;
+    };
+    let Some(thread) = board.threads.shown(buffer) else {
+        return;
+    };
+    let count = board.threads.visible_replies(buffer);
+    let uploads: Vec<_> = thread
+        .replies
+        .iter()
+        .rev()
+        .take(count)
+        .chain(std::iter::once(&thread.root))
+        .flat_map(|entry| subspace_api_client::chat_uploads::references(&entry.line.text))
+        .collect();
+    if !uploads.is_empty()
+        && let Some(hub) = &board.hub
+    {
+        hub.update(cx, |hub, cx| crate::uploads::cache::want(hub, uploads, cx));
     }
 }

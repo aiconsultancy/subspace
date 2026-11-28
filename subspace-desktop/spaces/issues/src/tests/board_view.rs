@@ -1,4 +1,4 @@
-use super::{has, label, listed, listed_at, mount, render, row_name, row_shown};
+use super::{has, listed, listed_at, mount, render, row_name, row_shown};
 use crate::{Issues, listing::Failure, scope::Access};
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_framework::dashboard::{Dashboard as _, ListDashboard as _};
@@ -42,6 +42,7 @@ fn list_keeps_grouping_controls_and_accessible_rows_without_removed_actions(
         "issue-new",
         "issues-sign-in",
         "issues-heading",
+        "issues-grouping",
         "issues-scope",
         "issues-live",
         "issues-project-button",
@@ -53,11 +54,6 @@ fn list_keeps_grouping_controls_and_accessible_rows_without_removed_actions(
     assert_eq!(
         row_name(&board, TRACKER, cx).as_deref(),
         Some("SUB-955, In Progress, No priority, Tracker: Feature module — Sample Tracking")
-    );
-    assert_eq!(
-        label(cx, "issues-grouping").as_deref(),
-        Some("Grouped by state"),
-        "the count is the status bar's; the toolbar says how the list is grouped"
     );
     cx.update(|_, cx| {
         let current = board.read(cx);

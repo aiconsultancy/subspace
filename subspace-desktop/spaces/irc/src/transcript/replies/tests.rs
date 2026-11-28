@@ -13,7 +13,7 @@ fn count_changes_invalidate_the_root_height_without_replacing_reply_rows() {
         entry(&room, 1, "reply", None),
     ]
     .into();
-    let rows = crate::transcript::rows(&held, &room.target, &chrono::Utc);
+    let rows = crate::transcript::rows(&held, &room, &chrono::Utc, false);
     let before = counts(&room, &held);
     held.entries[1].line.reply_to = Some("root".into());
     let after = counts(&room, &held);
@@ -122,5 +122,48 @@ fn restored_history_rebuilds_the_same_counts_and_latest_time() {
             original.values().collect::<Vec<_>>(),
             rebuilt.values().collect::<Vec<_>>()
         );
+    }
+}
+
+#[test]
+fn one_row_per_unloaded_thread_and_no_inline_replies_when_the_root_is_loaded() {
+    use crate::transcript::Row;
+    let room = channel("#threads");
+    let mut held = Buffer::default();
+    held.entries = [
+        entry(&room, 0, "root", None),
+        entry(&room, 1, "reply", Some("root")),
+        entry(&room, 2, "earlier", Some("older-root")),
+        entry(&room, 3, "also-earlier", Some("earlier")),
+    ]
+    .into();
+    let rows = crate::transcript::rows(&held, &room, &chrono::Utc, true);
+    assert!(crate::transcript::row_of(&rows, 0).is_some());
+    assert!(crate::transcript::row_of(&rows, 1).is_none());
+    assert_eq!(
+        *rows
+            .iter()
+            .find(|row| matches!(row, Row::EarlierThread(_)))
+            .unwrap(),
+        Row::EarlierThread(2)
+    );
+    assert!(crate::transcript::row_of(&rows, 3).is_none());
+}
+
+#[test]
+fn unread_replies_anchor_the_divider_to_the_visible_thread() {
+    use crate::transcript::Row;
+    let room = channel("#threads");
+    for older in [false, true] {
+        let mut held = Buffer::default();
+        held.entries = [
+            entry(&room, 0, "root", older.then_some("unloaded")),
+            entry(&room, 1, "reply", Some("root")),
+        ]
+        .into();
+        held.unread_entries.insert(1);
+        let rows = crate::transcript::rows(&held, &room, &chrono::Utc, true);
+        assert!(rows.contains(&Row::UnreadDivider(0)));
+        assert!(!rows.contains(&Row::UnreadDivider(1)));
     }
 }

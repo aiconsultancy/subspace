@@ -23,11 +23,11 @@ pub(super) fn search_candidates(
         ..without_filters.clone()
     };
     let sub_issues = ListChoice {
-        sub_issues: SubIssues::Flat,
+        sub_issues: SubIssues::Nested,
         ..scoped.clone()
     };
-    let flat = ListChoice {
-        sub_issues: SubIssues::Flat,
+    let nested = ListChoice {
+        sub_issues: SubIssues::Nested,
         ..clear.clone()
     };
     let mut candidates = Vec::new();
@@ -36,7 +36,7 @@ pub(super) fn search_candidates(
         without_filters,
         sub_issues,
         clear.clone(),
-        flat.clone(),
+        nested.clone(),
     ] {
         if &wider != scoped && !candidates.contains(&wider) {
             candidates.push(wider);
@@ -47,10 +47,10 @@ pub(super) fn search_candidates(
             project: project.clone(),
             ..clear.clone()
         });
-        if clear.sub_issues != flat.sub_issues {
+        if clear.sub_issues != nested.sub_issues {
             candidates.push(ListChoice {
                 project,
-                ..flat.clone()
+                ..nested.clone()
             });
         }
     }

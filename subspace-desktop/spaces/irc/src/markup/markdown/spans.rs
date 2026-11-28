@@ -44,6 +44,9 @@ pub(super) struct Link {
 /// the link opens exactly that URL and no entity changes it. `None` when the
 /// policy would not open it.
 pub(crate) fn destination(raw: &str) -> Option<String> {
+    if let Some(found) = super::super::link::thread_ref(raw) {
+        return Some(super::super::link::ref_url(&found));
+    }
     let url = safe_url(raw)?;
     Some(
         url.chars()

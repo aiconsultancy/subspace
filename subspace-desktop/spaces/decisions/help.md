@@ -16,8 +16,7 @@ press `?` while the Space has focus.
 ## Before you start
 
 Sign in under **Settings > Account**. Decisions uses the same account as
-Issues; you do not enter a token. The first read can take up to a minute
-while Subspace API wakes.
+Issues; you do not enter a token.
 
 When you switch account or organisation, or sign out, the Space at once
 drops everything it read for the previous account: the list, the selection,

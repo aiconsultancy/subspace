@@ -1,5 +1,5 @@
 //! Anchors: a connection asks only for the lines the owner missed, and the
-//! lines around one message, answered as `Event::Backfill`.
+//! lines around one message, answered as `Event::Around`.
 
 use super::{ALL_CAPS, ERGO_ISUPPORT, channel, command, config, feed, in_channel, now, sent};
 use crate::model::{Anchor, Command, Event, NetworkId, Target};
@@ -188,7 +188,7 @@ fn failed_target_discovery_leaves_known_dm_catch_up_pending() {
 
 fn backfill(events: &[Event]) -> Option<(&Target, Vec<&str>)> {
     events.iter().find_map(|event| match event {
-        Event::Backfill { buffer, lines } => Some((
+        Event::Backfill { buffer, lines } | Event::Around { buffer, lines } => Some((
             &buffer.target,
             lines.iter().map(|line| line.text.as_str()).collect(),
         )),
