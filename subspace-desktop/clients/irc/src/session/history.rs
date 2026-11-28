@@ -6,10 +6,14 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 
 use super::{Output, Session, describe, lines, reactions};
-use crate::model::{Anchor, BufferKey, Event, Line, LineKind, Target};
+use crate::model::{BufferKey, Event, Line, Target};
 use crate::proto::Message;
 
 const CAP: &str = "draft/chathistory";
+mod anchors;
+use anchors::anchor;
+pub(super) use anchors::{remember, track};
+
 pub(super) mod targets;
 /// Lines requested when a buffer opens with nothing held.
 pub const LATEST: u16 = 100;
@@ -280,69 +284,6 @@ fn complete(count: usize, requested: Option<Pending>) -> bool {
     match requested {
         Some(request) => count < usize::from(request.limit),
         None => count == 0,
-    }
-}
-
-/// The anchor of `target`, by any spelling: anchors may arrive before the
-/// server announces its case mapping.
-fn anchor<'a>(anchors: &'a [Anchor], target: &str) -> Option<&'a Anchor> {
-    anchors
-        .iter()
-        .find(|anchor| name(&anchor.target).is_some_and(|name| name.eq_ignore_ascii_case(target)))
-}
-
-fn name(target: &Target) -> Option<&str> {
-    match target {
-        Target::Channel(name) | Target::Query(name) => Some(name),
-        Target::Server => None,
-    }
-}
-
-/// Keeps `next` when it is newer than the anchor held for its buffer.
-pub(super) fn remember(anchors: &mut Vec<Anchor>, next: Anchor) {
-    let Some(target) = name(&next.target) else {
-        return;
-    };
-    match anchors
-        .iter()
-        .position(|held| name(&held.target).is_some_and(|held| held.eq_ignore_ascii_case(target)))
-    {
-        Some(at) if anchors[at].time < next.time => anchors[at] = next,
-        Some(_) => {}
-        None => anchors.push(next),
-    }
-}
-
-/// Moves each buffer's anchor to the newest message among `events`, so a
-/// reconnect asks only for what came after.
-pub(super) fn track(anchors: &mut Vec<Anchor>, events: &[Event]) {
-    let found: Vec<Anchor> = events
-        .iter()
-        .flat_map(event_lines)
-        .filter(|line| {
-            matches!(
-                line.kind,
-                LineKind::Privmsg | LineKind::Action | LineKind::Notice
-            )
-        })
-        .map(|line| Anchor {
-            target: line.buffer.target.clone(),
-            id: line.id.clone(),
-            time: line.time,
-        })
-        .collect();
-    found
-        .into_iter()
-        .for_each(|anchor| remember(anchors, anchor));
-}
-
-fn event_lines(event: &Event) -> &[Line] {
-    match event {
-        Event::Line(line) | Event::Replayed(line) => std::slice::from_ref(line),
-        Event::History { lines, .. }
-        | Event::Backfill { lines, .. }
-        | Event::Around { lines, .. } => lines,
-        _ => &[],
     }
 }
 
