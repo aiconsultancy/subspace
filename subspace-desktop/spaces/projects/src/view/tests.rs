@@ -1,3 +1,5 @@
+mod inspector;
+
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AppContext as _, Bounds, Entity, Pixels, TestAppContext, VisualTestContext, WindowBounds,
@@ -50,33 +52,11 @@ fn overview_and_milestones_center_the_issues_reading_width(cx: &mut TestAppConte
     }
 }
 
-#[gpui_kit::test]
-fn the_toolbar_heading_the_pane_ends_level_with_the_navigators_header(cx: &mut TestAppContext) {
-    cx.update(gpui_kit::init);
-    let (window, _board) = cx.update(|cx| {
-        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| Projects::new(window, cx))
-        })
-        .unwrap()
-    });
-    let view = VisualTestContext::from_window(window, cx).into_mut();
-    view.update(|window, cx| {
-        window.render_frame(cx);
-        let header = window.find("workspace-navigator-header").bounds();
-        let toolbar = window.find("projects-toolbar").bounds();
-        assert!(
-            (toolbar.bottom() - header.bottom()).abs() < px(0.5),
-            "the hairlines under {toolbar:?} and {header:?} are one line"
-        );
-    });
-}
-
 /// Each leading control's id and its entry in the overflow menu.
-const LEADING: [(&str, &str); 4] = [
+const LEADING: [(&str, &str); 3] = [
     ("projects-initiative-button", "Initiative: Design Studio…"),
     ("Overview", "Overview"),
     ("Milestones", "Milestones"),
-    ("milestone-back", "Back"),
 ];
 
 const LEADING_SIDE: &str = "workspace-toolbar-leading";
@@ -85,7 +65,7 @@ const TRAILING_SIDE: &str = "workspace-toolbar-trailing";
 /// What the pane shows in a narrow test.
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
-    /// A milestone's page, so all four leading controls are there.
+    /// A milestone's page, so Back has a fixed place before the other controls.
     Milestone,
     /// A writable project's overview, so Edit project is there too.
     Overview,
@@ -257,12 +237,15 @@ fn reachable(
 fn a_narrow_pane_keeps_every_leading_control_reachable(cx: &mut TestAppContext) {
     let (board, view) = narrow(IconButtonSize::Small, Page::Milestone, cx);
     let hidden = reachable(LEADING_SIDE, &LEADING, view);
-    assert!(hidden.contains(&"Back"), "Back, the last, goes first");
-    choose("Back", view);
+    assert!(
+        !hidden.is_empty(),
+        "the other leading controls can overflow"
+    );
+    view.update(|window, cx| window.click("milestone-back", cx));
     view.update(|_, cx| {
         assert!(
             board.read(cx).milestone_pages.detail.is_none(),
-            "Back from the menu left the milestone"
+            "the toolbar Back left the milestone"
         );
     });
 }

@@ -8,7 +8,7 @@
 //! inspector's Open or a link from another Space opens it, and Escape, Back,
 //! the tab's close or the view's tab closes it.
 
-use gpui_kit::component::{Disableable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, Context, Div, FontWeight, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
@@ -16,12 +16,15 @@ use gpui_kit::{
 };
 use subspace_framework::client_github::model::GhItem;
 use subspace_framework::dashboard::action::{Intent, icon_button};
+use subspace_framework::dashboard::icon_button::IconButton;
 use subspace_framework::dashboard::list::{self, ListDashboard as _, ListState};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::tabs::{self as dashboard_tabs, TabBar, TabSpec};
+use subspace_framework::dashboard::tokens::ButtonRole;
 use subspace_framework::dashboard::workspace::{Pane, READING_WIDTH_PX, Toolbar, text_edge};
 use subspace_framework::dashboard::{
-    CloseDetail, SelectNext, SelectPrevious, Tokens, heading_font,
+    CloseDetail, DashboardEvent, ReturnPoint, SelectNext, SelectPrevious, Tokens, heading_font,
+    truncated,
 };
 
 use crate::inspector::{short_title, state_line};
@@ -29,7 +32,7 @@ use crate::peek::{self, Allowed};
 use crate::{Github, detail, github_section_icon};
 
 /// The page title's size before the theme scales it.
-const PAGE_TITLE_PX: f32 = 22.;
+const PAGE_TITLE_PX: f32 = 20.;
 
 /// Opens the page of pull request `key`, as Enter does on its row.
 pub(crate) fn open_page(board: &mut Github, key: &str, cx: &mut Context<Github>) {
@@ -38,9 +41,21 @@ pub(crate) fn open_page(board: &mut Github, key: &str, cx: &mut Context<Github>)
     });
 }
 
-/// Back to the list, as Escape does.
+/// Close the detail tab and return to the list.
 pub(crate) fn close_page(board: &mut Github, cx: &mut Context<Github>) {
     list::update(board, cx, ListState::close_detail);
+}
+
+/// Back closes the detail tab before asking the shell to restore its source.
+fn go_back(board: &mut Github, cx: &mut Context<Github>) {
+    let origin = board
+        .navigation
+        .as_mut()
+        .and_then(|target| target.origin.take());
+    close_page(board, cx);
+    if let Some(origin) = origin {
+        cx.emit(DashboardEvent::Return(origin));
+    }
 }
 
 /// `j` and `k`: the next or previous pull request, keeping the page open
@@ -93,13 +108,20 @@ impl Github {
     /// Back and the path on the leading side, the review actions on the
     /// trailing side. The dock switches are the status bar's.
     fn page_toolbar(&self, item: Option<&GhItem>, cx: &mut Context<Self>) -> Toolbar {
-        let name = format!("Back to {}", self.view_title());
+        let name = self
+            .navigation
+            .as_ref()
+            .and_then(|target| target.origin.as_ref())
+            .map_or_else(
+                || format!("Back to {}", self.view_title()).into(),
+                ReturnPoint::back_label,
+            );
         let back = icon_button("gh-page-back", Intent::Quiet, IconName::ArrowLeft, name)
-            .on_click(cx.listener(|this, _, _, cx| close_page(this, cx)));
-        let toolbar = Toolbar::new("github-page-toolbar").leading(back);
+            .on_click(cx.listener(|this, _, _, cx| go_back(this, cx)));
+        let toolbar = Toolbar::new("github-page-toolbar");
         match item {
-            Some(item) => self.item_tools(toolbar, item, cx),
-            None => toolbar.trailing(self.page_refresh_button(cx)),
+            Some(item) => self.item_tools(toolbar.leading(path(item, back, cx)), item, cx),
+            None => toolbar.leading(back).trailing(self.page_refresh_button(cx)),
         }
     }
 
@@ -123,23 +145,33 @@ impl Github {
             .and_then(|account| account.details.get(&item.key));
         let on = self.panel_actions();
         let allowed = Allowed::of(item, detail);
-        let merge = crate::merge_pull_request::button(self, item, allowed.merge_is_primary(), cx);
+        let merge = crate::merge_pull_request::button(
+            self,
+            item,
+            allowed.merge_is_primary(),
+            ButtonRole::Toolbar,
+            cx,
+        );
         let mut buttons: Vec<_> = peek::page_actions(allowed)
             .map(|action| {
                 self.item_action_button(action, "page", allowed.approved, &on)
                     .into_any_element()
             })
-            .chain(merge.map(|button| button.into_any_element()))
             .collect();
+        if let Some(merge) = merge {
+            let before_approve = usize::from(!allowed.merge_is_primary());
+            buttons.insert(
+                buttons.len().saturating_sub(before_approve),
+                merge.into_any_element(),
+            );
+        }
         buttons.insert(
             buttons.len().saturating_sub(1),
             self.page_refresh_button(cx),
         );
         buttons
             .into_iter()
-            .fold(toolbar.leading(path(item, cx)), |toolbar, button| {
-                toolbar.trailing(button)
-            })
+            .fold(toolbar, |toolbar, button| toolbar.trailing(button))
     }
 
     /// The reading column, centred in the pane, scrolling.
@@ -228,20 +260,32 @@ fn page_title(id: &'static str, title: String, cx: &App) -> AnyElement {
 }
 
 /// The path in the toolbar: the repository, then `#number`.
-fn path(item: &GhItem, cx: &App) -> AnyElement {
+fn path(item: &GhItem, back: IconButton, cx: &App) -> AnyElement {
     let tokens = Tokens::current(cx);
     let number = format!("#{}", item.number);
+    let breadcrumb = h_flex()
+        .min_w_0()
+        .overflow_hidden()
+        .gap_2()
+        .text_size(tokens.secondary_size())
+        .text_color(tokens.muted)
+        .child(truncated::text("gh-page-repository", item.repo.clone()))
+        .child(Icon::from(IconName::ChevronRight).xsmall().flex_shrink_0())
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(tokens.fg_strong)
+                .child(number.clone()),
+        );
     h_flex()
         .id("gh-page-path")
         .aria_label(format!("{} {number}", item.repo))
         .test_support()
         .min_w_0()
+        .max_w_full()
         .gap_2()
-        .text_size(tokens.secondary_size())
-        .text_color(tokens.muted)
-        .child(item.repo.clone())
-        .child("›")
-        .child(div().text_color(tokens.fg_strong).child(number))
+        .child(back.flex_shrink_0())
+        .child(breadcrumb)
         .into_any_element()
 }
 

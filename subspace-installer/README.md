@@ -2,8 +2,9 @@
 
 A fleet is one Linux VM. Human **admirals** use **Starbase** to work out what
 to build with the **rear admiral**, who coordinates the **captains** and talks
-to stakeholders. Each captain has a ship channel and a **crew**. The default
-crew is two Claude-family and two Codex-family workers.
+to stakeholders. Guided setup defaults to four captains. Each gets a ship
+channel and, when a repository is configured, two Claude-family and two
+Codex-family crew members.
 
 The rear admiral and the captains each have their own Linux user, IRC
 account and GitHub App. Each captain gets a checkout of the configured
@@ -15,8 +16,10 @@ its captain: crew have no IRC accounts.
 Stargate routes IRC conversations to the rear admiral and captains. The
 installer defaults to OpenCode V2, using CLIProxyAPI for models. Configure
 the model, reasoning effort and harness per role, and the model per crew
-family; captains default to Claude Opus 5.5 and the rear admiral to Claude
-Fable 5.2 ([officer models](#officer-models)). The dashboard
+family. Captains and default Claude crew use Claude Opus 5.5, the rear admiral
+uses Claude Fable 5.2, and default Codex crew use GPT-6.2 Sol.
+OpenCode automatically compacts these models at 750,000 tokens by default
+([officer models](#officer-models)). The dashboard
 shows the primary Stargate gateway, and AgentsView indexes OpenCode session
 databases, including crew sessions, for local browsing and search. The
 installer can run a [medical ship](#medical-ship) to flag Sentry errors and
@@ -169,6 +172,11 @@ How the effort reaches the model:
 
 The installer refuses an effort that the officer's harness does not offer.
 
+For OpenCode, the installer sets the catalogue context to 1,000,000 tokens
+for Claude Fable 5.2 and Claude Opus 5.5, and 1,050,000 for GPT-6.2 Sol. Their
+configured input budget is 882,352 tokens. With OpenCode's default 15%
+reserve, the automatic compaction threshold is 750,000 tokens.
+
 Captains with crew can use `stargate_model({op: "inspect", target: "codex-1"})`
 to read a worker's selected model and variant. To prepare an idle worker for a
 review, use `stargate_model({op: "effort", target: "codex-1", variant: "high"})`
@@ -269,8 +277,13 @@ Set fleet-wide `crew.claude` and `crew.codex` defaults, or override either
 under a captain's `crew`. Each family takes a `count` from 0 to 10 and a
 `model`. `subspace-setup` writes the fleet-wide ones from `--crew-claude`,
 `--crew-codex`, `--crew-claude-model` and `--crew-codex-model`, and keeps a
-model set in `fleet.json` by hand when no option names one. Crew run inside their captain's OpenCode server, as the captain's
-Linux user, through Stargate's crew plugin:
+model set in `fleet.json` by hand when no option names one. New guided
+installs write Claude Opus 5.5 and GPT-6.2 Sol into `fleet.json`. A fleet
+definition that omits those fields uses the legacy Claude Sonnet 5.5 and
+GPT-5.4 fallback. To select the new defaults on an existing fleet, pass
+`--crew-claude-model '' --crew-codex-model ''`. Crew run inside their
+captain's OpenCode server, as the captain's Linux user, through Stargate's
+crew plugin:
 
 - Each crew member has one permanent worktree per repository, under
   `/var/lib/subspace-fleet/agents/<captain-id>/worktrees/<crew-id>/<repository-id>`.
@@ -1111,6 +1124,38 @@ through Stargate's crew tools. Stargate uses IRC message IDs for strict wake
 rules. [Agent dispatch](#agent-dispatch) addresses one captain at a time.
 Ready for agents offers and legacy assignment notices use fleet command.
 Capacity-aware assignment requests go to the captain's ship channel.
+
+### Fleet Audit
+
+For a new local IRC installation, the installer creates a private `#<slug>-audit` channel by default
+and configures every officer's Stargate registration to mirror incoming and
+outgoing DMs there. It grants channel access to the fleet's officer accounts
+and to the allowlisted people seeded on that IRC server. Join the channel
+with one of those accounts to see the mirror. Channels shows it as **# fleet-audit**
+beside Starbase and Fleet Command when connected to the Subspace API.
+
+On remote IRC, register `#<slug>-audit` as invite-only and secret, and grant
+access to the intended readers and every officer account before running the
+installer with `--fleet-audit`. On Ergo, use `+Cimnst` and
+`ChanServ AMODE #<slug>-audit +v <account>` for each permitted account.
+The installer signs in to query the channel's modes before it enables mirroring.
+Switching to a different remote IRC connection requires opting in again.
+
+For a local IRC installation that predates Fleet Audit, opt in with
+`--fleet-audit` after checking that the name is available. The local seeder
+refuses an existing channel with an unexpected founder, member, persistent
+grant or invite exception. Reconcile its access before enabling the mirror.
+Use `--no-fleet-audit` to disable mirroring. For a manually managed
+`fleet.json`, set `irc.fleetAudit` to `true` or `false`. If a ship or another
+local channel already uses the audit name, it keeps the name and the
+installer leaves the default mirror off. Explicitly enabling it reports the
+conflict. A pinned local IRC checkout needs a channel seeder with
+`privateAccounts` support. A pinned Stargate needs
+[DM audit support](https://github.com/aiconsultancy/stargate/blob/main/docs/irc.md#dm-audit).
+
+Audit messages do not start agent turns. The mirror contains DM text, including
+redirect notices, and Stargate withholds text that resembles credentials.
+Only grant access to people authorised to read the fleet's DMs.
 
 ### Local IRC and TLS
 
@@ -2682,7 +2727,7 @@ whether at its cap or with the whole VM out of memory.
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model`, `effort` and `extraPermissions`, apply to one. Explicit OpenCode V2 rules in `permissions` replace the starter policy; rules in `extraPermissions` (fleet, role and officer, appended in that order) extend whichever applies. Each rule has `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `captainTools` | `standard`, captains code, or `delegate`, captains with crew leave edits, commits and pushes to them and have an open shell with writes refused (see [Instructions, permissions and toolchains](#instructions-permissions-and-toolchains)). Absent means `standard`, as for a fleet installed before the setting; `subspace-setup` and `fleet.example.json` give a new fleet `delegate`. |
-| `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
+| `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model`. Guided setup writes `claude-opus-5-5` and `gpt-6.2-sol` on new fleets. A captain's `crew` overrides the fleet values. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions), and an optional `check` (one command line, at most 300 characters) that `--verify-toolchains` runs ([Toolchains](#toolchains)). The ID, URL and visibility are fixed once installed; the description, tracker and check may change. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local binds loopback and can use TLS with `caFile` and the two Compose TLS files. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` or `password`. See [IRC sign-in](#irc-sign-in). |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<id>` for a captain (`#<slug>-<id>` with fleet-prefixed names). Any other name is refused. |
@@ -3127,6 +3172,7 @@ retention and explicit pruning, the Node toolchain, read-only reference
 checkouts and fresh worktree bases. It exercises nftables when permitted by
 the container and checks rule generation otherwise. For the offline checks,
 run `python3 -B subspace-installer/tests/policy_test.py`,
+`python3 -B subspace-installer/tests/headscale_test.py`,
 `python3 -B subspace-installer/tests/private_network_test.py`,
 `python3 -B subspace-installer/tests/sessions_test.py`,
 `python3 -B subspace-installer/tests/setup_test.py`,

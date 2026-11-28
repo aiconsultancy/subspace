@@ -306,9 +306,16 @@ mod tests {
         });
         cx.update(|window, cx| {
             assert!(window.try_find("actions-run-page").is_some());
-            let mut tabs = window.within("actions-open-tabs");
+            let tabs = window.within("actions-open-tabs");
             assert_eq!(tabs.find(1usize).label(), Some("Run 1"));
-            tabs.click(0usize, cx);
+            assert!(window.try_find("actions-list-toolbar").is_none());
+            assert!(
+                window
+                    .within("actions-page-toolbar")
+                    .try_find("actions-refresh")
+                    .is_some()
+            );
+            window.click("actions-page-back", cx);
         });
         draw(cx);
         cx.update(|window, cx| {

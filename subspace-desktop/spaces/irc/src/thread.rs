@@ -83,8 +83,8 @@ pub(crate) fn continues(replies: &[crate::state::Entry]) -> Vec<bool> {
         .collect()
 }
 
-/// Opens the thread of message `root` in `buffer`: the inspector shows,
-/// on its Thread tab.
+/// Opens a thread for reading. Its retained editor is prepared as part of
+/// choosing the thread, so it is ready whenever the inspector is visible.
 pub(crate) fn open(
     board: &mut Irc,
     buffer: &BufferKey,
@@ -92,12 +92,16 @@ pub(crate) fn open(
     window: &mut Window,
     cx: &mut Context<Irc>,
 ) {
-    let previous = board.threads.chosen(buffer).map(str::to_owned);
-    board.threads.choose(buffer, root.clone());
-    if previous.is_some_and(|previous| previous != root) {
-        cancel_reply(board, buffer, window, cx);
-    }
+    board.threads.choose(buffer, root);
     refresh(board, cx);
+    if let Some(shown) = board.threads.shown(buffer)
+        && let Some(root) = shown.root.line.id.as_deref()
+        && let Some(hosted) = board.dock.open.get(buffer)
+    {
+        hosted.entity.update(cx, |view, cx| {
+            crate::compose::reply::select(view, (root, shown.root.seq), window, cx)
+        });
+    }
     board.inspector_tab = crate::view::InspectorTab::Thread;
     if !board.dock.members_open() {
         crate::dock::toggle_members(board, cx);
@@ -105,37 +109,32 @@ pub(crate) fn open(
     cx.notify();
 }
 
-/// Rebuilds each chosen thread whose buffer changed, and lets go of those
-/// whose root is no longer held; a reply being written to one is kept,
-/// marked gone ([`crate::compose::reply::forget`]).
-pub(crate) fn refresh(board: &mut Irc, cx: &mut Context<Irc>) {
-    let Some(hub) = board.hub.clone() else {
-        return;
-    };
-    let gone = board.threads.refresh(&hub.read(cx).state);
-    if gone.is_empty() {
-        return;
-    }
-    crate::dock::with_window(board, cx, move |board, _, cx| {
-        for (buffer, root) in &gone {
-            if let Some(hosted) = board.dock.open.get(buffer) {
-                hosted.entity.update(cx, |view, cx| {
-                    crate::compose::reply::forget(view, root, cx);
-                });
-            }
-        }
+pub(crate) fn focus_reply(
+    board: &Irc,
+    buffer: &BufferKey,
+    window: &mut Window,
+    cx: &mut Context<Irc>,
+) {
+    let draft = board.threads.shown(buffer).and_then(|shown| {
+        let root = shown.root.line.id.as_deref()?;
+        board
+            .dock
+            .open
+            .get(buffer)?
+            .entity
+            .read(cx)
+            .reply_drafts
+            .get(root)
     });
+    if let Some(draft) = draft {
+        draft.update(cx, |draft, cx| draft.focus(window, cx));
+    }
 }
 
-/// Leaves reply mode in `buffer`'s composer, unless its reply is gone.
-fn cancel_reply(board: &Irc, buffer: &BufferKey, window: &mut Window, cx: &mut Context<Irc>) {
-    if let Some(hosted) = board.dock.open.get(buffer) {
-        // A reply whose thread is gone keeps its guard: only Write to the
-        // channel lifts it.
-        // Nor does it keep an offer to move to the thread left behind.
-        hosted.entity.update(cx, |view, cx| {
-            crate::compose::reply::escape(view, window, cx);
-            crate::compose::reply::withdraw_offer(view, cx);
-        });
+/// Rebuilds chosen threads as their buffers change. The independent editors
+/// keep unsent text even when their original message is no longer held.
+pub(crate) fn refresh(board: &mut Irc, cx: &mut Context<Irc>) {
+    if let Some(hub) = &board.hub {
+        board.threads.refresh(&hub.read(cx).state);
     }
 }

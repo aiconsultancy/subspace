@@ -76,6 +76,8 @@ pub struct DecisionListItem {
     pub made_by_type: DecisionMakerType,
     #[serde(default)]
     pub made_by_user_id: Option<String>,
+    #[serde(default, rename = "madeBy")]
+    pub human_makers: DecisionMakers,
     #[serde(default)]
     pub made_by_agent_name: Option<String>,
     #[serde(default)]
@@ -201,6 +203,26 @@ pub struct DecisionMember {
     pub available: bool,
     /// User kind, as in `Person` and `Me`; preserve unknown kinds.
     pub kind: String,
+}
+
+/// The Subspace API supplies one maker. The NETT adapter may supply several.
+#[derive(Clone, Default, Deserialize)]
+#[serde(untagged)]
+pub enum DecisionMakers {
+    Person(DecisionMember),
+    People(Vec<DecisionMember>),
+    #[default]
+    Unavailable,
+}
+
+impl DecisionMakers {
+    pub fn people(&self) -> &[DecisionMember] {
+        match self {
+            Self::Person(person) => std::slice::from_ref(person),
+            Self::People(people) => people,
+            Self::Unavailable => &[],
+        }
+    }
 }
 
 #[derive(Clone, Deserialize)]

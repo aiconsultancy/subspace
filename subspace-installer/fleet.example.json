@@ -15,8 +15,8 @@
     "captain": { "family": "claude", "model": "claude-opus-5-5", "effort": "xhigh" }
   },
   "crew": {
-    "claude": { "count": 2, "model": "claude-sonnet-5-5" },
-    "codex": { "count": 2, "model": "gpt-5.4" }
+    "claude": { "count": 2, "model": "claude-opus-5-5" },
+    "codex": { "count": 2, "model": "gpt-6.2-sol" }
   },
   "captainTools": "delegate",
   "repositories": [],

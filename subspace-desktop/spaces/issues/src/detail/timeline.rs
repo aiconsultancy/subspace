@@ -113,6 +113,11 @@ impl TimelineFocus {
     /// as the list's one Tab stop. Nothing is focused while the list is not
     /// drawn, so focus never falls to the window's first Tab stop.
     pub(crate) fn focus_selected(&self, window: &mut Window, cx: &mut Context<Issues>) {
+        // Kit keeps a focused tab as the Tab stop. Release that tab so the
+        // list can give the Tab stop to the new selection on the next frame.
+        if self.tabs.contains_focused(window, cx) {
+            self.tabs.focus(window, cx);
+        }
         let request = self.request.get() + 1;
         self.request.set(request);
         let (tabs, latest) = (self.tabs.clone(), self.request.clone());

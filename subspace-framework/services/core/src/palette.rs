@@ -222,10 +222,10 @@ mod tests {
     #[test]
     fn highlight_marks_word_prefixes_that_match_the_query() {
         assert_eq!(
-            highlight_runs("Plan crew onboarding", "onbo team"),
+            highlight_runs("Plan crew onboarding", "onbo crew"),
             [
-                run("Automate ", false),
-                run("Team", true),
+                run("Plan ", false),
+                run("crew", true),
                 run(" ", false),
                 run("onbo", true),
                 run("arding", false),

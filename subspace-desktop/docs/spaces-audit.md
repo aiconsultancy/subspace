@@ -119,7 +119,9 @@ limit. Ports, userinfo, encoded or rewritten paths, path suffixes, queries
 and fragments are refused. The helper normalises leading zeroes in numbers.
 No account or credentials travel with navigation: the PRs board uses its
 current account and its normal detail reader, including for a pull request
-outside the loaded searches. With no running responder, navigation does
+outside the loaded searches. When the shell supplies a return point, the PR
+detail toolbar's Back button restores that originating Space and view. With
+no running responder, navigation does
 nothing. Requesters must keep the external GitHub action available.
 
 **Pull request summaries.** `github@1/resolve-pull-requests`

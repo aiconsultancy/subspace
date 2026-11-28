@@ -131,9 +131,13 @@ fn properties(peek: &Peek, cx: &App) -> AnyElement {
 
 /// Issue text: selectable, and never offered to chat.
 fn text(id: &'static str, value: &str, tokens: &Tokens) -> Div {
-    div().min_w_0().text_color(tokens.fg).child(plain_text_with(
-        SharedString::from(id),
-        value,
-        MenuChat::Off,
-    ))
+    div()
+        .min_w_0()
+        .text_size(tokens.secondary_size())
+        .text_color(tokens.fg)
+        .child(plain_text_with(
+            SharedString::from(id),
+            value,
+            MenuChat::Off,
+        ))
 }

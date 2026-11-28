@@ -37,6 +37,8 @@ pub(crate) enum ChannelKind {
     Starbase,
     /// The rear admiral and its captains.
     Command,
+    /// The fleet's private DM mirror.
+    Audit,
     /// A captain's ship, named by the captain's nick.
     Ship { captain: String },
 }
@@ -196,7 +198,7 @@ impl Names {
                 };
                 agent.channel.clone().map(|channel| (channel, kind))
             });
-        let channels = [
+        let mut channels: Vec<_> = [
             starbase.map(|(name, _)| (name, ChannelKind::Starbase)),
             command.map(|(name, _)| (name, ChannelKind::Command)),
         ]
@@ -204,8 +206,21 @@ impl Names {
         .flatten()
         .chain(ships)
         .collect();
+        channels.extend(audit_channel(slug, &channels));
         Self { agents, channels }
     }
+}
+
+/// An existing ship or recorded channel takes precedence over the standard audit name.
+fn audit_channel(
+    slug: Option<&str>,
+    channels: &[(String, ChannelKind)],
+) -> Option<(String, ChannelKind)> {
+    let audit = format!("#{}-audit", slug?);
+    let taken = channels
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case(&audit));
+    (!taken).then_some((audit, ChannelKind::Audit))
 }
 
 /// A fleet's ships, indexed once: each ship's recorded channel and its
@@ -372,7 +387,7 @@ fn crewed(
             ChannelKind::Ship { captain } => agents
                 .get(&captain.to_ascii_lowercase())
                 .is_some_and(|agent| agent.rank == Rank::Captain),
-            ChannelKind::Starbase | ChannelKind::Command => true,
+            ChannelKind::Starbase | ChannelKind::Command | ChannelKind::Audit => true,
         })
         .collect()
 }

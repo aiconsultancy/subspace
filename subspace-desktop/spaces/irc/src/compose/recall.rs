@@ -17,6 +17,18 @@ pub(crate) struct Recall {
 }
 
 impl Recall {
+    pub(super) fn is_empty(&self) -> bool {
+        self.sent.is_empty()
+    }
+
+    /// Retain the sent lines when the editor is replaced.
+    pub(super) fn take_sent(&mut self) -> Self {
+        Self {
+            sent: std::mem::take(&mut self.sent),
+            ..Self::default()
+        }
+    }
+
     pub fn push(&mut self, text: String) {
         if self.sent.last() != Some(&text) {
             self.sent.push(text);
@@ -79,20 +91,31 @@ pub(super) fn step(
 ) {
     let batches = super::batches_lines(conversation, cx);
     let draft = &mut conversation.draft;
-    let current = draft.entity.read(cx).text(cx);
-    let next = if older {
-        draft.recall.older(&current)
-    } else {
-        draft.recall.newer()
-    };
-    if let Some(text) = next {
-        let recalled = draft.recall.showing(&text);
-        draft.entity.update(cx, |input, cx| {
-            input.set_text(&text, window, cx);
-            input.set_recalled(recalled, cx);
-        });
+    if let Some(text) = replace(&mut draft.recall, &draft.entity, older, window, cx) {
         super::validate_draft(draft, &text, batches, cx);
     }
+}
+
+/// Applies this input's recall, leaving the value available for validation.
+pub(super) fn replace(
+    recall: &mut Recall,
+    entity: &gpui_kit::Entity<subspace_framework::dashboard::ChatInput>,
+    older: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<String> {
+    let current = entity.read(cx).text(cx);
+    let next = if older {
+        recall.older(&current)
+    } else {
+        recall.newer()
+    }?;
+    let recalled = recall.showing(&next);
+    entity.update(cx, |input, cx| {
+        input.set_text(&next, window, cx);
+        input.set_recalled(recalled, cx);
+    });
+    Some(next)
 }
 
 #[cfg(test)]

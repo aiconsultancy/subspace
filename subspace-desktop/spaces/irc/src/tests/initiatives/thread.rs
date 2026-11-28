@@ -6,8 +6,7 @@
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
-use subspace_client_irc::{Command, Event, Line, LineKind};
-use subspace_framework::dashboard::ChatInputEvent;
+use subspace_client_irc::{Event, Line, LineKind};
 
 use super::super::inject;
 use super::super::remove::settle;
@@ -20,7 +19,9 @@ use crate::thread_status::PROGRESS_TAG;
 use crate::view::InspectorTab;
 use crate::{Irc, view};
 
+mod composing;
 mod live;
+pub(super) use composing::reply_input;
 
 const SHIP: &str = "#aurora-lyra";
 
@@ -106,7 +107,7 @@ fn with_no_thread_chosen_the_tab_says_how_to_open_one(cx: &mut TestAppContext) {
             window.find("irc-thread-prompt-line").label(),
             Some(view::THREAD_PROMPT)
         );
-        assert!(window.try_find("irc-thread-reply").is_none(), "no footer");
+        assert!(window.try_find("irc-reply-editor").is_none(), "no footer");
     });
 }
 
@@ -159,7 +160,7 @@ fn the_settled_line_carries_the_reply_count_and_opens_the_thread(cx: &mut TestAp
             replies.try_find_by_label("mira: Reply r2.").is_some(),
             "a reply to a reply"
         );
-        assert!(window.find("irc-thread-reply").visible());
+        assert!(window.find("irc-reply-editor").visible());
     });
 }
 
@@ -260,66 +261,12 @@ fn the_chosen_thread_survives_switching_tabs_and_conversations(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
-fn reply_in_thread_sends_to_the_channel_with_the_reply_tag(cx: &mut TestAppContext) {
-    let (board, hub, cx) = finished(cx, &[MESSAGE_TAGS]);
-    cx.update(|window, cx| window.click("irc-status:ask1", cx));
-    settle(cx);
-    cx.update(|window, cx| window.click("irc-thread-reply", cx));
-    settle(cx);
-    let conversation = front(&board, cx);
-    cx.update(|window, _| {
-        assert_eq!(
-            window.find("irc-reply-mode").label(),
-            Some("Replying in thread to mira: aurora-lyra: capture a baseline")
-        );
-    });
-    let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
-    input.update(cx, |_, cx| {
-        cx.emit(ChatInputEvent::Submit("Thanks, Lyra.".into()))
-    });
-    settle(cx);
-    hub.read_with(cx, |hub, _| {
-        let sent = hub.sent().last().cloned();
-        assert_eq!(
-            sent,
-            Some(Command::Reply {
-                buffer: channel(SHIP),
-                msgid: "ask1".into(),
-                text: "Thanks, Lyra.".into(),
-            })
-        );
-    });
-    cx.update(|window, _| {
-        assert!(
-            window.try_find("irc-reply-mode").is_none(),
-            "sent, so it ends"
-        );
-    });
-}
-
-#[gpui_kit::test]
-fn reply_mode_shows_what_it_replies_to_and_cancels(cx: &mut TestAppContext) {
-    let (board, _, cx) = finished(cx, &[MESSAGE_TAGS]);
-    cx.update(|window, cx| window.click("irc-status:ask1", cx));
-    settle(cx);
-    cx.update(|window, cx| window.click("irc-thread-reply", cx));
-    settle(cx);
-    cx.update(|window, cx| window.click("irc-reply-mode-cancel", cx));
-    settle(cx);
-    cx.update(|window, _| assert!(window.try_find("irc-reply-mode").is_none()));
-    let conversation = front(&board, cx);
-    conversation.read_with(cx, |conversation, _| {
-        assert_eq!(conversation.draft.reply, None)
-    });
-}
-
-#[gpui_kit::test]
 fn without_the_reply_tag_the_footer_says_why(cx: &mut TestAppContext) {
     let (_, _, cx) = finished(cx, &[]);
     cx.update(|window, cx| window.click("irc-status:ask1", cx));
     settle(cx);
     cx.update(|window, _| {
-        assert!(window.try_find("irc-thread-reply").is_none());
+        assert!(window.try_find("irc-reply-editor").is_none());
         assert_eq!(
             window.find("irc-thread-reply-refused").label(),
             Some(NO_REPLY_TAG)

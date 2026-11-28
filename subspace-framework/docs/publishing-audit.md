@@ -62,15 +62,27 @@ MiB in total.
 ## Removed before publishing
 
 - **A real person's name and handles in test fixtures.** `subspace-core`'s
-  credential tests used a person's full name as GitHub logins
-  (`octo-dev_corp`, `jdoe` and case variants) and a search
-  test used "Doe, Jane"; agent and sign-in tests used the login
-  `jack`. They now use the fictional `octo-dev_corp`, `octocat`,
-  `Doe, Jane`, `octo-dev` and `octo_corp`. Git history still holds the old
-  values, but history is not published.
+  credential tests used a person's name as GitHub logins, a search test
+  used the same name, and agent and sign-in tests used a first name as the
+  login. They now use fictional logins, `octocat` and `Doe, Jane`.
 - **Subspace's identity.** The OAuth App client id, the Report issue
   repository and the organisation's bundle ids and repository in test
   fixtures (see [Resolved](#resolved-before-the-first-publish)).
+
+## Removed after publishing
+
+Found on 28 November 2026, after the crates had been published:
+
+- **Test data taken from real work.** Search, palette, repository-name and
+  rich text fixtures, and some doc comments, used titles, identifiers and
+  names from the owner's other work. They are now invented: `example-org`,
+  `Example.Job.Handler` and made-up items.
+- **An employer's suffix on fixture logins.** The fictional logins that
+  replaced the person's name still ended in an employer's suffix. They are
+  now `octo-dev_corp`, `octo_corp` and `work_corp`.
+
+A new release does not change crates that are already published, nor the
+repository's history.
 
 ## Harmless
 
@@ -95,7 +107,8 @@ MiB in total.
   Framework's tests use the fictional `subspace-networks`.
 - **"Ported" origins.** The notes that code was ported from the owner's
   earlier app are gone; it is the owner's original, unpublished work.
-- **The persona "Jack".** Comments and tests call the example user Zack.
+- **The owner as a persona.** Comments and tests call the example user
+  Zack.
 - **Licence.** Apache-2.0, confirmed by the owner on 17 November 2026.
 
 The last three were fixed in `c36138b`, `ce89fb2`, `8ae45bb` and `51a1b47`.
@@ -125,9 +138,10 @@ them part of the public API and history of the crates.
 4. **Example issue keys.** The default issue reference recogniser in
    `subspace-contracts` uses the fictional `TST` project key.
 5. **`repository` and `homepage`.** The manifests set neither, because the
-   repository is private. crates.io will show no source link, and the
-   README's relative links to `docs/` will not resolve there. Set both, and
-   switch README links to absolute URLs, if the repository becomes public.
+   repository was private when the crates were first published. crates.io
+   shows no source link, and the README's relative links to `docs/` do not
+   resolve there. The repository is public now: set both, and switch README
+   links to absolute URLs.
 
 ## Licence and notices
 

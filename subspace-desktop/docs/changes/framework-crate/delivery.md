@@ -106,7 +106,7 @@ baselines cover 9,401 (Framework) and 7,885 (desktop) functions.
 ### Cross-folder scan
 
 ```bash
-cd /Users/jack/Code/aic/subspace
+cd subspace
 git ls-files -co --exclude-standard subspace-desktop | grep -v '^subspace-desktop/docs/changes/' \
   | xargs grep -InE '\.\./subspace-framework|ROOT\.parent' | awk -F: '{print $1}' | sort | uniq -c
 git ls-files -co --exclude-standard subspace-framework \

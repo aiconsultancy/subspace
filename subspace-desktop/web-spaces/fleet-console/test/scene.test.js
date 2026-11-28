@@ -62,6 +62,20 @@ test("the crew tier draws the 24-hour ring, one card per context and orbiting su
   assert.ok(frame.hits.filter((hit) => hit.kind === "recent").length >= 2);
 });
 
+test("the crew tier asks for the exact crew selection, including its fleet", async () => {
+  const ctx = await context();
+  const nav = landed({ level: 2, ship: "galactica", crew: "starbuck" });
+  const selection = { ...nav.state.sel, fleet: "aurora" };
+  const frame = composeFrame({ ...nav.state, sel: selection }, {
+    ...ctx,
+    stateFor(target) {
+      assert.deepEqual(target, selection);
+      return { fleet: ctx.fleet, ships: ctx.ships };
+    },
+  }, 99_000, 0.016);
+  assert.equal(frame.hits.filter((hit) => hit.kind === "ctx").length, 2);
+});
+
 test("mid-warp there are two layers, a gate and star velocity; text of the zoomed parent fades first", async () => {
   const nav = landed(TOP);
   nav.go({ level: 1, ship: "pegasus" }, 10_000);

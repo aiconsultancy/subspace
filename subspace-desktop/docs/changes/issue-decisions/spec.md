@@ -10,10 +10,13 @@ Back to the [change record](intent.md).
   read. The **Decisions** tab has no composer.
 - The first **Decisions** visit reads a page of 50 using the issue identifier.
   **Show more** follows the opaque cursor, preserving API order and
-  deduplicating by ID. A failed continuation offers **Retry** without clearing
-  existing rows. Issue refresh reads a fresh cursor chain to the loaded depth,
-  including any requested continuation, or to its end. It replaces the rows
-  only after success. Offline, **Show more** can reconnect a continuation but
+  deduplicating by ID. If a continuation returns a repeated cursor, the tab
+  keeps the already loaded rows, discards the repeated continuation page
+  and ends **Show more** at the existing depth. A request failure
+  offers **Retry** without clearing existing rows. Issue refresh reads a fresh cursor chain to the loaded depth,
+  including any requested continuation, or to its end. If the refresh
+  encounters a repeated cursor, it keeps the loaded rows and ends
+  **Show more** at the same depth. Offline, **Show more** can reconnect a continuation but
   is disabled if another read is paused; **Retry** resumes that read. The tab
   shows busy, not a count.
 - Loading shows a skeleton. Empty reads say “No decisions linked to this
@@ -29,7 +32,8 @@ Back to the [change record](intent.md).
   behind the panel.
 - Use the native tab controls with Left/Right and Enter/Space. Kit's tab
   rendering already supplies selection semantics and pointer activation;
-  a local adapter supplies keyboard focus without a Framework change.
+  a local adapter supplies keyboard focus. The palette can select **All**
+  directly from **Decisions** and focuses the selected tab.
 - Close receives focus on open. Tab and Shift+Tab stay in the decision panel,
   and each control they reach scrolls the panel body just far enough to show
   it. The arrow keys, Page Up, Page Down, Home and End scroll the body from
@@ -57,8 +61,8 @@ Back to the [change record](intent.md).
 
 | Limit | Desktop behaviour or follow-up |
 | --- | --- |
-| Order is by decided-on date, newest first | Keep API order. The row's accessible description says so. |
-| A person maker has no display name in the projection | Show “Made by a person”; do not substitute the recorder or expose an ID. A named maker needs an API projection. |
+| Subspace API sorts by creation time, newest first | Keep the order across pages, including decisions logged after their decided-on date. |
+| Human maker name is optional | Use the available maker’s display name. For a NETT decision with multiple deciders, show their names together only when all are available. Otherwise use “Made by a person” in the list and “A person” in the panel. |
 | No total | Show no count on the tab. |
 | Accepter and rejecter are IDs only | Show acceptance or rejection times, not those IDs. |
 | Unlinking a decision logs no issue activity | **All** can still show a historical event after unlinking. **Decisions** is authoritative for current links. |

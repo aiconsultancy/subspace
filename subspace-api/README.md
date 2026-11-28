@@ -1542,8 +1542,10 @@ Decision and document revisions are available through the versioned REST routes.
 `GET /api/v1/decisions` sorts by creation time and ID, newest first. It
 filters by `issue`, `project`, `status`, `madeByType`, and the exact
 lower-case `tag`. Use `q` to search the title, decision, context, why,
-implications and alternatives without matching case, or to match a full
-decision identifier.
+implications and alternatives without matching case. An identifier query
+such as `D-00042-EXA` matches that reference only. `D-00042` matches the same
+decision number across projects, and `D-0004` matches the start of a reference.
+Follow `nextCursor` to read the next page of the same query.
 
 Every decision has a server-assigned `identifier` such as `D-00042-EXA`.
 The number increments within its project, padded to at least five digits.

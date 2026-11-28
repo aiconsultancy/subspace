@@ -294,8 +294,12 @@ each missing channel over loopback IRC before the public listeners start.
 Startup applies only the topic and flag changes supplied in the seed. An
 empty topic clears it. Use `+` to add flags and `-` to remove them, as in
 `+s-C`. Supported argument-free flags are `i m n t E s C R M u U`.
-For `+is` channels, grant membership through an invitation or persistent
-ChanServ access. A channel with a different registered founder stops startup.
+A channel seed with `privateAccounts` applies the `+Cimnst` modes and
+grants persistent ChanServ `+v` to named accounts from the account seed,
+including certificate accounts. The founder also has access. The bootstrap
+client removes access for accounts dropped from a previously applied
+seed. It refuses invite exceptions and unexpected members or persistent
+grants, so it cannot adopt a channel with other readers. A channel with a different registered founder stops startup.
 Use ChanServ to transfer ownership deliberately and then update the seed.
 Removing an entry leaves the registration intact.
 

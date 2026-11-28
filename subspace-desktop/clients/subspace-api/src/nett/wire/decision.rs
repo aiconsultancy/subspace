@@ -7,18 +7,20 @@ use serde_json::{Value, json};
 /// deciders, a planning project and an initiative; it has no tags, agent
 /// makers or evidence, which stay empty.
 pub(crate) fn decision(item: &Value) -> Value {
-    let decider_id = item
+    let deciders = item
         .get("deciders")
         .and_then(Value::as_array)
-        .and_then(|deciders| deciders.first())
-        .and_then(|decider| decider.get("userId"))
-        .and_then(Value::as_str);
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let decider_id = deciders
+        .first()
+        .and_then(|person| person.get("userId")?.as_str());
     let recorded_by = item
         .get("createdByUserId")
         .and_then(Value::as_str)
         .or(decider_id)
         .unwrap_or_default();
-    let mut row = row(item, decider_id, recorded_by);
+    let mut row = row(item, decider_id, deciders, recorded_by);
     if item.get("decision").is_some()
         && let (Some(row), Value::Object(detail)) =
             (row.as_object_mut(), detail(item, decider_id, recorded_by))
@@ -33,7 +35,7 @@ fn text<'a>(item: &'a Value, key: &str) -> &'a str {
 }
 
 /// The fields every decision row has.
-fn row(item: &Value, decider_id: Option<&str>, recorded_by: &str) -> Value {
+fn row(item: &Value, decider_id: Option<&str>, deciders: &[Value], recorded_by: &str) -> Value {
     let summary_id = |key: &str| {
         item.get(key)
             .and_then(|summary| summary.get("id"))
@@ -56,11 +58,22 @@ fn row(item: &Value, decider_id: Option<&str>, recorded_by: &str) -> Value {
         "tags": [],
         "madeByType": "human",
         "madeByUserId": decider_id,
+        "madeBy": deciders.iter().map(maker).collect::<Vec<_>>(),
         "recordedByUserId": recorded_by,
         "version": item.get("version").cloned().unwrap_or(Value::Null),
         "revisionNumber": item.get("revisionNumber").cloned().unwrap_or(json!(1)),
         "createdAt": text(item, "createdAt"),
         "updatedAt": text(item, "updatedAt"),
+    })
+}
+
+fn maker(decider: &Value) -> Value {
+    let id = text(decider, "userId");
+    json!({
+        "userId": id,
+        "displayName": text(decider, "displayName"),
+        "available": !id.is_empty() && decider.get("available").and_then(Value::as_bool).unwrap_or(true),
+        "kind": "human",
     })
 }
 

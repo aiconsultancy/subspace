@@ -12,13 +12,19 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, FocusHandle, InteractiveElement as _, ParentElement as _, Styled as _,
-    TestSupportExt as _, div,
+    AnyElement, FocusHandle, InteractiveElement as _, ParentElement as _, SharedString,
+    Styled as _, TestSupportExt as _, div,
 };
+
+pub(super) struct CompactMessage {
+    pub label: SharedString,
+    pub input_name: SharedString,
+}
 
 pub(super) struct MessageState {
     /// Write/Preview for Markdown; off for plain-text protocols.
     pub markdown: bool,
+    pub compact: Option<CompactMessage>,
     pub busy: bool,
     pub submit_blocked: bool,
     pub error: Option<String>,
@@ -31,9 +37,34 @@ pub(super) struct MessageState {
 impl ChatInput {
     /// A Markdown message input, sharing Copilot's minimum size and Enter bindings.
     pub fn message(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_message(None, window, cx)
+    }
+
+    /// An inset plain-text composer with a labelled send action.
+    ///
+    /// An addon set on this composer appears before the shared send controls.
+    pub fn compact_message(
+        label: impl Into<SharedString>,
+        input_name: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let compact = CompactMessage {
+            label: label.into(),
+            input_name: input_name.into(),
+        };
+        Self::with_message(Some(compact), window, cx)
+    }
+
+    fn with_message(
+        compact: Option<CompactMessage>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             message: Some(MessageState {
-                markdown: true,
+                markdown: compact.is_none(),
+                compact,
                 busy: false,
                 submit_blocked: false,
                 error: None,
@@ -44,6 +75,10 @@ impl ChatInput {
             }),
             ..Self::with_placeholder("Write a message…".into(), window, cx)
         }
+    }
+
+    pub(super) fn compact(&self) -> Option<&CompactMessage> {
+        self.message.as_ref()?.compact.as_ref()
     }
 
     /// A plain-text message input for a protocol without Markdown, such as
@@ -83,7 +118,9 @@ impl ChatInput {
     /// Prevents submitting the message while leaving its draft editable.
     // qual:api
     pub fn set_submit_blocked(&mut self, blocked: bool, cx: &mut Context<Self>) {
-        if let Some(message) = &mut self.message {
+        if let Some(message) = &mut self.message
+            && message.submit_blocked != blocked
+        {
             message.submit_blocked = blocked;
             cx.notify();
         }
@@ -115,6 +152,9 @@ impl ChatInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if let Some(compact) = self.compact() {
+            return self.compact_toolbar(&compact.label, window, cx);
+        }
         if let Some(addon) = &self.addon {
             return Some(addon.clone().into_any_element());
         }
@@ -132,6 +172,40 @@ impl ChatInput {
         )
     }
 
+    fn compact_toolbar(
+        &self,
+        label: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let message = self.message.as_ref()?;
+        let send = action_button(
+            "message-send",
+            Intent::Primary,
+            Some(IconName::CornerDownLeft),
+            label.clone(),
+        )
+        .loading(message.busy)
+        .disabled(!self.can_send(message, cx))
+        .on_click(cx.listener(|this, _, _, cx| this.enter(cx)));
+        Some(
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .children(self.addon.clone())
+                .child(self.message_status(message, window, cx))
+                .child(send)
+                .into_any_element(),
+        )
+    }
+
+    fn can_send(&self, message: &MessageState, cx: &gpui_kit::App) -> bool {
+        !self.disabled
+            && !message.submit_blocked
+            && (self.submit_empty || !self.text(cx).trim().is_empty())
+    }
+
     fn message_status(
         &self,
         message: &MessageState,
@@ -145,6 +219,20 @@ impl ChatInput {
                 .min_w_0()
                 .text_xs()
                 .text_color(tokens.red)
+                .into_any_element();
+        }
+        if message.compact.is_some() {
+            let keys = if cx.platform_info().is_mac() {
+                "⇧↵ New line"
+            } else {
+                "Shift+Enter · New line"
+            };
+            return crate::truncated::text("message-status", keys)
+                .flex_1()
+                .min_w_0()
+                .text_right()
+                .text_size(tokens.caption_size())
+                .text_color(tokens.muted)
                 .into_any_element();
         }
         let target = hint_opacity(!self.text(cx).is_empty(), message.submit_blocked);

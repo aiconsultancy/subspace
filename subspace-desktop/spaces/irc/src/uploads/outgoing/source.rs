@@ -8,7 +8,7 @@ use subspace_api_client::signed_in_generation;
 use subspace_framework::dashboard::chat_input::attachments::{AttachmentSource, IngestionBatch};
 
 /// Open the system picker for this conversation's tray.
-pub(super) fn pick(this: &mut Conversation, cx: &mut Context<Conversation>) {
+pub(crate) fn pick(this: &mut Conversation, cx: &mut Context<Conversation>) {
     if !this.tray.idle() || !subspace_api_client::capabilities().chat_uploads {
         return;
     }

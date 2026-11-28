@@ -264,12 +264,12 @@ pub(crate) fn review_actions(allowed: Allowed) -> Vec<ItemAction> {
     actions
 }
 
-/// The most useful actions beside the pull request's title.
+/// The toolbar actions, with Approve after the neutral actions.
 pub(crate) fn page_actions(allowed: Allowed) -> impl Iterator<Item = ItemAction> {
     [
-        (allowed.review, ItemAction::Approve),
         (allowed.files, ItemAction::Files),
         (allowed.close, ItemAction::Close),
+        (allowed.review, ItemAction::Approve),
     ]
     .into_iter()
     .filter_map(|(allowed, action)| allowed.then_some(action))

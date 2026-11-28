@@ -112,6 +112,18 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
   or configuration. Use fictional fixtures and placeholders such as
   `example.com` in docs and `.env.example` files. Configure identity
   providers and service endpoints at build or run time.
+- Private terms, such as a real name, address or employer, are kept out by
+  [`scripts/check-private-terms.py`](scripts/check-private-terms.py). The
+  list is private too: it lives in the `PRIVATE_TERMS` secret, which the
+  [`private terms`](.github/workflows/private-terms.yml) check reads on every
+  pull request, and in `~/.config/subspace-private-terms` on the machine of
+  anyone who holds it, where the commit and push hooks read it. Never write a
+  term from the list, or the text a finding points at, in a commit, pull
+  request, issue or review. When the check fails, the term is already on
+  GitHub: tell a maintainer, who can find it with the list, and rewrite the
+  branch instead of adding a commit that removes it. The push hook reads one
+  branch per push and not the name of a branch pushed with no new commits,
+  and nothing reads comments or the content of images.
 - Keep generated build output out of commits.
 - **Code that needs the Subspace API** lives in the product crate or a
   Space, never in a Framework crate that a build without the API also uses.

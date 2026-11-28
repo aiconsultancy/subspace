@@ -27,7 +27,7 @@ before this change.
 | State | Image |
 | --- | --- |
 | Before: SUB-1's Activity has only Comments and All | ![Before](evidence/before-comments.png) |
-| The Decisions tab on SUB-1: three linked decisions, newest decided first, with their status, project, date, and maker or successor | ![Decisions tab](evidence/after-tabs-decisions.png) |
+| The Decisions tab on SUB-1: three linked decisions, with the most recently logged decision first, with their status, project, date, and maker or successor | ![Decisions tab](evidence/after-tabs-decisions.png) |
 | **Use one review queue** in the side panel, scrolled down: the decision text, maker, evidence link showing its host, the decision it supersedes and linked issues SUB-1 and SUB-4 | ![Decision panel](evidence/after-panel.png) |
 | After following **Supersedes**: the earlier decision, with Back to return | ![Followed decision](evidence/after-panel-followed.png) |
 | Escape closes the panel, keeps the Decisions tab and returns focus to the opener | ![Panel closed](evidence/after-panel-escape.png) |
@@ -49,3 +49,21 @@ focuses the Space again before every `key:` step, so Enter doesn't activate
 a focused tab. The headless test
 `keyboard_only_from_activity_to_decision_and_back` covers the same keyboard
 path.
+
+## Issue Decisions follow-up
+
+A PostgreSQL-backed API test pages through two decisions linked to the
+same issue. The backdated decision was logged later and appears on the
+first page. The hub regression follows a cursor back to an earlier page
+across separate clicks and checks that the valid rows and refresh depth
+are preserved. The Issues tests cover optional maker labels and palette
+selection and focus.
+
+These paired native captures use the Twilight Two theme and the local
+Decisions fixture.
+
+| State | Before | After |
+| --- | --- | --- |
+| Decision list | [Generic maker](evidence/sub-64-before-list.png) | [Named maker and a backdated decision](evidence/sub-64-after-list.png) |
+| Decision panel | [Generic maker](evidence/sub-64-before-panel.png) | [Named maker](evidence/sub-64-after-panel.png) |
+| Palette on Decisions | [Original commands](evidence/sub-64-before-palette.png) | [Show all issue activity](evidence/sub-64-after-palette.png) |

@@ -39,13 +39,14 @@ the maker and the project.
 
 While a section is on its first row, every row in it shows how many of the
 listed decisions it holds. Otherwise only the chosen row shows its count. A
-count ending in **+** means there were more decisions than the Space reads at
-once.
+count ending in **+** means there is another page. Use **Previous** and
+**Next** below the list to browse 100 decisions at a time. The counts show
+the decisions on the current page.
 
 The list groups decisions by status: **Proposed**, **Accepted**,
 **Superseded**, then **Rejected**. In **All decisions**, Superseded and
 Rejected start folded; a search opens every group. Within a group the most
-recently decided come first. A row shows the decision reference, such as
+recently recorded come first. A row shows the decision reference, such as
 `D-00042-EXA`, the title, a
 **supersedes** or **superseded** mark, the number of linked issues, who made
 the decision (a person's name, or an agent's name and rank) and the date it
@@ -56,15 +57,16 @@ to the Decisions list when opened there.
 
 The status bar shows **Subspace API**, the signed-in account, the number of
 decisions and when the list was read. A failed reload keeps the decisions
-already listed under an **Offline** message. A new search or choice clears
-the list first, so if its read fails the Space says why and offers
-**Retry** rather than showing the earlier decisions.
+already listed under an **Offline** message. While searching, the current
+list stays visible and the toolbar shows **Searching…**. The results replace
+it when they arrive. If the search fails, **Previous results** identifies the
+rows still on screen. Use **Refresh** to retry.
 
 ## Toolbar and filters
 
 | Control | What it does |
 | --- | --- |
-| **Search decisions** | Searches titles, decisions and their context after a short typing pause. Enter or Escape returns to the list. |
+| **Search decisions** | Search by text or ID. `D-00042-EXA` matches that decision. `D-00042` matches the same number across projects. `D-0004` finds IDs with that prefix. Enter or Escape returns focus to the list. |
 | **Tag** | Shows only decisions with the chosen tag. **Any tag** clears it. It appears once a read has shown a tag. The tag is not remembered. |
 | View menu | While the navigator is hidden, it names the current view and holds the views, the makers and the projects. |
 | Count | How many decisions the list holds. |
@@ -95,7 +97,9 @@ supersedes another (**Supersedes**); choose the named decision to open it.
 Then come the title, the status and the date, and the sections **Decision**,
 **Context**, **Why**, **Implications** and **Alternatives**, leaving out any
 that are empty, then **Evidence**. The text is no wider than a comfortable
-reading width.
+reading width. The detail toolbar puts Back and the decision reference on
+the left. **Revision history** is the clock button on the right, beside
+the actions available for the open decision.
 
 Beside the page, the inspector shows the decision's facts: status, decided
 on, made by, recorded by, when and by whom it was accepted or rejected, the

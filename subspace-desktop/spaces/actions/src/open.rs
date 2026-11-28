@@ -155,6 +155,8 @@ pub(crate) fn page(this: &Actions, open: &OpenTab, cx: &App) -> AnyElement {
         .w_full()
         .max_w(px(workspace::READING_WIDTH_PX))
         .min_w_0()
+        .px(workspace::text_edge(&tokens))
+        .py_4()
         .gap_6();
     let column = match record {
         Some(record) => column.children(sections(record, &open.detail, cx)),
@@ -170,9 +172,7 @@ pub(crate) fn page(this: &Actions, open: &OpenTab, cx: &App) -> AnyElement {
         .size_full()
         .min_h_0()
         .overflow_y_scroll()
-        .px(workspace::text_edge(&tokens))
-        .py_4()
-        .child(column)
+        .child(h_flex().w_full().justify_center().child(column))
         .into_any_element()
 }
 

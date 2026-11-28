@@ -1,4 +1,4 @@
-//! The composer in a fleet channel: the hint row under it, `/ask` offered
+//! The composer in a fleet channel: the command and mention actions, `/ask` offered
 //! before the IRC client's commands, and `/ask` sent to the channel's agent
 //! so the request status line tracks it.
 
@@ -30,20 +30,24 @@ fn says(hub: &Entity<Hub>, text: &str, cx: &mut VisualTestContext) -> bool {
 }
 
 #[gpui_kit::test]
-fn the_hint_row_names_the_keys_under_the_composer(cx: &mut TestAppContext) {
-    let (_, _, cx) = ship(cx);
-    cx.update(|window, _| {
-        let row = window.within("irc-composer-hints");
-        for (word, key) in [
-            ("mention", "at sign"),
-            ("commands", "slash"),
-            ("recall when empty", "Up arrow"),
-            ("new line", "Shift+Return"),
-        ] {
-            let hint = row.find(format!("irc-hint:{word}"));
-            assert!(hint.visible(), "{word}");
-            assert_eq!(hint.label(), Some(format!("{word}: {key}").as_str()));
-        }
+fn the_channel_composer_opens_irc_commands_from_its_toolbar(cx: &mut TestAppContext) {
+    let (board, _, cx) = ship(cx);
+    let conversation = front(&board, cx);
+    let input = conversation.read_with(cx, |view, _| view.composer().clone());
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.set_text("Capture the baseline.", window, cx)
+        });
+        assert!(window.find("irc-mention").visible());
+        window.click("irc-commands", cx);
+    });
+    settle(cx);
+    conversation.read_with(cx, |view, cx| {
+        assert_eq!(
+            view.draft.offered(cx).first().map(String::as_str),
+            Some("/ask")
+        );
+        assert_eq!(view.composer().read(cx).text(cx), "Capture the baseline.");
     });
 }
 

@@ -1,5 +1,6 @@
 //! The list, the navigator, the toolbar and the peek.
 
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_api_client::Error;
 use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
@@ -69,6 +70,15 @@ fn one_click_selects_a_decision_and_peeks_without_opening_it(cx: &mut TestAppCon
     );
     assert!(has(cx, "decisions-issue-row:NAV-2"));
     assert!(has(cx, "decisions-issue-row:NAV-5"));
+    cx.update(|window, _| {
+        let first = window.find("decisions-issue-content:NAV-2").bounds();
+        let second = window.find("decisions-issue-content:NAV-5").bounds();
+        assert_eq!(
+            first.left(),
+            second.left(),
+            "different lengths share a text edge"
+        );
+    });
     assert!(has(cx, "decisions-open"));
 }
 
@@ -135,8 +145,9 @@ fn the_search_reads_after_it_is_committed_and_opens_every_group(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
-fn a_failed_search_shows_no_rows_found_for_the_previous_text(cx: &mut TestAppContext) {
+fn search_keeps_visible_rows_while_loading_and_labels_them_after_failure(cx: &mut TestAppContext) {
     let (board, cx) = mount(cx);
+    let previous = rows(&board, cx);
     board.update(cx, |board, _| {
         board.reader = fixtures::failing(Error::Network)
     });
@@ -144,16 +155,20 @@ fn a_failed_search_shows_no_rows_found_for_the_previous_text(cx: &mut TestAppCon
         board.update(cx, |board, cx| {
             board
                 .search
-                .update(cx, |input, cx| input.set_value("relay", window, cx));
-            search::commit(board, cx);
+                .update(cx, |input, cx| input.replace_all("relay", window, cx));
         });
     });
     render(cx);
-    assert!(
-        rows(&board, cx).is_empty(),
-        "the previous text's rows do not stay under the new text"
+    assert_eq!(rows(&board, cx), previous);
+    assert_eq!(label(cx, "decisions-count").as_deref(), Some("Searching…"));
+
+    board.update(cx, search::commit);
+    render(cx);
+    assert_eq!(rows(&board, cx), previous);
+    assert_eq!(
+        label(cx, "decisions-count").as_deref(),
+        Some("Previous results")
     );
-    assert_eq!(label(cx, "decisions-state").as_deref(), Some("Offline"));
 }
 
 /// Uses a dock's switch as the shell's status bar does: through the Space's

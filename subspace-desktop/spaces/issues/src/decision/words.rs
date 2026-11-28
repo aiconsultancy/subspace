@@ -50,20 +50,38 @@ pub(crate) fn date(item: &DecisionListItem, spoken: bool) -> String {
     }
 }
 
+fn human_names(item: &DecisionListItem) -> Option<String> {
+    let names: Option<Vec<_>> = item
+        .human_makers
+        .people()
+        .iter()
+        .map(|maker| {
+            let name = maker.display_name.trim();
+            (maker.available && maker.kind == "human" && !name.is_empty()).then_some(name)
+        })
+        .collect();
+    names
+        .filter(|names| !names.is_empty())
+        .map(|names| names.join(", "))
+}
+
 pub(crate) fn maker_short(item: &DecisionListItem) -> String {
     match item.made_by_type {
         DecisionMakerType::Agent => item.made_by_agent_name.as_deref().map_or_else(
             || "Made by an agent".into(),
             |name| format!("{name} (agent)"),
         ),
-        DecisionMakerType::Human => "Made by a person".into(),
+        DecisionMakerType::Human => human_names(item).map_or_else(
+            || "Made by a person".into(),
+            |name| format!("Made by {name}"),
+        ),
         _ => "Maker not recorded".into(),
     }
 }
 
 pub(crate) fn maker(item: &DecisionListItem) -> String {
     match item.made_by_type {
-        DecisionMakerType::Human => return "A person".into(),
+        DecisionMakerType::Human => return human_names(item).unwrap_or_else(|| "A person".into()),
         DecisionMakerType::Agent => (),
         _ => return "Maker not recorded".into(),
     }
@@ -136,4 +154,48 @@ pub(crate) fn retry(
     action_button(id, Intent::Neutral, Some(IconName::RotateCw), "Retry")
         .accessibility_label(label)
         .on_click(cx.listener(move |this, _, _, cx| action(this, cx)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DecisionListItem, maker, maker_short};
+    use serde_json::json;
+
+    #[test]
+    fn human_maker_labels_use_only_an_available_name() {
+        let mut decision = json!({
+            "id":"fixture","title":"Review","status":"proposed","decidedOn":"2026-11-10",
+            "projectId":"project","projectKey":"SUB","issues":{"items":[],"count":0},
+            "tags":[],"madeByType":"human","recordedByUserId":"recorder","revisionNumber":1,
+            "createdAt":"2026-11-18T10:00:00Z","updatedAt":"2026-11-18T10:00:00Z"
+        });
+        for name in [None, Some(" "), Some("Ada Fixture")] {
+            if let Some(name) = name {
+                decision["madeBy"] = json!({
+                    "userId":"maker","displayName":name,"available":true,"kind":"human"
+                });
+            }
+            let item: DecisionListItem = serde_json::from_value(decision.clone()).unwrap();
+            let expected = name.filter(|name| !name.trim().is_empty());
+            assert_eq!(maker(&item), expected.unwrap_or("A person"));
+            assert_eq!(
+                maker_short(&item),
+                format!("Made by {}", expected.unwrap_or("a person"))
+            );
+        }
+        let ada = decision["madeBy"].clone();
+        let grace = json!({"userId":"maker-2","displayName":"Grace Fixture","available":true,"kind":"human"});
+        decision["madeBy"] = json!([ada, grace]);
+        let joint: DecisionListItem = serde_json::from_value(decision.clone()).unwrap();
+        assert_eq!(maker(&joint), "Ada Fixture, Grace Fixture");
+        assert_eq!(maker_short(&joint), "Made by Ada Fixture, Grace Fixture");
+        let mut without_summary = decision.clone();
+        without_summary["madeBy"] = serde_json::Value::Null;
+        let absent: DecisionListItem = serde_json::from_value(without_summary).unwrap();
+        assert_eq!(maker(&absent), "A person");
+        decision["madeBy"][1]["available"] = json!(false);
+        let item: DecisionListItem = serde_json::from_value(decision).unwrap();
+        assert_eq!(maker(&item), "A person");
+        assert_eq!(maker_short(&item), "Made by a person");
+    }
 }

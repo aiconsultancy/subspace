@@ -121,6 +121,8 @@ OFFICER_MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:-]{0,127}")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # The officers' model before each role had its own default. A fleet set up then keeps it until it chooses.
 LEGACY_OFFICER_MODEL = "gpt-5.4"
+# Write new crew defaults to fleet.json. Older fleets that omitted the model keep the installer's legacy fallback.
+CREW_MODEL_DEFAULTS = {"claude": "claude-opus-5-5", "codex": "gpt-6.2-sol"}
 # The API on this VM against an existing PostgreSQL (--database-url-file). The URL file is root's alone; the URL
 # is written only to the root-only api.env, single-quoted so Compose takes it literally, hence no quote in it.
 DATABASE_URL_TEXT = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+")
@@ -220,7 +222,7 @@ def parse_args(argv):
     parser.add_argument("--name", help="fleet display name, for example 'Example Fleet'")
     parser.add_argument("--slug", help="stable fleet ID; defaults to the name in lower case")
     parser.add_argument("--rear-admiral", help="the rear admiral's name, for example Atlas")
-    parser.add_argument("--captains", help="comma-separated captain (ship) names, for example 'Orion,Vega'. Each "
+    parser.add_argument("--captains", help="comma-separated captain (ship) names (new fleets default to four). Each "
                         "officer's name in lower case is its one name: IRC account and nick, Subspace API agent name "
                         "and Stargate ID, unique on the IRC server and in the API's organisation")
     parser.add_argument("--crew-names", help="names for each captain's crew, in slot order (Claude-family crew, then "
@@ -235,10 +237,9 @@ def parse_args(argv):
                         "'' clears it. Private GitHub repositories need GitHub Apps first (installer README)")
     parser.add_argument("--crew-claude", type=int, help="Claude-family crew per captain (default 2; crew need a repository)")
     parser.add_argument("--crew-codex", type=int, help="Codex-family crew per captain (default 2; crew need a repository)")
-    parser.add_argument("--crew-claude-model", help="model of each Claude-family crew member, such as claude-opus-5-5 "
-                        "(default claude-sonnet-5-5; kept on later runs; '' returns to the default)")
-    parser.add_argument("--crew-codex-model", help="model of each Codex-family crew member, such as gpt-6.2-sol "
-                        "(default gpt-5.4; kept on later runs; '' returns to the default)")
+    for family, model in CREW_MODEL_DEFAULTS.items():
+        parser.add_argument(f"--crew-{family}-model", help=f"model of each {family.title()}-family crew member "
+                            f"(new fleets default to {model}; kept on later runs; '' selects {model})")
     for role, flag, default in (("captain", "captain", runtime.OFFICER_DEFAULTS["captain"]),
                                 ("rear_admiral", "rear-admiral", runtime.OFFICER_DEFAULTS["rear_admiral"])):
         who = "each captain" if role == "captain" else "the rear admiral"
@@ -331,6 +332,9 @@ def parse_args(argv):
                         help="offer unassigned Ready for agents issues (default on with agent dispatch)")
     parser.add_argument("--decision-outcome-dms", action=argparse.BooleanOptionalAction, default=None,
                         help="Send decision outcomes by DM when the local API and Stargate support it.")
+    parser.add_argument("--fleet-audit", action=argparse.BooleanOptionalAction, default=None,
+                        help="mirror officer DMs to the private fleet audit channel (default on for new local IRC installs). "
+                             "On remote IRC, provision the private channel before enabling it.")
     parser.add_argument("--operator", help="Linux login that may SSH in and tunnel (default: the sudo user)")
     parser.add_argument("--access", choices=["ssh", "tailscale", "cloudflare"],
                         help="how you reach the VM; tailscale limits SSH to the tailnet, cloudflare to cloudflared")
@@ -399,6 +403,7 @@ def yes_no(label, default, interactive):
 def gather(args, saved):
     interactive = sys.stdin.isatty() and not args.non_interactive
     answers = dict(saved)
+    fresh = new_fleet(saved)
 
     def pick(key, flag, label, default=None):
         if flag is not None:
@@ -415,7 +420,15 @@ def gather(args, saved):
     require(answers.get("rearAdmiral"), "Choose the rear admiral's name with --rear-admiral.")
     captains = args.captains if args.captains is not None else answers.get("captains")
     if captains is None:
-        captains = prompt("Captain (ship) names, comma-separated", None, interactive)
+        default = None
+        if fresh:
+            stem = answers["slug"]
+            if len(stem) > 12:
+                # Preserve a distinction between long fleet IDs sharing a prefix within the 16-character name limit.
+                suffix = hashlib.sha256(stem.encode()).hexdigest()[:4]
+                stem = f"{stem[:7].rstrip('-')}-{suffix}"
+            default = ",".join(f"c-{stem}-{number}" for number in range(1, 5))
+        captains = prompt("Captain (ship) names, comma-separated", default, interactive)
     if isinstance(captains, str):
         captains = [name.strip() for name in captains.split(",") if name.strip()]
     require(captains, "Name at least one captain with --captains.")
@@ -463,7 +476,7 @@ def gather(args, saved):
         answers["captainPeerMessages"] = args.captain_peer_messages
     if args.captain_tools is not None:
         answers["captainTools"] = args.captain_tools
-    elif new_fleet(saved):
+    elif fresh:
         # A new fleet: captains with crew leave coding to them. A fleet set up before captainTools existed has no
         # answer and keeps the standard policy, which a fleet.json without captainTools means.
         policy = prompt("Captain tools: delegate (crew edit, commit and push; captains plan, review and open pull "
@@ -504,12 +517,11 @@ def gather(args, saved):
         answers["initiativeId"] = args.initiative.lower()
     models = answers.setdefault("crewModels", {})
     for family, flag in (("claude", args.crew_claude_model), ("codex", args.crew_codex_model)):
-        if flag == "":
-            models[family] = ""  # The fleet installer's default, even if fleet.json names a model.
-        elif flag is not None:
-            require(CREW_MODEL.fullmatch(flag), f"--crew-{family}-model must be a model ID, such as "
-                    f"{'claude-opus-5-5' if family == 'claude' else 'gpt-6.2-sol'}.")
-            models[family] = flag
+        default = CREW_MODEL_DEFAULTS[family]
+        if flag is not None:
+            require(flag == "" or CREW_MODEL.fullmatch(flag),
+                    f"--crew-{family}-model must be a model ID, such as {default}.")
+            models[family] = flag or default
     officers = answers.get("officerModels")
     if officers is None:
         officers = {}
@@ -645,6 +657,11 @@ def gather(args, saved):
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
     installed = read_json(INPUTS / "fleet.json", {}) or {}
+    if args.fleet_audit is not None:
+        answers["fleetAudit"] = args.fleet_audit
+    elif answers.get("fleetAudit") is True and answers["irc"] == "remote" and not same_remote_irc(answers, saved, installed):
+        answers.pop("fleetAudit")
+        say("Fleet Audit is off on the new IRC server. Provision its private channel before enabling it.")
     installed_dispatch = installed.get("agentDispatch")
     for key, flag in (("assignmentRequests", args.assignment_requests),
                       ("readyOffers", args.ready_for_agents_offers)):
@@ -683,7 +700,7 @@ def gather(args, saved):
         answers["decisionOutcomeMode"] = "off"
     elif "decisionOutcomeMode" not in answers:
         answers["decisionOutcomeMode"] = (
-            "on" if previous_dms is True else "auto" if new_fleet(saved) else "off"
+            "on" if previous_dms is True else "auto" if fresh else "off"
         )
     if (args.decision_outcome_dms is None and answers["decisionOutcomeMode"] == "on"
             and answers["irc"] == "remote" and not same_remote_irc(answers, saved, installed)):
@@ -1255,6 +1272,8 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         }
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
+    if "fleetAudit" in answers:
+        config["irc"]["fleetAudit"] = answers["fleetAudit"]
     previous = read_json(INPUTS / "fleet.json", {})
     if endpoints := answers.get("agentEgress", previous.get("agentEgress", [])):
         config["agentEgress"] = endpoints
@@ -1265,10 +1284,11 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     config["toolchains"], packages = toolchain_settings(read_json(INPUTS / TOOLCHAIN_RECORD), previous)
     if packages:
         config["systemPackages"] = packages
-    # Each crew family's model: this or an earlier run's answer, else one set in fleet.json by hand.
+    # Keep explicit answers and installed models. Write the new defaults only for a fresh fleet definition.
+    chosen = answers.get("crewModels", {})
     for family, crew in config["crew"].items():
-        chosen = answers.get("crewModels", {})
-        model = chosen[family] if family in chosen else (previous.get("crew", {}).get(family) or {}).get("model")
+        default = (previous.get("crew", {}).get(family) or {}).get("model") if previous else CREW_MODEL_DEFAULTS[family]
+        model = chosen.get(family, default)
         if model:
             crew["model"] = model
     # Keep anything the operator added by hand, such as private repositories, GitHub Apps or stakeholders.

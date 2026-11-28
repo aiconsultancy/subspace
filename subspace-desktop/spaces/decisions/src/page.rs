@@ -1,7 +1,7 @@
 //! A decision opened as a page: its own tab beside the list, read in full
 //! from Subspace API, until it is closed.
 
-mod controls;
+pub(crate) mod controls;
 pub(crate) mod view;
 
 use gpui_kit::{AppContext as _, Context, Window};

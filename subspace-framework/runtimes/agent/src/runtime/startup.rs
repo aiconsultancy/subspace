@@ -267,7 +267,7 @@ mod tests {
         let options = client_options(
             &Secret::new("github_pat_test"),
             Path::new("/private/workspace"),
-            "Work_corp",
+            "Work_Corp",
         );
         assert_eq!(options.use_logged_in_user, Some(false));
         assert_eq!(

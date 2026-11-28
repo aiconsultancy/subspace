@@ -236,6 +236,18 @@ def check_seeded(port, agent_pw, captain_pw, command_topic, command_modes):
         agent.expect(f" 473 smoke-agent {INITIATIVE_CHANNEL} ")
 
 
+def check_audit(port, agent_pw, captain_pw):
+    with connect(port) as agent, connect(port) as captain:
+        agent.login("smoke-agent", agent_pw)
+        captain.login("smoke-captain", captain_pw)
+        captain.join("#smoke-audit")
+        captain.send("MODE #smoke-audit")
+        modes = captain.expect(" 324 smoke-captain #smoke-audit ")
+        assert set("Cimnst") <= set(modes.split()[-1])
+        agent.send("JOIN #smoke-audit")
+        agent.expect(" 473 smoke-agent #smoke-audit ")
+
+
 def write_channel_mount(directory, channels):
     seed_file = directory / "channels.json"
     seed_file.write_text(json.dumps(channels), encoding="utf-8")
@@ -263,17 +275,19 @@ def smoke():
     seed = [
         {"name": "smoke-agent", "password": agent_pw},
         {"name": "smoke-captain", "password": captain_pw},
+        {"name": "smoke-officer", "fingerprint": fingerprint},
     ]
     channels = [
         {"name": CHANNEL, "topic": "Fleet coordination", "modes": "+s-C"},
         {"name": CAPTAIN_CHANNEL, "founder": "smoke-captain"},
         {"name": INITIATIVE_CHANNEL, "founder": "smoke-captain", "modes": "+is"},
+        {"name": "#smoke-audit", "privateAccounts": ["smoke-captain", "smoke-officer"]},
     ]
     env = {key: value for key, value in os.environ.items() if not key.startswith("IRC_")}
     env.update(
         IRC_OPER_NAME="smoke-operator",
         IRC_OPER_PASSWORD=operator_pw,
-        IRC_ACCOUNTS_JSON=json.dumps([*seed, {"name": "smoke-officer", "fingerprint": fingerprint}]),
+        IRC_ACCOUNTS_JSON=json.dumps(seed),
         IRC_CHANNELS_JSON=json.dumps(channels),
         IRC_PLAIN_PORT="0",
         IRC_TLS_PORT="0",
@@ -320,6 +334,7 @@ def smoke():
         external_context.load_cert_chain(client_certificate, client_key)
         with connect(tls, external_context) as officer:
             officer.login_external("smoke-officer")
+            officer.join("#smoke-audit")
         check_cost(12)
         # Without IRC_AUTH_API_URL the auth hook is absent and no token is written.
         config = compose(
@@ -331,9 +346,15 @@ def smoke():
         ).returncode == 1
         exercise(plain, tls, context, operator_pw, agent_pw)
         check_seeded(plain, agent_pw, captain_pw, "Fleet coordination", "nst")
+        check_audit(plain, agent_pw, captain_pw)
         check_websocket(ws, "http://localhost:3000")
         check_websocket(ws, "https://example.com", 403)
         check_websocket(ws, status=403)
+        with connect(plain) as operator:
+            operator.login("smoke-operator", operator_pw)
+            operator.join(CHANNEL)
+            operator.send(f"PRIVMSG ChanServ :AMODE {CHANNEL} +v smoke-agent")
+            operator.expect("Successfully set persistent mode +v on smoke-agent")
         print("Passed SASL, channel seeding, operator-only creation, IRCv3, TLS and WebSocket origins")
 
         fails_to_start("data volume is already in use")
@@ -367,12 +388,18 @@ def smoke():
         )
         fails_to_start(
             "does not match the existing account",
-            IRC_ACCOUNTS_JSON=json.dumps([{**seed[0], "password": "wrong-synthetic-password"}, seed[1]]),
+            IRC_ACCOUNTS_JSON=json.dumps([{**seed[0], "password": "wrong-synthetic-password"}, *seed[1:]]),
+        )
+        fails_to_start(
+            "the private channel has unexpected existing access",
+            IRC_CHANNELS_JSON=json.dumps([{"name": CHANNEL, "privateAccounts": ["smoke-captain"]}]),
         )
         compose("up", "--force-recreate", "--wait", "--wait-timeout", "40")
         with connect(port(6697), external_context) as officer:
             officer.login_external("smoke-officer")
+            officer.join("#smoke-audit")
         check_seeded(port(6667), agent_pw, captain_pw, "Fleet coordination", "nst")
+        check_audit(port(6667), agent_pw, captain_pw)
         # Verify the same trust anchor and current persisted account credentials.
         with connect(port(6697), context) as agent:
             agent.login("smoke-agent", agent_pw)
@@ -384,6 +411,7 @@ def smoke():
             {**channels[0], "founder": "smoke-operator", "topic": "", "modes": "+C-s"},
             {"name": CAPTAIN_CHANNEL},
             channels[2],
+            {**channels[3], "founder": "smoke-operator", "privateAccounts": ["smoke-captain"]},
         ]
         with TemporaryDirectory(dir=ROOT, prefix=".channel-seed-") as directory:
             override = write_channel_mount(Path(directory), updated)
@@ -400,6 +428,11 @@ def smoke():
             )
             check_cost(10)
             check_seeded(port(6667), agent_pw, captain_pw, "", "Cnt")
+            check_audit(port(6667), agent_pw, captain_pw)
+            with connect(port(6697), external_context) as officer:
+                officer.login_external("smoke-officer")
+                officer.send("JOIN #smoke-audit")
+                officer.expect(" 473 smoke-officer #smoke-audit ")
             check_websocket(port(8097), "https://chat.example.com")
             check_websocket(port(8097), "http://localhost:3000", 403)
         print("Passed volume locking, validation, idempotency, persistent history and mounted updates")

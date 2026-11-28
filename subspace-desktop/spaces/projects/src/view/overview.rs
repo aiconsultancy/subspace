@@ -14,7 +14,7 @@ use crate::{Projects, Record, project_editor::STAGES};
 const FACT_MIN_WIDTH: Pixels = px(96.);
 const STAGE_HEIGHT: Pixels = px(3.);
 
-pub(super) fn facts(project: &PlanningProject, tokens: &Tokens) -> Div {
+pub(super) fn properties(project: &PlanningProject) -> [(&'static str, String); 6] {
     let status = if project.archived {
         "Archived"
     } else {
@@ -33,6 +33,24 @@ pub(super) fn facts(project: &PlanningProject, tokens: &Tokens) -> Div {
         4 => "Low",
         _ => "None",
     };
+    [
+        ("Status", status.to_owned()),
+        ("Health", health.to_owned()),
+        ("Priority", priority.to_owned()),
+        (
+            "Lead",
+            project
+                .lead_name
+                .clone()
+                .unwrap_or_else(|| "Unavailable".into()),
+        ),
+        ("Start date", date_label(project.start_date.as_deref())),
+        ("Target date", date_label(project.target_date.as_deref())),
+    ]
+}
+
+/// Keep the properties in the content when the inspector is hidden.
+pub(super) fn facts(project: &PlanningProject, tokens: &Tokens) -> Div {
     h_flex()
         .flex_wrap()
         .gap_x_7()
@@ -40,29 +58,13 @@ pub(super) fn facts(project: &PlanningProject, tokens: &Tokens) -> Div {
         .py_3()
         .border_y_1()
         .border_color(tokens.line)
-        .children(
-            [
-                ("Status", status.to_owned()),
-                ("Health", health.to_owned()),
-                ("Priority", priority.to_owned()),
-                (
-                    "Lead",
-                    project
-                        .lead_name
-                        .clone()
-                        .unwrap_or_else(|| "Unavailable".into()),
-                ),
-                ("Start date", date_label(project.start_date.as_deref())),
-                ("Target date", date_label(project.target_date.as_deref())),
-            ]
-            .map(|(label, value)| {
-                v_flex()
-                    .min_w(FACT_MIN_WIDTH)
-                    .gap_1()
-                    .child(div().text_sm().text_color(tokens.muted).child(label))
-                    .child(div().text_color(tokens.fg_strong).child(value))
-            }),
-        )
+        .children(properties(project).map(|(label, value)| {
+            v_flex()
+                .min_w(FACT_MIN_WIDTH)
+                .gap_1()
+                .child(div().text_sm().text_color(tokens.muted).child(label))
+                .child(div().text_color(tokens.fg_strong).child(value))
+        }))
 }
 
 fn stage(status: &str) -> &str {

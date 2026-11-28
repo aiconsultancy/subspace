@@ -291,7 +291,7 @@ class FleetPolicyTests(unittest.TestCase):
         crew = cfg["members"][1]["crew"]
         self.assertEqual([worker["id"] for worker in crew], ["claude-1", "claude-2", "codex-1", "codex-2"])
         self.assertEqual({worker["family"]: worker["model"] for worker in crew},
-                         {"claude": "claude-sonnet-5-5", "codex": "gpt-5.4"})
+                         {"claude": "claude-opus-5-5", "codex": "gpt-6.2-sol"})
         self.assertEqual(crew[0]["agent"], "orion-crew-claude-1")
         self.assertEqual(crew[0]["branch"], "crew/example-fleet-orion-claude-1")
         self.assertEqual(cfg["members"][0]["crew"], [])
@@ -409,7 +409,7 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertIn("anthropic-compatible", engine["providers"]["claude-proxy"]["package"])
         self.assertIn("openai-compatible/responses", engine["providers"]["openai-proxy"]["package"])
         crew_agent = engine["agents"]["orion-crew-codex-2"]
-        self.assertEqual((crew_agent["model"], crew_agent["mode"]), ("openai-proxy/gpt-5.4", "primary"))
+        self.assertEqual((crew_agent["model"], crew_agent["mode"]), ("openai-proxy/gpt-6.2-sol", "primary"))
         self.assertIn("Codex 2 (`codex-2`)", crew_agent["system"])
         self.assertIn(f"{home}/worktrees/codex-2/project", crew_agent["system"])
         self.assertNotIn("ship channel", crew_agent["system"])
@@ -423,7 +423,7 @@ class FleetPolicyTests(unittest.TestCase):
                           if rule["action"] == "stargate_model"],
                          ["inspect", "effort", "get"])
         self.assertEqual([variant["id"] for variant in
-                          engine["providers"]["openai-proxy"]["models"]["gpt-5.4"]["variants"]],
+                          engine["providers"]["openai-proxy"]["models"]["gpt-6.2-sol"]["variants"]],
                          ["low", "medium", "high", "xhigh"])
         self.assertEqual(engine["permissions"], captain["harness"]["permissions"])
         environment = saved["engine-orion"]["environment"]
@@ -1346,6 +1346,32 @@ class StandardChannelTests(unittest.TestCase):
         self.assertEqual([entry["channels"][0] for entry in (rear, orion, lyra)],
                          ["#example-fleet-starbase", "#example-fleet-orion", "#example-fleet-lyra"])
 
+    def test_audit_defaults_on_for_managed_local_irc_and_can_be_disabled(self):
+        self.config["irc"] = {"mode": "local", "allowedAccounts": ["operator"],
+                              "compose": {"operator": "ircop", "ref": "0" * 40}}
+        self.secrets["ircOperatorPassword"] = "fixture-operator-password"
+        cfg = validate(self.config, self.secrets)
+        for registration in self.officers(cfg):
+            self.assertEqual(registration["audit"], {"channel": "#example-fleet-audit"})
+            self.assertNotIn("#example-fleet-audit", registration["channels"])
+        previous = {"irc": {"mode": "local"}}
+        legacy = validate(self.config, self.secrets, installed=previous)
+        self.assertIsNone(legacy["irc"]["auditChannel"])
+        previous["irc"]["fleetAudit"] = True
+        with_audit = validate(self.config, self.secrets, installed=previous)
+        self.assertEqual(with_audit["irc"]["auditChannel"], "#example-fleet-audit")
+        self.config["irc"]["fleetAudit"] = False
+        self.assertTrue(all("audit" not in entry for entry in self.officers(validate(self.config, self.secrets))))
+
+    def test_remote_irc_requires_opt_in_and_rejects_a_channel_collision(self):
+        self.assertTrue(all("audit" not in entry for entry in self.officers(validate(self.config, self.secrets))))
+        self.config["irc"]["fleetAudit"] = True
+        self.assertTrue(all(entry["audit"]["channel"] == "#example-fleet-audit"
+                            for entry in self.officers(validate(self.config, self.secrets))))
+        self.config["captains"][0]["id"] = "audit"
+        with self.assertRaisesRegex(Invalid, r"Fleet Audit needs #example-fleet-audit"):
+            validate(self.config, self.secrets)
+
     def test_the_standard_names_may_be_stated(self):
         self.config["irc"].update(starbaseChannel="#example-fleet-starbase",
                                   commandChannel=standard_channels.command("example-fleet"))
@@ -2177,7 +2203,7 @@ class PlainNamesTests(unittest.TestCase):
                                 ("mira", "Mira", "codex-1", True), ("sirius", "Sirius", "codex-2", True)])
         plan = "\n".join(runtime.names_plan(cfg))
         self.assertIn("Captain Orion: orion, channel #orion", plan)
-        self.assertIn("crew: Rigel (Claude 1, claude-sonnet-5-5); Deneb (Claude 2, claude-sonnet-5-5)", plan)
+        self.assertIn("crew: Rigel (Claude 1, claude-opus-5-5); Deneb (Claude 2, claude-opus-5-5)", plan)
         for names, message in (({"claude-1": "rigel"}, "same name as captain orion's Rigel"),
                                ({"claude-1": "Orion"}, "has an officer's name"),
                                ({"claude-1": "ATLAS"}, "has an officer's name")):
@@ -2191,7 +2217,7 @@ class PlainNamesTests(unittest.TestCase):
         cfg = validate(self.config, self.secrets)
         self.assertEqual([worker["name"] for worker in cfg["members"][2]["crew"]],
                          ["Claude 1", "Claude 2", "Codex 1", "Codex 2"])
-        self.assertIn("Claude 1 (Claude 1, claude-sonnet-5-5) [slot name]", "\n".join(runtime.names_plan(cfg)))
+        self.assertIn("Claude 1 (Claude 1, claude-opus-5-5) [slot name]", "\n".join(runtime.names_plan(cfg)))
 
     def test_a_new_captains_crew_are_named_in_a_plain_fleet(self):
         self.config["captains"][1].pop("crewNames")
@@ -2290,7 +2316,7 @@ class PlainNamesTests(unittest.TestCase):
             self.assertIn(f"- {names[0]} (`claude-1`, Claude family, slot claude-1", documents["instructions"])
             self.assertEqual(sorted(documents["crew"]), slots)
             self.assertIn(names[0], documents["crew"]["claude-1"])
-        self.assertIn("Captain Pavo: pavo, channel #pavo\n    crew: Merlin (Claude 1, claude-sonnet-5-5, ID claude-1); ",
+        self.assertIn("Captain Pavo: pavo, channel #pavo\n    crew: Merlin (Claude 1, claude-opus-5-5, ID claude-1); ",
                       "\n".join(runtime.names_plan(cfg)))
         # A name on two ships is refused, naming both, as is an officer's name.
         for captain, slot, name, message in (
@@ -2678,6 +2704,21 @@ class OfficerModelTests(unittest.TestCase):
                                  [{"id": effort, "settings": {"reasoningEffort": effort}}
                                   for effort in ("low", "medium", "high", "xhigh")])
                 self.assertNotIn("variants", catalogue["custom-review-model"])
+
+    def test_known_model_limits_set_a_750000_token_trigger_with_opencode_default_reserve(self):
+        cfg = validate(self.config(), officer_secrets("example-vega"))
+        for family, models in (
+            ("claude", {"claude-fable-5-2": 1_000_000, "claude-opus-5-5": 1_000_000}),
+            ("codex", {"gpt-6.2-sol": 1_050_000}),
+        ):
+            catalogue = runtime.model_provider(cfg, family, [*models, "custom-model"])["models"]
+            for model, context in models.items():
+                with self.subTest(model):
+                    limit = catalogue[model]["limit"]
+                    self.assertEqual(limit["context"], context)
+                    window = min(limit["context"], limit["input"])
+                    self.assertEqual(window - max(window * 15 // 100, 16_000), 750_000)
+            self.assertNotIn("limit", catalogue["custom-model"])
 
     def test_officers_whose_model_no_signed_in_account_serves_stop_both_runs(self):
         temporary = tempfile.TemporaryDirectory()

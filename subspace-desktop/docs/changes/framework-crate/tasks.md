@@ -65,7 +65,7 @@ Back to the [spec](spec.md).
 
 - [ ] The decisions in `subspace-framework/docs/publishing-audit.md` (crate
   names, the issue-report destination, the OAuth App, Subspace wording and
-  `SUBSPACE_*` names, the persona "Jack", `repository`/`homepage`).
+  `SUBSPACE_*` names, the owner as a persona, `repository`/`homepage`).
 - [ ] Publishing itself, with a token, from a clean pushed commit.
 - [ ] After publishing: switch the desktop to the published crate, or keep
   the path while both projects share this repository.

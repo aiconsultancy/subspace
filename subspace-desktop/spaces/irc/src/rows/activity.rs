@@ -125,7 +125,7 @@ fn captain_status(captain: &str, statuses: &Statuses, members: &[Member]) -> Act
 pub(crate) fn captain(kind: &ChannelKind) -> Option<&str> {
     match kind {
         ChannelKind::Ship { captain } => Some(captain),
-        ChannelKind::Starbase | ChannelKind::Command => None,
+        ChannelKind::Starbase | ChannelKind::Command | ChannelKind::Audit => None,
     }
 }
 

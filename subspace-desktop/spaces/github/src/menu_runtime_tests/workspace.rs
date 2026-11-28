@@ -33,8 +33,10 @@ fn the_page_sits_beside_the_inspector_and_keys_reach_the_space_from_it(cx: &mut 
         let approve = window.find(("gh-approve", 4usize)).bounds();
         let files = window.find(("gh-diff", 4usize)).bounds();
         let close = window.find(("gh-close", 4usize)).bounds();
-        assert!(approve.right() <= files.left());
+        let refresh = window.find("gh-page-refresh").bounds();
         assert!(files.right() <= close.left());
+        assert!(close.right() <= refresh.left());
+        assert!(refresh.right() <= approve.left());
         assert!(window.try_find(("gh-comment", 4usize)).is_none());
         assert!(window.try_find(("gh-changes", 4usize)).is_none());
         assert!(window.try_find(("gh-approve", 3usize)).is_some(), "footer");

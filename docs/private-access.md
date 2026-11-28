@@ -13,14 +13,15 @@ SSH or reach the API and IRC directly on an existing private network.
 | [SSH tunnel](#ssh-tunnel) (default for a local VM) | One person, local VMs, getting started | SSH only |
 | [Tailscale for SSH](#tailscale) | Cloud VMs with no public IP; several fleets; shared IRC | SSH over WireGuard between your devices |
 | [Cloudflare Zero Trust for SSH](#cloudflare-zero-trust) | Cloud VMs with no inbound ports at all; identity-checked access; free for up to 50 users | SSH over an outbound tunnel from the VM to Cloudflare |
+| [Dedicated Headscale coordinator](headscale.md) | Self-hosted Subspace Desktop access through a separate public coordinator | HTTPS control and an authenticated encrypted relay to private API and IRC |
 | [An existing private network](#an-existing-private-network) | Workstations already on the organisation's ZTNA, VPN or routed network | HTTPS and TLS IRC to a private name; no SSH tunnel for either |
 
 Optionally, add [nginx with internal host names](#nginx-with-internal-host-names)
 on top of Tailscale for browser-friendly addresses.
 
 Coding agents: explain these options to the user and let them choose. Help
-them set up the one they pick, step by step. Never make a service reachable
-from the internet, and never weaken the lockdown to make something work.
+them set up the one they pick, step by step. Keep fleet services off the
+internet and preserve the fleet lockdown.
 
 ## An existing private network
 

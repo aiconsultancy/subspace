@@ -82,7 +82,7 @@ impl Subject {
                 captain: captain.clone(),
             }),
             ChannelKind::Starbase => Some(Self::Starbase),
-            ChannelKind::Command => None,
+            ChannelKind::Command | ChannelKind::Audit => None,
         }
     }
 
@@ -212,15 +212,31 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
                 });
             },
         )
-        .on_close(
-            "Hide members",
-            cx.listener(|board, _, _, cx| dock::toggle_members(board, cx)),
-        )
+        .on_close("Close inspector", cx.listener(close_tabbed))
         .child(body);
     Some(match footer {
         Some(footer) => inspector.footer(footer),
         None => inspector,
     })
+}
+
+fn close_tabbed(
+    board: &mut Irc,
+    _: &gpui_kit::ClickEvent,
+    window: &mut gpui_kit::Window,
+    cx: &mut Context<Irc>,
+) {
+    dock::toggle_members(board, cx);
+    if let Some(hosted) = board
+        .dock
+        .focused
+        .as_ref()
+        .and_then(|buffer| board.dock.open.get(buffer))
+    {
+        hosted
+            .entity
+            .update(cx, |view, cx| view.focus_composer(window, cx));
+    }
 }
 
 /// The People tab: the channel's member list, as without tabs.

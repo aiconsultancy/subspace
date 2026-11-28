@@ -57,8 +57,8 @@ test.skipIf(!testDatabase)(
         await client.query(
           `INSERT INTO project_decisions
             (organisation_id, project_id, recorded_by_id, title, decision, decided_on, created_at, made_by_type, status)
-           VALUES ($1, $2, $3, 'First', 'Do the first thing', '2026-01-03', '2026-01-01', 'human', 'accepted'),
-                  ($1, $2, $3, 'Second', 'Do the second thing', '2026-01-01', '2026-01-02', 'human', 'proposed')
+           VALUES ($1, $2, $3, 'First', 'Do the first thing', '2026-01-03', '2026-01-04', 'human', 'accepted'),
+                  ($1, $2, $3, 'Second', 'Do the second thing', '2026-01-01', '2026-01-05', 'human', 'proposed')
            RETURNING id`,
           [org, project, owner],
         )
@@ -103,6 +103,36 @@ test.skipIf(!testDatabase)(
         expect([response.status, response.status === status ? "" : body]).toEqual([status, ""]);
         return body;
       };
+      const [{ id: issue }] = (
+        await client.query(
+          `WITH state AS (
+             INSERT INTO workflow_states (id, organisation_id, project_id, name, type, position, is_default)
+             SELECT default_state_id, organisation_id, id, 'Todo', 'unstarted', 0, true
+             FROM projects WHERE id = $2
+             RETURNING id
+           )
+           INSERT INTO issues (organisation_id, project_id, number, identifier, title, summary, state_id, created_by_id)
+           SELECT $1, $2, 1, 'EXA-1', 'Example issue', 'Example summary', id, $3 FROM state
+           RETURNING id`,
+          [org, project, owner],
+        )
+      ).rows;
+      await client.query(
+        `INSERT INTO project_decision_issues (organisation_id, decision_id, issue_id)
+         VALUES ($1, $2, $4), ($1, $3, $4)`,
+        [org, first, second, issue],
+      );
+      const linkedPage = "?issue=EXA-1&limit=1";
+      const latest = await call(200, linkedPage);
+      expect(latest.items).toMatchObject([{ id: second, decidedOn: "2026-01-01" }]);
+      expect(latest.nextCursor).toBeString();
+      const earlier = await call(
+        200,
+        `${linkedPage}&cursor=${encodeURIComponent(latest.nextCursor)}`,
+      );
+      expect(earlier.items).toMatchObject([{ id: first, decidedOn: "2026-01-03" }]);
+      expect(earlier.nextCursor).toBeNull();
+
       const payload = {
         projectId: project,
         title: "Replacement",
@@ -164,9 +194,51 @@ test.skipIf(!testDatabase)(
         id: a.id,
         identifier: a.identifier,
       });
+      await client.query(
+        `INSERT INTO project_decisions
+          (organisation_id, project_id, recorded_by_id, identifier, title, decision, decided_on, created_at, made_by_type)
+         SELECT $1, $2, $3, 'D-' || lpad(n::text, 5, '0') || '-EXA', 'Fixture ' || n,
+                'See D-00001-EXA in the older record', '2026-02-01', '2026-02-01', 'human'
+         FROM generate_series(5, 5004) n`,
+        [org, project, owner],
+      );
+      await checkSearchAndPaging(call);
     } finally {
       await api?.close();
       await database.drop();
     }
   },
+  30000,
 );
+
+async function checkSearchAndPaging(
+  call: (
+    status: number,
+    path: string,
+  ) => Promise<{ items: Array<{ identifier: string }>; total: number; nextCursor: string | null }>,
+) {
+  const ids = (items: Array<{ identifier: string }>) => items.map(({ identifier }) => identifier);
+  expect(ids((await call(200, "?q=d-00001-exa")).items)).toEqual(["D-00001-EXA"]);
+  expect(ids((await call(200, "?q=D-00001")).items).sort()).toEqual(["D-00001-ALT", "D-00001-EXA"]);
+  expect(ids((await call(200, "?q=D-00001&project=EXA")).items)).toEqual(["D-00001-EXA"]);
+  expect((await call(200, "/counts?q=D-0499&project=EXA")).total).toBe(10);
+  expect((await call(200, "?q=D-09999")).items).toEqual([]);
+  expect((await call(200, "?q=older%20record&limit=5")).items).toHaveLength(5);
+
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; page < 51; page++) {
+    const position = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+    const reply = await call(200, `?project=EXA&limit=100${position}`);
+    expect(reply.items).toHaveLength(page < 50 ? 100 : 4);
+    for (const id of ids(reply.items)) {
+      expect(seen.has(id)).toBe(false);
+      seen.add(id);
+    }
+    cursor = reply.nextCursor;
+    expect(Boolean(cursor)).toBe(page < 50);
+  }
+  expect(seen.size).toBe(5004);
+  expect(seen.has("D-05004-EXA")).toBe(true);
+  expect(seen.has("D-00001-EXA")).toBe(true);
+}

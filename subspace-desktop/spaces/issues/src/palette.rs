@@ -131,35 +131,27 @@ impl Issues {
     fn timeline_commands(&self) -> Vec<PaletteCommand> {
         use crate::detail::timeline::TimelineMode;
         let mode = self.issue_view.timeline.mode;
-        let (label, next) = match mode {
-            TimelineMode::Comments => ("Show all issue activity", TimelineMode::All),
-            TimelineMode::All | TimelineMode::Decisions => {
-                ("Show issue comments", TimelineMode::Comments)
-            }
-        };
-        let weak = self.weak.clone();
-        let mut commands = vec![
-            PaletteCommand::new("Focus discussion", keys::FocusTimeline).shortcut("m"),
-            PaletteCommand::callback(label, move |window, cx| {
-                _ = weak.update(cx, |this, cx| {
-                    this.show_timeline(next, cx);
-                    this.focus_timeline(window, cx);
-                });
-            }),
+        let focus = PaletteCommand::new("Focus discussion", keys::FocusTimeline).shortcut("m");
+        let tabs = [
+            (TimelineMode::Comments, "Show issue comments"),
+            (TimelineMode::All, "Show all issue activity"),
+            (TimelineMode::Decisions, "Show issue decisions"),
         ];
-        if mode != TimelineMode::Decisions {
-            let weak = self.weak.clone();
-            commands.push(PaletteCommand::callback(
-                "Show issue decisions",
-                move |window, cx| {
-                    _ = weak.update(cx, |this, cx| {
-                        this.show_timeline(TimelineMode::Decisions, cx);
-                        this.focus_timeline(window, cx);
-                    });
-                },
-            ));
-        }
-        commands
+        std::iter::once(focus)
+            .chain(
+                tabs.into_iter()
+                    .filter(|(next, _)| *next != mode)
+                    .map(|(next, label)| {
+                        let weak = self.weak.clone();
+                        PaletteCommand::callback(label, move |window, cx| {
+                            _ = weak.update(cx, |this, cx| {
+                                this.show_timeline(next, cx);
+                                this.focus_timeline(window, cx);
+                            });
+                        })
+                    }),
+            )
+            .collect()
     }
 
     fn list_commands(&self) -> Vec<PaletteCommand> {

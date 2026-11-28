@@ -92,7 +92,7 @@ mod tests {
     #[cfg(feature = "copilot")]
     #[test]
     fn each_account_keeps_its_own_open_tabs() {
-        assert_eq!(tabs_file_name("Work_corp"), "copilot-tabs-work_corp.json");
+        assert_eq!(tabs_file_name("Work_Corp"), "copilot-tabs-work_corp.json");
     }
 
     #[cfg(feature = "copilot")]

@@ -194,6 +194,45 @@ def nickserv_lines(connection, request):
             lines.append(params[-1])
 
 
+def register_client(connection, host, client_pem, account):
+    name = nick()
+    if client_pem or account:
+        connection.send("CAP REQ :sasl")
+    connection.send(f"NICK {name}")
+    connection.send(f"USER {name} 0 * :subspace-setup")
+    if client_pem or account:
+        _, _, params = connection.until("CAP")
+        if len(params) < 2 or params[1].upper() != "ACK":
+            raise IrcError(f"The IRC server {host} does not offer SASL.")
+        if account:
+            sign_in(connection, host, *account)
+        else:
+            connection.send("AUTHENTICATE EXTERNAL")
+            _, command, _ = connection.until("AUTHENTICATE", "904", "908")
+            if command == "AUTHENTICATE":
+                connection.send("AUTHENTICATE +")
+                connection.until("900", "902", "903", "904", "905", "906")
+        connection.send("CAP END")
+    _, command, params = connection.until("001", "FAIL")
+    if command == "FAIL":
+        if "ACCOUNT_REQUIRED" in params:
+            raise IrcError(ACCOUNT_REQUIRED.format(host=host))
+        raise IrcError(f"The IRC server {host} refused the connection: {params[-1] if params else ''}")
+
+
+def require_private_channel(host, port, ca_file, channel, client_pem=None, account=None):
+    """Read the channel's IRC modes without joining it or sending it any messages."""
+    connection = Connection(host, port, ca_file, client_pem)
+    try:
+        register_client(connection, host, client_pem, account)
+        connection.send(f"MODE {channel}")
+        _, command, params = connection.until("324", "403", "442")
+        if command != "324" or len(params) < 3 or params[1].lower() != channel or not {"i", "s"} <= set(params[2]):
+            raise IrcError(f"{channel} must exist and report invite-only and secret modes.")
+    finally:
+        connection.close()
+
+
 def accounts_taken(host, port, ca_file, names, client_pem=None, account=None):
     """Which of names NickServ knows as a registered account or a nick reserved by one, as {name: account}.
 
@@ -202,29 +241,7 @@ def accounts_taken(host, port, ca_file, names, client_pem=None, account=None):
     """
     connection = Connection(host, port, ca_file, client_pem)
     try:
-        name = nick()
-        if client_pem or account:
-            connection.send("CAP REQ :sasl")
-        connection.send(f"NICK {name}")
-        connection.send(f"USER {name} 0 * :subspace-setup")
-        if client_pem or account:
-            _, _, params = connection.until("CAP")
-            if len(params) < 2 or params[1].upper() != "ACK":
-                raise IrcError(f"The IRC server {host} does not offer SASL.")
-            if account:
-                sign_in(connection, host, *account)
-            else:
-                connection.send("AUTHENTICATE EXTERNAL")
-                _, command, _ = connection.until("AUTHENTICATE", "904", "908")
-                if command == "AUTHENTICATE":
-                    connection.send("AUTHENTICATE +")
-                    connection.until("900", "902", "903", "904", "905", "906")
-            connection.send("CAP END")
-        _, command, params = connection.until("001", "FAIL")
-        if command == "FAIL":
-            if "ACCOUNT_REQUIRED" in params:
-                raise IrcError(ACCOUNT_REQUIRED.format(host=host))
-            raise IrcError(f"The IRC server {host} refused the connection: {params[-1] if params else ''}")
+        register_client(connection, host, client_pem, account)
         taken = {}
         for wanted in names:
             lines = nickserv_lines(connection, f"INFO {wanted}")

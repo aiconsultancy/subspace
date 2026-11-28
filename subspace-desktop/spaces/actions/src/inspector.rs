@@ -61,8 +61,10 @@ pub(crate) fn render(this: &Actions, cx: &mut Context<Actions>) -> Option<worksp
                 .child(empty),
         );
     };
-    let inspector = workspace::Inspector::new("actions-inspector", title(record, this.view))
-        .action(open_button(&record.key, cx));
+    let mut inspector = workspace::Inspector::new("actions-inspector", title(record, this.view));
+    if this.opened().is_none() {
+        inspector = inspector.action(open_button(&record.key, cx));
+    }
     let inspector = match github_button(record) {
         Some(github) => inspector.action(github),
         None => inspector,

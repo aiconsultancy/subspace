@@ -27,11 +27,16 @@ hooks = [
     { id = "end-of-file-fixer", exclude = "^subspace-desktop/licenses/(fonts/LICENSE-|onnxruntime/(LICENSE|ThirdPartyNotices\\.txt)$|rust-crates/|webview2/(LICENSE|NOTICE)\\.txt$)" },
 ]
 
-# Run project checks once per push. The entry selects the projects and handles
-# deletions even when prek has no existing paths to pass.
+# Private terms are checked first, on every commit and push, by whoever holds
+# the list (scripts/check-private-terms.py); without it they pass. Then the
+# project checks run once per push. That entry selects the projects and
+# handles deletions even when prek has no existing paths to pass.
 [[repos]]
 repo = "local"
 hooks = [
+    { id = "private-terms-commit", name = "private terms in the staged change", entry = "python3 scripts/check-private-terms.py --staged", language = "system", stages = ["pre-commit"], always_run = true, pass_filenames = false },
+    { id = "private-terms-push", name = "private terms in the pushed commits", entry = "python3 scripts/check-private-terms.py --push", language = "system", stages = ["pre-push"], always_run = true, pass_filenames = false },
+    { id = "private-terms-tests", name = "test the private terms check", entry = "python3 -B scripts/test-check-private-terms.py", language = "system", stages = ["pre-push"], files = "^(prek\\.toml|\\.github/workflows/private-terms\\.yml|scripts/(test-)?check-private-terms\\.py)$", pass_filenames = false },
     { id = "check-push", name = "check changed projects", entry = "python3 scripts/check-push.py", language = "system", stages = ["pre-push"], always_run = true, require_serial = true, verbose = true },
     { id = "check-push-tests", name = "test project check routing", entry = "python3 -B scripts/test-check-push.py", language = "system", stages = ["pre-push"], files = "^(prek\\.toml|scripts/(test-)?check-push\\.py)$", pass_filenames = false },
     { id = "release-check", name = "release: make release-check", entry = "make release-check", language = "system", stages = ["pre-push"], files = "^(scripts/|\\.github/|release-please-config\\.json$|\\.release-please-manifest\\.json$|subspace-installer/stargate-hold\\.json$|.*Cargo\\.(toml|lock)$)", exclude = "(?i)\\.md$", pass_filenames = false },

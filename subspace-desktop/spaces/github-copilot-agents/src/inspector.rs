@@ -142,10 +142,13 @@ fn head(peek: &Peek, tokens: &Tokens) -> AnyElement {
                 )),
         )
         .children(peek.excerpt.as_deref().map(|excerpt| {
-            div().text_color(tokens.fg).child(rich::plain_text(
-                "github-copilot-agents-peek-excerpt",
-                excerpt,
-            ))
+            div()
+                .text_size(tokens.secondary_size())
+                .text_color(tokens.fg)
+                .child(rich::plain_text(
+                    "github-copilot-agents-peek-excerpt",
+                    excerpt,
+                ))
         }))
         .into_any_element()
 }

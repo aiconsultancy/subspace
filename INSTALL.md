@@ -6,7 +6,7 @@ in it, and ask it to set Subspace up. The agent reads this page, asks you a few
 questions and runs the installer for you. You can also follow it yourself.
 
 We recommend a fleet VM in your cloud, reached over a private network
-(Tailscale, Cloudflare Zero Trust or similar): Subspace is meant to be
+(Tailscale, Cloudflare Zero Trust, Headscale or similar): Subspace is meant to be
 multiplayer, and that keeps the agents' builds off your machine. Your agent
 can create the VM with your cloud provider's own tools and set the private
 network up for you, with your permission. To just try Subspace out, a VM on
@@ -21,7 +21,7 @@ your own computer is the quickest way, and it stays fully supported.
 >    names for them.
 > 2. **Confirm the plan once.** Summarise the answers, the exact commands you
 >    will run and everything they will install or change: software on this
->    computer (Lima, QEMU, Multipass, Tailscale, `cloudflared`), the VM and
+>    computer (Lima, QEMU, Multipass, Tailscale, `cloudflared`), the VMs and
 >    any other cloud resources with their cost, the cloud account and private
 >    network they use, the user's agent profiles. Wait for one clear yes.
 >    That yes covers only what the plan lists; pass `--install-deps` only if
@@ -225,11 +225,10 @@ answer it now.
    **If the user cannot answer, put Ergo on the fleet VM**: it creates no
    extra cloud resources and costs nothing more. Tell them that moving to a
    shared server later keeps the fleet but not its IRC history.
-3. **Names.** A name for the fleet (for example "Example Fleet"), a name for
-   the rear admiral (for example "Atlas"), one or more captain or ship names
-   (for example "Orion, Vega") and a name for every crew member on every
-   ship (question 5 sets how many). Suggest names, with a theme for the
-   fleet or for each ship (stars, birds, rivers), and let the user accept or
+3. **Names.** Ask for the fleet and rear admiral names and the names for
+   each ship and crew member. New fleets default to four captains with
+   names based on the fleet ID. The user can choose a different roster with
+   `--captains`. Suggest a theme for the names and let the user accept or
    change each one.
    - **An officer's name is its one name everywhere.** In lower case it is
      the rear admiral's or captain's IRC account and nick, its agent name in
@@ -289,11 +288,10 @@ answer it now.
    captain's files, credentials and GitHub App, commit as the captain, and
    have no IRC accounts. The user talks to the captain, who delegates to its
    crew. A captain's crew roster is fixed once the fleet first starts, so
-   settle the counts now. Ask which model each kind of crew member uses
-   (**`claude-sonnet-5-5` and `gpt-5.4`**), for example
-   `--crew-claude-model claude-opus-5-5 --crew-codex-model gpt-6.2-sol`; the
-   models, unlike the counts, can change later. The officers themselves run
-   Claude: captains `claude-opus-5-5` at reasoning effort `xhigh`, the rear
+   settle the counts now. Ask which model each kind of crew member uses.
+   The defaults are **`claude-opus-5-5` and `gpt-6.2-sol`** and the models
+   can change later with `--crew-claude-model` and `--crew-codex-model`.
+   Captains use `claude-opus-5-5` at reasoning effort `xhigh` and the rear
    admiral `claude-fable-5-2` at `high`, which needs a Claude account. If the
    user has only a ChatGPT account, choose models it serves, for example
    `--captain-model gpt-5.4 --rear-admiral-model gpt-5.4`.
@@ -336,12 +334,23 @@ answer it now.
     and a trusted certificate for the private name; it is not available with
     the default development sign-in. Ask for any addresses that alone may
     use SSH (`--ssh-from`). Keep the SSH route for administration.
+    Offer [a dedicated Headscale coordinator](docs/headscale.md) if they want
+    self-hosted private desktop access. Ask whether they have a second,
+    dedicated Ubuntu 24.04 VM or want you to create one. Collect the provider,
+    account, region, size and acceptable cost if creating it. Ask for the
+    public coordinator name and its DNS administrator, the provider's
+    management channel, and the private HTTPS API and TLS IRC addresses the
+    fleet router can reach. Include the second VM, DNS and TCP 443 ingress
+    in the same confirmation. Use a Desktop build with embedded Headscale
+    support and keep the separate private administrator SSH route. If they
+    want an existing operator HTTPS gateway on Headscale, collect its
+    distinct private address and the approved operators.
     Also offer nginx with internal host names if they want browser-friendly
     addresses.
 
-    The private network needs the user in their browser: signing in to
-    Tailscale or Cloudflare, approving this computer, and creating a one-off
-    auth key or a tunnel token. Ask whether they are there to do it now.
+    Tailscale and Cloudflare setup need the user in their browser to sign
+    in, approve this computer, and create a one-off auth key or tunnel token.
+    Ask whether they are there to do it now.
     Do it together before the unattended run starts, because that run
     cannot reach a VM with no public IP without it: before you confirm the
     plan, or straight after its yes for any step that needs Tailscale or
@@ -588,6 +597,9 @@ these routes; follow it rather than improvising.
   IRC clients must verify the server's certificate: while the proxy is
   stopped by its guard or a rollback, a local VM user can bind its private
   address on port 6697.
+- **Headscale.** Follow the [dedicated coordinator guide](docs/headscale.md)
+  to set up the second VM and enrol the private router and workstations.
+  Use the existing private SSH path for operator commands and fleet setup.
 - **Tailscale.** The user, in their browser: signs in to Tailscale, adds
   `tag:fleet` to the tailnet policy as Private access shows, signs this
   computer in to the tailnet, and creates a one-off, pre-approved auth key
@@ -1194,10 +1206,11 @@ the agents come online. CLIProxyAPI also supports `antigravity`, `kimi`,
 
 The default models are `claude-opus-5-5` at reasoning effort `xhigh` for
 captains, `claude-fable-5-2` at `high` for the rear admiral, and
-`claude-sonnet-5-5` and `gpt-5.4` for Claude-family and Codex-family crew.
-Use model IDs your accounts can reach: the officers' defaults need a Claude
-account. Once an account is signed in, the dry run and the install stop if
-none can serve an officer's Claude or GPT model. Set the officers' models
+`claude-opus-5-5` and `gpt-6.2-sol` for Claude-family and Codex-family crew.
+OpenCode automatically compacts these models at 750,000 tokens by default.
+The default crew use a Claude account and a Codex account. Once an account
+is signed in, the dry run and the install stop if no account can serve an
+officer's Claude or GPT model. Set the officers' models
 with `sudo subspace-setup --captain-model MODEL --captain-effort EFFORT
 --rear-admiral-model MODEL --rear-admiral-effort EFFORT`, and the crew's with
 `--crew-claude-model MODEL --crew-codex-model MODEL` (or the same options on

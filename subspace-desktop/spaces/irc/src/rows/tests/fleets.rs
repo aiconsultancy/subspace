@@ -89,10 +89,11 @@ pub(super) fn owned(groups: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
 }
 
 #[test]
-fn a_fleet_s_channels_come_starbase_command_ships_then_the_rest_without_its_prefix() {
+fn fleet_audit_sorts_after_command_and_before_ships() {
     let state = joined([
         channel("#aurora-orion"),
         channel("#aurora-nav"),
+        channel("#aurora-audit"),
         channel("#aurora-lyra"),
         channel("#aurora-command"),
         channel("#aurora-starbase"),
@@ -104,7 +105,14 @@ fn a_fleet_s_channels_come_starbase_command_ships_then_the_rest_without_its_pref
         owned(&[(
             "Aurora",
             &[
-                "starbase", "command", "lyra", "orion", "nav", "#lounge", "Server"
+                "starbase",
+                "command",
+                "fleet-audit",
+                "lyra",
+                "orion",
+                "nav",
+                "#lounge",
+                "Server"
             ]
         )])
     );
@@ -117,7 +125,7 @@ fn a_fleet_s_channels_come_starbase_command_ships_then_the_rest_without_its_pref
     assert_eq!(layout.networks.get(&fleet), Some(&network_id()));
     let lyra = row_key(&channel("#aurora-lyra"));
     assert_eq!(
-        layout.groups[0].rows[2].key, lyra,
+        layout.groups[0].rows[3].key, lyra,
         "a row keeps its buffer's key, so selection and the dock restore keep working"
     );
     assert_eq!(layout.buffers.get(&lyra), Some(&channel("#aurora-lyra")));
@@ -129,6 +137,7 @@ fn a_fleet_s_channels_come_starbase_command_ships_then_the_rest_without_its_pref
     for plain in [
         "#aurora-starbase",
         "#aurora-command",
+        "#aurora-audit",
         "#aurora-nav",
         "#lounge",
     ] {
@@ -224,12 +233,19 @@ fn people_hold_private_conversations_with_people_only() {
 }
 
 #[test]
-fn a_network_that_serves_no_fleet_keeps_its_private_conversations() {
-    let state = joined([query("mira"), channel("#aurora-lyra")]);
+fn a_network_that_serves_no_fleet_uses_the_raw_audit_channel_name() {
+    let state = joined([
+        query("mira"),
+        channel("#aurora-lyra"),
+        channel("#aurora-audit"),
+    ]);
     let layout = super::super::layout(&state, &Rosters::default(), &Default::default());
     assert_eq!(
         outline(&layout),
-        owned(&[("Acme IRC", &["Server", "#aurora-lyra", "mira"])])
+        owned(&[(
+            "Acme IRC",
+            &["Server", "#aurora-audit", "#aurora-lyra", "mira"]
+        )])
     );
 }
 

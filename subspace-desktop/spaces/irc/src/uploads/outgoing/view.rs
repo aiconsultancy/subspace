@@ -1,7 +1,7 @@
 //! The tray above the composer: one small thumbnail per attachment with ×,
 //! "Check upload" for an upload that may have completed, the limit notice
 //! and file picker. Who can see files is said at the end of the
-//! composer's hint row (`compose/hints.rs`).
+//! channel composer’s destination row.
 use super::{Item, ItemState, Pending, Phase, Tray};
 use crate::conversation::Conversation;
 use crate::uploads::intake::Preview;
@@ -17,7 +17,7 @@ use gpui_kit::{
 };
 use subspace_framework::dashboard::{
     ChatInput, Tokens,
-    action::{Intent, action_button, icon_button},
+    action::{Intent, action_button},
     icon_button::IconButton,
     media::size_text,
 };
@@ -61,7 +61,7 @@ pub(crate) fn controls(
                 .map(|text| div().text_sm().text_color(tokens.orange).child(text)),
         )
         .children((!checks.is_empty()).then(|| h_flex().gap_2().children(checks)))
-        .child(attach_row(!empty, idle, cx))
+        .children((!empty).then(|| attach_draft(idle, cx)))
         .into_any_element()
 }
 
@@ -88,33 +88,17 @@ fn status_line(
     })
 }
 
-/// The paperclip chooses files, and the labelled action converts the draft.
-fn attach_row(has_draft: bool, idle: bool, cx: &mut Context<Conversation>) -> gpui_kit::Div {
-    h_flex()
-        .w_full()
-        .min_w_0()
-        .gap_2()
-        .child(
-            icon_button(
-                "irc-attach-file",
-                Intent::Quiet,
-                IconName::Paperclip,
-                "Attach files…",
-            )
-            .disabled(!idle)
-            .on_click(cx.listener(|this, _, _, cx| super::source::pick(this, cx))),
-        )
-        .children(has_draft.then(|| {
-            action_button(
-                "irc-send-attachment",
-                Intent::Quiet,
-                Some(IconName::FileText),
-                "Attach draft as Markdown",
-            )
-            .small()
-            .disabled(!idle)
-            .on_click(cx.listener(|this, _, window, cx| super::text(this, window, cx)))
-        }))
+/// Converts the current channel draft to a Markdown file.
+fn attach_draft(idle: bool, cx: &mut Context<Conversation>) -> IconButton {
+    action_button(
+        "irc-send-attachment",
+        Intent::Quiet,
+        Some(IconName::FileText),
+        "Attach draft as Markdown",
+    )
+    .small()
+    .disabled(!idle)
+    .on_click(cx.listener(|this, _, window, cx| super::text(this, window, cx)))
 }
 
 /// What the tray is doing, while it is doing something.

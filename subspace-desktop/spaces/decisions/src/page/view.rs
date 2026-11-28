@@ -11,7 +11,7 @@ use gpui_kit::{
 use subspace_api_client::model::DecisionDetail;
 use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::row_menu::MenuChat;
-use subspace_framework::dashboard::{ReturnPoint, Tokens, feedback, rich, workspace};
+use subspace_framework::dashboard::{Tokens, feedback, heading_font, rich, workspace};
 use subspace_framework::lucide::IconName;
 
 use super::{Page, PageState};
@@ -20,6 +20,9 @@ use crate::inspector;
 use crate::load::Failure;
 use crate::peek::{self, Related};
 use crate::words;
+
+/// Match the issue detail heading at the default heading size.
+const PAGE_TITLE_PX: f32 = 20.;
 
 const GONE: &str = "This decision is no longer available. It may have been removed, or you may no longer have access.";
 
@@ -43,32 +46,16 @@ pub(crate) fn render(
         .min_h_0()
         .overflow_y_scroll()
         .child(
-            v_flex()
-                .w_full()
-                .max_w(px(workspace::READING_WIDTH_PX))
-                .px(workspace::text_edge(tokens))
-                .py_4()
-                .gap_6()
-                .child(back(page, cx))
-                .children(body),
-        )
-        .into_any_element()
-}
-
-fn back(page: &Page, cx: &mut Context<Decisions>) -> AnyElement {
-    let label = page.origin.as_ref().map_or_else(
-        || SharedString::from("Back to decisions"),
-        ReturnPoint::back_label,
-    );
-    h_flex()
-        .child(
-            action_button(
-                "decisions-page-back",
-                Intent::Neutral,
-                Some(IconName::ArrowLeft),
-                label,
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.go_back(window, cx))),
+            h_flex().w_full().justify_center().child(
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .max_w(px(workspace::READING_WIDTH_PX))
+                    .px(workspace::text_edge(tokens))
+                    .py_4()
+                    .gap_6()
+                    .children(body),
+            ),
         )
         .into_any_element()
 }
@@ -79,11 +66,9 @@ fn loaded(
     tokens: &Tokens,
     cx: &mut Context<Decisions>,
 ) -> Vec<AnyElement> {
-    let mut content = Vec::new();
-    if crate::author::available() {
-        content.push(super::controls::render(board, detail, cx));
-    }
-    content.extend(crate::history::render(&board.history, tokens, cx));
+    let mut content: Vec<_> = crate::history::render(&board.history, tokens, cx)
+        .into_iter()
+        .collect();
     if board.history.snapshot().is_none() {
         content.extend(reading(detail, tokens, cx));
     }
@@ -148,7 +133,7 @@ pub(crate) fn reading(
             .as_ref()
             .map(|older| banner(Banner::Supersedes, older, tokens, cx)),
     );
-    parts.push(heading(detail, tokens));
+    parts.push(heading(detail, tokens, cx));
     parts.extend(
         peek::prose(detail)
             .into_iter()
@@ -238,7 +223,7 @@ fn banner(
 }
 
 /// The title, then the status in words beside its glyph and the date.
-fn heading(detail: &DecisionDetail, tokens: &Tokens) -> AnyElement {
+fn heading(detail: &DecisionDetail, tokens: &Tokens, cx: &Context<Decisions>) -> AnyElement {
     let status = detail.status;
     v_flex()
         .id("decisions-page-heading")
@@ -248,8 +233,9 @@ fn heading(detail: &DecisionDetail, tokens: &Tokens) -> AnyElement {
         .min_w_0()
         .child(
             div()
-                .text_size(tokens.heading_font)
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_family(heading_font(cx))
+                .text_size(tokens.heading_size(PAGE_TITLE_PX))
+                .font_weight(FontWeight::BOLD)
                 .text_color(tokens.fg_strong)
                 .child(rich::plain_text_with(
                     "decisions-page-title",
@@ -259,6 +245,8 @@ fn heading(detail: &DecisionDetail, tokens: &Tokens) -> AnyElement {
         )
         .child(
             h_flex()
+                .w_full()
+                .flex_wrap()
                 .gap_2()
                 .text_size(tokens.secondary_size())
                 .children(detail.identifier.as_ref().map(|identifier| {
