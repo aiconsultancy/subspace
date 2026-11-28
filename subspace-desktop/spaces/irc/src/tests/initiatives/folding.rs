@@ -213,7 +213,7 @@ fn other_starts_collapsed_and_can_be_opened(cx: &mut TestAppContext) {
         assert!(board.list.is_folded(&group));
         assert!(!board.list.visible_keys().contains(&server));
     });
-    cx.update(|window, cx| window.click(group.clone(), cx));
+    cx.update(|window, cx| window.click(format!("list-group-title:{group}"), cx));
     board.read_with(cx, |board, _| {
         assert!(!board.list.is_folded(&group));
         assert!(board.list.visible_keys().contains(&server));

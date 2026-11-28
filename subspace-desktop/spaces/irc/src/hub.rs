@@ -309,6 +309,7 @@ impl Hub {
             self.recall.forget(buffer);
             self.reactions.forget(buffer);
             self.tiles.forget(buffer);
+            self.comms.refresh(&self.state);
             self.save_removed(cx);
             cx.notify();
         }
