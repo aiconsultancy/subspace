@@ -4,6 +4,57 @@ Release Please adds an entry for each release of the Subspace App, from the
 conventional commits that touch `subspace-desktop/`. See
 [Releases](docs/ways-of-working.md#releases).
 
+## [0.14.0](https://github.com/aiconsultancy/subspace/compare/subspace-desktop-v0.13.0...subspace-desktop-v0.14.0) (2026-11-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **framework:** OverflowUnit::refresh is removed in favour of OverflowUnit::icon_button, and plan_overflow takes the row's width as an Option.
+
+### Features
+
+* **desktop:** align native Space toolbars and inspectors ([#218](https://github.com/aiconsultancy/subspace/issues/218)) ([290fb9b](https://github.com/aiconsultancy/subspace/commit/290fb9bccc874156c3fe27fae3dac411c71e5468))
+* **fleet:** enable private Fleet Audit ([#220](https://github.com/aiconsultancy/subspace/issues/220)) ([2adc4fd](https://github.com/aiconsultancy/subspace/commit/2adc4fd8b9d1a79aa98a416884775014cf41fae2))
+* **irc:** add Comms and keep replies in threads ([8458afd](https://github.com/aiconsultancy/subspace/commit/8458afd2c09bef513c7ab611b69c4241c3e48244))
+* **irc:** compose replies in the thread inspector ([4b72b74](https://github.com/aiconsultancy/subspace/commit/4b72b74f3e0785b35fe2566a9ec15593dd6ee9f1))
+* **irc:** compose replies in the thread inspector ([df08b82](https://github.com/aiconsultancy/subspace/commit/df08b82511d09336ce4217f7165eca4631fc2b98))
+
+
+### Bug Fixes
+
+* **decisions:** page results and keep rows visible while searching ([e9a7c0f](https://github.com/aiconsultancy/subspace/commit/e9a7c0f91214dc58d922d9985a6f3f5c254e1025))
+* **decisions:** repair ID search and add cursor paging ([2b59db7](https://github.com/aiconsultancy/subspace/commit/2b59db71874599f92ed7a97ff09de60679739032))
+* **desktop:** discard stale search results and message menus ([228b5f7](https://github.com/aiconsultancy/subspace/commit/228b5f7da19a9a7b53eeb2d755951dc8c92c296b))
+* **desktop:** restore file drops, stabilise Ship details and wrap issue titles ([3fa6a9b](https://github.com/aiconsultancy/subspace/commit/3fa6a9b38dfc3e4710bdc3d374367b53ffc5cbbb))
+* **fleet-console:** preserve selected crew outcomes ([ebd3275](https://github.com/aiconsultancy/subspace/commit/ebd32758f2b6516887edcb6f3eac0b09ec3f7cbc))
+* **fleet-console:** preserve selected crew outcomes ([0900cd6](https://github.com/aiconsultancy/subspace/commit/0900cd6baee2d0d96087166ba827eb60cd6ab0f2))
+* **fleet-console:** retain latest known crew activity through outages ([0871660](https://github.com/aiconsultancy/subspace/commit/087166009a01edd10c5afb9accad1291845c8129))
+* **framework:** settle the follow-ups from the menu bar and hairlines reviews ([#212](https://github.com/aiconsultancy/subspace/issues/212)) ([afbeb85](https://github.com/aiconsultancy/subspace/commit/afbeb85683f47662611172807685b937e51f0f20))
+* **irc:** accept mixed file drops and web attachments ([aa84d2a](https://github.com/aiconsultancy/subspace/commit/aa84d2a0be2ca241e2567bf0352835ee1dabe8f4))
+* **irc:** clear notifications when removing a channel ([99ef7eb](https://github.com/aiconsultancy/subspace/commit/99ef7eb1912b0a18904dfae4b2c3b24f8c496b3b))
+* **irc:** disambiguate formatting imports for rustdoc ([745ee70](https://github.com/aiconsultancy/subspace/commit/745ee708bec0047b8aee849b26ad98b32095806c))
+* **irc:** distinguish permalink history from reconnect catch-up ([56cd039](https://github.com/aiconsultancy/subspace/commit/56cd039ff5874da8f334b8e2251b3335bbe04c3c))
+* **irc:** filter claimed channels before cloning them ([d19844c](https://github.com/aiconsultancy/subspace/commit/d19844ca5a9582549985f1267bc84549ea6f2d85))
+* **irc:** improve fleet threads and message controls ([4075907](https://github.com/aiconsultancy/subspace/commit/4075907c5bc8eed9d26e71acd0ff6c3f2f0d8418))
+* **irc:** inset hover actions and remove the thread highlight border ([1ccdca9](https://github.com/aiconsultancy/subspace/commit/1ccdca94a6bdb11c6bfff5aeec33f8087081bbed))
+* **irc:** join linked channels before loading threads ([0024ac6](https://github.com/aiconsultancy/subspace/commit/0024ac637c8dafc86cee7544583b3d7aeb41790f))
+* **irc:** keep earlier thread drafts reachable ([0d709c1](https://github.com/aiconsultancy/subspace/commit/0d709c1b585738753d5aa183d069f50ef1528636))
+* **irc:** keep Ship details stale until the reconnect is ready ([b3d6f1b](https://github.com/aiconsultancy/subspace/commit/b3d6f1b1ffe18ec0f73240dea41df23f71eb6a4e))
+* **irc:** keep Ship details steady through refreshes ([7710ec0](https://github.com/aiconsultancy/subspace/commit/7710ec0c169051609824bed758ba55745d0a1b3e))
+* **irc:** keep Stop available in the Thread inspector ([df05327](https://github.com/aiconsultancy/subspace/commit/df053278be2672032359976bcc27e6efa1c561f4))
+* **irc:** keep the transcript visually grouped ([3ac3418](https://github.com/aiconsultancy/subspace/commit/3ac341873a67b76d4048d19fcf347b9fe54a72b2))
+* **irc:** preserve thread access and clear account activity ([36f3079](https://github.com/aiconsultancy/subspace/commit/36f30792e31062a8d531f808bdeaa98fc0307583))
+* **irc:** preserve unread thread replies and require channel membership ([7ce0921](https://github.com/aiconsultancy/subspace/commit/7ce092111fd0142b22695f0aec12fca8c5e0ad61))
+* **irc:** require a fresh channel join after reconnecting ([1c2883f](https://github.com/aiconsultancy/subspace/commit/1c2883f92797ce0eaa782fe9b1149ba0e2d9f921))
+* **irc:** retain crew while a reconnected feed fills in ([871a3a5](https://github.com/aiconsultancy/subspace/commit/871a3a5ba2aad318a9c4cb2f23eb4deba0d37f6f))
+* **irc:** update the draft shortcut after sending or recalling ([a074637](https://github.com/aiconsultancy/subspace/commit/a074637e0b924b68e095d3b0277aba263a77621d))
+* **issues:** nest sub-issues in the desktop list (SUB-89) ([886da1e](https://github.com/aiconsultancy/subspace/commit/886da1ea0dcca49b8f33323756fca42b1908f49e))
+* **issues:** stabilise decision paging and show maker names ([971c298](https://github.com/aiconsultancy/subspace/commit/971c298252ddaab165969d6e90843d5c348ae609))
+* **issues:** stabilise decision paging and show maker names ([3302111](https://github.com/aiconsultancy/subspace/commit/3302111d53e362be0a9facea51ba139210377cae))
+* **issues:** wrap long titles beside Properties ([7f30f58](https://github.com/aiconsultancy/subspace/commit/7f30f586a30150ed1237551ed77fdbb2055f5c38))
+* **search:** reveal issues and decisions hidden by filters ([4b53aa2](https://github.com/aiconsultancy/subspace/commit/4b53aa2d7fededb3c8fcd6a56d2128356b819cfb))
+* **subspace:** build the terminal from a shared offline Ghostty cache ([#155](https://github.com/aiconsultancy/subspace/issues/155)) ([efb887b](https://github.com/aiconsultancy/subspace/commit/efb887b3e21350260062e0adbf1e8a7ff4cd518e))
+
 ## [0.13.0](https://github.com/aiconsultancy/subspace/compare/subspace-desktop-v0.12.1...subspace-desktop-v0.13.0) (2026-11-27)
 
 
