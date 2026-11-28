@@ -298,7 +298,7 @@ credential files that the installer provisions instead.
 
 ## Screenshots
 
-The desktop app in its Twilight Two theme, with fictional fixture data.
+The desktop app in its Twilight Two theme, with fictional demo data.
 Select an image to see it full size.
 
 ### Channels and the tracker
@@ -322,7 +322,7 @@ Select an image to see it full size.
 
 <table>
 <tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-projects-twilight-two.png"><img src="docs/assets/screenshots/desktop-projects-twilight-two.png" width="440" alt="The Projects Space showing a demo project's status, health, lead, dates, timeline, next milestone and latest update"></a><br><b>Projects.</b> Follow a project's status, timeline and latest update.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-projects-twilight-two.png"><img src="docs/assets/screenshots/desktop-projects-twilight-two.png" width="440" alt="The Projects Space showing a demo project's timeline, next milestone and latest update, with status, health, lead and dates in the inspector"></a><br><b>Projects.</b> Follow a project's timeline and latest update, with its properties in the inspector.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-agentsview-twilight-two.png"><img src="docs/assets/screenshots/desktop-agentsview-twilight-two.png" width="440" alt="The AgentsView Space showing fictional Claude and Codex sessions, project totals and activity charts in Twilight Two"></a><br><b>AgentsView.</b> Browse agent sessions and review activity across projects.</td>
 </tr>
 </table>
