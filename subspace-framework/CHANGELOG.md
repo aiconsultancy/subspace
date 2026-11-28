@@ -4,6 +4,25 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.10.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.9.0...subspace-framework-v0.10.0) (2026-11-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **framework:** OverflowUnit::refresh is removed in favour of OverflowUnit::icon_button, and plan_overflow takes the row's width as an Option.
+
+### Features
+
+* **framework:** add a compact message composer to the gallery ([2a8b7a4](https://github.com/aiconsultancy/subspace/commit/2a8b7a4ec18b0b5ff57f4f30ee55149dc86fd022))
+* **irc:** compose replies in the thread inspector ([5d482df](https://github.com/aiconsultancy/subspace/commit/5d482df509be3daca4919aaf697d926f9ddaea68))
+
+
+### Bug Fixes
+
+* **framework:** name compact message fields for assistive tech ([012387e](https://github.com/aiconsultancy/subspace/commit/012387ea153e5a856cd0b1dbd50f0087c7c277b7))
+* **framework:** name the standard chat field ([902aa91](https://github.com/aiconsultancy/subspace/commit/902aa91c94f5be112df50e76adc63aa1134b5b6c))
+* **framework:** settle the follow-ups from the menu bar and hairlines reviews ([#212](https://github.com/aiconsultancy/subspace/issues/212)) ([512f5ab](https://github.com/aiconsultancy/subspace/commit/512f5ab7ad895ea5eff22e0d8be6383f50570cf4))
+
 ## [0.9.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.8.0...subspace-framework-v0.9.0) (2026-11-27)
 
 
