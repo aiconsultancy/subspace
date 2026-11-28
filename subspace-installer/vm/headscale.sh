@@ -5,11 +5,12 @@ umask 077
 
 usage() {
     cat <<'USAGE'
-Usage: ./install.sh headscale [--dry-run] HEADSCALE_FQDN PUBLIC_IPV4 API_IPV4 IRC_IPV4
+Usage: ./install.sh headscale [--dry-run] HEADSCALE_FQDN PUBLIC_IPV4 API_IPV4 IRC_IPV4 [OPERATOR_GATEWAY_IPV4]
 
 Set up a dedicated Ubuntu 24.04 Headscale VM via the provider's management
 channel. The host firewall allows public TCP 443 and closes SSH. API_IPV4
 and IRC_IPV4 are the private IPv4 addresses that the fleet router can reach.
+The optional gateway grants HTTPS to enrolled operator devices only.
 USAGE
 }
 
@@ -20,11 +21,12 @@ case ${1:-} in
     --help|-h) usage; exit 0 ;;
     --dry-run) dry_run=true; shift ;;
 esac
-[[ $# == 4 ]] || { usage >&2; exit 2; }
+[[ $# == 4 || $# == 5 ]] || { usage >&2; exit 2; }
 hostname=$1
 public_ip=$2
 api_ip=$3
 irc_ip=$4
+operator_ip=${5:-}
 
 validate_ipv4() {
     local address=$1 octet
@@ -48,6 +50,12 @@ private_ipv4() {
 if ! private_ipv4 "$api_ip" || ! private_ipv4 "$irc_ip"; then
     die 'API and IRC must use private network addresses'
 fi
+if [[ -n $operator_ip ]]; then
+    validate_ipv4 "$operator_ip"
+    if ! private_ipv4 "$operator_ip" || [[ $operator_ip == "$api_ip" || $operator_ip == "$irc_ip" ]]; then
+        die 'the operator gateway needs a distinct private IPv4 address'
+    fi
+fi
 if private_ipv4 "$public_ip" || [[ $public_ip =~ ^(0\.|127\.|169\.254\.) ]]; then
     die 'the coordinator requires a public IPv4 address'
 fi
@@ -59,6 +67,9 @@ if $dry_run; then
         "Headscale $version with verified-member DERP" \
         "Workstation access: TCP $api_ip:443 and $irc_ip:6697 only" \
         'Ubuntu package upgrades, unattended security updates, default-drop host firewall and no SSH ingress'
+    if [[ -n $operator_ip ]]; then
+        printf 'Operator access: TCP %s:443\n' "$operator_ip"
+    fi
     exit 0
 fi
 
@@ -82,6 +93,9 @@ state=/var/lib/subspace-headscale
 config=/etc/subspace-headscale
 settings=$config/install-settings
 printf '%s\n' "$hostname" "$public_ip" "$api_ip" "$irc_ip" >"$staging/install-settings"
+if [[ -n $operator_ip ]]; then
+    printf '%s\n' "$operator_ip" >>"$staging/install-settings"
+fi
 if [[ -f $settings ]]; then
     cmp -s "$staging/install-settings" "$settings" ||
         die 'this coordinator is already configured with a different endpoint or routes'
@@ -160,26 +174,25 @@ curl --fail --silent --show-error --location --retry 3 --max-time 180 \
 printf '%s  %s\n' "$checksum" "$staging/headscale" | sha256sum --check --status ||
     die 'Headscale release checksum mismatch'
 
-route_approvers() {
-    printf '    "%s/32": ["tag:router"]' "$api_ip"
-    if [[ $api_ip != "$irc_ip" ]]; then
-        printf ',\n    "%s/32": ["tag:router"]' "$irc_ip"
-    fi
-}
-# Account sign-in remains on the API and IRC. Give enrolled workstations only their service ports.
-install -m 0640 -g subspace-headscale /dev/stdin "$config/policy.hujson" <<POLICY
-{
-  "tagOwners": {"tag:router": []},
-  "autoApprovers": {"routes": {
-$(route_approvers)
-  }},
-  "grants": [
-    {"src": ["workstation@"], "dst": ["$api_ip/32"], "ip": ["tcp:443"]},
-    {"src": ["workstation@"], "dst": ["$irc_ip/32"], "ip": ["tcp:6697"]}
-  ],
-  "nodeAttrs": [{"target": ["*"], "attr": ["disable-captive-portal-detection", "debug-disable-upnp"]}]
-}
-POLICY
+# Keep an operator's existing policy when updating the coordinator.
+if [[ ! -f $config/policy.hujson ]]; then
+    jq --null-input --arg api "$api_ip/32" --arg irc "$irc_ip/32" \
+        --arg gateway "${operator_ip:+$operator_ip/32}" '
+          (if $gateway == "" then ["workstation@"] else ["workstation@", "operator@"] end) as $members |
+          ([$api, $irc] + (if $gateway == "" then [] else [$gateway] end)) as $routes |
+          {
+            tagOwners: {"tag:router": []},
+            autoApprovers: {routes: ($routes | map({key: ., value: ["tag:router"]}) | from_entries)},
+            grants: (
+              [{src: $members, dst: [$api], ip: ["tcp:443"]},
+               {src: $members, dst: [$irc], ip: ["tcp:6697"]}] +
+              if $gateway == "" then [] else [{src: ["operator@"], dst: [$gateway], ip: ["tcp:443"]}] end
+            ),
+            nodeAttrs: [{target: ["*"], attr: ["disable-captive-portal-detection", "debug-disable-upnp"]}]
+          }
+        ' >"$staging/policy.hujson"
+    install -m 0640 -g subspace-headscale "$staging/policy.hujson" "$config/policy.hujson"
+fi
 
 install -m 0640 -g subspace-headscale /dev/stdin "$config/config.yaml" <<CONFIG
 server_url: https://$hostname

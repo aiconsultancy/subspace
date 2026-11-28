@@ -342,7 +342,9 @@ answer it now.
     management channel, and the private HTTPS API and TLS IRC addresses the
     fleet router can reach. Include the second VM, DNS and TCP 443 ingress
     in the same confirmation. Use a Desktop build with embedded Headscale
-    support and keep the separate private administrator SSH route.
+    support and keep the separate private administrator SSH route. If they
+    want an existing operator HTTPS gateway on Headscale, collect its
+    distinct private address and the approved operators.
     Also offer nginx with internal host names if they want browser-friendly
     addresses.
 

@@ -42,6 +42,20 @@ class HeadscaleTest(unittest.TestCase):
                 self.assertNotEqual(dry_run("headscale", HOST, PUBLIC, API, address).returncode, 0)
                 self.assertNotEqual(dry_run("headscale-router", HOST, API, address).returncode, 0)
 
+    def test_optional_operator_gateway_must_have_a_distinct_private_address(self):
+        gateway = "10.20.0.6"
+        plan = dry_run("headscale", HOST, PUBLIC, API, IRC, gateway)
+        self.assertEqual(plan.returncode, 0, plan.stderr)
+        self.assertIn(f"Operator access: TCP {gateway}:443", plan.stdout)
+        router = dry_run("headscale-router", "--operator-gateway", gateway, HOST, API, IRC)
+        self.assertEqual(router.returncode, 0, router.stderr)
+        self.assertIn(f"Advertised routes: {API}/32,{IRC}/32,{gateway}/32", router.stdout)
+        for conflicting in (API, IRC, PUBLIC):
+            self.assertNotEqual(dry_run("headscale", HOST, PUBLIC, API, IRC, conflicting).returncode, 0)
+            self.assertNotEqual(
+                dry_run("headscale-router", "--operator-gateway", conflicting, HOST, API, IRC).returncode, 0
+            )
+
     def test_coordinator_requires_public_ip_and_hostname(self):
         for host, public in (("https://headscale.example.com", PUBLIC), (HOST, API), (HOST, "127.0.0.1")):
             with self.subTest(host=host, public=public):

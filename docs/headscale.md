@@ -80,12 +80,37 @@ hs preauthkeys create --user ROUTER_ID --tags tag:router --expiration 20m --outp
 On the fleet VM or an existing private host with the required path, install
 the router. The key file must be root-owned with mode 0600. Remove your
 copies of the key after the device joins. The router uses an unprivileged
-userspace Tailscale service, advertises just the two specified host routes
-and does not change the host's firewall or SSH policy.
+userspace Tailscale service, advertises the specified host routes and does
+not change the host's firewall or SSH policy.
 
 ```sh
 sudo ./install.sh headscale-router headscale.example.com 10.20.0.4 10.20.0.5 /run/router.key
 ```
+
+## Optional operator HTTPS gateway
+
+A fleet with an existing private HTTPS gateway can offer its operator
+services over the same private network. Use a private address distinct
+from the API and IRC addresses. Give it only virtual hosts intended for the
+operators and keep their existing application authentication. Access is
+to the gateway's HTTPS listener, including the names it serves on that
+address and port.
+
+On a new coordinator, pass the gateway address as the fifth argument.
+On the private router, pass the same address with `--operator-gateway`.
+The operator and workstation roles both get the API and IRC. Only the
+operator role gets TCP 443 on the gateway. Create the `operator` user on the
+coordinator and issue its one-use keys only to authorised administrators.
+Leave the extra address out for ordinary API and IRC access.
+
+```sh
+./install.sh headscale --dry-run headscale.example.com 203.0.113.42 10.20.0.4 10.20.0.5 10.20.0.6
+sudo ./install.sh headscale-router --operator-gateway 10.20.0.6 \
+    headscale.example.com 10.20.0.4 10.20.0.5 /run/router.key
+```
+
+Verify the gateway's trusted HTTPS origins from an operator device. Verify
+that an ordinary workstation cannot reach the gateway.
 
 ## Enrol Subspace Desktop
 
@@ -126,7 +151,7 @@ Before updating Headscale, read its release and upgrade notes and back up
 is stopped. Keep the backups private because the state includes device
 registrations and private keys. Update to a Subspace installer revision
 with the desired stable Headscale release, then rerun setup with the same
-endpoint and routes. It validates the release checksum and configuration
-before restarting the service. Check the TLS endpoint, enrolment and one
+endpoint and routes. It preserves the installed access policy and validates
+the release checksum and configuration before restarting the service. Check the TLS endpoint, enrolment and one
 existing workstation after the upgrade.
 [Headscale upgrade documentation](https://headscale.net/stable/setup/upgrade/).

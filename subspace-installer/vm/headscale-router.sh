@@ -5,9 +5,10 @@ umask 077
 
 usage() {
     cat <<'USAGE'
-Usage: ./install.sh headscale-router [--dry-run] HEADSCALE_FQDN API_IPV4 IRC_IPV4 [AUTH_KEY_FILE]
+Usage: ./install.sh headscale-router [--dry-run] [--operator-gateway IPV4] HEADSCALE_FQDN API_IPV4 IRC_IPV4 [AUTH_KEY_FILE]
 
-Join the private VM to Headscale and advertise the API and IRC host routes.
+Join the private VM to Headscale and advertise the API and IRC host routes,
+plus the optional operator HTTPS gateway.
 On first install, supply a root-owned mode-0600 file with a one-use router
 key. Reuse the same endpoint and routes when updating an enrolled router.
 USAGE
@@ -16,10 +17,15 @@ USAGE
 die() { printf 'headscale router setup: %s\n' "$*" >&2; exit 1; }
 
 dry_run=false
-case ${1:-} in
-    --help|-h) usage; exit 0 ;;
-    --dry-run) dry_run=true; shift ;;
-esac
+operator_ip=
+while [[ ${1:-} == --* || ${1:-} == -h ]]; do
+    case $1 in
+        --help|-h) usage; exit 0 ;;
+        --dry-run) dry_run=true; shift ;;
+        --operator-gateway) operator_ip=${2:?--operator-gateway needs an IPv4 address}; shift 2 ;;
+        *) die "unknown option: $1" ;;
+    esac
+done
 [[ $# == 3 || $# == 4 ]] || { usage >&2; exit 2; }
 hostname=$1
 api_ip=$2
@@ -28,7 +34,10 @@ key_file=${4:-}
 
 [[ ${#hostname} -le 253 && $hostname =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
     die 'use a fully qualified lowercase DNS name'
-for address in "$api_ip" "$irc_ip"; do
+if [[ -n $operator_ip && ( $operator_ip == "$api_ip" || $operator_ip == "$irc_ip" ) ]]; then
+    die 'the operator gateway needs a distinct private IPv4 address'
+fi
+for address in "$api_ip" "$irc_ip" ${operator_ip:+"$operator_ip"}; do
     [[ $address =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2})){1,2}$ ]] ||
         die 'use private IPv4 addresses for the API and IRC'
     IFS=. read -r -a octets <<<"$address"
@@ -40,6 +49,7 @@ done
 
 routes=$api_ip/32
 if [[ $api_ip != "$irc_ip" ]]; then routes+=,$irc_ip/32; fi
+if [[ -n $operator_ip ]]; then routes+=,$operator_ip/32; fi
 if $dry_run; then
     printf '%s\n' "Router for https://$hostname via userspace networking" "Advertised routes: $routes"
     exit 0
