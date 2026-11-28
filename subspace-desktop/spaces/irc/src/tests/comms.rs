@@ -85,9 +85,7 @@ fn a_thread_link_joins_an_unopened_channel_and_keeps_comms_open(cx: &mut TestApp
         assert!(hub.sent().iter().any(|command| matches!(
             command, Command::Join { channel, .. } if channel == "#example-command"
         )));
-        assert!(!hub.sent().iter().any(|command| matches!(
-            command, Command::LoadAround { buffer, .. } if buffer == &destination
-        )));
+        assert!(!requested_history(hub.sent(), &destination));
     });
     inject(
         &hub,
@@ -97,10 +95,7 @@ fn a_thread_link_joins_an_unopened_channel_and_keeps_comms_open(cx: &mut TestApp
         cx,
     );
     hub.read_with(cx, |hub, _| {
-        assert!(hub.sent().iter().any(|command| matches!(
-            command, Command::LoadAround { buffer, id: Some(id), .. }
-                if buffer == &destination && id == "decision"
-        )));
+        assert!(requested_history(hub.sent(), &destination));
     });
     let mut linked = message(&destination, "admiral", "Decision recorded", 4);
     linked.id = Some("decision".into());
@@ -137,4 +132,13 @@ fn removing_the_network_clears_comms_without_waiting_for_irc(cx: &mut TestAppCon
         assert!(hub.comms.summaries().is_empty());
         assert_eq!(hub.comms.unread(), (0, false));
     });
+}
+
+fn requested_history(commands: &[Command], destination: &subspace_client_irc::BufferKey) -> bool {
+    commands.iter().any(|command| {
+        matches!(
+            command, Command::LoadAround { buffer, id: Some(id), .. }
+                if buffer == destination && id == "decision"
+        )
+    })
 }
