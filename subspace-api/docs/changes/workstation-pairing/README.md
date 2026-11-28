@@ -59,6 +59,112 @@ and fingerprint, and a device token with its header and claims, valid only at
 - **Bootstrap** (`scripts/pairing-owner.ts`, `bootstrapOwner` in `src/pairing-owner.ts`).
   `bun run auth:owner ORG` runs only as root and does everything in one transaction.
 
+## Provision a fleet for setup
+
+On the API host, root runs `bun run --silent auth:provision-fleet`, with the API's
+`DATABASE_URL`, `AUTH_PROVIDERS` (including `pairing`), `AGENT_TOKEN_AUDIENCE`,
+`DEVICE_TOKEN_AUDIENCE` if the API sets it, and any `RESERVED_USERNAMES`. The
+command checks them as the API does before it opens the database, and prints
+the setting at fault, never its value. The command reads one UTF-8 JSON object of up to
+64 KiB from standard input, or accepts `--file PATH` for a private root-owned
+regular file (no group or other permissions; the final path must not be a
+symlink). It has no HTTP route. A request looks like this:
+
+```json
+{
+  "organisation": "example",
+  "owner": { "name": "Aubrey Example", "email": "aubrey@example.com" },
+  "fleet": {
+    "slug": "example",
+    "name": "Example Fleet",
+    "ircHost": "irc.example.com",
+    "ircPort": 6697,
+    "ircTls": true,
+    "starbaseChannel": "#example-starbase",
+    "commandChannel": "#example-command"
+  },
+  "rearAdmiral": { "name": "atlas", "ircNick": "atlas", "model": "example-model" },
+  "captains": [
+    {
+      "name": "vega",
+      "ircNick": "vega",
+      "model": "example-model",
+      "ship": "Vega",
+      "channel": "#vega"
+    }
+  ],
+  "repositories": ["example/repository"]
+}
+```
+
+- `organisation` names `pairing:ORG`, with the same `ORG` format as
+  `auth:owner`. Give `owner.name` on the first run; the e-mail is optional. On
+  reruns the existing owner is reused, not renamed or replaced. A `dev:ORG`
+  or externally managed organisation with the same suffix is not migrated.
+- `fleet` uses the create-fleet API fields, including optional `ircWebsocketUrl`,
+  `vmHost` and `fleetApiUrl`. On a rerun, as with the update-fleet API, an
+  optional field the specification omits keeps its saved value; set it to
+  `null` to clear it. Supply the standard channel names from the installer
+  for the fleet and each captain. There is one rear admiral and up to 49
+  captains. Officer names, IRC nicks, ships and channels each differ ignoring
+  case. Officers are matched by name; same-fleet, same-rank active officers keep
+  their member IDs and key credentials. Omission does not delete a ship or
+  deactivate an officer. The command does not create Ergo accounts or keys.
+- Without an `initiative` field, setup picks a non-archived initiative: one of
+  the fleet's name owned by this fleet; else the initiative assigned to the
+  fleet itself, whatever its name, so renaming the fleet on a rerun keeps it;
+  else an unassigned one of the fleet's name. If none is found, it creates one
+  for the fleet. An ambiguous choice at any step needs an explicit
+  `"initiative": {"id": "<UUID>"}`. Keep the returned ID for
+  reruns. An existing initiative of another fleet is moved only with
+  `"initiative": {"id": "<UUID>", "adopt": true}`. That includes ownership
+  inherited from an ancestor. An unassigned initiative can be attached without
+  `adopt`.
+- `repositories` is optional (up to 50 `owner/repository` names). Setup reports
+  existing, unarchived tracker projects linked to them and their effective fleet,
+  including ownership inherited from an ancestor. It does not create, edit or
+  move projects. A different `fleetId` is a warning the installer can show.
+
+On success standard output contains one JSON line, with these fields:
+
+| Field                                                  | Shape                                                                                     |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `organisationId`, `ownerId`, `fleetId`, `initiativeId` | UUID strings                                                                              |
+| `ownerCreated`                                         | `true` when this run created the owner, which a rerun does only when no owner is left     |
+| `officers`                                             | Array of `{name, id}` in request order, rear admiral first                                |
+| `projects`                                             | Array of `{repository, id, key, fleetId}`; `fleetId` is a UUID or `null`                  |
+| `grant`                                                | `{id, token, expiresAt, maxUses}`: UUID, opaque `senr1.` token, UTC timestamp and integer |
+
+Pass only the grant token to Stargate's existing enrolment flow through a private
+channel. It is fleet-scoped, valid for ten minutes and has as many uses as the
+specification has officers; as with any fleet grant, a new certificate consumes
+one use. The roster does not bind it: until it is spent or expires, it can
+enrol a new officer of any name in that fleet or add a key to any existing
+officer of the fleet, the rear admiral included. Treat it as that authority.
+Carry it, and present it to the enrolment endpoint, only over authenticated TLS
+or a trusted local or tunnelled transport: the command checks that the device
+audience is https or loopback, not the address Stargate enrols at.
+The gateway should keep its existing officer keys on reruns. Provision close to
+enrolment: each successful run returns a fresh grant; earlier grants keep their
+original expiry and use limit. Do not print the response to a setup log or keep
+it in setup answers, generated instructions or shell arguments. Only the hash
+of the token is stored. On refusal, the command exits non-zero, writes a
+diagnostic to standard error and leaves no partial changes or grant. Changes are
+audited as API-host CLI actions, not as actions by the owner. Existing records
+that require an administrator ID use the owner as their sponsor.
+
+Provisioning mints no owner invite and does not rotate a pending invite or
+revoke a device. After setup succeeds, run `auth:owner` separately when an invite
+is needed and deliver it only to the owner. No administrator bearer or human key
+is needed by setup.
+
+The command runs in one transaction that takes the organisation's row
+`FOR UPDATE` first, the mode its initiative writes need, so it never upgrades
+that lock while holding fleet, ship or officer rows. Ordinary fleet and ship
+creation take the same row before inserting, as other writes to an
+organisation's members and agents do. A request that overlaps a run waits for
+it and then commits or gets the usual 409; neither deadlocks.
+
 ## Decisions
 
 - **Reuse the agent key model, not a new credential type.** A device credential is

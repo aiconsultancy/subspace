@@ -777,6 +777,40 @@ export function repositoryProjects(member: Member, input: typeof RepositoryQuery
   });
 }
 
+/** Active projects linked to the requested repositories, in request order then project-key order. */
+export function repositoryProjectReferences(
+  db: Db,
+  organisationId: string,
+  repositories: readonly string[],
+) {
+  const requested = [...new Set(repositories.map((repository) => repository.toLowerCase()))];
+  if (!requested.length) return Effect.succeed([]);
+  const repos = projectRepositories;
+  return db
+    .select({ repository: repos.repository, id: projects.id, key: projects.key })
+    .from(repos)
+    .innerJoin(
+      projects,
+      and(eq(projects.organisationId, organisationId), eq(projects.id, repos.projectId)),
+    )
+    .where(
+      and(
+        eq(repos.organisationId, organisationId),
+        inArray(repos.repository, requested),
+        isNull(projects.archivedAt),
+      ),
+    )
+    .pipe(
+      Effect.map((references) => {
+        const grouped = Map.groupBy(
+          references.sort(byKey((project) => project.key)),
+          (row) => row.repository,
+        );
+        return requested.flatMap((repository) => grouped.get(repository) ?? []);
+      }),
+    );
+}
+
 const pullQuery = { ...PageQuery, includeInactive: Schema.optional(Schema.Boolean) };
 const params = { reference: Ref };
 export const githubGroup = HttpApiGroup.make("github")

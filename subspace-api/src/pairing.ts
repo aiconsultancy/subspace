@@ -10,7 +10,8 @@ import {
   HttpApiSchema,
   OpenApi,
 } from "effect/http-api";
-import { insertCredential, lockOrganisation, readCertificate } from "./agent-credentials";
+import { insertCredential, readCertificate } from "./agent-credentials";
+import { lockOrganisation } from "./organisation-lock";
 import {
   agentTokenMaxLifetime,
   CertificatePem,

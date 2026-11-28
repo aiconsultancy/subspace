@@ -1,6 +1,6 @@
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { Effect } from "effect";
-import { lockOrganisation } from "./agent-credentials";
+import { lockOrganisation } from "./organisation-lock";
 import { type PrincipalIdentity } from "./auth";
 import { type Provider } from "./config";
 import { Database } from "./db";

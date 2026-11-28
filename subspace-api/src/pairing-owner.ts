@@ -1,10 +1,11 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { Effect } from "effect";
-import { lockOrganisation } from "./agent-credentials";
+import { Effect, Schema } from "effect";
+import { lockOrganisation } from "./organisation-lock";
 import { type AuditFields } from "./audit";
 import { Database } from "./db";
 import { revokeDevices } from "./device-revocation";
 import { pairedSubjectPrefix } from "./identity";
+import { lockInitiativeWrites } from "./initiatives";
 import {
   databaseNow,
   insertPairedPerson,
@@ -41,6 +42,10 @@ const hostAudit = (
 /** Why the bootstrap command refused, in words safe to print on the API host. */
 export class BootstrapRefused extends Error {}
 
+export const PairingOrganisationId = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9][a-z0-9.-]{0,62}$/u),
+);
+
 export interface OwnerBootstrap {
   /** The pairing organisation's external ID, which IRC_AUTH_ORGANISATION names after `pairing:`. */
   readonly externalOrganisation: string;
@@ -73,8 +78,17 @@ export function deviceChoice(flags: {
   return flags.revokeDevices ? "revoke" : flags.keepDevices ? "keep" : undefined;
 }
 
-/** The pairing organisation's ID, created if it is new, and locked. */
-const ensureOrganisation = (tx: Db, externalId: string) =>
+/**
+ * The pairing organisation's ID, created if it is new, and locked: `FOR NO KEY UPDATE` by default,
+ * as every write to its members takes it, or `FOR UPDATE` for a transaction that will also write
+ * initiatives (`lockInitiativeWrites`), so that it takes the stronger lock first and never
+ * upgrades it while holding other rows.
+ */
+export const ensureOrganisation = (
+  tx: Db,
+  externalId: string,
+  lock: "no key update" | "update" = "no key update",
+) =>
   Effect.gen(function* () {
     const [created] = yield* tx
       .insert(organisations)
@@ -90,7 +104,7 @@ const ensureOrganisation = (tx: Db, externalId: string) =>
         .where(
           and(eq(organisations.provider, "pairing"), eq(organisations.externalId, externalId)),
         ))[0]!.id;
-    yield* lockOrganisation(tx, id);
+    yield* lock === "update" ? lockInitiativeWrites(tx, id) : lockOrganisation(tx, id);
     return { id, created: Boolean(created) };
   });
 
@@ -161,9 +175,18 @@ const settleDevices = (
 /**
  * The organisation's owner, its earliest administrator with a paired-only subject, created with
  * the request's name if there is none. A deactivated owner is never replaced, and is restored only
- * with `reactivate`.
+ * by `auth:owner` with `reactivate`. The caller holds the organisation lock acquired by
+ * `ensureOrganisation` and attributes any new owner registration to its own CLI audit actor.
  */
-const ensureOwner = (tx: Db, organisationId: string, request: OwnerBootstrap) =>
+export const ensureOwner = (
+  tx: Db,
+  organisationId: string,
+  request: Pick<OwnerBootstrap, "displayName" | "email" | "reserved"> &
+    (
+      | { readonly command: "auth:owner"; readonly reactivate?: boolean }
+      | { readonly command: "auth:provision-fleet" }
+    ),
+) =>
   Effect.gen(function* () {
     // Locked before `active` is read, so a concurrent change to the owner, such as a direct
     // deactivation, either commits first and is seen here or waits for this invite.
@@ -181,8 +204,14 @@ const ensureOwner = (tx: Db, organisationId: string, request: OwnerBootstrap) =>
       .orderBy(asc(users.createdAt), asc(users.id))
       .limit(1)
       .for("no key update");
-    if (existing?.active) return { owner: existing, created: false, reactivated: false };
+    if (existing?.active) return { owner: existing, reactivated: false };
     if (existing) {
+      if (request.command === "auth:provision-fleet")
+        return yield* Effect.fail(
+          new BootstrapRefused(
+            `The owner ${existing.displayName} is deactivated. Use auth:owner with --reactivate to restore them before provisioning.`,
+          ),
+        );
       if (!request.reactivate)
         return yield* Effect.fail(
           new BootstrapRefused(
@@ -190,16 +219,22 @@ const ensureOwner = (tx: Db, organisationId: string, request: OwnerBootstrap) =>
           ),
         );
       yield* tx.update(users).set({ active: true }).where(eq(users.id, existing.id));
-      return { owner: { ...existing, active: true }, created: false, reactivated: true };
+      return { owner: { ...existing, active: true }, reactivated: true };
     }
-    if (request.reactivate)
+    if (request.command === "auth:owner" && request.reactivate)
       return yield* Effect.fail(
         new BootstrapRefused(
           "There is no owner to reactivate. Run without --reactivate to create one.",
         ),
       );
     if (!request.displayName)
-      return yield* Effect.fail(new BootstrapRefused("Give the owner's name with --name."));
+      return yield* Effect.fail(
+        new BootstrapRefused(
+          request.command === "auth:owner"
+            ? "Give the owner's name with --name."
+            : "Give the owner's name in the fleet specification.",
+        ),
+      );
     const { member, registered } = yield* insertPairedPerson(tx, {
       organisationId,
       displayName: request.displayName,
@@ -208,8 +243,7 @@ const ensureOwner = (tx: Db, organisationId: string, request: OwnerBootstrap) =>
       reserved: request.reserved,
       summary: "Registered the organisation's owner on the API host.",
     });
-    yield* tx.insert(auditLogs).values(hostAudit(organisationId, registered));
-    return { owner: member, created: true, reactivated: false };
+    return { owner: member, registered, reactivated: false };
   });
 
 /**
@@ -229,9 +263,9 @@ export const bootstrapOwner = (request: OwnerBootstrap) =>
         const organisationId = organisation.id;
         const {
           owner,
-          created: ownerCreated,
+          registered,
           reactivated: ownerReactivated,
-        } = yield* ensureOwner(tx, organisationId, request);
+        } = yield* ensureOwner(tx, organisationId, { ...request, command: "auth:owner" });
         const ownerId = owner.id;
 
         // The database's clock, which redemption judges expiry by: with this process's, a host
@@ -246,6 +280,7 @@ export const bootstrapOwner = (request: OwnerBootstrap) =>
           now,
         });
         yield* tx.insert(auditLogs).values([
+          ...(registered ? [hostAudit(organisationId, registered)] : []),
           ...(ownerReactivated
             ? [
                 hostAudit(organisationId, {
@@ -278,7 +313,7 @@ export const bootstrapOwner = (request: OwnerBootstrap) =>
           organisationId,
           organisationCreated: organisation.created,
           owner: { id: ownerId, displayName: owner.displayName, username: owner.username },
-          ownerCreated,
+          ownerCreated: Boolean(registered),
           ownerReactivated,
           invite: { id: invite.id, token, expiresAt: invite.expiresAt },
           revokedInvites: revokedInvites.length,

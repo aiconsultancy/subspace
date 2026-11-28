@@ -13,11 +13,12 @@ import {
 } from "./agent-keys";
 import { recordAudit } from "./audit";
 import { Database } from "./db";
+import { lockOrganisation } from "./organisation-lock";
 import { hasConstraint } from "./fleets";
 import { CurrentMember, isAdministrator, type Member } from "./identity";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
 import { endpointErrors, problem, validationProblem } from "./problems";
-import { agentCredentials, organisations, users } from "./schema";
+import { agentCredentials, users } from "./schema";
 import { dateTime, dateTimeOrNull, Line, NullableString, Timestamp, Uuid } from "./validation";
 
 type Db = (typeof Database)["Service"];
@@ -70,14 +71,6 @@ export const readCertificate = (pem: string, field = "certificate") =>
         ? Effect.succeed(check.certificate)
         : Effect.fail(validationProblem(field, certificateProblemDetail[check.reason])),
   );
-
-/** Locks the organisation's row as every agent registration change does, before its users. */
-export const lockOrganisation = (db: Db, organisationId: string) =>
-  db
-    .select({ id: organisations.id })
-    .from(organisations)
-    .where(eq(organisations.id, organisationId))
-    .for("no key update");
 
 /** The active credential with a fingerprint, in any organisation, if there is one. */
 export const activeCredential = (db: Db, fingerprint: string) =>

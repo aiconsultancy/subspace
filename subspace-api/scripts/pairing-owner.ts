@@ -18,7 +18,12 @@ import {
   maxInviteLifetime,
   minInviteLifetime,
 } from "../src/pairing-invites";
-import { bootstrapOwner, BootstrapRefused, deviceChoice } from "../src/pairing-owner";
+import {
+  bootstrapOwner,
+  BootstrapRefused,
+  deviceChoice,
+  PairingOrganisationId,
+} from "../src/pairing-owner";
 import { Email, Name } from "../src/validation";
 
 const usage =
@@ -46,7 +51,7 @@ const { values, positionals } = parseArgs({
 });
 
 const [organisation, ...extra] = positionals;
-if (!organisation || extra.length || !/^[a-z0-9][a-z0-9.-]{0,62}$/u.test(organisation)) {
+if (extra.length || !Schema.is(PairingOrganisationId)(organisation)) {
   fail(`${usage}\nORG is 1 to 63 lower-case letters, digits, dots and hyphens.`);
 }
 const minutes = values["expires-in"] ?? String(defaultInviteLifetime / 60);

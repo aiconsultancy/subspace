@@ -6,7 +6,7 @@ import { jwtVerify } from "jose";
 import pg from "pg";
 import { parseCertificate } from "../src/agent-keys";
 import { documentedApi } from "../src/api";
-import { config, deviceTokenAudience } from "../src/config";
+import { authProviders, config, deviceTokenAudience, pairingAudience } from "../src/config";
 import { databaseLayer } from "../src/db";
 import { problemTypes } from "../src/problems";
 import { mintPairingInvite, pairingInvitePrefix, readPairingInvite } from "../src/pairing-invites";
@@ -20,6 +20,17 @@ const agentAudience = "https://api.example.com";
 const deviceAudience = "https://subspace.example.internal";
 
 describe("configuration", () => {
+  test("the pairing audience can be checked without loading the server configuration", () => {
+    const env = { AUTH_PROVIDERS: "pairing", AGENT_TOKEN_AUDIENCE: "http://api.example.com" };
+    const providers = authProviders(env);
+    expect(() => pairingAudience(env, providers)).toThrow(
+      "Pairing needs https: AGENT_TOKEN_AUDIENCE, the device token audience",
+    );
+    expect(pairingAudience({ ...env, DEVICE_TOKEN_AUDIENCE: deviceAudience }, providers)).toBe(
+      deviceAudience,
+    );
+  });
+
   test("pairing needs a device audience, which defaults to the agent audience", () => {
     const base = { DATABASE_URL: "postgresql://subspace@127.0.0.1/subspace" };
     expect(() => config({ ...base, AUTH_PROVIDERS: "pairing" })).toThrow(

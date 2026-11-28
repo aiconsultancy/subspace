@@ -284,7 +284,7 @@ export const agentTokenAudience = (env: NodeJS.ProcessEnv) =>
  * DEVICE_TOKEN_AUDIENCE: the origin every device token names in `aud`, in the same form, when
  * people's workstations reach the API by another name than the officers, such as a private DNS
  * name. AGENT_TOKEN_AUDIENCE when unset. Pairing (AUTH_PROVIDERS has `pairing`) needs one of the
- * two, and it must be https unless its host is loopback: see `checkPairingAudience`. It is configured,
+ * two, and it must be https unless its host is loopback: see `pairingAudience`. It is configured,
  * never taken from a request's Host header.
  */
 export const deviceTokenAudience = (env: NodeJS.ProcessEnv) =>
@@ -319,12 +319,14 @@ const isLoopbackOrigin = (origin: string) => {
 };
 
 /**
- * Checks the device token audience when pairing is on. Workstations send invites to it and sign
- * tokens for it, so it must be https: pinning the audience does not protect an invite sent in
- * plain text. Plain http is allowed only on a loopback host, for development. TLS may end at a
- * trusted proxy in front of the API, as long as workstations reach the API through https.
+ * The validated device token audience when pairing is on, or null when it is off. Workstations
+ * send invites to it and sign tokens for it, so it must be https: pinning the audience does not
+ * protect an invite sent in plain text. Plain http is allowed only on a loopback host, for
+ * development. TLS may end at a trusted proxy, as long as workstations reach it through https.
  */
-function checkPairingAudience(env: NodeJS.ProcessEnv, audience: string | null) {
+export function pairingAudience(env: NodeJS.ProcessEnv, providers: ReadonlySet<Provider>) {
+  const audience = deviceTokenAudience(env);
+  if (!providers.has("pairing")) return null;
   if (!audience) throw new Error("Pairing needs DEVICE_TOKEN_AUDIENCE or AGENT_TOKEN_AUDIENCE");
   if (!audience.startsWith("https://") && !isLoopbackOrigin(audience)) {
     const name = env.DEVICE_TOKEN_AUDIENCE?.trim()
@@ -334,6 +336,7 @@ function checkPairingAudience(env: NodeJS.ProcessEnv, audience: string | null) {
       `Pairing needs https: ${name} must be an https origin unless its host is loopback`,
     );
   }
+  return audience;
 }
 
 /**
@@ -392,9 +395,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
       "Dev sign-in needs a loopback listener or local-only container port publishing",
     );
   }
-  const deviceAudience = deviceTokenAudience(env);
-  // A paired device proves who it is only with tokens bound to this audience.
-  if (providers.has("pairing")) checkPairingAudience(env, deviceAudience);
+  const deviceAudience = pairingAudience(env, providers);
   const agent = agentListener(env, providers, hostname, port);
   const adminRole = entraAdminRole(env, providers);
   const ircPort = Number(env.DEV_IRC_PORT ?? "6667");
@@ -417,7 +418,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
     providers,
     agentTokenAudience: agentTokenAudience(env),
     /** The device token audience while AUTH_PROVIDERS has pairing, which turns pairing on. */
-    deviceTokenAudience: providers.has("pairing") ? deviceAudience : null,
+    deviceTokenAudience: deviceAudience,
     autoRegister: autoRegister(env, providers),
     reservedUsernames: reservedUsernames(env),
     irc: ircSignIn(env, providers),
