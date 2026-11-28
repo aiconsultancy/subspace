@@ -114,7 +114,7 @@ mod tests {
             signed_in: Vec::new(),
         };
         assert_eq!(
-            accounts.pick(Some("work_corp")).as_deref(),
+            accounts.pick(Some("work_CORP")).as_deref(),
             Some("Work_corp")
         );
         assert_eq!(accounts.pick(Some("gone")).as_deref(), Some("personal"));

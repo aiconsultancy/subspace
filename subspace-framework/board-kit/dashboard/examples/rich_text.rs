@@ -31,7 +31,7 @@ const SAMPLES: &[(&str, Format, &str)] = &[
     (
         "html-code-inside",
         Format::Html,
-        "<p>The observer inside <code>Example.Job.Handler</code> reconciles Kubernetes Jobs and Pods into deterministic lifecycle transitions without durable producer state. </p>",
+        "<p>The observer inside <code>Example.Job.Handler</code> reconciles jobs and workers into ordered status changes without keeping state of its own. </p>",
     ),
     (
         "html-list-code",
@@ -41,7 +41,7 @@ const SAMPLES: &[(&str, Format, &str)] = &[
     (
         "markdown-code",
         Format::Markdown,
-        "`Example.Job.Handler` reconciles Jobs and `Pods` into transitions.",
+        "`Example.Job.Handler` reconciles Jobs and `Workers` into status changes.",
     ),
 ];
 

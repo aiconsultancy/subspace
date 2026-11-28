@@ -445,7 +445,7 @@ mod tests {
     fn each_account_gets_its_own_copilot_config_directory() {
         let workspace = Path::new("/private/workspace");
         assert_eq!(
-            config_directory(workspace, "Work_corp"),
+            config_directory(workspace, "Work_Corp"),
             PathBuf::from("/private/workspace/runtime-config/work_corp")
         );
         assert_ne!(

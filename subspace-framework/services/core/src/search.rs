@@ -316,8 +316,8 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
 mod tests {
     use super::{SearchDoc, SearchIndex, natural_cmp, tokenize};
 
-    /// The web test's items, mapped as the board's `boardDocs` maps them:
-    /// the short title, the parent's short title, and type, state and person.
+    /// Invented items, mapped as a board maps its items: the short title,
+    /// the parent's short title, and type, state and person.
     fn index() -> SearchIndex {
         let doc = |id: u64, title: &str, parent: &str, kind: &str, state: &str| {
             SearchDoc::new(id.to_string(), title)
@@ -347,13 +347,7 @@ mod tests {
                 "Task",
                 "Done",
             ),
-            doc(
-                1259313,
-                "Tidy the sample lint rules",
-                "",
-                "Task",
-                "To Do",
-            ),
+            doc(1259313, "Tidy the sample lint rules", "", "Task", "To Do"),
         ])
     }
 
@@ -382,7 +376,7 @@ mod tests {
     fn the_last_word_matches_as_a_prefix_while_typing() {
         let index = index();
         assert_eq!(ids(&index, "onbo")[0], "1204258");
-        // "job" is a whole term, so it matches exactly (not "journey");
+        // "job" is a whole term, so it matches exactly, not as a prefix;
         // matching both words (the child through its parent's title) outranks
         // matching one.
         assert_eq!(ids(&index, "job onbo"), ["1204258", "1204302", "1258950"]);
@@ -395,7 +389,7 @@ mod tests {
 
     #[test]
     fn items_matching_more_words_rank_first() {
-        assert_eq!(ids(&index(), "azure journey")[0], "1258950");
+        assert_eq!(ids(&index(), "harbour route")[0], "1258950");
     }
 
     #[test]
@@ -403,7 +397,7 @@ mod tests {
         let index = index();
         assert_eq!(ids(&index, "1258950")[0], "1258950");
         assert_eq!(ids(&index, "#1258950")[0], "1258950");
-        assert_eq!(ids(&index, "49043"), ["1204302"]);
+        assert_eq!(ids(&index, "12043"), ["1204302"]);
     }
 
     #[test]
