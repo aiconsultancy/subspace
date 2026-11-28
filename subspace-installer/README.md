@@ -2248,6 +2248,36 @@ protections and refuses a changed head SHA. Crew hand the PR and head SHA back
 to their captain. The helper refuses merges from crew worktrees. Crew still
 share the captain's Linux user and GitHub App.
 
+### Workflow file pushes
+
+GitHub refuses a push that creates or changes a file under
+`.github/workflows/` unless the token carries the **Workflows** permission,
+and the Git credential helper normally asks only for Contents. Ask the
+operator before enabling workflow pushes. Pass
+`--workflow-repositories example/project[,example/library]` to `install.sh`
+or `subspace-setup`. Setup saves this list as
+`githubPolicy.workflowRepositories` in the fleet definition. The default is
+an empty list. Pass `--workflow-repositories none` to turn it off. Use the
+GitHub owner and repository names from the fleet's repository URLs.
+
+For a listed repository, the Git token of every member whose GitHub App has
+Contents write also carries Workflows write. Crew use their captain's App, so
+they can push workflow changes too. A rear admiral with Contents read gets no
+extra permission. Git asks the helper for the same token to fetch and to
+push, so a member's fetches from a listed repository carry it too. Tokens
+for other repositories, the installer's read-only clones and reference
+checkouts, and `subspace-github gh` keep their usual permissions.
+Protected branches stay guarded by the pre-push hook and the repository's
+branch rules, so workflow changes still arrive through feature branches and
+reviewed pull requests.
+
+Each App's registration and installation must have **Workflows: Read and
+write**, and an organisation owner may need to approve the permission update
+for the installation. Otherwise GitHub refuses to issue the member's Git
+token for a listed repository, so fetches fail as well as pushes. Rerun
+setup as root after changing the list, or after the installations gain the
+permission, so each member's GitHub policy is rewritten.
+
 ### Add private repositories later
 
 A fleet installed without its private repositories gets them once the rear

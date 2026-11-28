@@ -644,6 +644,20 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual(fleet_setup.fleet_config(cleared, members, "a" * 40)["githubPolicy"],
                          {"protectedBranches": ["main"], "captainMergeRepositories": []})
 
+    def test_workflow_repository_selection_survives_setup_and_can_be_cleared(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--repositories", "https://github.com/example/project.git",
+                "--workflow-repositories", "example/project", *CREW]
+        answers, members, config, _, _ = self.generate(argv)
+        self.assertEqual(config["githubPolicy"]["workflowRepositories"], ["example/project"])
+        config["githubPolicy"]["captainMergeRepositories"] = ["example/project"]
+        kept = self.rerun(answers, config)
+        self.assertNotIn("workflowRepositories", kept)
+        self.assertEqual(fleet_setup.fleet_config(kept, members, "a" * 40)["githubPolicy"], config["githubPolicy"])
+        cleared = self.rerun(kept, config, "--workflow-repositories", "none")
+        self.assertEqual(fleet_setup.fleet_config(cleared, members, "a" * 40)["githubPolicy"],
+                         {"workflowRepositories": [], "captainMergeRepositories": ["example/project"]})
+
     def test_extra_permissions_written_by_hand_are_kept_on_a_rerun(self):
         args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
                 "--repositories", "https://github.com/example/project.git", *CREW]
