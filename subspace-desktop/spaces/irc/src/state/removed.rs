@@ -121,6 +121,7 @@ fn buffer_of(event: &Event) -> Option<&BufferKey> {
         Event::Line(line) | Event::Replayed(line) => Some(&line.buffer),
         Event::History { buffer, .. }
         | Event::Backfill { buffer, .. }
+        | Event::Around { buffer, .. }
         | Event::Joined { buffer }
         | Event::Left { buffer }
         | Event::Topic { buffer, .. }

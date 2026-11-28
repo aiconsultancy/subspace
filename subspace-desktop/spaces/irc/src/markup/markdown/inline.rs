@@ -170,7 +170,10 @@ fn reference(word: &str, mentions: &Mentions, first: bool) -> Option<Piece> {
     let label = label(&word[range.clone()]);
     let piece = Piece::text(format!("{leading}[{label}]({target})"), &word[..range.end]);
     Some(Piece {
-        found: found.filter(Ref::is_record).map(|found| (range, found)),
+        formatted: matches!(found, Some(Ref::Thread(..))),
+        found: found
+            .filter(|found| found.is_record() || matches!(found, Ref::Thread(..)))
+            .map(|found| (range, found)),
         ..piece
     })
 }
@@ -194,9 +197,13 @@ fn literal(text: &str, at: usize) -> Piece {
         '`' => code(rest),
         '[' => match spans::link(rest) {
             Some(link) => {
-                let text = &rest[link.text];
+                let text = &rest[link.text.clone()];
                 let markdown = format!("[{}]({})", label(text), link.url);
-                Piece::formatting(markdown, text, link.len)
+                Piece {
+                    found: super::super::link::thread_ref(&link.url)
+                        .map(|found| (link.text, found)),
+                    ..Piece::formatting(markdown, text, link.len)
+                }
             }
             None => Piece::text("\\[".to_owned(), "["),
         },

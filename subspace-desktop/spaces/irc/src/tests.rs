@@ -11,6 +11,7 @@ use crate::hub::{self, Hub};
 use crate::{Irc, config::Settings, rows, view};
 
 mod back;
+mod comms;
 mod completion;
 mod conversation;
 mod conversation_menu;

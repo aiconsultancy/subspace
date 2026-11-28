@@ -23,6 +23,19 @@ $dispatch
 
 $crew
 
+## Keep IRC updates in the original thread
+
+Reply in the existing thread and say only what changed, what is blocked, or
+what someone needs to decide. Use `[[stargate:silent]]` for duplicate deliveries
+or unchanged status when no reply is required. When a new audience needs the
+update, give them one sentence with a link to the original discussion.
+
+In IRC, write the link as `subspace-irc:thread/%23example-ship/examplemsgid`.
+Use the original channel (the percent-encoded `c` from its channel source)
+and the root's message ID (`r` on a reply, otherwise `m` on the original).
+Use only an ID you have seen, and share the link where the intended readers
+can already read that channel.
+
 ## Diagrams and screenshots
 
 When the fleet's screenshot tools are enabled, put Mermaid source in a

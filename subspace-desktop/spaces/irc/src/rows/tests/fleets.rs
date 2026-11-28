@@ -102,19 +102,13 @@ fn fleet_audit_sorts_after_command_and_before_ships() {
     let layout = super::super::layout(&state, &aurora(), &Default::default());
     assert_eq!(
         outline(&layout),
-        owned(&[(
-            "Aurora",
-            &[
-                "starbase",
-                "command",
-                "fleet-audit",
-                "lyra",
-                "orion",
-                "nav",
-                "#lounge",
-                "Server"
-            ]
-        )])
+        owned(&[
+            (
+                "Aurora",
+                &["starbase", "command", "fleet-audit", "lyra", "orion", "nav"]
+            ),
+            ("Other", &["#lounge", "Server"]),
+        ])
     );
     let fleet = fleet_group_key(&network_id(), "aurora");
     assert_eq!(layout.groups[0].key, fleet, "only the group's key is new");
@@ -149,7 +143,7 @@ fn fleet_audit_sorts_after_command_and_before_ships() {
 }
 
 #[test]
-fn a_one_fleet_network_is_one_group_with_the_connection_state_and_the_server_last() {
+fn a_one_fleet_network_has_one_connection_state_and_the_server_in_other() {
     let mut state = joined([channel("#aurora-lyra")]);
     state.apply(
         Event::Status {
@@ -164,8 +158,8 @@ fn a_one_fleet_network_is_one_group_with_the_connection_state_and_the_server_las
         .iter()
         .map(|group| group.count.as_ref().map(ToString::to_string))
         .collect();
-    assert_eq!(counts, [Some("Connected".to_owned())], "named once");
-    let rows = &layout.groups[0].rows;
+    assert_eq!(counts, [Some("Connected".to_owned()), None], "named once");
+    let rows = &layout.groups[1].rows;
     assert_eq!(rows.last().map(|row| row.title.as_ref()), Some("Server"));
     assert_eq!(
         layout.networks.get(&layout.groups[0].key),
@@ -203,7 +197,7 @@ fn a_one_fleet_network_with_no_fleet_channel_open_is_still_named_after_its_fleet
     let layout = super::super::layout(&state, &aurora(), &Default::default());
     assert_eq!(
         outline(&layout),
-        owned(&[("Aurora", &["#lounge", "Server"])])
+        owned(&[("Aurora", &[]), ("Other", &["#lounge", "Server"])])
     );
     assert_eq!(layout.fleets.len(), 1);
 }
@@ -220,14 +214,15 @@ fn people_hold_private_conversations_with_people_only() {
     assert_eq!(
         outline(&layout),
         owned(&[
-            ("Aurora", &["lyra", "aurora-lyra", "Server"]),
+            ("Aurora", &["lyra"]),
+            ("Other", &["aurora-lyra", "Server"]),
             ("People", &["Anna", "mira"]),
         ]),
         "an older conversation with an agent stays with the network's rows"
     );
-    assert_eq!(layout.groups[1].key, people_group_key(&network_id()));
+    assert_eq!(layout.groups[2].key, people_group_key(&network_id()));
     assert_eq!(
-        layout.networks.get(&layout.groups[1].key),
+        layout.networks.get(&layout.groups[2].key),
         Some(&network_id())
     );
 }

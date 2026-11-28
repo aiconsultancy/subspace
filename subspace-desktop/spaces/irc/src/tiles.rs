@@ -59,7 +59,7 @@ impl TileRef {
         match found {
             Ref::Issue(identifier) => Some(Self::Issue(identifier.clone())),
             Ref::PullRequest(found) => Some(Self::PullRequest(found.key.clone())),
-            Ref::Channel(_) | Ref::Nick(_) | Ref::Decision(_) => None,
+            Ref::Channel(_) | Ref::Nick(_) | Ref::Decision(_) | Ref::Thread(..) => None,
         }
     }
 }

@@ -281,7 +281,7 @@ fn a_result_the_buffer_does_not_hold_asks_around_it_then_opens_it(cx: &mut TestA
     assert_eq!(target(&board, &room, cx), None);
     inject(
         &hub,
-        vec![Event::Backfill {
+        vec![Event::Around {
             buffer: room.clone(),
             lines: vec![old.clone()],
         }],

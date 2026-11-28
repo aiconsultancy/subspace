@@ -46,6 +46,7 @@ impl Event {
             Event::AutojoinRetired(buffer)
             | Event::History { buffer, .. }
             | Event::Backfill { buffer, .. }
+            | Event::Around { buffer, .. }
             | Event::Joined { buffer }
             | Event::Left { buffer }
             | Event::Topic { buffer, .. }

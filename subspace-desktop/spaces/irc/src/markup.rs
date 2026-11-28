@@ -14,7 +14,7 @@ mod markdown;
 mod pull_request;
 
 pub(crate) use issue::IssueKeys;
-pub(crate) use link::{linked_pull_requests, parse_ref_url};
+pub(crate) use link::{linked_pull_requests, parse_ref_url, thread_url};
 use markdown::to_markdown;
 pub(crate) use markdown::{Rendered, destination, literal};
 pub(crate) use pull_request::PrRef;
@@ -41,6 +41,7 @@ const NICK_SPECIAL: &[char] = &['[', ']', '\\', '`', '_', '^', '{', '|', '}', '-
 pub(crate) enum Ref {
     Channel(String),
     Nick(String),
+    Thread(String, String),
     /// An issue identifier, such as `TST-827`, from plain text.
     Issue(String),
     Decision(String),
@@ -131,6 +132,10 @@ pub(crate) fn is_nick(name: &str) -> bool {
 pub(super) fn classify(word: &str, mentions: &Mentions, first: bool) -> Option<Found> {
     let (start, core) = core(word);
     pull_request(word, start, core)
+        .or_else(|| {
+            let found = link::thread_ref(core)?;
+            Some(Found::Ref(start..start + core.len(), found))
+        })
         .or_else(|| linked(core, start))
         .or_else(|| named(core, start, mentions))
         .or_else(|| decision(core, start, mentions))
