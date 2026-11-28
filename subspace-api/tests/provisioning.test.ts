@@ -135,6 +135,7 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
     expect(Date.parse(grant.expiresAt) - start).toBeGreaterThanOrEqual(600_000);
     expect(Date.parse(grant.expiresAt) - Date.now()).toBeLessThanOrEqual(600_000);
     expect(grant.maxUses).toBe(2);
+    expect(first.ownerCreated).toBe(true);
     expect(first.projects).toEqual([]);
     expect(
       (
@@ -186,7 +187,12 @@ describe.skipIf(!testDatabase)("fleet provisioning on PostgreSQL", () => {
       ).rows[0];
     const originalProfile = await captainProfile();
     const rerun = await provision({ ...input, owner: undefined });
-    expect({ ...rerun, grant: undefined }).toEqual({ ...first, grant: undefined });
+    expect(rerun.ownerCreated).toBe(false);
+    expect({ ...rerun, grant: undefined }).toEqual({
+      ...first,
+      ownerCreated: false,
+      grant: undefined,
+    });
     expect(await captainProfile()).toEqual(originalProfile);
     expect(rerun.grant.id).not.toBe(grant.id);
     const replay = await enrol(rerun.grant.token, rear.name, rearKey);

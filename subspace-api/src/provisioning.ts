@@ -301,6 +301,8 @@ export const provisionFleet = (spec: Spec, reserved: ReadonlySet<string>) =>
         return {
           organisationId: organisation.id,
           ownerId: owner.id,
+          // Reported as auth:owner reports it: a rerun creates an owner only when none is left.
+          ownerCreated: Boolean(registered),
           fleetId: fleet.id,
           initiativeId,
           officers,

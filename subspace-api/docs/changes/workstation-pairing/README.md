@@ -126,6 +126,7 @@ On success standard output contains one JSON line, with these fields:
 | Field                                                  | Shape                                                                                     |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
 | `organisationId`, `ownerId`, `fleetId`, `initiativeId` | UUID strings                                                                              |
+| `ownerCreated`                                         | `true` when this run created the owner, which a rerun does only when no owner is left     |
 | `officers`                                             | Array of `{name, id}` in request order, rear admiral first                                |
 | `projects`                                             | Array of `{repository, id, key, fleetId}`; `fleetId` is a UUID or `null`                  |
 | `grant`                                                | `{id, token, expiresAt, maxUses}`: UUID, opaque `senr1.` token, UTC timestamp and integer |
