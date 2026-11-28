@@ -1,6 +1,6 @@
 //! One menu policy for literal values, rich blocks and legacy selectable hosts.
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui_kit::base::TextSelection;
 use gpui_kit::component::menu::{ContextMenu, PopupMenu, PopupMenuItem};
@@ -19,7 +19,7 @@ use super::view::RichTextContext;
 #[derive(Clone)]
 pub(super) struct Options {
     pub(super) chat: MenuChat,
-    pub(super) leading: Option<Rc<dyn Fn() -> PopupMenuItem>>,
+    pub(super) leading: Option<Arc<dyn Fn() -> PopupMenuItem + Send + Sync>>,
 }
 
 impl Options {
@@ -109,11 +109,10 @@ impl Source {
     }
 }
 
-pub(super) fn with_source<E>(element: E, source: Source, chat: MenuChat) -> ContextMenu<E>
+pub(super) fn with_source<E>(element: E, source: Source, options: Options) -> ContextMenu<E>
 where
     E: InteractiveElement + ParentElement + Styled,
 {
-    let options = Options::new(chat);
     element
         .anchored_context_menu(move |menu, window, cx| build(menu, &source, &options, window, cx))
 }

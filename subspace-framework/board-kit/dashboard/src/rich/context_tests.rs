@@ -25,6 +25,12 @@ fn inline_context_uses_its_specific_fallback_without_changing_native_text(cx: &m
                 state: state.downgrade(),
                 target: Arc::default(),
                 fallback: None,
+                menu_options: super::menu::Options {
+                    chat: crate::row_menu::MenuChat::Offered,
+                    leading: Some(Arc::new(|| {
+                        gpui_kit::component::menu::PopupMenuItem::new("Reply in thread")
+                    })),
+                },
                 highlights: Vec::new(),
             };
             context
@@ -48,7 +54,10 @@ fn inline_context_uses_its_specific_fallback_without_changing_native_text(cx: &m
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.render_frame(cx);
-        window.within("popup-menu").click(0usize, cx);
+        let mut menu = window.within("popup-menu");
+        assert_eq!(menu.find(0usize).label(), Some("Reply in thread"));
+        assert_eq!(menu.find(2usize).label(), Some("Copy"));
+        menu.click(2usize, cx);
         assert_eq!(
             cx.read_from_clipboard().unwrap().text().as_deref(),
             Some("KEY")
@@ -66,6 +75,7 @@ fn custom_inline_find_highlights_map_native_source_to_label_offsets(cx: &mut Tes
             state: state.downgrade(),
             target: Arc::default(),
             fallback: None,
+            menu_options: super::menu::Options::new(crate::row_menu::MenuChat::Offered),
             highlights: vec![(6..9, color)],
         };
         let spans = context.source_highlights(5..17, cx);

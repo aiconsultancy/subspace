@@ -85,7 +85,11 @@ pub fn text_menu_with<E>(element: E, fallback: impl Into<String>, chat: MenuChat
 where
     E: InteractiveElement + ParentElement + Styled,
 {
-    menu::with_source(element, menu::Source::Fallback(fallback.into()), chat)
+    menu::with_source(
+        element,
+        menu::Source::Fallback(fallback.into()),
+        menu::Options::new(chat),
+    )
 }
 
 fn selected_or_fallback(selected: &str, fallback: &str) -> String {

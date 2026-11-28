@@ -201,8 +201,12 @@ impl RenderOnce for PlainText {
             .refine_style(&self.style)
             .child(state.clone());
         let root = if self.menu {
-            super::menu::with_source(root, super::menu::Source::Plain(state), self.chat)
-                .into_any_element()
+            super::menu::with_source(
+                root,
+                super::menu::Source::Plain(state),
+                super::menu::Options::new(self.chat),
+            )
+            .into_any_element()
         } else {
             root.into_any_element()
         };

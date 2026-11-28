@@ -1,9 +1,6 @@
 //! Retained native rich-text state with the shared text-menu policy.
 
-use std::{
-    rc::Rc,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use gpui_kit::base::{TextView, TextViewState, TextViewStyle};
 use gpui_kit::component::menu::PopupMenuItem;
@@ -60,6 +57,7 @@ pub struct RichTextContext {
     pub(super) state: WeakEntity<TextViewState>,
     target: Arc<Mutex<Option<String>>>,
     pub(super) fallback: Option<String>,
+    menu_options: menu::Options,
     highlights: Vec<(std::ops::Range<usize>, gpui_kit::Hsla)>,
 }
 
@@ -77,7 +75,9 @@ impl RichTextContext {
     {
         let mut context = self.clone();
         context.fallback = Some(fallback.into());
-        super::menu::with_source(element, super::menu::Source::Rich(context), chat)
+        let mut options = self.menu_options.clone();
+        options.chat = chat;
+        super::menu::with_source(element, super::menu::Source::Rich(context), options)
     }
 
     /// Find backgrounds for a custom inline label, mapped through native source positions.
@@ -214,8 +214,8 @@ impl RichText {
     }
 
     /// Place a contextual action before the shared text commands.
-    pub fn menu_action(mut self, item: impl Fn() -> PopupMenuItem + 'static) -> Self {
-        self.menu_options.leading = Some(Rc::new(item));
+    pub fn menu_action(mut self, item: impl Fn() -> PopupMenuItem + Send + Sync + 'static) -> Self {
+        self.menu_options.leading = Some(Arc::new(item));
         self
     }
 
@@ -253,6 +253,7 @@ impl RenderOnce for RichText {
             state: state.downgrade(),
             target: owner.read(cx).target.clone(),
             fallback: self.fallback,
+            menu_options: self.menu_options.clone(),
             highlights: scope.as_ref().map_or_else(Vec::new, |scope| {
                 scope
                     .session
