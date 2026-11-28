@@ -128,7 +128,7 @@ impl Recall {
     pub fn answered(&mut self, events: &[Event]) {
         self.around.retain(|buffer| {
             !events.iter().any(
-                |event| matches!(event, Event::Backfill { buffer: answered, .. } if answered == buffer),
+                |event| matches!(event, Event::Around { buffer: answered, .. } if answered == buffer),
             )
         });
     }
@@ -186,7 +186,9 @@ pub(super) fn stored_lines(events: &[Event]) -> Vec<Line> {
         .iter()
         .flat_map(|event| match event {
             Event::Line(line) | Event::Replayed(line) => std::slice::from_ref(line),
-            Event::History { lines, .. } | Event::Backfill { lines, .. } => lines.as_slice(),
+            Event::History { lines, .. }
+            | Event::Backfill { lines, .. }
+            | Event::Around { lines, .. } => lines.as_slice(),
             _ => &[],
         })
         .filter(|line| store::stored(line))
@@ -354,4 +356,22 @@ impl Hub {
             }
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn an_around_lookup_waits_through_reconnect_catch_up() {
+    let mut recall = Recall::waiting(Vec::new());
+    let buffer = crate::fixtures::channel("#example-ship");
+    recall.await_around(buffer.clone());
+    recall.answered(&[Event::Backfill {
+        buffer: buffer.clone(),
+        lines: Vec::new(),
+    }]);
+    assert!(recall.awaiting(&buffer));
+    recall.answered(&[Event::Around {
+        buffer: buffer.clone(),
+        lines: Vec::new(),
+    }]);
+    assert!(!recall.awaiting(&buffer));
 }

@@ -272,7 +272,9 @@ impl ReactionBook {
                 self.rename(&buffer.network, old_nick, &member.nick, account);
             }
             Event::Line(line) | Event::Replayed(line) => self.see_lines(std::slice::from_ref(line)),
-            Event::History { lines, .. } | Event::Backfill { lines, .. } => self.see_lines(lines),
+            Event::History { lines, .. }
+            | Event::Backfill { lines, .. }
+            | Event::Around { lines, .. } => self.see_lines(lines),
             _ => {}
         }
     }

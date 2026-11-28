@@ -27,6 +27,7 @@ pub(super) struct Pending {
 enum Delivery {
     Older,
     Backfill,
+    Around,
     Discovered,
 }
 
@@ -95,7 +96,7 @@ pub(super) fn around(
         subcommand: "AROUND",
         selector: lines::history_selector(point.0, point.1),
         limit,
-        delivery: Delivery::Backfill,
+        delivery: Delivery::Around,
     };
     send(session, target, request)
 }
@@ -191,6 +192,7 @@ pub(super) fn deliver(
             // New conversations use the same unread handling as bouncer replay.
             out.events.extend(lines.into_iter().map(Event::Replayed));
         }
+        Some(Delivery::Around) => out.event(Event::Around { buffer, lines }),
         Some(Delivery::Backfill | Delivery::Discovered) => {
             out.event(Event::Backfill { buffer, lines });
         }
@@ -249,6 +251,10 @@ fn ended(session: &Session, target: &str, requests: &[Pending]) -> Vec<Event> {
             match request.delivery {
                 Delivery::Discovered => None,
                 Delivery::Backfill => Some(Event::Backfill {
+                    buffer,
+                    lines: Vec::new(),
+                }),
+                Delivery::Around => Some(Event::Around {
                     buffer,
                     lines: Vec::new(),
                 }),
@@ -333,7 +339,9 @@ pub(super) fn track(anchors: &mut Vec<Anchor>, events: &[Event]) {
 fn event_lines(event: &Event) -> &[Line] {
     match event {
         Event::Line(line) | Event::Replayed(line) => std::slice::from_ref(line),
-        Event::History { lines, .. } | Event::Backfill { lines, .. } => lines,
+        Event::History { lines, .. }
+        | Event::Backfill { lines, .. }
+        | Event::Around { lines, .. } => lines,
         _ => &[],
     }
 }

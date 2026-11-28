@@ -48,11 +48,11 @@ pub(super) fn name_mut(target: &mut Target) -> Option<&mut String> {
 pub(super) fn buffers_mut(event: &mut Event) -> Vec<&mut BufferKey> {
     match event {
         Event::Line(line) | Event::Replayed(line) => vec![&mut line.buffer],
-        Event::History { buffer, lines, .. } | Event::Backfill { buffer, lines } => {
-            std::iter::once(buffer)
-                .chain(lines.iter_mut().map(|line| &mut line.buffer))
-                .collect()
-        }
+        Event::History { buffer, lines, .. }
+        | Event::Backfill { buffer, lines }
+        | Event::Around { buffer, lines } => std::iter::once(buffer)
+            .chain(lines.iter_mut().map(|line| &mut line.buffer))
+            .collect(),
         Event::AutojoinRetired(buffer)
         | Event::Joined { buffer }
         | Event::Left { buffer }

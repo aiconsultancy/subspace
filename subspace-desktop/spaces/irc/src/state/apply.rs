@@ -38,7 +38,9 @@ fn dispatch(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> Option<At
             lines,
             complete,
         } => history(state, &buffer, lines, complete),
-        Event::Backfill { buffer, lines } if !lines.is_empty() => {
+        Event::Backfill { buffer, lines } | Event::Around { buffer, lines }
+            if !lines.is_empty() =>
+        {
             super::merge::merge(state, &buffer, lines, true);
         }
         Event::Typing {

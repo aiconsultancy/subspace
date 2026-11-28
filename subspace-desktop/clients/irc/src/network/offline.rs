@@ -87,7 +87,7 @@ fn describe(command: &Command, name: &str) -> Option<Reply> {
             lines: Vec::new(),
             complete: false,
         }),
-        Command::LoadAround { buffer, .. } => Reply::Event(Event::Backfill {
+        Command::LoadAround { buffer, .. } => Reply::Event(Event::Around {
             buffer: buffer.clone(),
             lines: Vec::new(),
         }),

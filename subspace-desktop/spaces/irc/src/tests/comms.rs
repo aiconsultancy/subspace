@@ -101,7 +101,7 @@ fn a_thread_link_joins_an_unopened_channel_and_keeps_comms_open(cx: &mut TestApp
     linked.id = Some("decision".into());
     inject(
         &hub,
-        vec![Event::Backfill {
+        vec![Event::Around {
             buffer: destination.clone(),
             lines: vec![linked],
         }],

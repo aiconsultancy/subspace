@@ -145,12 +145,9 @@ pub(crate) fn thread_message(
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
-        .when(thread_only, |column| {
-            column
-                .children(attachments(original, context, &tokens, cx))
-                .when(show_status, |column| {
-                    column.children(thread_facts(entry, context, &tokens, cx))
-                })
+        .children(attachments(original, context, &tokens, cx))
+        .when(thread_only && show_status, |column| {
+            column.children(thread_facts(entry, context, &tokens, cx))
         })
         .children(if thread_only {
             crate::transcript::reactions::thread_reply(entry, context)

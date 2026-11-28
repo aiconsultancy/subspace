@@ -93,7 +93,7 @@ fn join_channel(
             hub.send(Command::Join {
                 network: pending.buffer.network.clone(),
                 channel: channel.clone(),
-                key: None,
+                key: hub.join_key(&pending.buffer.network, channel),
             });
         });
     }

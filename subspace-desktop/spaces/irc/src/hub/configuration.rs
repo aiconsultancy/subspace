@@ -14,6 +14,21 @@ impl Hub {
         self.applied.error.clone()
     }
 
+    pub(crate) fn join_key(&self, network: &NetworkId, channel: &str) -> Option<String> {
+        let config = self
+            .applied
+            .networks
+            .iter()
+            .find(|config| &config.id == network)?;
+        config.channels.iter().find_map(|entry| {
+            let mut words = entry.split_whitespace();
+            if !words.next()?.eq_ignore_ascii_case(channel) {
+                return None;
+            }
+            words.next().map(str::to_owned)
+        })
+    }
+
     pub(crate) fn configured_initiative_network(&self) -> Option<NetworkId> {
         self.initiatives.network(&self.running)
     }
