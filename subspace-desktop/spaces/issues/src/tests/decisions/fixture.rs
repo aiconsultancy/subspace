@@ -14,6 +14,15 @@ pub(super) fn item(id: &str, title: &str, status: &str) -> Value {
         "createdAt":"2026-11-18T10:00:00Z","updatedAt":"2026-11-18T10:00:00Z"})
 }
 
+fn with_human_maker(mut item: Value) -> Value {
+    item["madeByType"] = json!("human");
+    item["madeByUserId"] = json!("person-2");
+    item["madeBy"] = json!({
+        "userId":"person-2","displayName":"Fixture maker","available":true,"kind":"human"
+    });
+    item
+}
+
 fn detail(id: &str) -> Value {
     let mut item = if id == NEW {
         item(id, "Read decisions here", "accepted")
@@ -24,7 +33,7 @@ fn detail(id: &str) -> Value {
         item["supersedesId"] = json!(OLD);
         item["supersedes"] = json!({"id":OLD,"title":"Older choice","status":"superseded"});
         item["supersededById"] = json!("unavailable");
-        item["madeByType"] = json!("human");
+        item = with_human_maker(item);
         item["evidenceKind"] = json!("documentOrUrl");
         item["evidenceReference"] = json!("https://example.invalid/design");
     } else {
@@ -69,7 +78,7 @@ pub(super) fn switched(
         let (code, response) = match path {
             FIRST => (
                 first.load(Ordering::Relaxed),
-                json!({"items":[item(NEW, "Read decisions here", "accepted")],"nextCursor":"next"}),
+                json!({"items":[with_human_maker(item(NEW, "Read decisions here", "accepted"))],"nextCursor":"next"}),
             ),
             NEXT => (
                 next.load(Ordering::Relaxed),
@@ -99,7 +108,7 @@ pub(super) fn long_fixture() -> Offline {
         let path = r.path.as_str();
         let body = match path {
             FIRST => {
-                json!({"items":[item(NEW, "Read decisions here", "accepted")],"nextCursor":null})
+                json!({"items":[with_human_maker(item(NEW, "Read decisions here", "accepted"))],"nextCursor":null})
             }
             _ if path == detail_path => long_detail(),
             _ if path.starts_with("/api/v1/issues/SUB-1/activity?") => timeline(),

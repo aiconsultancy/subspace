@@ -403,12 +403,11 @@ class FixtureTests(unittest.TestCase):
         rows = self.get('/decisions?issue=SUB-1')['items']
         self.assertEqual({row['status'] for row in rows}, {'accepted', 'proposed', 'superseded'})
         self.assertEqual(len(rows), 3)
-        # Newest decided first, as Subspace API sorts, on distinct dates that
-        # differ from the ID order.
-        dates = [row['decidedOn'] for row in rows]
-        self.assertEqual(len(set(dates)), 3)
-        self.assertEqual(dates, sorted(dates, reverse=True))
-        self.assertNotEqual([row['id'] for row in rows], sorted(row['id'] for row in rows))
+        # The latest record was backdated. Its decided-on date does not
+        # move it behind older records on a later page.
+        created = [row['createdAt'] for row in rows]
+        self.assertEqual(created, sorted(created, reverse=True))
+        self.assertLess(rows[0]['decidedOn'], rows[1]['decidedOn'])
         self.assertEqual([row['status'] for row in rows], ['proposed', 'accepted', 'superseded'])
         self.assertEqual(self.get(f"/decisions?issue={tracker['id']}")['items'], rows)
         self.assertEqual(self.get('/decisions?issue=SUB-2'), {'items': [], 'nextCursor': None})

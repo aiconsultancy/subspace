@@ -182,8 +182,10 @@ The timeline starts on **Comments**. Choose **All** to include other activity.
 Replies appear beneath their root comment. Deleted comments show a tombstone.
 
 Choose **Decisions** under **Activity** to read decisions linked to the issue.
-**Show more** loads another page. The most recently decided appear first.
-This tab has no comment composer. Open a decision here or from a
+**Show more** loads another page. On Subspace API, the most recently
+logged decision appears first. The command palette offers **Show all issue
+activity** while you read Decisions. This tab has no comment composer.
+Open a decision here or from a
 **Decision logged** entry in **All**. Both open the same side panel. Use
 the panel's Back arrow to return after following a supersede link. In the
 panel, Tab moves between its controls and scrolls each one into view, and

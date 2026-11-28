@@ -1,4 +1,4 @@
-use super::{Hub, IssueStatus, Job, Read, Task, load, lock};
+use super::{DecisionPages, Hub, IssueStatus, Job, Read, Task, load, lock};
 use crate::tests::{common, connected, decisions::row, detail, page, wait};
 use serde_json::{Value, json};
 use std::sync::{
@@ -189,6 +189,56 @@ fn tail(id: &str, title: &str) -> Value {
 }
 
 #[test]
+fn repeated_cursor_across_show_more_clicks_keeps_the_valid_prefix_and_depth() {
+    let mock = Mock::new(move |request| match request.path.as_str() {
+        FIRST => (200, page(vec![named("Head")], Some("old"))),
+        OLD_NEXT => (200, page(vec![tail(OLD_TAIL_ID, "Second")], Some("fresh"))),
+        FRESH_NEXT => (
+            200,
+            page(vec![tail(FRESH_TAIL_ID, "Repeated")], Some("old")),
+        ),
+        _ => common(request),
+    });
+    let hub = connected(&mock);
+    hub.activate_decisions().unwrap();
+    wait(&hub, |s| s.issue().unwrap().can_load_more_decisions());
+    hub.load_more_decisions().unwrap();
+    wait(&hub, |s| titles(s).len() == 2);
+    hub.load_more_decisions().unwrap();
+    wait_for_refresh(&hub);
+
+    assert_loop_kept_loaded_decisions(&hub);
+
+    // A refresh that carries an outstanding Show more can encounter the
+    // same loop in one read. It must not leave a permanent retry at depth 3.
+    let job = pending_job(&hub, Read::Refresh(3));
+    let Task::Decisions(request) = &job.task else {
+        unreachable!()
+    };
+    load(&hub.0, &job, request);
+    assert_loop_kept_loaded_decisions(&hub);
+    hub.stop();
+}
+
+fn assert_loop_kept_loaded_decisions(hub: &Hub) {
+    let snapshot = hub.snapshot();
+    assert_eq!(titles(&snapshot), ["Head", "Second"]);
+    assert!(snapshot.issue().unwrap().decisions_failed().is_none());
+    assert!(!snapshot.issue().unwrap().can_load_more_decisions());
+    let state = lock(&hub.0.state);
+    assert!(
+        state
+            .snapshot
+            .issue
+            .as_ref()
+            .unwrap()
+            .decisions
+            .refresh_intent()
+            == Read::Refresh(2)
+    );
+}
+
+#[test]
 fn explicit_refresh_during_show_more_rereads_from_the_first_page() {
     let (old, old_request) = held_reply();
     let mock = restart_fixture(old_request);
@@ -226,7 +276,13 @@ fn a_restarted_continuation_keeps_the_cached_cursor_until_the_refresh_lands() {
     assert!(decisions.stage(Some(Read::First)));
     let page: crate::model::Page<crate::model::DecisionListItem> =
         serde_json::from_str(&page(vec![named("Original head")], Some("old"))).unwrap();
-    decisions.install(Read::First, Ok((page, 1)));
+    decisions.install(
+        Read::First,
+        Ok(DecisionPages::Loaded {
+            page,
+            consumed_cursors: Default::default(),
+        }),
+    );
     assert!(decisions.stage(Some(Read::More)));
     decisions.restart();
     assert!(decisions.pending == Some(Read::Refresh(2)));

@@ -281,36 +281,26 @@ fn a_palette_command_selects_and_focuses_its_activity_tab(cx: &mut TestAppContex
     let (fixture, _) = fixture();
     let (board, cx) = open_timeline(&fixture, cx);
     render(cx);
-    cx.update(|window, cx| {
-        let commands = board.read(cx).palette_commands();
-        let command = commands
-            .iter()
-            .find(|command| command.label == "Show issue decisions")
-            .unwrap();
-        let CommandRun::Callback(run) = &command.run else {
-            panic!("expected a callback")
-        };
-        run(window, cx);
-    });
-    settle_frames(cx);
-    assert_eq!(mode(&board, cx), TimelineMode::Decisions);
-    cx.update(|window, cx| {
-        let tabs = &board
-            .read(cx)
-            .issue_view
-            .timeline_focus
-            .as_ref()
-            .unwrap()
-            .tabs;
-        assert!(
-            tabs.contains_focused(window, cx),
-            "an Activity tab has focus"
-        );
-        let decisions = window.within("issue-timeline-tabs").find(2usize);
-        assert_eq!(
-            decisions.focused(),
-            Some(true),
-            "the Decisions tab has focus"
-        );
-    });
+    for (label, expected, tab) in [
+        ("Show issue decisions", TimelineMode::Decisions, 2usize),
+        ("Show all issue activity", TimelineMode::All, 1usize),
+    ] {
+        cx.update(|window, cx| {
+            let commands = board.read(cx).palette_commands();
+            let command = commands
+                .iter()
+                .find(|command| command.label == label)
+                .unwrap();
+            let CommandRun::Callback(run) = &command.run else {
+                panic!("expected a callback");
+            };
+            run(window, cx);
+        });
+        settle_frames(cx);
+        assert_eq!(mode(&board, cx), expected);
+        cx.update(|window, _| {
+            let selected = window.within("issue-timeline-tabs").find(tab);
+            assert_eq!(selected.focused(), Some(true), "{label} focuses its tab");
+        });
+    }
 }
