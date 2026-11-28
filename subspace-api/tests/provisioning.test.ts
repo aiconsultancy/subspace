@@ -4,7 +4,7 @@ import { Effect, Schema } from "effect";
 import { Database, databaseLayer } from "../src/db";
 import { bootstrapOwner } from "../src/pairing-owner";
 import { assignProject, createProject } from "../src/projects";
-import { FleetProvisionSpec, provisionFleet } from "../src/provisioning";
+import { FleetProvisionSpec, provisionFleet, provisioningConfiguration } from "../src/provisioning";
 import { projectRepositories, users } from "../src/schema";
 import { agentKey, agentToken, type AgentKey } from "./certificates";
 import { isolatedDatabase, startApi, testDatabase } from "./entra-stack";
@@ -51,6 +51,32 @@ test.skipIf(process.getuid?.() === 0)(
     expect(command.stderr.toString()).toBe("Run this command as root on the API host.\n");
   },
 );
+
+test("the command's configuration errors name the setting, never its value", () => {
+  const env = {
+    AUTH_PROVIDERS: "pairing",
+    AGENT_TOKEN_AUDIENCE: "https://api.example.com",
+    DATABASE_URL: "postgresql://user:not-printed@db.example.com/subspace",
+  };
+  expect(provisioningConfiguration(env).url).toBe(env.DATABASE_URL);
+  for (const [change, setting] of [
+    [{ AUTH_PROVIDERS: "workos" }, "AUTH_PROVIDERS"],
+    [{ AGENT_TOKEN_AUDIENCE: "" }, "AGENT_TOKEN_AUDIENCE"],
+    // The API's own rule: plain http only on loopback, for the device audience too.
+    [{ DEVICE_TOKEN_AUDIENCE: "http://api.example.com" }, "DEVICE_TOKEN_AUDIENCE"],
+    [{ DATABASE_URL: "" }, "DATABASE_URL"],
+  ] as const) {
+    let message = "";
+    try {
+      provisioningConfiguration({ ...env, ...change });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toStartWith("The API configuration is not usable for provisioning: ");
+    expect(message).toContain(setting);
+    expect(message).not.toContain("not-printed");
+  }
+});
 
 test("the specification does not accept key material or account subjects", () => {
   const input = spec("example");

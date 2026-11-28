@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { AgentName, IrcNick, reconcileFleetOfficer } from "./agents";
-import { Database } from "./db";
+import { agentTokenAudience, authProviders, pairingAudience, reservedUsernames } from "./config";
+import { Database, databaseUrl } from "./db";
 import { insertEnrolmentToken, maxEnrolmentChecks } from "./enrolment";
 import { lockInitiativeFleet, lockProjectFleet } from "./fleet-ownership";
 import {
@@ -240,6 +241,26 @@ function checkProjects(tx: Db, organisationId: string, repositories: readonly st
     }
     return checks;
   });
+}
+
+/**
+ * The API settings the provisioning command needs, checked as the API checks them before the
+ * database is opened: pairing on, an agent token audience, a usable device token audience
+ * (DEVICE_TOKEN_AUDIENCE, by default AGENT_TOKEN_AUDIENCE), reserved usernames and DATABASE_URL.
+ * Throws an Error whose message names the setting, never its value, for the command to print.
+ */
+export function provisioningConfiguration(env: NodeJS.ProcessEnv) {
+  try {
+    const providers = authProviders(env);
+    if (!providers.has("pairing") || !agentTokenAudience(env))
+      throw new Error("AUTH_PROVIDERS must include pairing and AGENT_TOKEN_AUDIENCE must be set");
+    pairingAudience(env, providers);
+    return { reserved: reservedUsernames(env), url: databaseUrl(env) };
+  } catch (error) {
+    throw new Error(
+      `The API configuration is not usable for provisioning: ${error instanceof Error ? error.message : "unknown error"}.`,
+    );
+  }
 }
 
 /** One transaction: a failed check must not leave a partially provisioned fleet or a usable grant. */

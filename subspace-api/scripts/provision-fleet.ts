@@ -1,16 +1,10 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { Effect, Schema } from "effect";
-import {
-  agentTokenAudience,
-  authProviders,
-  pairingAudience,
-  reservedUsernames,
-} from "../src/config";
-import { databaseLayer, databaseUrl } from "../src/db";
+import { databaseLayer } from "../src/db";
 import { BootstrapRefused } from "../src/pairing-owner";
 import { isProblem } from "../src/problems";
-import { FleetProvisionSpec, provisionFleet } from "../src/provisioning";
+import { FleetProvisionSpec, provisionFleet, provisioningConfiguration } from "../src/provisioning";
 
 const usage = "Usage: bun run --silent auth:provision-fleet [--file PATH]";
 const maxInput = 64 * 1024;
@@ -61,14 +55,19 @@ const spec = await readInput(path)
     ),
   );
 
+// Checked before the database is opened. The messages name settings, never their values.
+const configuration = (() => {
+  try {
+    return provisioningConfiguration(process.env);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "The API configuration is not usable.");
+  }
+})();
+
 try {
-  const providers = authProviders(process.env);
-  if (!providers.has("pairing") || !agentTokenAudience(process.env))
-    fail("Configure AUTH_PROVIDERS with pairing and set AGENT_TOKEN_AUDIENCE before provisioning.");
-  pairingAudience(process.env, providers);
   const result = await Effect.runPromise(
-    provisionFleet(spec, reservedUsernames(process.env)).pipe(
-      Effect.provide(databaseLayer(databaseUrl())),
+    provisionFleet(spec, configuration.reserved).pipe(
+      Effect.provide(databaseLayer(configuration.url)),
     ),
   );
   // This is the only place the plaintext grant leaves the process.
@@ -83,6 +82,6 @@ try {
   )
     fail(error.detail);
   fail(
-    "The fleet could not be provisioned. Check the fleet specification, API configuration and database migrations.",
+    "The fleet could not be provisioned. Check the fleet specification, the database and its migrations.",
   );
 }

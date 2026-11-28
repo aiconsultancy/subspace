@@ -62,8 +62,10 @@ and fingerprint, and a device token with its header and claims, valid only at
 ## Provision a fleet for setup
 
 On the API host, root runs `bun run --silent auth:provision-fleet`, with the API's
-`DATABASE_URL`, `AUTH_PROVIDERS` (including `pairing`), `AGENT_TOKEN_AUDIENCE`
-and any `RESERVED_USERNAMES`. The command reads one UTF-8 JSON object of up to
+`DATABASE_URL`, `AUTH_PROVIDERS` (including `pairing`), `AGENT_TOKEN_AUDIENCE`,
+`DEVICE_TOKEN_AUDIENCE` if the API sets it, and any `RESERVED_USERNAMES`. The
+command checks them as the API does before it opens the database, and prints
+the setting at fault, never its value. The command reads one UTF-8 JSON object of up to
 64 KiB from standard input, or accepts `--file PATH` for a private root-owned
 regular file (no group or other permissions; the final path must not be a
 symlink). It has no HTTP route. A request looks like this:
