@@ -146,7 +146,7 @@ pub(crate) fn toolbar(
             .aria_label("Message actions")
             .test_support()
             .absolute()
-            .top_0()
+            .top_1()
             .right(px(INSET_PX))
             .gap_0p5()
             .p_0p5()

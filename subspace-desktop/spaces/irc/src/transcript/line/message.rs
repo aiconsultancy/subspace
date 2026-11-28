@@ -64,7 +64,7 @@ pub(crate) fn message(
         .children(attachments(original, context, &tokens, cx))
         .children(crate::transcript::reactions::row(entry, context))
         .children(marks::focus_card(entry, context));
-    let row = row_frame((&id, group), spoken, selected_thread, &tokens)
+    let row = row_frame((&id, group), spoken, &tokens)
         .test_support()
         .child(leading)
         .child(column)
@@ -79,7 +79,6 @@ pub(crate) fn message(
 fn row_frame(
     (id, group): (&SharedString, SharedString),
     spoken: String,
-    selected_thread: bool,
     tokens: &Tokens,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
     h_flex()
@@ -92,15 +91,9 @@ fn row_frame(
         .items_start()
         .gap_2()
         .px_2()
-        .py_0p5()
+        .py_1()
         .relative()
         .rounded(tokens.control_radius)
-        .border_l_1()
-        .border_color(if selected_thread {
-            tokens.accent
-        } else {
-            gpui_kit::transparent_black()
-        })
 }
 
 fn reply_mark(tokens: &Tokens) -> impl IntoElement {
