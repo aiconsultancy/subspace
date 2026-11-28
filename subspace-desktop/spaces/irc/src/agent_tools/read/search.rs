@@ -3,7 +3,7 @@
 
 use chrono::SecondsFormat;
 use serde_json::{Value, json};
-use subspace_client_irc::{BufferKey, Target, format};
+use subspace_client_irc::{BufferKey, Target, format as irc_format};
 use subspace_framework::dashboard::full_text::{Filters, Hit, Query, Ranking, Service};
 
 use super::super::lookup;
@@ -30,7 +30,7 @@ pub(super) fn search(
         .flat_map(|(key, buffer)| buffer.entries.iter().map(move |entry| (key, entry)))
         .filter(|(_, entry)| {
             is_message(entry.line.kind)
-                && format::strip(&entry.line.text)
+                && irc_format::strip(&entry.line.text)
                     .to_lowercase()
                     .contains(&needle)
         })

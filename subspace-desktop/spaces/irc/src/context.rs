@@ -1,7 +1,7 @@
 //! What **Add to chat** attaches for IRC: the buffer in front, with its
 //! recent messages as other people's text, bounded like every reference.
 
-use subspace_client_irc::{BufferKey, Target, format};
+use subspace_client_irc::{BufferKey, Target, format as irc_format};
 use subspace_framework::dashboard::AgentContext;
 use subspace_framework::dashboard::context_text::ContextText;
 
@@ -25,7 +25,9 @@ pub(crate) fn reference(network: &str, buffer: &BufferKey, held: &Buffer) -> Age
     text.line(kind, name);
     text.option(
         "Topic",
-        held.topic.as_ref().map(|topic| format::strip(&topic.text)),
+        held.topic
+            .as_ref()
+            .map(|topic| irc_format::strip(&topic.text)),
     );
     text.line("Note", UNTRUSTED);
     text.block("Recent messages", recent(held));
@@ -49,7 +51,7 @@ fn recent(held: &Buffer) -> String {
                 "{} {}: {}",
                 entry.line.time.format("%Y-%m-%d %H:%M"),
                 entry.line.from.as_deref().unwrap_or("server"),
-                format::strip(&entry.line.text)
+                irc_format::strip(&entry.line.text)
             )
         })
         .collect();
