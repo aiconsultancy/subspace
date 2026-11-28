@@ -7398,7 +7398,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-ghostty-config"
-version = "0.13.0"
+version = "0.14.0"
 
 [[package]]
 name = "subspace-github-auth"
@@ -7446,7 +7446,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-terminal"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "gpui-kit",

@@ -10121,7 +10121,7 @@ dependencies = [
 
 [[package]]
 name = "subspace"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "embed-resource",
  "gpui-kit",
@@ -10164,7 +10164,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-actions-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -10213,7 +10213,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-api-client"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -10283,7 +10283,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-client-fleet"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gpui-kit",
  "rand 0.10.3",
@@ -10317,7 +10317,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-client-irc"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -10406,7 +10406,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-decisions-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -10417,7 +10417,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-descriptor"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "serde_json",
  "subspace-framework",
@@ -10473,7 +10473,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-ghostty-config"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "tempfile",
 ]
@@ -10496,7 +10496,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-github-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -10510,7 +10510,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-github-copilot-agents-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -10521,7 +10521,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-irc-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -10542,7 +10542,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-issues-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -10591,7 +10591,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-mxc-worker"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "mxc-sdk",
@@ -10609,7 +10609,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-projects-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -10696,7 +10696,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-space-lab-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10717,7 +10717,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-terminal"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
@@ -10737,7 +10737,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-terminal-panel"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gpui-kit",
  "serde_json",
@@ -10748,7 +10748,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-tsx-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gpui-kit",
  "hex",
@@ -10766,7 +10766,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-tsx-system"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -10807,7 +10807,7 @@ dependencies = [
 
 [[package]]
 name = "subspace-web-board"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "block2 0.6.2",
  "gpui-kit",
