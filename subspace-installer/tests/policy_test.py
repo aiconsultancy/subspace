@@ -186,6 +186,72 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(gh.call_args.args[1], ["gh", "api", "--method", "PUT", "repos/example/project/pulls/4/merge",
                                                 "-f", "sha=" + "a" * 40, "-f", "merge_method=squash"])
 
+    def test_workflow_permission_is_requested_only_for_listed_repositories_on_push(self):
+        policy = {"enabled": True, "contents": "write", "protectedBranches": ["main"],
+                  "workflowRepositories": ["Example/Project"]}
+
+        def credential(path, policy=policy, read_only=False):
+            request = f"protocol=https\nhost=github.com\npath={path}\n\n"
+            with patch.object(github_app, "active_policy", return_value=policy), \
+                    patch.object(github_app, "installation_token", return_value="fixture-token") as mint, \
+                    patch.object(sys, "stdin", io.StringIO(request)), contextlib.redirect_stdout(io.StringIO()):
+                github_app.credential(Path("/fixture"), "get", read_only=read_only)
+            return mint.call_args.args[1:]
+
+        # A listed repository, named in any case, with or without .git: the push token may change workflows.
+        for path in ("example/project.git", "EXAMPLE/project"):
+            with self.subTest(path=path):
+                self.assertEqual(credential(path), ({"contents": "write", "workflows": "write"}, ["project"]))
+        # Unlisted, read-only, a Contents read App or no list at all: exactly the Contents request as before.
+        self.assertEqual(credential("example/library.git"), ({"contents": "write"}, ["library"]))
+        self.assertEqual(credential("other/project.git"), ({"contents": "write"}, ["project"]))
+        self.assertEqual(credential("example/project.git", read_only=True), ({"contents": "read"}, ["project"]))
+        self.assertEqual(credential("example/project.git", {**policy, "contents": "read"}), ({"contents": "read"}, ["project"]))
+        without = {key: value for key, value in policy.items() if key != "workflowRepositories"}
+        self.assertEqual(credential("example/project.git", without), ({"contents": "write"}, ["project"]))
+        # The bootstrap token and gh keep their own requests.
+        with patch.object(github_app, "active_policy", return_value=policy), \
+                patch.object(github_app, "installation_token", return_value="fixture-token") as mint, \
+                contextlib.redirect_stdout(io.StringIO()):
+            github_app.main(["bootstrap-token", "https://github.com/example/project.git"])
+        self.assertEqual(mint.call_args.args[1:], ({"contents": "read"}, ["project"]))
+        with patch.object(github_app, "active_policy", return_value=policy), \
+                patch.object(github_app, "installation_token", return_value="fixture-token") as mint, \
+                patch.object(github_app.os, "execve"):
+            github_app.main(["gh", "issue", "list", "--repo", "example/project"])
+        self.assertNotIn("workflows", mint.call_args.args[1])
+
+    def test_workflow_repositories_are_configured_names_written_to_every_member_policy(self):
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        app = {"appId": 1, "installationId": 2, "clientId": "fixture-client", "botLogin": "fixture[bot]", "botId": 3}
+        config["captains"][0]["githubApp"] = app
+        self.assertEqual(validate(config, officer_secrets(), check_files=False)["workflowRepositories"], [])
+        config["githubPolicy"] = {"workflowRepositories": ["EXAMPLE/PROJECT"]}
+        cfg = validate(config, officer_secrets(), check_files=False)
+        self.assertEqual(cfg["workflowRepositories"], ["example/project"])
+        packets = []
+
+        def run(command, **kwargs):
+            if command[-1] == "provision":
+                packets.append(json.loads(kwargs["input"]))
+            return subprocess.CompletedProcess(command, 0, stdout="")
+
+        _, captain = cfg["members"]
+        with patch.object(runtime, "app_key", return_value="fixture-key"), patch.object(runtime.subprocess, "run", run), \
+                patch.object(runtime, "run"):
+            runtime.configure_git(captain, "ss-orion", Path("/home/ss-orion"), False, cfg["protectedBranches"],
+                                  cfg["workflowRepositories"])
+            runtime.configure_git(captain, "ss-orion", Path("/home/ss-orion"), False, cfg["protectedBranches"])
+        self.assertEqual(packets[0]["policy"]["workflowRepositories"], ["example/project"])
+        self.assertNotIn("workflowRepositories", packets[1]["policy"])
+        for names, message in ((["example/library"], "must name configured GitHub repositories"),
+                               ("example/project", "must be an array of GitHub owner/repository names"),
+                               ([3], "must be an array of GitHub owner/repository names")):
+            config["githubPolicy"]["workflowRepositories"] = names
+            with self.subTest(names=names), self.assertRaisesRegex(Invalid, f"workflowRepositories {message}"):
+                validate(config, officer_secrets(), check_files=False)
+
     def test_captain_app_grants_pr_comments_and_reviews_without_merge(self):
         config = example_config()
         config["captainTools"] = "standard"

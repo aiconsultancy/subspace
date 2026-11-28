@@ -368,6 +368,10 @@ def parse_args(argv):
     parser.add_argument("--captain-merge-repositories",
                         help="GitHub owner/repository names, comma-separated, where captains may squash-merge "
                         "reviewed heads. Use 'none' to turn it off. Kept on later runs")
+    parser.add_argument("--workflow-repositories",
+                        help="GitHub owner/repository names, comma-separated, where members' GitHub Apps may push "
+                        "changes to .github/workflows. The installations need the Workflows permission. Use 'none' "
+                        "to turn it off. Kept on later runs")
     parser.add_argument("--toolchains", help="the toolchains the repositories need: 'derive' (after cloning, setup "
                         "reads the repositories and proposes what they need, installing nothing until you confirm "
                         "it), 'none' (the default: Node 24 and the base tools), or tools as TOOL@VERSION, "
@@ -487,10 +491,9 @@ def gather(args, saved):
     if merge_repos is None and interactive and not saved and repositories and not (INPUTS / "fleet.json").exists():
         merge_repos = prompt("May captains squash-merge pull requests? Enter the GitHub owner/repository names "
                              "(comma-separated), or 'none'", "none")
-    if merge_repos is not None:
-        answers["captainMergeRepositories"] = (
-            [] if merge_repos.strip() in ("", "none") else [repo.strip() for repo in merge_repos.split(",")]
-        )
+    for key, value in (("captainMergeRepositories", merge_repos), ("workflowRepositories", args.workflow_repositories)):
+        if value is not None:
+            answers[key] = [] if value.strip() in ("", "none") else [repo.strip() for repo in value.split(",")]
     if args.toolchains in ("derive", "none"):
         answers["toolchains"] = args.toolchains
     elif args.toolchains is not None:
@@ -1091,9 +1094,10 @@ def roster(answers, rear, captains):
 
 
 def save_answers(answers):
-    # Repositories and merge policy live in fleet.json. The listener setting lives in api.env.
+    # Repositories and GitHub policy live in fleet.json. The listener setting lives in api.env.
     write_json(INPUTS / "answers.json", {key: value for key, value in answers.items()
-                                        if key not in {"repositories", "captainMergeRepositories", "agentListener", "decisionOutcomeDms"}})
+                                        if key not in {"repositories", "captainMergeRepositories", "workflowRepositories",
+                                                       "agentListener", "decisionOutcomeDms"}})
 
 
 def demo_channels():
@@ -1305,9 +1309,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     view = config.get("agentsview", {})
     if not answers.get("agentsview", True) or "enabled" in view:
         config["agentsview"] = {**view, "enabled": answers.get("agentsview", True)}
-    if "captainMergeRepositories" in answers:
-        config["githubPolicy"] = {**config.get("githubPolicy", {}),
-                                  "captainMergeRepositories": answers["captainMergeRepositories"]}
+    for key in ("captainMergeRepositories", "workflowRepositories"):
+        if key in answers:
+            config["githubPolicy"] = {**config.get("githubPolicy", {}), key: answers[key]}
     # Each role's memory hard cap and the VM's swap: this or an earlier run's answer, over one set by hand. A role's
     # auto is written as auto, which the installer reads as its sizing over a fleet-wide memory.max (an officer's
     # own memory still wins); auto is swap's default, so it needs no entry.

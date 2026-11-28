@@ -57,6 +57,13 @@ def officer_github_repositories(cfg):
     return {key: name for key, source in cfg.get("repositories", {}).items() if (name := github_repository(source["url"]))}
 
 
+def workflow_permission(path, policy):
+    """Whether a push token for this owner/repository path may also change workflow files."""
+    repository_name(path)
+    listed = {name.lower() for name in policy.get("workflowRepositories", [])}
+    return policy["contents"] == "write" and path.removesuffix(".git").lower() in listed
+
+
 def merge_repository(args, policy, checkout):
     """Resolve a squash merge to the repository assigned to this captain checkout."""
     repository = policy.get("captainMergeCheckouts", {}).get(str(checkout))

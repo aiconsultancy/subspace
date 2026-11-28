@@ -129,7 +129,30 @@ def check(work):
                 github_app.main(["gh", "issue", "list"])
             assert gh.call_args.args[2]["GH_TOKEN"] == "fixture-installation-token"
         assert "password=fixture-installation-token" in output.getvalue()
+    workflow_scopes(directory)
     print("Per-agent GitHub App files, commit identities, RS256 minting, credential scope and gh environment passed.")
+
+
+def workflow_scopes(directory):
+    """Workflows write joins Contents only on a push token for a listed repository."""
+    policy = {"enabled": True, "contents": "write", "protectedBranches": ["main"],
+              "workflowRepositories": ["Example/Fixture"]}
+    for path, read_only, contents, expected in (
+            ("example/fixture.git", False, "write", {"contents": "write", "workflows": "write"}),
+            ("example/fixture.git", True, "write", {"contents": "read"}),
+            ("example/fixture.git", False, "read", {"contents": "read"}),
+            ("example/other.git", False, "write", {"contents": "write"})):
+        with patch.object(github_app, "active_policy", return_value={**policy, "contents": contents}), \
+                patch.object(github_app, "installation_token", return_value="fixture-installation-token") as mint, \
+                patch.object(sys, "stdin", io.StringIO(f"protocol=https\nhost=github.com\npath={path}\n\n")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            github_app.credential(directory, "get", read_only=read_only)
+        assert mint.call_args.args[1] == expected, (path, read_only, contents, mint.call_args.args[1])
+    with patch.object(github_app, "active_policy", return_value=policy), \
+            patch.object(github_app, "installation_token", return_value="fixture-installation-token") as mint, \
+            contextlib.redirect_stdout(io.StringIO()):
+        github_app.main(["bootstrap-token", "https://github.com/example/fixture.git"])
+    assert mint.call_args.args[1] == {"contents": "read"}
 
 
 if __name__ == "__main__":

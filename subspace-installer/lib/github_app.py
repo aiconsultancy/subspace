@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from agent_files import agent_directory
-from github_policy import PolicyError, check_push, cli_permissions, merge_repository, repository_name
+from github_policy import PolicyError, check_push, cli_permissions, merge_repository, repository_name, workflow_permission
 
 
 class GitHubAppError(ValueError):
@@ -130,7 +130,11 @@ def credential(directory, operation, read_only=False):
     if fields.get("protocol") == "https" and fields.get("host") == "github.com" and fields.get("path"):
         policy = active_policy(directory)
         repo = repository_name(fields["path"])
-        token = installation_token(directory, {"contents": "read" if read_only else policy["contents"]}, [repo])
+        permissions = {"contents": "read" if read_only else policy["contents"]}
+        if not read_only and workflow_permission(fields["path"], policy):
+            # Without it GitHub refuses a push that creates or changes .github/workflows.
+            permissions["workflows"] = "write"
+        token = installation_token(directory, permissions, [repo])
         print("username=x-access-token")
         print("password=" + token)
 

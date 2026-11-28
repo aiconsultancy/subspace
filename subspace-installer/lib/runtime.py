@@ -1465,19 +1465,14 @@ def validate(config, credentials, check_files=True, installed=None):
     require(isinstance(operators, list), "operatorUsers must be an array.")
     operators = [pattern(user, r"[a-z_][a-z0-9_-]{0,31}", "Linux operator username") for user in operators]
     require(all(not user.startswith("ss-") for user in operators), "Fleet service users cannot be operators.")
-    github_policy = fields(cfg.get("githubPolicy", {}), "githubPolicy", "protectedBranches captainMergeRepositories")
+    github_policy = fields(cfg.get("githubPolicy", {}), "githubPolicy",
+                           "protectedBranches captainMergeRepositories workflowRepositories")
     protected = github_policy.get("protectedBranches", ["main", "master", "release/*"])
     require(isinstance(protected, list) and all(isinstance(branch, str) for branch in protected),
             "githubPolicy.protectedBranches must be an array of branch patterns.")
     protected = [pattern(branch, r"[a-zA-Z0-9*?._/-]{1,120}", "GitHub protected branch pattern") for branch in protected]
-    merge_repos = github_policy.get("captainMergeRepositories", [])
-    require(isinstance(merge_repos, list) and all(isinstance(repo, str) for repo in merge_repos),
-            "githubPolicy.captainMergeRepositories must be an array of GitHub owner/repository names.")
-    merge_repos = {repo.lower() for repo in merge_repos}
-    merge_checkouts = {repo_id: name for repo_id, repo in repositories.items()
-                       if (name := github_repository(repo["url"])) and name.lower() in merge_repos}
-    require(merge_repos == {name.lower() for name in merge_checkouts.values()},
-            "githubPolicy.captainMergeRepositories must name configured GitHub repositories.")
+    merge_checkouts = policy_repositories(github_policy, "captainMergeRepositories", repositories)
+    workflow_repos = sorted(set(policy_repositories(github_policy, "workflowRepositories", repositories).values()))
 
     private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken rearAdmiralApiToken", ["proxyKey"])
     proxy_key = pattern(private["proxyKey"], r"[a-zA-Z0-9_=-]{20,256}", "proxy client key")
@@ -1586,6 +1581,7 @@ def validate(config, credentials, check_files=True, installed=None):
         "repositoryChecks": repository_checks(cfg.get("repositories", [])),
         "integrations": integrations, "operators": operators, "protectedBranches": protected,
         "captainMergeRepositories": sorted(set(merge_checkouts.values())),
+        "workflowRepositories": workflow_repos,
         "toolchains": toolchain_config(cfg.get("toolchains", {})),
         "systemPackages": toolchains.package_config(cfg.get("systemPackages", [])),
         # The base screenshot tools (lib/screenshots.py): on unless fleet.json says "screenshots": false.
@@ -1848,7 +1844,20 @@ def save_settings(name, settings, user):
     return path
 
 
-def configure_git(person, user, home, prune, protected):
+def policy_repositories(github_policy, key, repositories):
+    """A githubPolicy list of owner/repository names, matched without case to configured repositories by ID."""
+    names = github_policy.get(key, [])
+    require(isinstance(names, list) and all(isinstance(name, str) for name in names),
+            f"githubPolicy.{key} must be an array of GitHub owner/repository names.")
+    wanted = {name.lower() for name in names}
+    found = {repo_id: name for repo_id, repo in repositories.items()
+             if (name := github_repository(repo["url"])) and name.lower() in wanted}
+    require(wanted == {name.lower() for name in found.values()},
+            f"githubPolicy.{key} must name configured GitHub repositories.")
+    return found
+
+
+def configure_git(person, user, home, prune, protected, workflow_repos=()):
     settings = {"user.name": person["name"]}
     git = person.get("git", {})
     if "email" in git:
@@ -1870,6 +1879,9 @@ def configure_git(person, user, home, prune, protected):
     metadata = home / ".config/subspace/github-app.json"
     if app or metadata.is_file():
         policy = {"enabled": app is not None, "contents": contents, "protectedBranches": protected}
+        if workflow_repos:
+            # The credential helper adds Workflows write to push tokens for these repositories only.
+            policy["workflowRepositories"] = list(workflow_repos)
         if checkouts := person.get("mergeCheckouts"):
             policy["captainMergeCheckouts"] = {str(home / "workspace" / name): repo for name, repo in checkouts.items()}
         packet = {
@@ -3758,7 +3770,7 @@ def render(cfg, extra, prune=False):
         user = f"ss-{agent_id}"
         home = homes[agent_id] = account(user, STATE / "agents" / agent_id)
         run("mkdir", "-p", "--", home / "workspace", user=user)
-        configure_git(person, user, home, prune, cfg["protectedBranches"])
+        configure_git(person, user, home, prune, cfg["protectedBranches"], cfg["workflowRepositories"])
         if subspace_mcp_url(cfg) or enrolled(cfg):
             run("mkdir", "-p", "-m", "700", "--", home / "outbox", user=user)
             directory(STATE / "file-exports", 0o711)
@@ -4282,6 +4294,9 @@ def main(args):
             if repos := cfg["captainMergeRepositories"]:
                 print(f"Captain squash merges enabled for {', '.join(repos)}. "
                       "Each captain needs a GitHub App with Contents write.")
+            if repos := cfg["workflowRepositories"]:
+                print(f"Workflow file pushes enabled for {', '.join(repos)}. Each GitHub App installation that "
+                      "pushes there needs the Workflows permission approved.")
             for line in policy_lines(cfg):
                 print(line)
             for line in toolchain_plan(cfg):
