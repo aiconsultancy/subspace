@@ -164,9 +164,51 @@ test.skipIf(!testDatabase)(
         id: a.id,
         identifier: a.identifier,
       });
+      await client.query(
+        `INSERT INTO project_decisions
+          (organisation_id, project_id, recorded_by_id, identifier, title, decision, decided_on, created_at, made_by_type)
+         SELECT $1, $2, $3, 'D-' || lpad(n::text, 5, '0') || '-EXA', 'Fixture ' || n,
+                'See D-00001-EXA in the older record', '2026-02-01', '2026-02-01', 'human'
+         FROM generate_series(5, 5004) n`,
+        [org, project, owner],
+      );
+      await checkSearchAndPaging(call);
     } finally {
       await api?.close();
       await database.drop();
     }
   },
+  30000,
 );
+
+async function checkSearchAndPaging(
+  call: (
+    status: number,
+    path: string,
+  ) => Promise<{ items: Array<{ identifier: string }>; total: number; nextCursor: string | null }>,
+) {
+  const ids = (items: Array<{ identifier: string }>) => items.map(({ identifier }) => identifier);
+  expect(ids((await call(200, "?q=d-00001-exa")).items)).toEqual(["D-00001-EXA"]);
+  expect(ids((await call(200, "?q=D-00001")).items).sort()).toEqual(["D-00001-ALT", "D-00001-EXA"]);
+  expect(ids((await call(200, "?q=D-00001&project=EXA")).items)).toEqual(["D-00001-EXA"]);
+  expect((await call(200, "/counts?q=D-0499&project=EXA")).total).toBe(10);
+  expect((await call(200, "?q=D-09999")).items).toEqual([]);
+  expect((await call(200, "?q=older%20record&limit=5")).items).toHaveLength(5);
+
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; page < 51; page++) {
+    const position = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+    const reply = await call(200, `?project=EXA&limit=100${position}`);
+    expect(reply.items).toHaveLength(page < 50 ? 100 : 4);
+    for (const id of ids(reply.items)) {
+      expect(seen.has(id)).toBe(false);
+      seen.add(id);
+    }
+    cursor = reply.nextCursor;
+    expect(Boolean(cursor)).toBe(page < 50);
+  }
+  expect(seen.size).toBe(5004);
+  expect(seen.has("D-05004-EXA")).toBe(true);
+  expect(seen.has("D-00001-EXA")).toBe(true);
+}
