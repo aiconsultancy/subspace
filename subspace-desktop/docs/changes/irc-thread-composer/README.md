@@ -35,3 +35,5 @@ on the existing Component gallery card. Fixture screenshots and the
 | ![The channel input changes to reply mode](evidence/before.png) | ![The inspector has its own reply input and the channel retains its composer](evidence/after.png) |
 
 ![At a narrower native window size the reply remains pinned below the thread](evidence/narrow.png)
+
+![The compact reply sample on the ChatInput card in the Component gallery](evidence/gallery.png)

@@ -2,12 +2,12 @@
 
 ## Layout and interaction
 
-- [ ] Verify both editors are visible with a thread open.
-- [ ] Send a reply and check the IRC channel and original message ID.
-- [ ] Write in both editors, switch roots and reopen the inspector.
-- [ ] Remove the original from loaded history and recover the unsent draft.
-- [ ] Check the compact composer on the Component gallery card.
-- [ ] Compare the two Twilight Two captures with the workspace shell.
+- [x] Verify both editors are visible with a thread open.
+- [x] Send a reply and check the IRC channel and original message ID.
+- [x] Write in both editors, switch roots and reopen the inspector.
+- [x] Remove the original from loaded history and recover the unsent draft.
+- [x] Check the compact composer on the Component gallery card.
+- [x] Compare the two Twilight Two captures with the workspace shell.
 
 ### Board checklist — Channels (`irc`)
 
