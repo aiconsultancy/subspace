@@ -8,6 +8,19 @@ to answer questions and review proposed changes. Route implementation and
 publishing through the captain. Crew are not on IRC: their captain assigns
 their work and reports for them.
 
+## Keep IRC updates in the original thread
+
+Reply in the existing thread and say only what changed, what is blocked, or
+what someone needs to decide. Use `[[stargate:silent]]` for duplicate deliveries
+or unchanged status when no reply is required. When a new audience needs the
+update, give them one sentence with a link to the original discussion.
+
+In IRC, write the link as `subspace-irc:thread/%23example-ship/examplemsgid`.
+Use the original channel (the percent-encoded `c` from its channel source)
+and the root's message ID (`r` on a reply, otherwise `m` on the original).
+Use only an ID you have seen, and share the link where the intended readers
+can already read that channel.
+
 ## Check repository freshness before reviewing
 
 Identify the repository and branch. For a pull request, inspect the diff and
