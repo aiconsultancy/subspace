@@ -20,6 +20,10 @@ mod interaction_tests;
 #[cfg(test)]
 mod layout_tests;
 mod navigator;
+mod navigator_header;
+pub mod navigator_title;
+#[cfg(test)]
+mod navigator_title_tests;
 mod pane;
 mod resize;
 mod row_order;

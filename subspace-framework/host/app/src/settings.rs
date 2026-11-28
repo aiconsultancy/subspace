@@ -589,7 +589,7 @@ impl Settings {
         }
         self.save_preferences(cx);
         cx.set_global(DensityPreview(false));
-        background_updates::save(&mut self.background_updates, cx)?;
+        self.save_staged_preferences(cx)?;
         self.icon_buttons.save(cx)?;
         self.agent_icons.save(cx)?;
         self.initial_appearance = theme::AppearanceSnapshot::capture(cx);
@@ -597,6 +597,16 @@ impl Settings {
         self.partial_draft = None;
         window.refresh();
         Ok(self.services_saved)
+    }
+
+    /// Writes the state file with the background update drafts and the
+    /// navigator title choice; a failed write keeps the live preferences
+    /// and both drafts.
+    fn save_staged_preferences(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let stage_title = self.board_navigation.stage_title();
+        background_updates::save(&mut self.background_updates, stage_title, cx)?;
+        self.board_navigation.title_saved();
+        Ok(())
     }
 
     fn save_preferences(&mut self, cx: &mut Context<Self>) {

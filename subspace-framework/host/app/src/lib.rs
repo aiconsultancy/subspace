@@ -8,6 +8,7 @@ use subspace_agent_tools::{ToolEnvironment, ToolHost};
 use subspace_core::config;
 use subspace_core::credentials::Credentials;
 use subspace_dashboard::dock_panel::DockPanelRegistration;
+use subspace_dashboard::workspace::navigator_title;
 use subspace_dashboard::{Services, prefs};
 use subspace_github_auth::OAuthClient;
 use subspace_product::ProductContext;
@@ -67,8 +68,15 @@ pub(crate) struct DesktopOptions {
     pub github_oauth: Option<OAuthClient>,
     pub fonts: &'static [BundledFont],
     pub product_themes: ProductThemes,
+    pub navigator_title: bool,
     #[cfg(feature = "report-issue")]
     pub report_issue_repository: Option<&'static str>,
+}
+
+/// Starts GPUI Kit with the layout defaults the product chose.
+fn init_kit(shows_navigator_title: bool, cx: &mut gpui_kit::App) {
+    gpui_kit::init(cx);
+    navigator_title::install_default(shows_navigator_title, cx);
 }
 
 /// Opens one product window. [`launch`] is the only caller.
@@ -108,7 +116,7 @@ fn run_desktop(
         gpui_kit::application().with_assets(assets::Assets::new(artwork, &registrations.included));
     application.on_reopen(ensure_product_window);
     application.run(move |cx| {
-        gpui_kit::init(cx);
+        init_kit(options.navigator_title, cx);
         product::install_context(context.clone(), options.display_name_prefix, cx);
         install_registrations(
             boards.clone(),

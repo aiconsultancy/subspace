@@ -148,6 +148,9 @@ fn main() -> ExitCode {
         pre_startup: None,
         descriptor,
         product_themes: &[],
+        // Whether navigators show the Space's title until someone chooses in
+        // Settings › Layout.
+        navigator_title: true,
         // Prefixes window titles and About, such as an organisation's name.
         display_name_prefix: None,
         version: env!("CARGO_PKG_VERSION"),
@@ -184,6 +187,12 @@ fn main() -> ExitCode {
     )
 }
 ```
+
+**Upgrading: `ProductBuild::navigator_title`.** An app that builds
+`ProductBuild` field by field, as above, must now set `navigator_title`.
+`navigator_title: true` keeps the old behaviour: navigators show the
+Space's title until someone hides it in Settings › Layout.
+`ProductBuild::new` sets `true` for you.
 
 ## Requirements for an app
 

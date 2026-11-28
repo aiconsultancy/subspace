@@ -90,6 +90,8 @@ fn main() -> ExitCode {
             github_oauth: github_oauth(),
             fonts: fonts::bundled(),
             product_themes: &[],
+            // The Subspace App keeps the Space's title in the navigator.
+            navigator_title: true,
             #[cfg(feature = "report-issue")]
             report_issue_repository: Some(env!("SUBSPACE_BUILD_REPORT_ISSUE_REPOSITORY")),
         },

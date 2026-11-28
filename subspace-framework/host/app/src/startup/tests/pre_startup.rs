@@ -100,3 +100,8 @@ fn pre_startup_runs_before_theme_validation_and_none_continues_startup() {
         ExitCode::FAILURE
     );
 }
+
+#[test]
+fn a_new_product_shows_the_navigator_title_by_default() {
+    assert!(fixture_build().navigator_title);
+}

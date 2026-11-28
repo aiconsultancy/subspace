@@ -38,8 +38,15 @@ pub(super) fn load(
         .collect()
 }
 
-pub(super) fn save(drafts: &mut [Draft], cx: &mut App) -> Result<(), String> {
+/// Applies the drafts and `stage`'s preferences, then writes the state file.
+/// A failed write restores the preferences as they were, `stage`'s included.
+pub(super) fn save(
+    drafts: &mut [Draft],
+    stage: impl FnOnce(&mut App),
+    cx: &mut App,
+) -> Result<(), String> {
     let previous = cx.try_global::<Prefs>().cloned();
+    stage(cx);
     for draft in drafts.iter() {
         draft.apply(cx);
     }

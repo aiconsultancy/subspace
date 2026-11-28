@@ -274,3 +274,38 @@ fn shell_surfaces_link_to_gallery_cards() {
         crate::samples::shell::ITEMS.len()
     );
 }
+
+/// The Navigator card shows both ways a hidden title draws: no header at
+/// all, and a strip-height header kept for a badge and an action. The tree
+/// keeps the Space's name either way.
+#[gpui_kit::test]
+fn the_navigator_card_shows_both_hidden_title_states(cx: &mut TestAppContext) {
+    let (gallery, mut cx) = open_gallery(cx);
+    cx.update(|window, cx| {
+        // An app that hides the title by default still shows it on the
+        // card's first samples.
+        subspace_dashboard::workspace::navigator_title::install_default(false, cx);
+        gallery.update(cx, |gallery, cx| {
+            gallery.select_section("navigation", window, cx)
+        });
+        window.render_frame(cx);
+        let shown = window.within("gallery-sample:navigator-views");
+        assert!(shown.try_find("workspace-navigator-title").is_some());
+        let strip = subspace_dashboard::workspace::strip_height(window, cx);
+        let plain = window.within("gallery-sample:navigator-title-hidden");
+        assert!(plain.try_find("workspace-navigator-header").is_none());
+        assert!(plain.try_find("workspace-navigator-title").is_none());
+        assert_eq!(
+            plain.find("workspace-navigator-body").label(),
+            Some("Issues")
+        );
+        let kept = window.within("gallery-sample:navigator-title-hidden-header");
+        assert!(kept.try_find("workspace-navigator-title").is_none());
+        let header = kept.find("workspace-navigator-header").bounds();
+        assert_eq!(header.size.height, strip);
+        assert_eq!(
+            kept.find("workspace-navigator-body").label(),
+            Some("Issues")
+        );
+    });
+}

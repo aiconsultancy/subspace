@@ -29,7 +29,7 @@ app imports it as `subspace_framework::dashboard::workspace`.
 
 | Zone | Holds | Never holds | Size |
 | --- | --- | --- | --- |
-| Navigator, the leading dock | The Space's name in its header, then where you are looking: views, projects, networks, repositories, groups. The signed-in account may sit in its footer. | Filters, actions on the selection, the detail of an item. | `--nav-w` wide; header exactly the strip height; rows `--row-h` high |
+| Navigator, the leading dock | The Space's name in its header (unless Settings › Layout hides it), then where you are looking: views, projects, networks, repositories, groups. The signed-in account may sit in its footer. | Filters, actions on the selection, the detail of an item. | `--nav-w` wide; header exactly the strip height; rows `--row-h` high |
 | Tab strip, the top of the pane | What is open: the list or view on show, and an opened item beside it. | The Space's views; those are navigator rows. | exactly the strip height |
 | Toolbar, under the tab strip | Search and filters on the leading side, actions for what is open on the trailing side. | A Space title, a line of context, selection actions outside the [Decisions exception](#contextual-action-in-decisions), the dock switches. | at least `--toolbar-h` high; exactly the strip height when it heads a pane with no tab strip (`Toolbar::strip`) |
 | Content | The list, the page, the conversation or the graph. | A heading for the Space, its own outer padding. | the rest of the pane |
@@ -73,7 +73,12 @@ nothing to this control.
    `workspace::strip_height` high, hairline included, so the hairlines under
    them are one line across the window. The pane's top strip is its tab
    strip; a pane with no tab strip beside a dock heads it with
-   `Toolbar::strip`, never with a plain toolbar, which is taller. Controls
+   `Toolbar::strip`, never with a plain toolbar, which is taller. When
+   Settings › Layout hides the navigator title, a navigator with no badge
+   and no header actions has no header: its body starts at the top, and
+   the navigator draws no line under the strip height, so no hairline
+   sits half way across. With a badge or actions, the header stays at the
+   strip height without the title. Controls
    in a strip fit inside it: the strip height allows for toolbar and action
    buttons, compact segments and tabs, with their focus rings, but a strip
    never grows to fit anything else, so it holds no dialog buttons, fields
@@ -110,7 +115,13 @@ nothing to this control.
 7. **State goes to the status bar.** Account, connection, counts and sync
    time go through `Dashboard::status`. There is no large Space heading and
    no line of context above the content; the Space's name is the
-   navigator's title.
+   navigator's title. **Show the Space title in the navigator**
+   (Settings › Layout, saved as `layout.navigator-title`) can hide it,
+   keeping any badge or header actions visible. The window title still
+   names the Space. An app sets the
+   default with `ProductBuild::navigator_title` (`true` in
+   `ProductBuild::new`); a saved choice wins. Always pass the title to
+   `Navigator::new`: it is the navigator tree's accessible name.
 8. **Selection shows through surface and text.** A selected row shows it
    through its own fill; a selected tab takes the surface it adjoins, with
    the stronger text colour at medium weight. Never an accent line on one
@@ -496,7 +507,9 @@ A reviewer ticks:
 - [ ] Selection shows through the row's fill or the tab's surface, with no
       leading bar or accent edge.
 - [ ] The Space's name in the navigator takes the accent, and section
-      labels show in capitals.
+      labels show in capitals. With the title hidden in Settings › Layout,
+      the navigator's body starts at its top, or it keeps a strip-height
+      header for a badge or actions, and every edge still has one hairline.
 - [ ] The open tab joins the content by its surface and text, with no accent
       line on any edge, in every tab bar.
 - [ ] Each toolbar has at most one primary action. Check the

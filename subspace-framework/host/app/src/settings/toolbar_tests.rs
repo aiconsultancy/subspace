@@ -2,6 +2,7 @@ use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AppContext as _, TestAppContext, WindowHandle};
 use subspace_core::state::State;
 use subspace_dashboard::prefs;
+use subspace_dashboard::workspace::navigator_title;
 
 use super::Settings;
 use super::preview_tests::open_settings;
@@ -151,6 +152,83 @@ fn layout_navigation_save_and_reopen_preserves_the_draft(cx: &mut TestAppContext
             assert!(settings.board_navigation.collapsed);
         })
         .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_navigator_title_switch_is_a_draft_until_save(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let settings = open_settings(root.path(), cx);
+    settings
+        .update(cx, |settings, _, cx| {
+            assert!(settings.board_navigation.navigator_title);
+            settings.board_navigation.navigator_title = false;
+            assert!(navigator_title::shown(cx), "a draft changes nothing");
+        })
+        .unwrap();
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.save(window, cx).unwrap()
+        })
+        .unwrap();
+    cx.update(|cx| {
+        assert!(!navigator_title::shown(cx));
+        assert_eq!(
+            prefs::get(cx, "layout.navigator-title").as_deref(),
+            Some("0")
+        );
+    });
+    let reopened = open_settings(root.path(), cx);
+    reopened
+        .update(cx, |settings, _, _| {
+            assert!(!settings.board_navigation.navigator_title)
+        })
+        .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_failed_save_keeps_the_live_navigator_title_and_can_be_retried(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let settings = open_settings(root.path(), cx);
+    let state_file = root.path().join("state.json");
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.save(window, cx).unwrap();
+        })
+        .unwrap();
+    // The next write cannot replace the state file with a folder there.
+    std::fs::remove_file(&state_file).unwrap();
+    std::fs::create_dir(&state_file).unwrap();
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.board_navigation.navigator_title = false;
+            assert!(settings.save(window, cx).is_err());
+            assert!(navigator_title::shown(cx), "the live title is unchanged");
+            assert_eq!(prefs::get(cx, "layout.navigator-title"), None);
+            assert!(
+                !settings.board_navigation.navigator_title,
+                "the draft is kept"
+            );
+            // The write Save stages the title in, failing on its own.
+            let stage = settings.board_navigation.stage_title();
+            assert!(super::background_updates::save(&mut [], stage, cx).is_err());
+            assert!(
+                navigator_title::shown(cx),
+                "a failed write restores the title"
+            );
+        })
+        .unwrap();
+    std::fs::remove_dir(&state_file).unwrap();
+    settings
+        .update(cx, |settings, window, cx| {
+            settings.save(window, cx).unwrap();
+            assert!(
+                !navigator_title::shown(cx),
+                "the retried Save applies the draft"
+            );
+        })
+        .unwrap();
+    let saved = State::load(&state_file);
+    assert_eq!(saved.get("layout.navigator-title"), Some("0"));
 }
 
 #[gpui_kit::test]

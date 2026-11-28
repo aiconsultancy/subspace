@@ -26,6 +26,7 @@ pub(super) fn render(
         .gap_4()
         .child(board_order(settings, tokens, cx))
         .child(board_navigation(settings, tokens, cx))
+        .child(navigator_title(settings, tokens, cx))
         .children(terminal_layout(settings, tokens, cx))
         .child(toolbar_menu_row(settings, tokens, cx))
         .child(toolbar_label_group(settings, tokens, cx));
@@ -91,6 +92,25 @@ fn board_navigation(settings: &Settings, tokens: &Tokens, cx: &mut Context<Setti
             }))),
     )
     .child(note(tokens, "Choose horizontal tabs or a vertical Space navigation rail. The icon-only option applies to the vertical rail."))
+}
+
+/// Whether each Space's navigator starts with the Space's title.
+fn navigator_title(settings: &Settings, tokens: &Tokens, cx: &mut Context<Settings>) -> Div {
+    v_flex()
+        .gap_2()
+        .child(toggle_row(
+            "Show the Space title in the navigator",
+            subspace_dashboard::toggle::switch("navigator-title", cx)
+                .checked(settings.board_navigation.navigator_title)
+                .on_click(cx.listener(|settings, enabled: &bool, _, cx| {
+                    settings.board_navigation.navigator_title = *enabled;
+                    cx.notify();
+                })),
+        ))
+        .child(note(
+            tokens,
+            "The navigator lists a Space's views at the left. With this off, it no longer shows the Space's name at its top; any badge or header buttons stay visible. The window title still names the Space.",
+        ))
 }
 
 fn board_order(settings: &Settings, tokens: &Tokens, cx: &mut Context<Settings>) -> Div {
