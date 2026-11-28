@@ -13,6 +13,7 @@ use subspace_framework::dashboard::{
 use crate::dock::{self, IrcDock, Where};
 use crate::{Irc, hub, listing, remove, rows, setup, transcript};
 
+mod comms;
 mod conversations;
 mod details;
 mod empty;
@@ -21,6 +22,7 @@ mod hosting;
 mod inspector;
 mod navigator;
 
+pub(crate) use comms::Comms;
 use details::{kind, kind_icon};
 
 pub(crate) use details::{server_summary, status_line};
@@ -55,9 +57,9 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         watch: Default::default(),
         inspector_tab: Default::default(),
         ship_panel: Default::default(),
+        comms: Default::default(),
         threads: Default::default(),
-        seen_fleets: Default::default(),
-        absorbing: Default::default(),
+        seen_groups: Default::default(),
         selection_group: None,
         hub: None,
         hub_subscription: None,
@@ -94,6 +96,7 @@ pub(crate) fn bind_hub(board: &mut Irc, cx: &mut Context<Irc>) {
     board.watch.forget_hub();
     board.ship_panel = Default::default();
     board.dock.reset();
+    board.comms = Comms::default();
     board.find_revision = board.find_revision.wrapping_add(1);
     let owner = cx.entity().downgrade();
     cx.defer(move |cx| {
@@ -152,7 +155,7 @@ fn close_join_while_closed(board: &mut Irc, cx: &mut Context<Irc>) {
 /// the user is reading, so it reads as it arrives, and which conversations
 /// are on screen, which raise no notification.
 pub(crate) fn publish_visible(board: &mut Irc, cx: &mut Context<Irc>) {
-    let front = board.active && board.window_active;
+    let front = board.active && board.window_active && !board.comms.active;
     let visible = front.then(|| board.dock.focused.clone()).flatten();
     let shown = if front {
         dock::shown(board, cx)
@@ -251,7 +254,11 @@ impl ListDashboard for Irc {
     /// connection state's dot.
     fn group_leading(&self, group: &Group, cx: &App) -> Option<AnyElement> {
         let network = self.group_networks.get(&group.key)?;
-        (rows::people_group_key(network) == group.key).then(|| navigator::people_mark(cx))
+        if rows::people_group_key(network) == group.key {
+            Some(navigator::people_mark(cx))
+        } else {
+            (rows::other_group_key(network) == group.key).then(|| navigator::other_mark(cx))
+        }
     }
 
     /// Networks and their buffers start on the workspace's one text edge,

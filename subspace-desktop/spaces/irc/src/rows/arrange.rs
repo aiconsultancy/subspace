@@ -2,17 +2,13 @@
 //! network's own in one group, or a group per fleet and the network's own
 //! group last, named so it cannot read as a fleet.
 
-use std::collections::HashMap;
+use subspace_framework::dashboard::{Glyph, Group, Row, Tone};
 
-use gpui_kit::SharedString;
-use subspace_framework::dashboard::{Group, Row};
-
-use super::{group_key, groups, kind_name};
+use super::{group_key, groups, kind_name, other_group_key};
 use crate::fleet::FleetPlace;
 use crate::state::Network;
 
-/// The caption above the channels on a one-fleet network that no fleet
-/// claims, and its Server row.
+/// The group for channels on a one-fleet network that no fleet claims.
 pub(crate) const OTHER: &str = "Other";
 
 /// A network's groups before they are arranged.
@@ -25,47 +21,28 @@ pub(super) struct Parts {
 }
 
 /// `network`'s groups in order. Holding exactly one fleet (`places`), the
-/// fleet's group takes the network's rows ([`merged`]), then `People`.
+/// fleet is followed by the network's Other group, then People.
 /// Otherwise each fleet's group, `People`, then the network's own group,
 /// named by [`own_name`]; with no fleet that is the only group, as before.
-pub(super) fn groups(
-    network: &Network,
-    places: &[FleetPlace],
-    parts: Parts,
-    captions: &mut HashMap<SharedString, Vec<(SharedString, &'static str)>>,
-) -> Vec<Group> {
+pub(super) fn groups(network: &Network, places: &[FleetPlace], parts: Parts) -> Vec<Group> {
     let Parts {
-        mut fleets,
+        fleets,
         people,
         rest,
     } = parts;
-    if let ([_], [_]) = (places, fleets.as_slice()) {
-        let fleet = fleets.remove(0);
-        return std::iter::once(merged(fleet, rest, captions))
-            .chain(people)
-            .collect();
+    if let [_] = places {
+        let other = Group {
+            key: other_group_key(&network.id),
+            icon: Glyph::new("", Tone::Muted),
+            name: OTHER.into(),
+            count: None,
+            rows: server_last(rest),
+        };
+        return fleets.into_iter().chain([other]).chain(people).collect();
     }
     let name = own_name(&network.name, places);
     let own = groups::status_group(group_key(&network.id), &name, network, rest);
     fleets.into_iter().chain(people).chain([own]).collect()
-}
-
-/// The fleet's group with the network's `rest` after its channels, under
-/// an `Other` caption, the Server row last.
-pub(super) fn merged(
-    mut fleet: Group,
-    rest: Vec<Row>,
-    captions: &mut HashMap<SharedString, Vec<(SharedString, &'static str)>>,
-) -> Group {
-    let rest = server_last(rest);
-    if let Some(first) = rest.first() {
-        captions
-            .entry(fleet.key.clone())
-            .or_default()
-            .push((first.key.clone(), OTHER));
-    }
-    fleet.rows.extend(rest);
-    fleet
 }
 
 /// `rows` with the Server row moved to the end.

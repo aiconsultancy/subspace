@@ -31,8 +31,6 @@ context. The issue key retains its **Copy issue number** menu.
 Sign in under **Settings > Account**. Subspace API uses that account; you do
 not enter a token.
 
-The first load can take up to a minute while Subspace API wakes.
-
 ## Main view
 
 Issues uses the same layout as every Space. The navigator on the left lists
@@ -104,8 +102,7 @@ toolbar.
 | **Assignee** | **Me**, **No assignee** or **All assignees**. In My issues, choose **All assignees** to open All issues. |
 | **Priority** | Select priorities from **No priority** to **Low**, or clear with **Any priority**. |
 | **Filters** | Workflow statuses for one project, or state types for all projects; issue or tracker type, due date and **Show archived**. |
-| **Grouped by state** | Says how the list is grouped. It is text, not a control. |
-| **Sub-issues** | Include sub-issues in their state groups; the switch shows pressed while they are included. Off by default. While they are hidden, its tooltip and the status bar say how many are. |
+| **Show sub-issues** / **Hide sub-issues** | Show children beneath their parents. Each child keeps its own status. If its parent is outside the current view or in a folded group, the child stays in its own open group. Off by default. The tooltip and status bar show the hidden count. |
 | **New issue…** | Opens the issue editor. It is the toolbar's main action. |
 
 Type in a menu to find an option. Use arrows and Enter to choose it, or its
@@ -347,7 +344,7 @@ Plain keys do not switch views while you type in an input.
 “Sign in under Settings › Account.”
 
 The connection state is **Signed in as** your display name, **Sign-in
-needed**, **Offline**, or a connecting message. This page has no inputs.
+needed**, **Offline**, or an animated spinner while connecting. This page has no inputs.
 
 ## Troubleshooting
 
@@ -356,7 +353,7 @@ needed**, **Offline**, or a connecting message. This page has no inputs.
   initiatives, and you belong to none. Once an administrator adds you to one
   in Subspace, choose **Reload**.
 - **Offline:** “Couldn't reach Subspace API. Try again.” Check the connection
-  and reload. The first load can take up to a minute while the API wakes.
+  and reload.
 - A failed list or detail read can offer **Copy details**, which copies the
   read type and HTTP status without response content or credentials.
 - If a comment result is unclear, use **Check discussion** before **Post again**.

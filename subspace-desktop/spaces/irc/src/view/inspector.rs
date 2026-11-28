@@ -156,7 +156,25 @@ pub(crate) fn want_in_play(board: &Irc, cx: &mut Context<Irc>) {
 /// tabs; else the focused channel's members under their count, or a hint
 /// for a buffer that has none.
 pub(super) fn inspector(board: &Irc, cx: &mut Context<Irc>) -> workspace::Inspector {
-    tabbed(board, cx).unwrap_or_else(|| members_only(board, cx))
+    tabbed(board, cx).unwrap_or_else(|| {
+        let thread_open = board.inspector_tab == InspectorTab::Thread
+            && board
+                .dock
+                .focused
+                .as_ref()
+                .is_some_and(|buffer| board.threads.shown(buffer).is_some());
+        if thread_open {
+            let inspector = workspace::Inspector::new("irc-inspector", "Thread")
+                .on_close("Close inspector", cx.listener(close_tabbed))
+                .child(thread::body(board, cx));
+            match thread::footer(board, cx) {
+                Some(footer) => inspector.footer(footer),
+                None => inspector,
+            }
+        } else {
+            members_only(board, cx)
+        }
+    })
 }
 
 /// The member list under its title, without tabs.

@@ -125,6 +125,10 @@ impl ReplyDraft {
 
     fn send(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let state = &self.hub.read(cx).state;
+        if let Some(reason) = crate::thread::channel_reply_refusal(state, &self.buffer) {
+            self.error(reason, cx);
+            return;
+        }
         let network = state.network(&self.buffer.network);
         let loaded = state.buffer(&self.buffer).is_some_and(|held| {
             held.entries
@@ -153,10 +157,11 @@ impl ReplyDraft {
 
     fn revalidate(&mut self, cx: &mut Context<Self>) {
         let text = self.text(cx);
-        let network = self.hub.read(cx).state.network(&self.buffer.network);
+        let state = &self.hub.read(cx).state;
+        let network = state.network(&self.buffer.network);
         let batches = network.is_some_and(|network| connection_batches(&network.caps));
-        let blocked =
-            check_draft(&text, batches).is_err() || crate::thread::reply_refusal(network).is_some();
+        let blocked = check_draft(&text, batches).is_err()
+            || crate::thread::channel_reply_refusal(state, &self.buffer).is_some();
         let limits = DraftLimits::new(draft_line_limit(&text, batches), MAX_INLINE_BYTES);
         self.input.update(cx, |input, cx| {
             input.set_limits(Some(limits), cx);

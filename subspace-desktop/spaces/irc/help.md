@@ -691,6 +691,19 @@ copies the link as written, or `https://github.com/owner/repo/pull/number` for
 a marker. Card details stay in memory only: they are not stored with your
 messages or searchable.
 
+### Read notifications in Comms
+
+Open **Comms** at the top of the Channels navigator. It shows one row per
+thread with a mention or an unread reply. It also keeps activity from
+threads you have taken part in. The count is unread
+activity, and **@** marks unread mentions. Use **Mentions**, **Replies**, or
+**Unread only** to narrow the list.
+
+Choose a row to read and reply in the **Thread** inspector. **Jump to
+message** opens the original in its channel. Choose **Mark all read** to
+clear the Comms count for the current session. Comms uses IRC message IDs
+to group activity and open threads.
+
 ### Follow a thread
 
 In a ship's channel or a Starbase, the inspector has a **Thread** tab between
@@ -706,8 +719,9 @@ These come only from the agent's own progress notices, the ones that also
 drive the status line; a notice from anyone else is a reply, never a step.
 Then come the **Replies**, grouped by author as in the transcript, or **No
 replies yet.** A reply belongs to the thread only when the IRC server's reply
-tag says so. New replies and steps appear as they arrive. Replies still
-appear in the channel too; the tab is another view of them.
+tag says so. New replies and steps appear as they arrive. The channel shows
+the original message and its reply count. When the original is older than
+the loaded history, **Replies to an earlier message** opens the thread.
 
 Each conversation remembers its thread while Subspace runs, also when you
 switch tabs or conversations. It goes once its first message is no longer
@@ -717,20 +731,22 @@ history.
 
 The **Thread** inspector has its own reply box, pinned below the replies.
 Choose **Reply in thread** on a message to put the cursor in that box.
-**Jump to message** reveals the original in the channel. The channel input
+**Jump to message** reveals the original in the channel. **Copy link** copies
+a link you can paste into another conversation on the same IRC network.
+Selecting it opens the thread in the inspector. If you have not joined the
+channel, Channels joins it before requesting older messages. The channel input
 keeps its draft, and each thread keeps its own draft when you switch threads,
 switch channels or hide the inspector. Choose **Thread draft** in the
 channel composer to return to the last open thread with a draft.
 
-Use **Reply** or **Enter** to send. The reply appears in the channel with a
-**Thread reply** mark, and in the inspector. Commands and attachments use
-the channel input. If the connection is down or the server lacks
+Use **Reply** or **Enter** to send. The reply appears in the inspector.
+Commands and attachments use the channel input. If the connection is down or the server lacks
 `message-tags`, the tab explains why sending is unavailable. When the
 original message drops out of loaded history, the inspector keeps the text
 under **Unsent replies**. Choose **Copy draft** to reuse it.
 
-A long thread shows its latest 40 replies and says how many earlier ones
-are in the channel. A long **Status** list shows its latest 24 steps and
+A long thread shows its latest 40 replies first. Choose **Show earlier
+replies** to read more in the inspector. A long **Status** list shows its latest 24 steps and
 says how many earlier ones it leaves out.
 
 ### React to a message

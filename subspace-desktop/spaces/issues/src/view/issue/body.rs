@@ -3,8 +3,8 @@
 
 use gpui_kit::component::v_flex;
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
+    AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Role,
+    StatefulInteractiveElement as _, TestSupportExt as _, div,
 };
 use subspace_api_client::hub::{IssueSnapshot, IssueStatus};
 use subspace_framework::dashboard::Tokens;
@@ -36,22 +36,11 @@ pub(super) fn render(
 }
 
 fn loading(identifier: &str, tokens: &Tokens) -> AnyElement {
-    let label = format!("Loading {identifier}…");
     v_flex()
         .id("issues-detail-loading")
-        .aria_label(label.clone())
+        .role(Role::Status)
+        .aria_label(format!("Loading {identifier}…"))
         .test_support()
-        .child(
-            div()
-                .px(subspace_framework::dashboard::workspace::text_edge(tokens))
-                .pt_4()
-                .text_color(tokens.muted)
-                .child(label)
-                .child(format!(
-                    "The first load can take up to a minute while {} wakes.",
-                    subspace_api_client::service_name()
-                )),
-        )
         .child(feedback::skeleton(tokens))
         .into_any_element()
 }

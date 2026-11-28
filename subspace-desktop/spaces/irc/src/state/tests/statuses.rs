@@ -224,3 +224,37 @@ fn a_dropped_connection_leaves_nothing_stale_after_reconnecting() {
         "a status set after reconnecting shows"
     );
 }
+
+#[test]
+fn reconnecting_waits_for_each_channels_new_join() {
+    let mut state = crate::state::IrcState::new(&[crate::fixtures::config()], Vec::new());
+    let room = crate::fixtures::channel("#example-ship");
+    let set_status = |state: &mut crate::state::IrcState, status| {
+        state.apply(
+            subspace_client_irc::Event::Status {
+                network: room.network.clone(),
+                status,
+            },
+            crate::fixtures::at(0),
+        );
+    };
+    let connected = subspace_client_irc::ConnectionStatus::Connected {
+        nick: "subspace".into(),
+    };
+    set_status(&mut state, connected.clone());
+    let joined = subspace_client_irc::Event::Joined {
+        buffer: room.clone(),
+    };
+    state.apply(joined.clone(), crate::fixtures::at(0));
+    assert!(state.buffer(&room).unwrap().joined);
+
+    set_status(
+        &mut state,
+        subspace_client_irc::ConnectionStatus::Disconnected,
+    );
+    set_status(&mut state, connected);
+    assert!(!state.buffer(&room).unwrap().joined);
+
+    state.apply(joined, crate::fixtures::at(0));
+    assert!(state.buffer(&room).unwrap().joined);
+}

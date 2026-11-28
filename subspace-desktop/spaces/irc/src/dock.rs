@@ -24,7 +24,7 @@ use crate::view::Hosted;
 
 use layout::Side;
 pub(crate) use members::focused_members;
-pub(crate) use open::{Where, close, request, toggle_buffers, toggle_members};
+pub(crate) use open::{Where, close, open, request, toggle_buffers, toggle_members};
 use panels::EmptyPanel;
 
 /// The dock and what it shows, owned by the board.

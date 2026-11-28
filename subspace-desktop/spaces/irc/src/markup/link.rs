@@ -6,6 +6,7 @@ use super::{PrRef, Ref};
 pub(super) const SCHEME: &str = "subspace-irc:";
 const CHANNEL_PATH: &str = "channel/";
 const NICK_PATH: &str = "nick/";
+const THREAD_PATH: &str = "thread/";
 const ISSUE_PATH: &str = "issue/";
 const DECISION_PATH: &str = "decision/";
 /// A pull request's link names the URL to open; its identity comes from it.
@@ -13,31 +14,44 @@ const PR_PATH: &str = "pr/";
 /// A percent escape: `%` and two hex digits.
 const ESCAPE_LEN: usize = 3;
 const HEX_RADIX: u32 = 16;
+const MAX_THREAD_ID_BYTES: usize = 128;
 
 /// The link a reference becomes in rewritten Markdown.
 pub(crate) fn ref_url(found: &Ref) -> String {
     let (path, name) = match found {
         Ref::Channel(name) => (CHANNEL_PATH, name),
         Ref::Nick(name) => (NICK_PATH, name),
+        Ref::Thread(channel, id) => {
+            return format!("{SCHEME}{THREAD_PATH}{}/{}", encode(channel), encode(id));
+        }
         Ref::Issue(identifier) => (ISSUE_PATH, identifier),
         Ref::Decision(identifier) => (DECISION_PATH, identifier),
         Ref::PullRequest(found) => (PR_PATH, &found.url),
     };
-    let encoded: String = name
-        .bytes()
+    format!("{SCHEME}{path}{}", encode(name))
+}
+
+pub(crate) fn thread_url(channel: String, id: String) -> String {
+    ref_url(&Ref::Thread(channel, id))
+}
+
+fn encode(name: &str) -> String {
+    name.bytes()
         .map(|byte| match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' => {
                 char::from(byte).to_string()
             }
             _ => format!("%{byte:02X}"),
         })
-        .collect();
-    format!("{SCHEME}{path}{encoded}")
+        .collect()
 }
 
 /// The reference a rewritten link names, if it is one.
 pub(crate) fn parse_ref_url(url: &str) -> Option<Ref> {
     let path = url.strip_prefix(SCHEME)?;
+    if path.starts_with(THREAD_PATH) {
+        return thread_ref(url);
+    }
     let (make, encoded): (fn(String) -> Ref, &str) = match path {
         _ if path.starts_with(CHANNEL_PATH) => (Ref::Channel, &path[CHANNEL_PATH.len()..]),
         _ if path.starts_with(NICK_PATH) => (Ref::Nick, &path[NICK_PATH.len()..]),
@@ -48,6 +62,26 @@ pub(crate) fn parse_ref_url(url: &str) -> Option<Ref> {
     };
     let name = decode(encoded)?;
     (!name.is_empty()).then(|| make(name)).filter(valid)
+}
+
+/// A permalink identifies a channel and an IRC message on the same network.
+pub(super) fn thread_ref(url: &str) -> Option<Ref> {
+    let path = url.strip_prefix(SCHEME)?.strip_prefix(THREAD_PATH)?;
+    let (channel, id) = path.split_once('/')?;
+    let channel = decode(channel)?;
+    let id = decode(id)?;
+    let safe_channel = channel.strip_prefix('#').is_some_and(|name| {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| !c.is_whitespace() && !c.is_control() && !"#,/:".contains(c))
+    });
+    let safe_id = !id.is_empty()
+        && id.len() <= MAX_THREAD_ID_BYTES
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b));
+    (safe_channel && safe_id).then_some(Ref::Thread(channel, id))
 }
 
 /// A pull request reference to `url`; [`valid`] refuses one that names none.

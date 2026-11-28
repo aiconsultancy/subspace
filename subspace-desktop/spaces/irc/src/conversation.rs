@@ -185,7 +185,8 @@ impl Conversation {
         let Some(held) = state.buffer(&self.buffer) else {
             return (Vec::new(), Vec::new());
         };
-        let rows = transcript::rows(held, &self.buffer.target, &Local);
+        let threads = crate::thread::has_tab(&self.roster, &self.buffer);
+        let rows = transcript::rows(held, &self.buffer, &Local, threads);
         let ids = transcript::identities(&rows, &held.entries);
         (rows, ids)
     }

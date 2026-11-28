@@ -3,7 +3,7 @@
 
 use chrono::SecondsFormat;
 use serde_json::{Value, json};
-use subspace_client_irc::{BufferKey, Command, LineKind, Target, format};
+use subspace_client_irc::{BufferKey, Command, LineKind, Target, format as irc_format};
 
 use super::super::lookup;
 use super::{CHATHISTORY, buffer_key};
@@ -100,7 +100,7 @@ pub(crate) fn line(entry: &Entry) -> Value {
         "time": entry.line.time.to_rfc3339_opts(SecondsFormat::Secs, true),
         "kind": line_kind(entry.line.kind),
         "from": entry.line.from,
-        "text": format::strip(&entry.line.text),
+        "text": irc_format::strip(&entry.line.text),
         "own": entry.line.own,
         "mention": entry.highlight,
     })

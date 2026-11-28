@@ -176,15 +176,9 @@ pub(crate) fn group_key(network: &NetworkId) -> SharedString {
     format!("irc{SEPARATOR}{}", network.0).into()
 }
 
-/// The key of the network's own group whose rows `group`, a network's only
-/// fleet's group, took in: its Server row's network; `None` for a group
-/// without the network's rows.
-pub(crate) fn absorbed_network(group: &Group) -> Option<SharedString> {
-    let server = format!("{SEPARATOR}s");
-    group.rows.iter().find_map(|row| {
-        let network = row.key.strip_suffix(server.as_str())?;
-        (network.matches(SEPARATOR).count() == 1).then(|| SharedString::from(network.to_owned()))
-    })
+/// Other channels and the Server row on a network that holds one fleet.
+pub(crate) fn other_group_key(network: &NetworkId) -> SharedString {
+    format!("irc{SEPARATOR}{}{SEPARATOR}o", network.0).into()
 }
 
 /// A fleet's group on `network`, apart from the network's own.

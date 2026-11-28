@@ -167,6 +167,12 @@ impl Roster {
     pub(crate) fn channel(&self, channel: &str) -> Option<&ChannelKind> {
         self.channels.get(&channel.to_ascii_lowercase())
     }
+
+    /// A legacy channel's kind when it is the only available navigator row.
+    pub(crate) fn navigator_kind(&self, fleet: &FleetPlace, name: &str) -> Option<&ChannelKind> {
+        self.channel(name)
+            .or_else(|| self.channel(fleet.canonical(name)?))
+    }
 }
 
 /// One fleet's agents and channels, before clashes between fleets are

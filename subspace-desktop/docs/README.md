@@ -254,6 +254,8 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels Thread tab](changes/channels-thread-tab/README.md): the
   inspector's Thread tab with a request's status timeline and its replies,
   reply counts and status lines that open it, and reply mode.
+- [Channels threads and Comms](changes/channels-comms/README.md): thread links,
+  the Comms inbox and fleet navigator grouping.
 - [Channels reactions](changes/channels-reactions/README.md): message
   reactions as pills in Channels, toggling yours, the stop reactions on a
   running request, and the client layer's review findings closed.

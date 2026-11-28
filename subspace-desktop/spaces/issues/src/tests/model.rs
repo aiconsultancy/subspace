@@ -18,12 +18,12 @@ fn tabs_keep_their_order_labels_and_stored_keys() {
 }
 
 #[test]
-fn sub_issues_are_hidden_by_default_and_flat_when_on() {
+fn sub_issues_are_hidden_by_default_and_nested_when_on() {
     assert_eq!(SubIssues::default(), SubIssues::Hidden);
-    assert_eq!(SubIssues::Hidden.toggled(), SubIssues::Flat);
-    assert_eq!(SubIssues::Flat.toggled(), SubIssues::Hidden);
-    assert_eq!(SubIssues::from_key("flat"), SubIssues::Flat);
-    assert_eq!(SubIssues::from_key("nested"), SubIssues::Hidden);
+    assert_eq!(SubIssues::Hidden.toggled(), SubIssues::Nested);
+    assert_eq!(SubIssues::Nested.toggled(), SubIssues::Hidden);
+    assert_eq!(SubIssues::from_key("flat"), SubIssues::Nested);
+    assert_eq!(SubIssues::from_key("nested"), SubIssues::Nested);
 }
 
 #[test]

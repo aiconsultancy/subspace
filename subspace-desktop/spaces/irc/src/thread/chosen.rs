@@ -26,6 +26,7 @@ struct Chosen {
     shown: Option<Rc<Thread>>,
     /// The buffer as it was when the thread was last built.
     seen: Option<Fingerprint>,
+    shown_limit: usize,
 }
 
 /// What changes whenever a held line arrives, goes, folds or unfolds, or a
@@ -61,6 +62,7 @@ impl Threads {
                 root,
                 shown: None,
                 seen: None,
+                shown_limit: super::MAX_REPLIES,
             },
         );
     }
@@ -74,6 +76,18 @@ impl Threads {
     /// `buffer`'s chosen thread as last built.
     pub(crate) fn shown(&self, buffer: &BufferKey) -> Option<Rc<Thread>> {
         self.chosen.get(buffer)?.shown.clone()
+    }
+
+    pub(crate) fn visible_replies(&self, buffer: &BufferKey) -> usize {
+        self.chosen
+            .get(buffer)
+            .map_or(super::MAX_REPLIES, |chosen| chosen.shown_limit)
+    }
+
+    pub(crate) fn show_earlier(&mut self, buffer: &BufferKey) {
+        if let Some(chosen) = self.chosen.get_mut(buffer) {
+            chosen.shown_limit = chosen.shown_limit.saturating_add(super::MAX_REPLIES);
+        }
     }
 
     /// Builds each chosen thread whose buffer changed, and forgets those

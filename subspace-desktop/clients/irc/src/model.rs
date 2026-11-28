@@ -171,10 +171,13 @@ pub enum Event {
         complete: bool,
     },
     /// Lines from `chathistory` that belong among the held lines, not before
-    /// them: what was missed after an [`Anchor`], or the lines around one
-    /// message ([`Command::LoadAround`]). Owners merge them by time. Empty
-    /// when the request could not be answered.
+    /// them: what was missed after an [`Anchor`]. Owners merge them by time.
     Backfill {
+        buffer: BufferKey,
+        lines: Vec<Line>,
+    },
+    /// The answer to [`Command::LoadAround`]. Empty on a refused request.
+    Around {
         buffer: BufferKey,
         lines: Vec<Line>,
     },
@@ -334,7 +337,7 @@ pub enum Command {
         limit: u16,
     },
     /// Lines around one message, by `msgid` or else by time, answered as
-    /// [`Event::Backfill`].
+    /// [`Event::Around`].
     LoadAround {
         buffer: BufferKey,
         id: Option<String>,

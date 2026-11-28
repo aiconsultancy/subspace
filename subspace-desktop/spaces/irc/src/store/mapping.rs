@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use subspace_client_irc::{BufferKey, Line, NetworkId, Target, format};
+use subspace_client_irc::{BufferKey, Line, NetworkId, Target, format as irc_format};
 use subspace_framework::dashboard::full_text::{Document, IndexMetadata, Scope};
 
 use super::links;
@@ -111,7 +111,7 @@ pub(crate) fn document(line: &Line, now: DateTime<Utc>) -> Option<Document> {
     Some(Document {
         id: document_id(line),
         title,
-        body: format::strip(&line.text),
+        body: irc_format::strip(&line.text),
         metadata: format!("{from} {target}"),
         parent_id: Some(parent_id(&line.buffer)),
         kind: kind.to_owned(),
@@ -126,7 +126,7 @@ pub(crate) fn document(line: &Line, now: DateTime<Utc>) -> Option<Document> {
 pub(crate) fn metadata(line: &Line) -> IndexMetadata {
     IndexMetadata {
         project: Some(line.buffer.network.0.clone()),
-        references: links::references(&format::strip(&line.text)),
+        references: links::references(&irc_format::strip(&line.text)),
     }
 }
 

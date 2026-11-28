@@ -16,7 +16,6 @@ use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::icon_button::IconButton;
 use subspace_framework::dashboard::tabs::{self, TabSpec};
 use subspace_framework::dashboard::tokens::ButtonRole;
-use subspace_framework::dashboard::toolbar_label::{self, ToolbarLabel};
 use subspace_framework::dashboard::workspace::{Pane, Toolbar, Workspace};
 use subspace_framework::dashboard::{Tokens, fields};
 use subspace_framework::lucide::IconName;
@@ -31,9 +30,6 @@ pub(crate) use navigation::navigator;
 
 /// The search field's width in the toolbar.
 const SEARCH_WIDTH_PX: f32 = 208.;
-/// How the list is grouped: always by workflow state, or by state type for
-/// All projects.
-const GROUPING: &str = "Grouped by state";
 
 /// What the pane shows above its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,8 +103,8 @@ fn bare_toolbar(
     organisation().map(|menu| Toolbar::new("issues-toolbar").strip().leading(menu))
 }
 
-/// Search and filters on the leading side; how the list is grouped, the
-/// Sub-issues switch, Refresh and New issue… trail. The count is the
+/// Search and filters on the leading side; the sub-issue switch, Refresh
+/// and New issue… trail. The count is the
 /// status bar's.
 fn list_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Toolbar {
     scoped_toolbar(issues, shown, cx)
@@ -116,9 +112,6 @@ fn list_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Tool
         .leading(filter_menu::button(FilterMenu::Assignee, issues, cx))
         .leading(filter_menu::button(FilterMenu::Priority, issues, cx))
         .leading(filter_menu::button(FilterMenu::More, issues, cx))
-        .when(issues.listing.content.is_some(), |toolbar| {
-            toolbar.trailing(grouping(cx))
-        })
         .trailing(sub_issues_button(issues, cx))
         .trailing(refresh_button(cx))
         .when(issues.can_create_issue(), |toolbar| {
@@ -176,32 +169,21 @@ fn search(issues: &Issues, cx: &Context<Issues>) -> impl IntoElement {
         .child(search.id("issues-search"))
 }
 
-/// Quiet text that says how the list is grouped.
-fn grouping(cx: &Context<Issues>) -> impl IntoElement + use<> {
-    let label = ToolbarLabel {
-        icon: None,
-        text: GROUPING.into(),
-        accessible: GROUPING.into(),
-    };
-    toolbar_label::label("issues-grouping", label, cx)
-}
-
-/// The switch that shows sub-issues in the list, pressed while they show.
-/// While they are hidden, its name and tooltip say how many are, as the
-/// status bar does.
+/// The action names the result, and its tooltip includes the hidden count.
 fn sub_issues_button(issues: &Issues, cx: &Context<Issues>) -> impl IntoElement {
-    let hidden = super::hidden_subissues(issues);
-    let (name, tooltip) = super::sub_issues_words(issues.sub_issues, hidden);
+    let action = issues.sub_issues.action();
+    let tooltip = super::hidden_subissues(issues)
+        .map(|count| format!("{action} ({count} hidden)"))
+        .unwrap_or_else(|| action.to_owned());
     action_button(
         "issues-sub-issues",
         Intent::Quiet,
         Some(IconName::ListTree),
-        "Sub-issues",
+        action,
     )
     .role(ButtonRole::Toolbar)
-    .accessibility_label(name)
     .tooltip(tooltip)
-    .latched(issues.sub_issues == SubIssues::Flat)
+    .latched(issues.sub_issues == SubIssues::Nested)
     .on_click(cx.listener(|this, _, _, cx| this.toggle_sub_issues(cx)))
 }
 

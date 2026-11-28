@@ -28,9 +28,9 @@ pub(super) enum Scope {
 /// is taken in as it is appended instead.
 pub(super) fn scope(event: &Event) -> Option<Scope> {
     match event {
-        Event::History { buffer, .. } | Event::Backfill { buffer, .. } => {
-            Some(Scope::Buffer(buffer.clone()))
-        }
+        Event::History { buffer, .. }
+        | Event::Backfill { buffer, .. }
+        | Event::Around { buffer, .. } => Some(Scope::Buffer(buffer.clone())),
         _ => None,
     }
 }

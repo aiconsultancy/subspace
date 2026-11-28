@@ -15,7 +15,7 @@ pub(super) fn focus(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) 
     let changed = board.dock.focused.as_ref() != Some(buffer);
     board.dock.focused = Some(buffer.clone());
     for (key, hosted) in &board.dock.open {
-        let active = key == buffer;
+        let active = key == buffer && !board.comms.active;
         hosted.entity.update(cx, |view, cx| {
             if view.find_active != active {
                 view.find_active = active;
@@ -29,7 +29,13 @@ pub(super) fn focus(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) 
     }
     // A channel's list is created now, for the inspector to show.
     member_list(board, buffer, cx);
-    view::reveal_row(board, buffer, cx);
+    let collapsed_server = buffer.target == Target::Server
+        && board
+            .list
+            .is_folded(&crate::rows::other_group_key(&buffer.network));
+    if !board.comms.active && !collapsed_server {
+        view::reveal_row(board, buffer, cx);
+    }
     view::publish_visible(board, cx);
     if changed {
         // The conversation in front decides a followed fleet.

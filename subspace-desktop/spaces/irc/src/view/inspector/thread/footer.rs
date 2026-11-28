@@ -18,8 +18,8 @@ pub(crate) fn footer(board: &Irc, cx: &App) -> Option<AnyElement> {
     };
     let thread = board.threads.shown(buffer)?;
     let root = thread.root.line.id.as_deref()?;
-    let network = board.hub.as_ref()?.read(cx).state.network(&buffer.network);
-    let refusal = crate::thread::reply_refusal(network);
+    let state = &board.hub.as_ref()?.read(cx).state;
+    let refusal = crate::thread::channel_reply_refusal(state, buffer);
     let conversation = board.dock.open.get(buffer)?.entity.read(cx);
     let draft = conversation.reply_drafts.get(root)?;
     let tokens = Tokens::current(cx);

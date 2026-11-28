@@ -180,6 +180,9 @@ impl Issues {
         }
         let keys = self.list.visible_keys();
         let Some(key) = adjacent(&keys, self.list.selected(), forward) else {
+            if forward && self.sub_issues == crate::model::SubIssues::Nested {
+                self.load_more_near(self.list.selected().cloned(), cx);
+            }
             return;
         };
         self.list.select(key.clone());

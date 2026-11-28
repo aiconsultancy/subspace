@@ -41,7 +41,7 @@ pub(super) fn mention(mut line: subspace_client_irc::Line) -> subspace_client_ir
 
 /// The ship channel open, the Starbase joined with a line that mentions
 /// us, and private conversations with mira and with the captain.
-fn populated(cx: &mut TestAppContext) -> (Entity<Irc>, &mut VisualTestContext) {
+pub(super) fn populated(cx: &mut TestAppContext) -> (Entity<Irc>, &mut VisualTestContext) {
     let (board, hub, cx) = ship(cx);
     let starbase = channel(STARBASE);
     let line = mention(message(&starbase, "mira", "subspace: the review moved", 4));
@@ -72,10 +72,8 @@ fn the_navigator_draws_a_fleet_s_channels_and_people_apart(cx: &mut TestAppConte
     assert_eq!(
         outline(&board, cx),
         [
-            (
-                "Aurora".to_owned(),
-                titles(&["starbase", "lyra", "aurora-lyra", "Server"])
-            ),
+            ("Aurora".to_owned(), titles(&["starbase", "lyra"])),
+            ("Other".to_owned(), titles(&["aurora-lyra", "Server"])),
             ("People".to_owned(), titles(&["mira"])),
         ]
     );
