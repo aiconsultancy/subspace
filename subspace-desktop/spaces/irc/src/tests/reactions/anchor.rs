@@ -3,6 +3,7 @@
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{SharedString, TestAppContext};
+use subspace_framework::dashboard::Dashboard as _;
 
 use super::{open, room, seq};
 
@@ -32,6 +33,18 @@ fn the_toolbar_s_react_opens_at_the_hovered_message_not_the_focused_one(cx: &mut
         assert!(
             !view.reacting.anchors.keyboard.read(cx).is_open(),
             "not at the focused one's anchor"
+        );
+    });
+    cx.update(|window, cx| {
+        board.update(cx, |board, cx| board.deactivate(window, cx));
+        assert!(
+            !conversation
+                .read(cx)
+                .reacting
+                .anchors
+                .reaction
+                .read(cx)
+                .is_open()
         );
     });
 }

@@ -8,7 +8,7 @@ use gpui_kit::{Entity, Role, SharedString, TestAppContext, VisualTestContext};
 use subspace_client_irc::{Command, Update};
 
 use super::super::remove::settle;
-use super::thread::{finished, front, reply_input};
+use super::thread::{finished, front, reply_input, seq};
 use crate::fixtures::{at, channel, network_id};
 use crate::hub::Hub;
 use crate::thread::MESSAGE_TAGS;
@@ -26,20 +26,6 @@ fn receive(hub: &Entity<Hub>, updates: Vec<Update>, cx: &mut VisualTestContext) 
     hub.update(cx, |hub, cx| crate::hub::receive(hub, updates, at(51), cx));
     settle(cx);
     cx.update(|window, cx| window.render_frame(cx));
-}
-
-fn seq(hub: &Entity<Hub>, id: &str, cx: &mut VisualTestContext) -> i64 {
-    hub.read_with(cx, |hub, _| {
-        hub.state
-            .buffer(&channel(SHIP))
-            .and_then(|held| {
-                held.entries
-                    .iter()
-                    .find(|entry| entry.line.id.as_deref() == Some(id))
-            })
-            .map(|entry| entry.seq)
-            .expect("held")
-    })
 }
 
 /// The ship's thread with reaction support and a reaction on the request

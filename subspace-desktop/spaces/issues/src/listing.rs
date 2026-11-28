@@ -135,12 +135,14 @@ impl Listing {
 
     /// The hub's groups belong to `list`: a new list may read every first
     /// page again.
-    pub(crate) fn follow_list(&mut self, list: Option<ListId>) {
-        if self.paged_for != list {
-            self.paged.clear();
-            self.pending.clear();
-            self.paged_for = list;
+    pub(crate) fn follow_list(&mut self, list: Option<ListId>) -> bool {
+        if self.paged_for == list {
+            return false;
         }
+        self.paged.clear();
+        self.pending.clear();
+        self.paged_for = list;
+        true
     }
 
     pub(crate) fn follow_request(&mut self, revision: u64) {

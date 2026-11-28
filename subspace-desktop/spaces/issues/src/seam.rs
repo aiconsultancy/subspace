@@ -216,7 +216,9 @@ impl Issues {
         if self.initiative_id.is_some() && (self.project != previous || previous_list) {
             return;
         }
-        self.listing.follow_list(view.list);
+        if self.listing.follow_list(view.list) {
+            self.invalidate_search_result();
+        }
         self.listing.follow_request(view.request_revision);
         self.listing.hidden_subissues_count = view.hidden_subissues_count;
         self.listing.my_issues_count = view.my_issues_count;

@@ -133,7 +133,13 @@ impl ReplyDraft {
         });
         match command(&self.buffer, &self.root, text, loaded, network) {
             Ok(command) => {
-                self.hub.update(cx, |hub, _| hub.send(command));
+                if !self.hub.update(cx, |hub, _| hub.send(command)) {
+                    self.error(
+                        "This connection can no longer send replies. Draft kept.",
+                        cx,
+                    );
+                    return;
+                }
                 self.recall.push(text.to_owned());
                 self.input.update(cx, |input, cx| {
                     input.set_busy(false, cx);

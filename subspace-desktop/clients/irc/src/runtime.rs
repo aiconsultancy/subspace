@@ -37,7 +37,12 @@ impl Runtime {
     }
 
     pub fn send(&self, command: Command) {
-        let _ = self.commands.send(command);
+        self.try_send(command);
+    }
+
+    /// Whether the command reached the runtime queue.
+    pub fn try_send(&self, command: Command) -> bool {
+        self.commands.send(command).is_ok()
     }
 
     /// Every event reported since the last drain, oldest first. Reaction

@@ -5,7 +5,8 @@ use gpui_kit::{MouseButton, SharedString, TestAppContext, point, px};
 use subspace_client_irc::Event;
 
 use super::{
-    MESSAGE_TAGS, SHIP, channel, finished, front, inject, message, reply_input, settle, thread_tab,
+    MESSAGE_TAGS, SHIP, channel, finished, front, inject, message, reply_input, seq, settle,
+    thread_tab,
 };
 
 #[gpui_kit::test]
@@ -17,19 +18,7 @@ fn a_row_previews_its_thread_and_reply_from_the_gutter_pins_it(cx: &mut TestAppC
     inject(&hub, vec![Event::Line(another)], cx);
     settle(cx);
     thread_tab(&board, cx);
-    let seq = |id: &str| {
-        hub.read_with(cx, |hub, _| {
-            hub.state
-                .buffer(&room)
-                .unwrap()
-                .entries
-                .iter()
-                .find(|entry| entry.line.id.as_deref() == Some(id))
-                .unwrap()
-                .seq
-        })
-    };
-    let (ask, other) = (seq("ask1"), seq("another"));
+    let (ask, other) = (seq(&hub, "ask1", cx), seq(&hub, "another", cx));
     let text = format!("rich-menu-Name(\"irc-line:{ask}:text\")");
     let ask = SharedString::from(format!("irc-line:{ask}:row"));
     let other = SharedString::from(format!("irc-line:{other}:row"));

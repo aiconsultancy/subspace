@@ -11,8 +11,10 @@ use subspace_framework::dashboard::prefs;
 use super::{FOLDED_PREF, PROJECT_PREF, SUB_ISSUES_PREF, TAB_PREF, UNFOLDED_PREF};
 use crate::Issues;
 use crate::listing::{IssueGroup, More, Status};
-use crate::model::{ProjectScope, StateKind, SubIssues, Tab};
+use crate::model::{ProjectScope, StateKind};
 use crate::requests::{ListChoice, search_text};
+
+mod candidates;
 
 /// Typing waits this long before the list is read again.
 const SEARCH_PAUSE: Duration = Duration::from_millis(300);
@@ -96,6 +98,12 @@ impl Issues {
         self.search_fallback = SearchFallback::Idle;
     }
 
+    pub(crate) fn invalidate_search_result(&mut self) {
+        if !matches!(self.search_fallback, SearchFallback::Typing) {
+            self.cancel_search_fallback();
+        }
+    }
+
     /// Check other allowed list choices only after the scoped result settles empty.
     pub(crate) fn check_hidden_matches(&mut self, cx: &mut Context<Self>) {
         if !matches!(self.search_fallback, SearchFallback::Idle)
@@ -107,7 +115,7 @@ impl Issues {
         }
         let Some(hub) = self.hub.clone() else { return };
         let scoped = self.choice();
-        let candidates = self.search_candidates(&scoped);
+        let candidates = candidates::search_candidates(&scoped, self.wider_projects(&scoped));
         if candidates.is_empty() {
             self.search_fallback = SearchFallback::Checked;
             return;
@@ -152,6 +160,10 @@ impl Issues {
         {
             return;
         }
+        if self.hub.as_ref().is_some_and(|hub| hub.account_changed()) {
+            self.poll_hub(cx);
+            return;
+        }
         self.search_fallback = match found.filter(|_| self.search_is_empty()) {
             Some(hidden) => SearchFallback::Hidden(Box::new(hidden)),
             None => SearchFallback::Checked,
@@ -179,10 +191,17 @@ impl Issues {
             cx.notify();
             return;
         }
-        if let Some(hub) = &self.hub {
-            hub.adopt_wider_matches(hidden.found);
+        let HiddenMatch { found, wider, .. } = *hidden;
+        if !self
+            .hub
+            .as_ref()
+            .is_some_and(|hub| hub.adopt_wider_matches(found))
+        {
+            self.poll_hub(cx);
+            self.check_hidden_matches(cx);
+            cx.notify();
+            return;
         }
-        let wider = hidden.wider;
         self.tab = wider.tab;
         self.project = wider.project;
         self.sub_issues = wider.sub_issues;
@@ -193,59 +212,13 @@ impl Issues {
         self.rescope(cx);
     }
 
-    fn search_candidates(&self, scoped: &ListChoice) -> Vec<ListChoice> {
-        let without_filters = ListChoice {
-            filters: crate::filters::Filters {
-                archived: scoped.filters.archived,
-                ..Default::default()
-            },
-            ..scoped.clone()
-        };
-        let all_tab = ListChoice {
-            tab: Tab::All,
-            ..scoped.clone()
-        };
-        let clear = ListChoice {
-            tab: Tab::All,
-            ..without_filters.clone()
-        };
-        let sub_issues = ListChoice {
-            sub_issues: SubIssues::Flat,
-            ..scoped.clone()
-        };
-        let flat = ListChoice {
-            sub_issues: SubIssues::Flat,
-            ..clear.clone()
-        };
-        let mut candidates = Vec::new();
-        for wider in [
-            all_tab,
-            without_filters,
-            sub_issues,
-            clear.clone(),
-            flat.clone(),
-        ] {
-            if &wider != scoped && !candidates.contains(&wider) {
-                candidates.push(wider);
-            }
-        }
-        self.wider_projects(scoped, &mut candidates, &clear, &flat);
-        candidates
-    }
-
-    fn wider_projects(
-        &self,
-        scoped: &ListChoice,
-        candidates: &mut Vec<ListChoice>,
-        clear: &ListChoice,
-        flat: &ListChoice,
-    ) {
+    fn wider_projects(&self, scoped: &ListChoice) -> Vec<ProjectScope> {
         use crate::initiative::project_in_scope;
         if scoped.project == ProjectScope::AllProjects {
-            return;
+            return Vec::new();
         }
         let all = ProjectScope::AllProjects;
-        let projects = if project_in_scope(self, &all) {
+        if project_in_scope(self, &all) {
             vec![all]
         } else {
             self.projects
@@ -253,18 +226,6 @@ impl Issues {
                 .map(|project| ProjectScope::Project(project.key.clone()))
                 .filter(|project| *project != scoped.project && project_in_scope(self, project))
                 .collect()
-        };
-        for project in projects {
-            candidates.push(ListChoice {
-                project: project.clone(),
-                ..clear.clone()
-            });
-            if clear.sub_issues != flat.sub_issues {
-                candidates.push(ListChoice {
-                    project,
-                    ..flat.clone()
-                });
-            }
         }
     }
 

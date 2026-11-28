@@ -216,12 +216,8 @@ fn a_bad_first_page_or_server_failure_stays_retryable_without_replacing_the_list
     }
 }
 
-#[test]
-fn a_wider_search_can_replace_only_the_empty_list_it_checked() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    let mock = Mock::new(|request| {
+fn wider_search_fixture() -> Mock {
+    Mock::new(|request| {
         if request.path.starts_with("/api/v1/issues/groups?")
             && request.path.contains("q=relay")
             && !request.path.contains("stateType=")
@@ -232,10 +228,35 @@ fn a_wider_search_can_replace_only_the_empty_list_it_checked() {
             }).to_string());
         }
         common(request)
-    });
-    let scoped = ListQuery::new(ListTab::Backlog).search("relay");
+    })
+}
+
+fn assert_retired_search_rejected(hub: &Hub, found: crate::hub::WiderSearch) {
+    let previous = crate::native::test_lease::get();
+    let changed = crate::native::generation().map_or(1, |lease| lease.wrapping_add(1));
+    crate::native::test_lease::set(Some(changed));
+    assert!(
+        hub.account_changed(),
+        "the visible account changed before Reveal"
+    );
+    let adopted = hub.adopt_wider_matches(found);
+    crate::native::test_lease::set(previous);
+    assert!(!adopted, "the previous account's matches were rejected");
+}
+
+#[test]
+fn a_wider_search_can_replace_only_the_empty_list_it_checked() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let mock = wider_search_fixture();
+    let scoped = ListQuery::new(ListTab::Backlog)
+        .project(Some("SUB"))
+        .search("relay");
     let wider = ListQuery::new(ListTab::All).search("relay");
-    let hub = Hub::from_client(client(&mock), "Subspace API");
+    let mut client = client(&mock);
+    client.native_lease = Some(crate::NativeLease(crate::native::generation()));
+    let hub = Hub::from_client(client, "Subspace API");
     wait(&hub, |s| s.status() == &HubStatus::Ready);
     hub.activate(scoped.clone()).unwrap();
     let empty =
@@ -249,6 +270,11 @@ fn a_wider_search_can_replace_only_the_empty_list_it_checked() {
     assert!(!hub.adopt_wider_matches(stale));
     hub.activate(scoped.clone()).unwrap();
     wait(&hub, empty);
+    let retired = runtime
+        .block_on(hub.find_wider_matches(&scoped, &wider))
+        .unwrap();
+    assert_retired_search_rejected(&hub, retired);
+    assert!(empty(&hub.snapshot()));
     let found = runtime
         .block_on(hub.find_wider_matches(&scoped, &wider))
         .unwrap();
@@ -257,6 +283,13 @@ fn a_wider_search_can_replace_only_the_empty_list_it_checked() {
         "the user has not widened the search yet"
     );
     assert!(hub.adopt_wider_matches(found));
+    let installed = hub.snapshot();
+    assert!(
+        installed.list_project().is_none(),
+        "the wider scope is active"
+    );
+    hub.activate(wider).unwrap();
+    assert_eq!(hub.snapshot().list_id(), installed.list_id());
     assert_eq!(
         hub.snapshot().list().unwrap().groups[0].items[0]
             .fields

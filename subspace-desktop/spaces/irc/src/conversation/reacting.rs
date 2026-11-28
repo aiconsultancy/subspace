@@ -14,7 +14,7 @@
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::{App, AppContext as _, Context, Entity};
+use gpui_kit::{App, AppContext as _, Context, Entity, Window};
 use subspace_client_irc::Command;
 use subspace_framework::dashboard::anchored::Anchor;
 
@@ -100,6 +100,14 @@ pub(crate) struct Anchors {
     pub keyboard: Entity<Anchor>,
     pub reaction: Entity<Anchor>,
     pub stop: Entity<Anchor>,
+}
+
+impl Anchors {
+    pub(crate) fn dismiss(&self, window: &mut Window, cx: &mut App) {
+        for anchor in [&self.keyboard, &self.reaction, &self.stop] {
+            anchor.update(cx, |anchor, cx| anchor.dismiss(window, cx));
+        }
+    }
 }
 
 /// What the rows showed before a refresh.

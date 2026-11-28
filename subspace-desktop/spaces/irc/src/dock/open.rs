@@ -140,6 +140,7 @@ pub(crate) fn open(
         }
     });
     hide_placeholder(board, window, cx);
+    board.dock.dismiss_message_menus(Some(buffer), window, cx);
     entity.update(cx, |conversation, cx| {
         conversation.focus_composer(window, cx)
     });
@@ -227,7 +228,12 @@ fn conversation_event(
         ConversationEvent::Open(Ref::PullRequest(found)) => {
             pull_requests::open(found, &buffer, cx);
         }
-        ConversationEvent::Focused => super::members::focus(board, &buffer, cx),
+        ConversationEvent::Focused => {
+            if board.dock.focused.as_ref() != Some(&buffer) {
+                board.dock.dismiss_message_menus(Some(&buffer), window, cx);
+            }
+            super::members::focus(board, &buffer, cx);
+        }
         ConversationEvent::FindScopeChanged => {
             if board.active && board.dock.focused.as_ref() == Some(&buffer) {
                 board.find_revision = board.find_revision.wrapping_add(1);

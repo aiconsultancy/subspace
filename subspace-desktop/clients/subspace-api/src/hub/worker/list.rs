@@ -207,7 +207,7 @@ fn land_head(shared: &Shared, job: &Job, state: &mut crate::hub::State) {
     }
 }
 
-fn read_list(
+pub(in crate::hub) fn read_list(
     shared: &Shared,
     job: &Job,
     query: &ListQuery,

@@ -324,17 +324,20 @@ impl Hub {
     /// Sends `command` to the runtime, unless it is for an account network
     /// whose account is no longer the one signed in, or for any network
     /// while Channels is closed.
-    pub fn send(&mut self, command: Command) {
+    pub fn send(&mut self, command: Command) -> bool {
         if command
             .network()
             .is_some_and(|network| self.initiatives.closed() || !self.managed.admits(network))
         {
-            return;
+            return false;
         }
         match &mut self.outbox {
-            Outbox::Runtime(runtime) => runtime.send(command),
+            Outbox::Runtime(runtime) => runtime.try_send(command),
             #[cfg(test)]
-            Outbox::Recorded(sent) => sent.push(command),
+            Outbox::Recorded(sent) => {
+                sent.push(command);
+                true
+            }
         }
     }
 
