@@ -118,15 +118,20 @@ pub(crate) fn settle(board: &mut Irc, cx: &mut Context<Irc>) {
         hub.update(cx, |hub, _| request_thread(hub, &pending));
         return;
     }
+    finish(board, &pending, cx);
+}
+
+fn finish(board: &mut Irc, pending: &Pending, cx: &mut Context<Irc>) {
     board.reveal = None;
-    if !pending.thread || !open_retained_replies(board, &pending, cx) {
-        let message = if pending.loading == Loading::Join {
-            JOIN_REFUSED
-        } else {
-            GONE
-        };
-        cx.emit(DashboardEvent::Toast(Toast::info(message)));
+    if pending.thread && open_retained_replies(board, pending, cx) {
+        return;
     }
+    let message = if pending.loading == Loading::Join {
+        JOIN_REFUSED
+    } else {
+        GONE
+    };
+    cx.emit(DashboardEvent::Toast(Toast::info(message)));
 }
 
 /// Scrolls to the waiting line when its buffer holds it. True when it did.

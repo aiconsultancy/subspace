@@ -7,7 +7,7 @@ use crate::fixtures::{channel, message};
 
 #[gpui_kit::test]
 fn selecting_comms_opens_a_thread_without_reading_the_channel(cx: &mut TestAppContext) {
-    let (board, hub, cx) = mount(cx, settings());
+    let (_, hub, cx) = mount(cx, settings());
     let room = channel("#example-ship");
     let mut root = message(&room, "subspace", "Check the build", 1);
     root.id = Some("request".into());
@@ -22,12 +22,6 @@ fn selecting_comms_opens_a_thread_without_reading_the_channel(cx: &mut TestAppCo
     inject(
         &hub,
         vec![
-            Event::Status {
-                network: room.network.clone(),
-                status: ConnectionStatus::Connected {
-                    nick: "subspace".into(),
-                },
-            },
             Event::Joined {
                 buffer: room.clone(),
             },
@@ -60,8 +54,24 @@ fn selecting_comms_opens_a_thread_without_reading_the_channel(cx: &mut TestAppCo
         assert_eq!(hub.comms.unread(), (0, false));
         assert_eq!(hub.state.buffer(&room).unwrap().unread, 2);
     });
+}
 
+#[gpui_kit::test]
+fn a_thread_link_joins_an_unopened_channel_and_keeps_comms_open(cx: &mut TestAppContext) {
+    let (board, hub, cx) = mount(cx, settings());
     let destination = channel("#example-command");
+    inject(
+        &hub,
+        vec![Event::Status {
+            network: destination.network.clone(),
+            status: ConnectionStatus::Connected {
+                nick: "subspace".into(),
+            },
+        }],
+        cx,
+    );
+    cx.update(|window, cx| window.click("irc-comms-nav", cx));
+    cx.run_until_parked();
     board.update_in(cx, |board, window, cx| {
         crate::reveal::open_thread(
             board,
