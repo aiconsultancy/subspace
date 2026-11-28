@@ -44,6 +44,7 @@ const SECONDS_PER_MINUTE: i64 = 60;
 
 pub(crate) struct Hub {
     pub state: IrcState,
+    pub comms: crate::comms::Inbox,
     pub initiatives: InitiativeIrc,
     outbox: Outbox,
     /// The buffer open in a visible, active board, which reads as it arrives.
@@ -272,6 +273,7 @@ impl Hub {
         state.removed = removed;
         Self {
             state,
+            comms: Default::default(),
             initiatives,
             outbox,
             visible: None,
@@ -441,6 +443,7 @@ impl Hub {
         self.state.expire_typing(now);
         self.recall.keep(&self.state, stored);
         self.recall.keep_endings(&mut self.state);
+        self.comms.refresh(&self.state);
         self.read_visible();
         self.save_removed(cx);
         save_directories(self, cx);

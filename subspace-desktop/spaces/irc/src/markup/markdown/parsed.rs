@@ -59,6 +59,7 @@ fn allowed(url: &str, text: &str) -> bool {
         Some(Ref::Nick(nick)) => text.trim_start_matches('@') == nick,
         Some(Ref::Issue(identifier) | Ref::Decision(identifier)) => text.contains(&identifier),
         Some(Ref::PullRequest(found)) => text.to_ascii_lowercase().contains(found.label()),
+        Some(Ref::Thread(..)) => !text.trim().is_empty(),
         None => safe_url(url).is_some(),
     }
 }

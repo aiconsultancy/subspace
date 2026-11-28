@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use subspace_api_client::model::{Fleet, MemberInitiative};
 
-use super::Names;
+use super::{ChannelKind, Names};
 use crate::initiatives::channel_names;
 
 /// One fleet on a network, as the navigator groups it.
@@ -22,12 +22,20 @@ pub(crate) struct FleetPlace {
     pub slug: Option<String>,
     /// Its channels in lower case: the fleet's own, then its initiatives'.
     channels: HashSet<String>,
+    legacy: HashMap<String, String>,
 }
 
 impl FleetPlace {
     /// Whether `channel` is one of this fleet's, ignoring ASCII case.
     pub(crate) fn holds(&self, channel: &str) -> bool {
         self.channels.contains(&channel.to_ascii_lowercase())
+    }
+
+    /// The current channel corresponding to a former installer name.
+    pub(crate) fn canonical(&self, channel: &str) -> Option<&str> {
+        self.legacy
+            .get(&channel.to_ascii_lowercase())
+            .map(String::as_str)
     }
 }
 
@@ -69,13 +77,41 @@ pub(super) fn places(initiatives: &[&MemberInitiative]) -> Vec<FleetPlace> {
         .map(|fleet| FleetPlace {
             id: fleet.id.clone(),
             name: display_name(fleet),
+            legacy: legacy_channels(fleet, &claimed),
             slug: Some(fleet.slug.clone()).filter(|slug| !slug.is_empty()),
             channels: claimed
-                .remove(&fleet.id)
-                .unwrap_or_default()
+                .get(&fleet.id)
                 .into_iter()
+                .flatten()
+                .cloned()
                 .filter(|name| !shared.contains(name))
                 .collect(),
+        })
+        .collect()
+}
+
+/// Former installer names that are not still claimed as real channels.
+fn legacy_channels(
+    fleet: &Fleet,
+    claimed: &HashMap<String, Vec<String>>,
+) -> HashMap<String, String> {
+    let slug = fleet.slug.to_ascii_lowercase();
+    if slug.is_empty() {
+        return HashMap::new();
+    }
+    Names::of(fleet)
+        .channels
+        .into_iter()
+        .filter_map(|(channel, kind)| {
+            let channel = channel.to_ascii_lowercase();
+            let former = match kind {
+                ChannelKind::Audit => format!("#{slug}-fleet-audit"),
+                ChannelKind::Ship { .. } => format!("#{slug}-{}", channel.strip_prefix('#')?),
+                _ => return None,
+            };
+            let prefixed = channel.starts_with(&format!("#{slug}-"));
+            let taken = claimed.values().flatten().any(|name| name == &former);
+            (!(taken || prefixed && kind != ChannelKind::Audit)).then_some((former, channel))
         })
         .collect()
 }

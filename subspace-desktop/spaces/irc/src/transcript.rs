@@ -46,21 +46,26 @@ const RULE_PX: f32 = 1.;
 
 /// The scroller's rows for `buffer`: the older-history control while the
 /// server may have more, then the transcript items.
-pub(crate) fn rows<Tz: TimeZone>(buffer: &Buffer, target: &Target, zone: &Tz) -> Vec<Row> {
-    let conversation = *target != Target::Server;
+pub(crate) fn rows<Tz: TimeZone>(
+    buffer: &Buffer,
+    key: &BufferKey,
+    zone: &Tz,
+    threads: bool,
+) -> Vec<Row> {
+    let conversation = key.target != Target::Server;
+    let (hidden, earlier) = replies::placement(buffer, key, threads);
     let history = conversation && buffer.history.state != HistoryState::Complete;
-    let first_unread = buffer
-        .entries
-        .iter()
-        .position(|entry| buffer.shown_unread().contains(&entry.seq));
+    let first_unread = buffer.entries.iter().position(|entry| {
+        !hidden.contains(&entry.seq) && buffer.shown_unread().contains(&entry.seq)
+    });
     history
         .then_some(Row::History)
         .into_iter()
         .chain(
-            lines::items(&buffer.entries, &buffer.folded, zone, conversation)
+            lines::items(&buffer.entries, &hidden, zone, conversation)
                 .into_iter()
                 .flat_map(|item| {
-                    with_unread_divider(item, buffer, first_unread)
+                    with_unread_divider(item, buffer, first_unread, &earlier)
                         .into_iter()
                         .flatten()
                 }),
@@ -68,8 +73,17 @@ pub(crate) fn rows<Tz: TimeZone>(buffer: &Buffer, target: &Target, zone: &Tz) ->
         .collect()
 }
 
-fn with_unread_divider(item: Item, buffer: &Buffer, first: Option<usize>) -> [Option<Row>; 2] {
+fn with_unread_divider(
+    item: Item,
+    buffer: &Buffer,
+    first: Option<usize>,
+    earlier: &std::collections::HashSet<usize>,
+) -> [Option<Row>; 2] {
     match item {
+        Item::Message { at, .. } if earlier.contains(&at) => [
+            (first == Some(at)).then(|| Row::UnreadDivider(buffer.entries[at].seq)),
+            Some(Row::EarlierThread(at)),
+        ],
         Item::Message { at, .. } if Some(at) == first => [
             Some(Row::UnreadDivider(buffer.entries[at].seq)),
             Some(Row::Item(Item::Message {
@@ -149,6 +163,7 @@ pub(crate) fn row(
     let entry = |at: usize| held.entries.get(at);
     let element = match row {
         Row::History => history_control(origin, held.history.state == HistoryState::Loading),
+        Row::EarlierThread(at) => replies::earlier_thread(&held.entries[at], held, context),
         Row::UnreadDivider(seq) => unread_divider(seq, held.shown_unread().len(), &tokens),
         Row::Item(Item::Day(date)) => day_separator(date, context.today, &tokens),
         Row::Item(Item::Message { at, continues }) => {
@@ -310,7 +325,7 @@ mod tests {
         let seq = held.entries[2].seq;
         assert_eq!(held.unread_entries.len(), 1);
         assert!(held.unread_entries.contains(&seq));
-        let rows = rows(held, &room.target, &Utc);
+        let rows = rows(held, &room, &Utc, false);
         let boundary = rows.iter().position(|row| *row == Row::UnreadDivider(seq));
         assert_eq!(
             boundary.map(|at| rows[at + 1]),

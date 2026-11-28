@@ -1,5 +1,5 @@
 //! A network's navigator groups. A network that holds one fleet is one
-//! group named after the fleet: its channels, then under **Other** the
+//! fleet group followed by a separate **Other** group for the
 //! network's channels no fleet claims, with the Server row last; then
 //! `People`. A network that holds several keeps a group per fleet,
 //! `People`, then its own group, named so it cannot read as a fleet. A
@@ -53,7 +53,7 @@ pub(super) fn network(
         people,
         rest,
     };
-    let groups = arrange::groups(network, roster.fleets(), parts, &mut layout.captions);
+    let groups = arrange::groups(network, roster.fleets(), parts);
     push_groups(layout, network, groups);
 }
 
@@ -99,7 +99,7 @@ fn fleet_groups(
         let full: Vec<&str> = held.iter().map(|entry| title(entry.key())).collect();
         unclash(&mut rows, &full);
         let key = fleet_group_key(&network.id, &place.id);
-        let kinds = full.iter().map(|name| roster.channel(name));
+        let kinds = full.iter().map(|name| roster.navigator_kind(place, name));
         let captions = captions(rows.iter().map(|row| row.key.clone()).zip(kinds));
         if !captions.is_empty() {
             layout.captions.insert(key.clone(), captions);
@@ -173,7 +173,7 @@ fn entry_row(entry: &Entry<'_>, layout: &mut Layout) -> Row {
 fn fleet_row(entry: &Entry<'_>, fleet: &Fleet<'_>, layout: &mut Layout) -> Row {
     let mut row = entry_row(entry, layout);
     let name = title(entry.key());
-    row.title = match fleet.roster.channel(name) {
+    row.title = match fleet.roster.navigator_kind(fleet.place, name) {
         Some(ChannelKind::Audit) => "fleet-audit".into(),
         _ => short_name(fleet.place.slug.as_deref(), name)
             .to_owned()
@@ -204,7 +204,7 @@ pub(super) fn unclash(rows: &mut [Row], full: &[&str]) {
 
 /// A ship channel's activity; `None` for any other channel.
 fn ship_activity(name: &str, buffer: &Buffer, fleet: &Fleet<'_>) -> Option<activity::Activity> {
-    let captain = activity::captain(fleet.roster.channel(name)?)?;
+    let captain = activity::captain(fleet.roster.navigator_kind(fleet.place, name)?)?;
     let live = fleet.live.and_then(|live| live.ship(captain));
     Some(activity::ship(
         captain,

@@ -57,6 +57,12 @@ LATE = (
     ('mira', '@aurora-lyra can you take NAV-2 next, once NAV-7 merges?'),
     ('aurora-lyra', 'Accepted. Handing NAV-2 to Juniper now.'),
 )
+# With --comms: activity for the signed-in capture nick.
+COMMS = (
+    ('mira', '@{nick} Can you confirm the relay rehearsal window?'),
+    ('tavi', '@{nick} The cold-cache pilot passed on the review laptop.'),
+    ('aurora-lyra', '@{nick} The navigation runbook is ready for sign-off.'),
+)
 # With --repeats: NAV-1 and pull request 492 named again, and two references
 # that cannot be resolved.
 REPEATS = (
@@ -282,6 +288,7 @@ def main():
     parser.add_argument('--server', default='127.0.0.1:16667')
     parser.add_argument('--nick', default='subspace', help="the capture build's nick")
     parser.add_argument('--late-after', type=float, help='seconds after the capture build joins')
+    parser.add_argument('--comms', action='store_true', help='send mentions to the capture nick')
     parser.add_argument('--status', action='store_true', help="set aurora-lyra's status")
     parser.add_argument('--repeats', action='store_true', help='name NAV-1 and pull request 492 again')
     parser.add_argument('--thread', action='store_true', help='play two requests with progress and replies')
@@ -320,9 +327,10 @@ def main():
     threads = [threading.Thread(target=keep_alive, args=(sock,), daemon=True)
                for nick, sock in socks.items() if nick != watcher]
     if watcher:
+        late = tuple((speaker, text.format(nick=options.nick)) for speaker, text in COMMS) if options.comms else LATE
         threads.append(threading.Thread(target=late_lines, daemon=True,
                                         args=(socks[watcher], socks, options.nick, options.late_after,
-                                              LATE + (LATE_REPEATS if options.repeats else ()))))
+                                              late + (LATE_REPEATS if options.repeats else ()))))
     for thread in threads:
         thread.start()
     try:

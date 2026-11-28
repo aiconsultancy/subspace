@@ -2,6 +2,7 @@
 //! initiative's, unless it is a network's only fleet whose group took in
 //! the network's own rows, and what a folded group says it hides.
 
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use subspace_api_client::model::MemberInitiative;
@@ -97,7 +98,7 @@ fn fleets_other_than_the_selected_initiative_s_start_folded(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
-fn a_network_s_only_fleet_keeps_its_other_channels_open_when_another_fleet_is_picked(
+fn a_network_s_only_fleet_keeps_its_fleet_channels_open_when_another_initiative_is_picked(
     cx: &mut TestAppContext,
 ) {
     // The person is in a private conversation when the initiatives arrive,
@@ -145,17 +146,9 @@ fn a_network_s_only_fleet_keeps_its_other_channels_open_when_another_fleet_is_pi
     let aurora = rows::fleet_group_key(&network_id(), "aurora");
     board.read_with(cx, |board, _| {
         assert_eq!(board.list.selected(), Some(&rows::row_key(&query("mira"))));
-        let group = board.list.groups().iter().find(|group| group.key == aurora);
-        let titles: Vec<_> = group
-            .map(|group| group.rows.iter().map(|row| row.title.to_string()).collect())
-            .unwrap_or_default();
-        assert!(
-            titles.iter().any(|title| title.contains("lounge")),
-            "{titles:?}"
-        );
         assert!(
             !board.list.is_folded(&aurora),
-            "the network's own channels and Server row stay open"
+            "the fleet channels stay open"
         );
     });
 }
@@ -212,29 +205,17 @@ fn a_folded_fleet_says_it_hides_a_mention(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_folded_fleet_that_takes_in_the_network_s_rows_opens_as_the_network_s_group_was(
-    cx: &mut TestAppContext,
-) {
-    let (board, hub, cx) = two_fleets(cx, true);
-    let group = rows::fleet_group_key(&network_id(), "borealis");
-    board.read_with(cx, |board, _| assert!(board.list.is_folded(&group)));
-    // Aurora's initiative goes: Borealis is now the network's only fleet,
-    // and its group takes in the network's own rows, which showed.
-    hub.update(cx, |hub, cx| {
-        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
-            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(vec![borealis()]), cx);
-        })
-    });
-    settle(cx);
+fn other_starts_collapsed_and_can_be_opened(cx: &mut TestAppContext) {
+    let (board, cx) = super::navigator::populated(cx);
+    let group = rows::other_group_key(&network_id());
+    let server = rows::row_key(&crate::state::server_key(&network_id()));
     board.read_with(cx, |board, _| {
-        let held = board.list.groups().iter().find(|held| held.key == group);
-        assert!(
-            held.and_then(rows::absorbed_network).is_some(),
-            "the group took in the network's rows"
-        );
-        assert!(
-            !board.list.is_folded(&group),
-            "the network's rows that showed still show"
-        );
+        assert!(board.list.is_folded(&group));
+        assert!(!board.list.visible_keys().contains(&server));
+    });
+    cx.update(|window, cx| window.click(group.clone(), cx));
+    board.read_with(cx, |board, _| {
+        assert!(!board.list.is_folded(&group));
+        assert!(board.list.visible_keys().contains(&server));
     });
 }

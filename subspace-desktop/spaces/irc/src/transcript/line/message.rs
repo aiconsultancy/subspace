@@ -144,7 +144,11 @@ pub(crate) fn thread_message(
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
-        .children(crate::transcript::reactions::read_only(entry, context))
+        .children(if entry.line.reply_to.is_some() && context.threads {
+            crate::transcript::reactions::thread_reply(entry, context)
+        } else {
+            crate::transcript::reactions::read_only(entry, context)
+        })
         .into_any_element()
 }
 

@@ -203,3 +203,21 @@ fn decision_references_round_trip_in_plain_and_formatted_messages() {
     let decision = Ref::Decision("D-00042-EXA".into());
     assert_eq!(parse_ref_url(&ref_url(&decision)), Some(decision));
 }
+
+#[test]
+fn an_irc_thread_link_is_clickable_as_a_bare_url_or_labelled_link() {
+    let link = "subspace-irc:thread/%23example-ship/abc123";
+    let expected = Ref::Thread("#example-ship".into(), "abc123".into());
+    assert_eq!(parse_ref_url(link), Some(expected.clone()));
+    for source in [format!("See {link}."), format!("[Original thread]({link})")] {
+        let rendered = rich(&source, &Mentions::default()).unwrap();
+        assert!(rendered.markdown.contains(link), "{}", rendered.markdown);
+        assert_eq!(rendered.refs[0].1, expected);
+    }
+    for invalid in [
+        "subspace-irc:thread/ada/abc123",
+        "subspace-irc:thread/%23room/a%0Ab",
+    ] {
+        assert_eq!(parse_ref_url(invalid), None);
+    }
+}

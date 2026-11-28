@@ -65,6 +65,8 @@ fn tile(entry: &Entry, found: &Ref, context: &RowContext, cx: &App) -> AnyElemen
     match found {
         Ref::Issue(identifier) => crate::issues::slot(entry, identifier, context, cx),
         Ref::PullRequest(found) => crate::pull_requests::slot(entry, found, context, cx),
-        Ref::Channel(_) | Ref::Nick(_) | Ref::Decision(_) => gpui_kit::div().into_any_element(),
+        Ref::Channel(_) | Ref::Nick(_) | Ref::Decision(_) | Ref::Thread(..) => {
+            gpui_kit::div().into_any_element()
+        }
     }
 }

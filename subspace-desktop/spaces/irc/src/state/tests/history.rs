@@ -127,7 +127,7 @@ fn an_unavailable_history_answer_hides_the_older_messages_row() {
     let room = channel("#subspace");
     state.apply(Event::Line(message(&room, "alice", "hello", 1)), at(1));
     let rows = |state: &IrcState| {
-        crate::transcript::rows(state.buffer(&room).unwrap(), &room.target, &chrono::Utc)
+        crate::transcript::rows(state.buffer(&room).unwrap(), &room, &chrono::Utc, false)
     };
     assert_eq!(rows(&state)[0], crate::transcript::Row::History);
     assert!(state.begin_history(&room));

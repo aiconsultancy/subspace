@@ -140,9 +140,11 @@ pub(crate) fn open(
         }
     });
     hide_placeholder(board, window, cx);
-    entity.update(cx, |conversation, cx| {
-        conversation.focus_composer(window, cx)
-    });
+    if !board.comms.active {
+        entity.update(cx, |conversation, cx| {
+            conversation.focus_composer(window, cx)
+        });
+    }
     super::members::focus(board, buffer, cx);
     view::load_recent(board, buffer, cx);
 }
@@ -220,6 +222,9 @@ fn conversation_event(
         ConversationEvent::Open(Ref::Channel(name)) => {
             view::open_channel(board, &buffer.network, name, cx);
         }
+        ConversationEvent::Open(Ref::Thread(channel, id)) => {
+            crate::reveal::open_thread(board, (&buffer.network, channel), id, window, cx);
+        }
         ConversationEvent::Open(Ref::Issue(identifier)) => issues::open(identifier, &buffer, cx),
         ConversationEvent::Open(Ref::Decision(identifier)) => {
             crate::decision_references::open(board, identifier, &buffer, cx);
@@ -279,6 +284,10 @@ fn closed(
 /// the focused conversation's group.
 pub(crate) fn request(board: &Irc, buffer: BufferKey, place: Where, cx: &mut Context<Irc>) {
     super::with_window(board, cx, move |board, window, cx| {
+        if board.comms.close() {
+            board.find_revision = board.find_revision.wrapping_add(1);
+            cx.notify();
+        }
         open(board, &buffer, place, window, cx);
     });
 }

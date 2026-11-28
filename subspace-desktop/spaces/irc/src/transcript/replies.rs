@@ -1,6 +1,6 @@
 //! Summaries of loaded replies, built once when a conversation synchronises.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use chrono::{DateTime, Local, Utc};
@@ -12,6 +12,7 @@ use gpui_kit::{
 };
 use subspace_client_irc::{BufferKey, Target, ThreadRoots};
 use subspace_framework::dashboard::Tokens;
+use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::panel::IconName;
 
 use super::{Row, RowContext};
@@ -32,6 +33,86 @@ impl Summary {
     pub(crate) fn count(&self) -> usize {
         self.count
     }
+}
+
+/// Hidden lines and one visible thread entry for each unloaded root.
+pub(super) fn placement(
+    held: &Buffer,
+    buffer: &BufferKey,
+    threads: bool,
+) -> (HashSet<i64>, HashSet<usize>) {
+    let mut hidden = held.folded.clone();
+    let mut earlier = HashSet::new();
+    if !threads {
+        return (hidden, earlier);
+    }
+    let (roots, loaded) = thread_index(held, buffer);
+    let mut anchors = HashSet::new();
+    for (at, entry) in held.entries.iter().enumerate() {
+        let Some(root) = reply_root(entry, &roots, &held.folded) else {
+            continue;
+        };
+        if !loaded.contains(root) && entry.line.id.is_some() && anchors.insert(root) {
+            earlier.insert(at);
+        } else {
+            hidden.insert(entry.seq);
+        }
+    }
+    (hidden, earlier)
+}
+
+fn thread_index<'a>(
+    held: &'a Buffer,
+    buffer: &'a BufferKey,
+) -> (ThreadRoots<'a>, HashSet<&'a str>) {
+    let messages = held
+        .entries
+        .iter()
+        .map(|entry| &entry.line)
+        .filter(|line| line.buffer == *buffer && is_message(line.kind));
+    let loaded = messages
+        .clone()
+        .filter(|line| line.reply_to.is_none())
+        .filter_map(|line| line.id.as_deref())
+        .collect();
+    (ThreadRoots::new(buffer, messages), loaded)
+}
+
+fn reply_root<'a>(
+    entry: &'a Entry,
+    roots: &ThreadRoots<'a>,
+    folded: &HashSet<i64>,
+) -> Option<&'a str> {
+    let line = &entry.line;
+    if folded.contains(&entry.seq) || line.reply_to.is_none() || !is_message(line.kind) {
+        return None;
+    }
+    roots.root(line)
+}
+
+pub(super) fn earlier_thread(entry: &Entry, held: &Buffer, context: &RowContext) -> AnyElement {
+    let line = &entry.line;
+    let Target::Channel(channel) = &line.buffer.target else {
+        return gpui_kit::div().into_any_element();
+    };
+    let roots = ThreadRoots::new(&line.buffer, held.entries.iter().map(|entry| &entry.line));
+    let Some(root) = roots.root(line) else {
+        return gpui_kit::div().into_any_element();
+    };
+    let link = crate::markup::Ref::Thread(channel.clone(), root.to_owned());
+    let conversation = context.conversation.clone();
+    action_button(
+        format!("irc-earlier-thread:{}", entry.seq),
+        Intent::Quiet,
+        Some(IconName::MessagesSquare),
+        "Replies to an earlier message",
+    )
+    .on_click(move |_, _, cx| {
+        _ = conversation.update(cx, |_, cx| {
+            cx.emit(ConversationEvent::Open(link.clone()));
+        });
+    })
+    .into_any_element()
 }
 
 /// Counts never include other buffers, missing roots, or malformed chains.

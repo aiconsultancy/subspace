@@ -12,11 +12,12 @@ use crate::thread_status::{self, Ending, Outcome, Phase, Stage};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Thread {
     pub root: Entry,
+    /// The wire thread root, even if the message selected was a reply.
+    pub root_id: String,
     /// The status timeline, when the root is a request with trusted
     /// progress or one that ended, as for its status line.
     pub timeline: Option<Timeline>,
-    /// The latest replies the buffer holds, at most [`MAX_REPLIES`],
-    /// oldest first.
+    /// The replies the buffer holds, oldest first.
     pub replies: Vec<Entry>,
     /// How many replies the buffer holds, all of them.
     pub reply_count: usize,
@@ -25,8 +26,7 @@ pub(crate) struct Thread {
     pub nested: bool,
 }
 
-/// The most replies a thread keeps to draw: the latest. A rebuild copies
-/// no more, however long the thread.
+/// How many replies the inspector shows initially or adds in one step.
 pub(crate) const MAX_REPLIES: usize = 40;
 
 /// The most steps a timeline keeps to draw: the latest. An agent that
@@ -98,28 +98,21 @@ pub(crate) fn build(buffer: &BufferKey, held: &Buffer, root: &str) -> Option<Thr
         .find(|entry| entry.line.id.as_deref() == Some(root) && entry.line.buffer == *buffer)?;
     let roots = ThreadRoots::new(buffer, held.entries.iter().map(|entry| &entry.line));
     let thread = roots.root(&root_entry.line).unwrap_or(root);
-    let all: Vec<&Entry> = held
+    let replies: Vec<Entry> = held
         .entries
         .iter()
         .filter(|entry| entry.seq != root_entry.seq && is_reply(held, &roots, entry, thread))
+        .cloned()
         .collect();
-    let reply_count = all.len();
-    let replies = latest(&all);
+    let reply_count = replies.len();
     Some(Thread {
         root: root_entry.clone(),
+        root_id: thread.to_owned(),
         timeline: timeline(held, root_entry, root),
         replies,
         reply_count,
         nested: is_nested(thread, root),
     })
-}
-
-/// The latest [`MAX_REPLIES`] of `all`, copied.
-fn latest(all: &[&Entry]) -> Vec<Entry> {
-    all[all.len().saturating_sub(MAX_REPLIES)..]
-        .iter()
-        .map(|entry| (*entry).clone())
-        .collect()
 }
 
 /// Whether the chosen message `root` is itself a reply in `thread`.

@@ -249,7 +249,7 @@ fn a_kept_ending_is_the_end_whatever_notice_is_held() {
 }
 
 #[test]
-fn a_long_thread_keeps_its_count_and_only_its_latest_replies() {
+fn a_long_thread_keeps_its_count_and_earlier_replies() {
     let mut state = joined(vec![ship()]);
     let lines: Vec<_> = std::iter::once(request(&room(), "first", 1))
         .chain((0..45).map(|n| said(&room(), Some("first"), &format!("r{n}"), 2 + n)))
@@ -257,12 +257,8 @@ fn a_long_thread_keeps_its_count_and_only_its_latest_replies() {
     live(&mut state, lines);
     let found = thread(&state, "first").unwrap();
     assert_eq!(found.reply_count, 45);
-    assert_eq!(found.replies.len(), crate::thread::MAX_REPLIES);
-    assert_eq!(
-        found.replies[0].line.id.as_deref(),
-        Some("r5"),
-        "the latest 40"
-    );
+    assert_eq!(found.replies.len(), 45);
+    assert_eq!(found.replies[0].line.id.as_deref(), Some("r0"));
 }
 
 #[test]

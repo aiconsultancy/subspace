@@ -103,7 +103,6 @@ fn assert_titles<const N: usize>(
     cx: &mut VisualTestContext,
 ) {
     board.read_with(cx, |board, _| {
-        assert_eq!(board.list().groups().len(), 1);
         let titles: Vec<&str> = board.list().rows().map(|row| row.title.as_ref()).collect();
         assert_eq!(titles, expected);
         assert!(board.selected_listed().is_none());
@@ -122,10 +121,7 @@ fn assert_grouped(board: &Entity<Irc>, hub: &Entity<Hub>, cx: &mut VisualTestCon
         let group = &board.list().groups()[0];
         assert_eq!(
             board.group_captions(group, cx),
-            [
-                GroupCaption::new(listed_key("#aurora-lyra"), "Ships"),
-                GroupCaption::new(listed_key("#lobby"), "Other"),
-            ]
+            [GroupCaption::new(listed_key("#aurora-lyra"), "Ships")]
         );
         let vega = &group.rows[2];
         assert_eq!(vega.key, listed_key("#aurora-vega"));

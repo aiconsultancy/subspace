@@ -310,6 +310,7 @@ impl Hub {
                 .restore_buffer(&buffer.buffer, buffer.lines, &buffer.ended);
         }
         self.recall.keep_endings(&mut self.state);
+        self.comms.refresh(&self.state);
         let applied = &self.applied.networks;
         let networks = super::running::next((applied, applied), &self.running, &self.state.removed);
         self.run(networks);
@@ -330,6 +331,7 @@ impl Hub {
                 .restore_buffer(&buffer.buffer, buffer.lines, &buffer.ended);
         }
         self.recall.keep_endings(&mut self.state);
+        self.comms.refresh(&self.state);
         if let Some(networks) = self.recall.waiting.take() {
             self.run(networks);
         }

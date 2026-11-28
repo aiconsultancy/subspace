@@ -20,6 +20,8 @@ pub(crate) enum Row {
     History,
     /// The start of the unread messages, anchored to the first message.
     UnreadDivider(i64),
+    /// An entry point for replies whose original message is older than the transcript.
+    EarlierThread(usize),
     Item(Item),
 }
 
@@ -86,6 +88,7 @@ pub(crate) fn identities(rows: &[Row], entries: &VecDeque<Entry>) -> Vec<String>
         .map(|row| match row {
             Row::History => "history".to_owned(),
             Row::UnreadDivider(seq) => format!("unread:{seq}"),
+            Row::EarlierThread(at) => format!("earlier-thread:{}", entries[*at].seq),
             Row::Item(item) => lines::item_id(*item, entries),
         })
         .collect()
@@ -95,6 +98,7 @@ pub(crate) fn identities(rows: &[Row], entries: &VecDeque<Entry>) -> Vec<String>
 pub(crate) fn row_of(rows: &[Row], at: usize) -> Option<usize> {
     rows.iter().position(|row| match row {
         Row::Item(Item::Message { at: shown, .. } | Item::Line(shown)) => *shown == at,
+        Row::EarlierThread(shown) => *shown == at,
         Row::Item(Item::Membership { first, last }) => (*first..=*last).contains(&at),
         Row::Item(Item::Day(_)) | Row::History | Row::UnreadDivider(_) => false,
     })

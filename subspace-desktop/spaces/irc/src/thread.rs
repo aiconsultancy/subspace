@@ -1,8 +1,7 @@
 //! The inspector's **Thread** tab in a ship's channel or a Starbase: one
 //! thread at a time, being a message that has replies or a request (a
 //! message addressed to an agent). It shows the root message, a request's
-//! status timeline, then the replies. The transcript is unchanged: replies
-//! still show in the channel, and this is another view of them.
+//! status timeline, then the replies. The channel shows an entry point to each thread.
 //!
 //! - **Which messages belong** ([`model`]): a reply is a message whose
 //!   server reply tag (`+draft/reply`) leads, through held parents, to the
