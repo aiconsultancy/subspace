@@ -27,3 +27,7 @@ The desktop and API are verified with fictional records. The API integration
 fixture traverses 5,004 decisions on an isolated PostgreSQL database. The
 native evidence shows a large list, the next page, search in progress and a
 single ID match.
+
+- [Before paging](evidence/before.png)
+- [First page](evidence/first.png) and [second page](evidence/second.png)
+- [Search in progress](evidence/searching.png) and [short-ID match](evidence/match.png)
