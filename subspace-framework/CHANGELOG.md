@@ -4,6 +4,14 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.10.2](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.10.1...subspace-framework-v0.10.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* **framework:** carry row actions into reference menus ([7c8b8da](https://github.com/aiconsultancy/subspace/commit/7c8b8dacd8a9ee4a0e946496d583f7c57fea0bde))
+* **framework:** extend native text menus to message rows ([a259903](https://github.com/aiconsultancy/subspace/commit/a259903792b728e8770dcfe863da75ac47f2380a))
+
 ## [0.10.1](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.10.0...subspace-framework-v0.10.1) (2026-11-28)
 
 
